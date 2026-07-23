@@ -22,11 +22,13 @@ from agent_os.api.v1 import (
     POST_FRAME_POP,
     POST_FRAME_PUSH,
     POST_LLM_RESPONSE,
+    POST_LOGIC_EXEC,
     POST_SKILL_INVOKE,
     POST_TOOL_CALL,
     PRE_FRAME_POP,
     PRE_FRAME_PUSH,
     PRE_LLM_REQUEST,
+    PRE_LOGIC_EXEC,
     PRE_SKILL_INVOKE,
     PRE_STEP,
     PRE_TOOL_CALL,
@@ -34,8 +36,10 @@ from agent_os.api.v1 import (
     RUN_FINISHED,
     RUN_STARTED,
     ChatUsage,
+    ExecRequest,
     FrameContext,
     Message,
+    ResourceLimits,
     Role,
     RunConfig,
     RunStatus,
@@ -50,6 +54,7 @@ from agent_os.api.v1 import (
     ToolCall,
     ToolErrorKind,
     ToolResult,
+    TrustLevel,
 )
 from agent_os.kernel.errors import (
     BudgetExceeded,
@@ -57,7 +62,9 @@ from agent_os.kernel.errors import (
     OutputValidationError,
     RunAborted,
     SkillLoadError,
+    ToolDispatchError,
 )
+from agent_os.kernel.logic_context import KernelLogicContext
 from agent_os.kernel.run import Run
 from agent_os.kernel.stack import FrameStack
 from agent_os.tools.local_registry import ToolDispatchContext
@@ -196,8 +203,9 @@ class Kernel:
         await self.signals.emit(self._sig(POST_FRAME_PUSH, frame))
         try:
             if skill_obj.manifest.kind is SkillKind.CODE:
-                raise NotImplementedError("M2: code 技能帧执行(本切片不覆盖)")
-            result = await self._frame_loop(frame, skill_obj)
+                result = await self._run_code_frame(frame, skill_obj)
+            else:
+                result = await self._frame_loop(frame, skill_obj)
         except BaseException as err:
             self.stack.pop_err(frame, err)
             raise
@@ -251,6 +259,61 @@ class Kernel:
                     frame.context.messages.append(self._tool_message(call, payload))
                     raise
                 frame.context.messages.append(self._tool_message(call, payload))
+
+    # ------------------------------------------------------------------
+    # §9.4 code 技能帧:Logic Kernel 是唯一执行点(§9)
+    # ------------------------------------------------------------------
+
+    async def _run_code_frame(self, frame: SkillFrame, skill_obj: Skill) -> Any:
+        """code 技能帧(§9.4):构造 ExecRequest 交 Logic Kernel 路由执行。
+
+        默认 TRUSTED(注入 LogicContext,§9.3 编排者能力);``logic: {mode: sandbox}``
+        或 ``RunConfig.logic_policy.force_sandbox`` → SANDBOX(§9.2,ctx=None 纯计算)。
+        执行失败 → ToolDispatchError;返回值过 outputs schema 校验(无重试,§3.1 步骤 5)。
+        """
+        manifest = skill_obj.manifest
+        module, _, entry = (manifest.handler or "").partition(":")
+        if not module or not entry:
+            raise SkillLoadError(
+                f"code 技能 {manifest.name} 的 handler 应为 'pkg.mod:func' 形式,"
+                f"得到: {manifest.handler!r}"
+            )
+        if self.logic is None:
+            raise ToolDispatchError("未装配 Logic Kernel,code 技能无法执行(§9)")
+        kernel = self.logic.route(manifest, self.config)
+        trust = kernel.trust.value
+        timeout = manifest.limits.timeout if manifest.limits and manifest.limits.timeout else 60
+        req = ExecRequest(
+            source=module,
+            entry=entry,
+            args=frame.input,
+            ctx=(
+                KernelLogicContext(self, frame, manifest)
+                if kernel.trust is TrustLevel.TRUSTED
+                else None
+            ),
+            limits=ResourceLimits(
+                wall_time=timeout, cpu_time=timeout, memory_mb=256, stdout_bytes=100_000
+            ),
+        )
+        await self.signals.emit(self._sig(PRE_LOGIC_EXEC, frame, {"trust": trust}))
+        result = await kernel.execute(req)
+        await self.signals.emit(
+            self._sig(POST_LOGIC_EXEC, frame, {"trust": trust, "ok": result.error is None})
+        )
+        if result.error is not None:
+            raise ToolDispatchError(
+                f"code 技能 {manifest.name} 执行失败({result.error.kind.value}):"
+                f" {result.error.message}"
+            )
+        if manifest.outputs:
+            try:
+                jsonschema.validate(result.value, manifest.outputs)
+            except jsonschema.ValidationError as e:
+                raise OutputValidationError(
+                    f"code 技能 {manifest.name} 返回值不合 outputs schema: {e.message}"
+                ) from e
+        return result.value
 
     # ------------------------------------------------------------------
     # §3.1 步骤 6:分发(工具 vs 子技能,§3.3)

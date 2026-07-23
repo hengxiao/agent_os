@@ -4,6 +4,9 @@
 stdout/stderr 捕获(``contextlib.redirect_stdout/stderr`` → StringIO);
 返回值 JSON 序列化检查(不可序列化 → RUNTIME_ERROR);usage:wall_ms + cpu_ms,
 mem_peak_mb 不支持记 0;超时 → LIMIT_EXCEEDED。
+入口两种形态:``source`` 为源码文本 → exec 后取 ``entry``;为可 import 的模块路径
+(code 技能,§6.3)→ ``importlib.import_module`` 后 ``getattr``。
+硬失败(RunAborted/MaxDepthExceeded)不折成 ExecResult,原样上抛(§3.2)。
 明确不做:内存限额、隔离、网络管控——那是 PythonSandboxLogicKernel(M5)存在的意义。
 """
 
@@ -11,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.util
 import inspect
 import io
 import json
@@ -26,8 +30,27 @@ from agent_os.api.v1 import (
     LogicError,
     TrustLevel,
 )
+from agent_os.kernel.errors import MaxDepthExceeded, RunAborted
 
 _DEFAULT_WALL_TIME = 30.0
+
+
+def _is_module_path(source: str) -> bool:
+    """``pkg.mod`` 形态且当前可 import(find_spec 只探测);否则按源码文本处理。"""
+    try:
+        return importlib.util.find_spec(source) is not None
+    except Exception:  # noqa: BLE001 — 探测失败一律按源码文本处理
+        return False
+
+
+def _resolve_entry(req: ExecRequest) -> Any:
+    """模块路径 → import 后 ``getattr``;源码文本 → exec 后从命名空间取 ``entry``。"""
+    if "\n" not in req.source and _is_module_path(req.source):
+        module = importlib.import_module(req.source)
+        return getattr(module, req.entry)
+    ns: dict[str, Any] = {"__name__": "__logic_inprocess__"}
+    exec(compile(req.source, "<inprocess-logic>", "exec"), ns)  # noqa: S102
+    return ns.get(req.entry)
 
 
 class InProcessLogicKernel:
@@ -39,14 +62,12 @@ class InProcessLogicKernel:
     async def execute(self, req: ExecRequest) -> ExecResult:
         wall = req.limits.wall_time if req.limits.wall_time else _DEFAULT_WALL_TIME
         stdout_io, stderr_io = io.StringIO(), io.StringIO()
-        ns: dict[str, Any] = {"__name__": "__logic_inprocess__"}
         wall_start = time.perf_counter()
         cpu_start = time.process_time()
         value: Any = None
         try:
             with contextlib.redirect_stdout(stdout_io), contextlib.redirect_stderr(stderr_io):
-                exec(compile(req.source, "<inprocess-logic>", "exec"), ns)  # noqa: S102
-                entry = ns.get(req.entry)
+                entry = _resolve_entry(req)
                 if callable(entry):
                     value = entry(req.args, req.ctx)
                     if inspect.isawaitable(value):
@@ -58,6 +79,8 @@ class InProcessLogicKernel:
                 error=ExecError(kind=LogicError.LIMIT_EXCEEDED, message=f"超过 wall_time={wall}s"),
                 usage=self._usage(wall_start, cpu_start),
             )
+        except (RunAborted, MaxDepthExceeded):
+            raise  # 硬失败不折成 ExecResult,沿调用栈弹到 Run 边界(§3.2)
         except Exception:  # noqa: BLE001 — 执行边界故意兜底:任意异常归一化为 RUNTIME_ERROR(§9.7)
             tb = traceback.format_exc()
             return ExecResult(

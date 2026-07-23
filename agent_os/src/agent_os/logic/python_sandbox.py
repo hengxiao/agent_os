@@ -9,13 +9,23 @@
 
 v1 极简版接受偏差:**网络隔离不做**——M5 用 ``unshare``/nsjail 加固;
 文件系统仅靠 rlimits 与 ``-I`` 隔离,不是安全边界。
+
+code 技能入口(§9.2/§9.4):``source`` 为可 import 的模块路径时改走驱动脚本
+(``_DRIVER``)——沙箱内 import 模块、以 ``ctx=None`` 调 handler(v1 纯计算,无回调;
+handler 用 ctx 会 AttributeError → RUNTIME_ERROR,符合"沙箱 v1 纯计算"语义),
+结果以最后一行 ``{"value": ...}`` JSON 回传。``-I`` 隐含 ``-E``(PYTHONPATH 不进
+sys.path),故 env 传 ``PYTHONPATH = os.pathsep.join(sys.path)`` 后由驱动脚本自行
+读取并前置插入,保证宿主侧模块(如技能 handler 包)在沙箱内可 import。
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import sys
 import time
+from typing import Any
 
 from agent_os.api.v1 import (
     ExecError,
@@ -25,16 +35,50 @@ from agent_os.api.v1 import (
     LogicError,
     TrustLevel,
 )
+from agent_os.logic.inprocess import _is_module_path
 from agent_os.logic.limits import apply_limits
 
 #: 默认兜底墙钟(调用方未给 limits.wall_time 时)
 _DEFAULT_WALL_TIME = 30.0
+
+#: code 技能驱动脚本(§9.2):argv = [args_json, module, entry];结果 print 为最后一行
+#: ``{"value": ...}`` JSON;异常 → traceback 入 stderr 并非零退出(归一化为 RUNTIME_ERROR)。
+_DRIVER = """\
+import asyncio, importlib, json, os, sys, traceback
+
+try:
+    sys.path[:0] = [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]
+    args = json.loads(sys.argv[1])
+    mod = importlib.import_module(sys.argv[2])
+    fn = getattr(mod, sys.argv[3])
+    result = asyncio.run(fn(args, None))
+    print(json.dumps({"value": result}))
+except Exception:
+    traceback.print_exc()
+    sys.exit(1)
+"""
 
 
 def _truncate(text: str, max_bytes: int | None) -> str:
     if max_bytes is None:
         return text
     return text.encode("utf-8", errors="replace")[:max_bytes].decode("utf-8", errors="replace")
+
+
+def _parse_driver_stdout(stdout: str) -> tuple[Any, str]:
+    """驱动脚本协议:最后一个非空行 ``{"value": ...}`` → ``(value, 其余行)``;否则原样返回。"""
+    lines = stdout.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        if not lines[i].strip():
+            continue
+        try:
+            payload = json.loads(lines[i])
+        except ValueError:
+            return None, stdout
+        if isinstance(payload, dict) and "value" in payload:
+            return payload["value"], "\n".join(lines[:i] + lines[i + 1 :])
+        return None, stdout
+    return None, stdout
 
 
 class PythonSandboxLogicKernel:
@@ -50,19 +94,28 @@ class PythonSandboxLogicKernel:
     async def execute(self, req: ExecRequest) -> ExecResult:
         limits = req.limits
         wall = limits.wall_time if limits.wall_time else _DEFAULT_WALL_TIME
+        # 模块路径(code 技能)→ 驱动脚本;源码文本(LLM 动态代码)→ 原样 -c(§9.4)
+        module_mode = "\n" not in req.source and _is_module_path(req.source)
+        if module_mode:
+            argv = [sys.executable, "-I", "-c", _DRIVER, json.dumps(req.args), req.source, req.entry]
+            env: dict[str, str] | None = {
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(p for p in sys.path if p),
+            }
+        else:
+            argv = [sys.executable, "-I", "-c", req.source]
+            env = None
 
         def preexec() -> None:
             apply_limits(limits)
 
         start = time.perf_counter()
         proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-I",
-            "-c",
-            req.source,
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             preexec_fn=preexec,
+            env=env,
         )
         try:
             stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=wall)
@@ -91,5 +144,8 @@ class PythonSandboxLogicKernel:
                 error=ExecError(kind=LogicError.RUNTIME_ERROR, message=tail[-500:], traceback=stderr),
                 usage=usage,
             )
+        if module_mode:
+            value, body = _parse_driver_stdout(stdout)
+            return ExecResult(value=value, stdout=body, stderr=stderr, usage=usage)
         # result 解析(stdout 最后一行 JSON)由 python_exec 工具层做(§9.4)
         return ExecResult(value=stdout, stdout=stdout, stderr=stderr, usage=usage)

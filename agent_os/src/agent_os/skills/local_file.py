@@ -66,12 +66,20 @@ class LocalFileSkillRegistry:
     def __init__(self, path: str = "./skills.yaml") -> None:
         self.path = path
         self._skills: dict[str, Skill] = {}
+        self._mtime: float | None = None  # 上次成功加载时的文件 mtime(reload 变更检测)
         self._loaded = False
+        self.load()  # 构造即走加载流水线:循环依赖等错误在加载期暴露(§6.1)
 
     def load(self) -> None:
         """discover → parse → validate → resolve deps(拓扑排序)→ materialize → publish(§6.1)。"""
         if self._loaded:
             return
+        self._skills = self._load_all()
+        self._mtime = Path(self.path).stat().st_mtime
+        self._loaded = True
+
+    def _load_all(self) -> dict[str, Skill]:
+        """读文件并走完整加载流水线;抛 SkillLoadError 时不触碰调用方状态(reload 保留旧表)。"""
         data = yaml.safe_load(Path(self.path).read_text(encoding="utf-8")) or {}
         entries = data.get("skills") or []
         manifests = [parse_manifest(e) for e in entries]
@@ -86,16 +94,29 @@ class LocalFileSkillRegistry:
                     raise SkillLoadError(f"技能 {m.name} 引用了不存在的子技能: {dep}")
             for warning in validate_manifest(m):
                 _log.warning("%s", warning)
-        self._skills = {name: materialize(by_name[name]) for name in _topo_sort(manifests)}
-        self._loaded = True
+        return {name: materialize(by_name[name]) for name in _topo_sort(manifests)}
 
     def _ensure_loaded(self) -> None:
         if not self._loaded:
             self.load()
 
-    def reload(self) -> None:
-        """热重载(mtime 检查):新帧用新版,在跑帧钉住旧版(§6.1)。"""
-        raise NotImplementedError("M2")
+    def reload(self) -> bool:
+        """热重载(mtime 检查,§6.1/§6.3):mtime 未变 → False;变了重走 load 全流程
+
+        (解析+校验+拓扑),成功 → True 且新帧用新版(在跑帧钉住旧版 Skill 对象);
+        加载失败保留旧表并抛 SkillLoadError——不毁可用状态。
+        """
+        self._ensure_loaded()
+        mtime = Path(self.path).stat().st_mtime
+        if mtime == self._mtime:
+            return False
+        self._skills = self._load_all()  # 失败抛 SkillLoadError,旧表不被触碰
+        self._mtime = mtime
+        return True
+
+    def get_by_name(self, name: str) -> Skill:
+        """按名字取当前加载版本的 Skill(测试/调试入口;等价 ``get(SkillRef(name=name))``)。"""
+        return self.get(SkillRef(name=name))
 
     def get(self, ref: SkillRef) -> Skill:
         self._ensure_loaded()

@@ -90,16 +90,15 @@ class KernelBuilder:
     def build(self) -> Kernel:
         """组装 Kernel(注入信号总线 / FrameStack / Dispatcher / RunControl 等内核件)。
 
-        本纵向切片的装配边界:telemetry/memory/blackboard 尚未接线,
+        本纵向切片的装配边界:memory/blackboard 尚未接线,
         传入了为避免静默丢弃直接拒绝(各自里程碑再做);缺省补 ContextManager
         (M3:RollingWindowCompressor + 状态注入 + pre/post:compress 信号,§7);
         logic_kernels 按 TrustLevel 索引装配为 LogicKernelRouter(§9.2);
         sidecars(M4)装配 RunControlImpl + SidecarSupervisor 并注册到总线(§5);
+        telemetry(M5a)作为总线特权订阅者接入(§5.1:全量订阅,不算 sidecar);
         装配期权限闸门(§6.1):manifest 声明的工具必须在注册表中,缺失即拒绝加载。
         """
         unsupported: list[str] = []
-        if self._telemetry is not None:
-            unsupported.append("telemetry")
         if self._memory is not None:
             unsupported.append("memory")
         if self._blackboard is not None:
@@ -129,6 +128,9 @@ class KernelBuilder:
         )
         if hasattr(tools, "bind_signals"):
             tools.bind_signals(bus)
+        if self._telemetry is not None:
+            # §5.1:Telemetry 是总线的特权订阅者(全量订阅),不算 sidecar
+            bus.subscribe("*", self._telemetry.record)
         kernel = Kernel(
             config=self.config,
             providers=providers,
@@ -137,6 +139,7 @@ class KernelBuilder:
             context=context,
             logic=LogicKernelRouter(list(self._logic_kernels)),
             signals=bus,
+            telemetry=self._telemetry,
             stack=FrameStack(max_depth=self.config.max_depth),
         )
         if self._sidecars:

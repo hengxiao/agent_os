@@ -1,5 +1,5 @@
 """内核 runner(DESIGN.md §3.1 语义伪码的落点;M0 单帧 runner,M2 调用栈/压栈挂起,
-M4 verdict 仲裁与 sidecar 接线)。
+M4 verdict 仲裁与 sidecar 接线,M5a checkpoint/resume 断电恢复)。
 
 agent loop 顺序:safe point(run 中止标志)→ pre:step 检查点(verdict 仲裁,§5.2)
 → 强制压缩检查 → context.maintain/build → providers.chat →
@@ -68,6 +68,7 @@ from agent_os.api.v1 import (
     TrustLevel,
     Veto,
 )
+from agent_os.kernel.checkpoint import dump_checkpoint, resume_from_checkpoint
 from agent_os.kernel.control import FORCE_COMPRESS_KEY
 from agent_os.kernel.errors import (
     BudgetExceeded,
@@ -220,6 +221,18 @@ class Kernel:
             # run 收尾:取消在跑的 ASYNC sidecar 任务(§5.3)
             if self.sidecars is not None:
                 await self.sidecars.close()
+
+    # ------------------------------------------------------------------
+    # §10.2 检查点(M5a):WAL 原则——轨迹即全部状态,恢复 = 重入 loop 而非重跑
+    # ------------------------------------------------------------------
+
+    def checkpoint(self, run_id: str, path: str) -> None:
+        """把 run 状态与全部帧(含上下文、usage、状态)序列化为 JSON 检查点(§10.2)。"""
+        dump_checkpoint(self, run_id, path)
+
+    async def resume(self, path: str) -> Any:
+        """从检查点恢复:跳过 DONE 帧,最深的未完成帧带完整上下文重入 loop(§10.2)。"""
+        return await resume_from_checkpoint(self, path)
 
     # ------------------------------------------------------------------
     # §3.1 单帧 agent loop
@@ -519,6 +532,9 @@ class Kernel:
                 "value": None,
                 "error": _error_payload(ToolErrorKind.INVALID_ARGS, str(e)),
             }
+        # 登记触发子帧的父帧调用 id(checkpoint 恢复按 call_id 配对结算,§10.2;
+        # LogicContext.invoke 经 _dispatch_call 委托到此,同一路径覆盖)
+        child.call_id = call.id
         try:
             value = await self.run_frame(child)
         except (MaxDepthExceeded, RunAborted):

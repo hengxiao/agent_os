@@ -92,3 +92,5 @@ class SkillFrame:
     result: Any = None
     error: Any = None
     usage: Usage = field(default_factory=Usage)
+    #: 触发本帧的父帧调用 id(子帧创建时登记;checkpoint 恢复按它配对结算,§10.2)
+    call_id: str | None = None

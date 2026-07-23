@@ -37,3 +37,18 @@ async def naughty(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
 async def bad_output(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """返回不合 outputs schema 的值(用于 code 技能输出校验测试)。"""
     return {"wrong": 1}
+
+
+async def spawn_pair(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """后台帧编排(§3.4 spawn):父帧不挂起,两个子帧后台跑,wait 读终态。"""
+    f1 = await ctx.spawn("fib", {"n": input["a"]})
+    f2 = await ctx.spawn("fib", {"n": input["b"]})
+    ra = await ctx.wait(f1)
+    rb = await ctx.wait(f2)
+    return {"combined": ra["seq"] + rb["seq"]}
+
+
+async def spawn_naughty(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """spawn 白名单外的子技能(用于权限拒绝测试)。"""
+    await ctx.spawn("fib", {"n": 2})
+    return {"never": True}

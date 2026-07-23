@@ -169,6 +169,8 @@ class Kernel:
         #: RunControl 句柄(装配 sidecars 时由 KernelBuilder 注入;pre:step 的
         #: InjectMessage/ForceCompress verdict 经它落地)
         self.ctl: Any = None
+        #: spawn 后台帧登记表(§3.4):frame_id → 子帧后台任务;wait_frame 在此 join
+        self._spawned: dict[str, asyncio.Task[Any]] = {}
 
     # ------------------------------------------------------------------
     # §13 生命周期入口
@@ -298,6 +300,7 @@ class Kernel:
                 result = await self._execute_frame(frame, skill_obj)
             except BaseException as err:
                 self.stack.pop_err(frame, err)
+                await self._board_status(frame, {"status": "failed", "error": str(err)})
                 raise
             verdicts = await self.signals.emit(
                 self._sig(PRE_FRAME_POP, frame, {"result": result})
@@ -316,6 +319,7 @@ class Kernel:
                 )
             )
         self.stack.pop_ok(frame, result)
+        await self._board_status(frame, {"status": "done", "result": result})
         await self.signals.emit(self._sig(POST_FRAME_POP, frame))
         return result
 
@@ -398,6 +402,11 @@ class Kernel:
                         ],
                     },
                 )
+            )
+            # StatusBoard(§12.2):每步滚动状态,供父帧/外部按需读取
+            await self._board_status(
+                frame,
+                {"status": "running", "step": frame.usage.steps, "skill": str(frame.skill)},
             )
 
     # ------------------------------------------------------------------
@@ -550,6 +559,68 @@ class Kernel:
             }
         await self.signals.emit(self._sig(POST_SKILL_INVOKE, frame, {"skill": name, "ok": True}))
         return {"ok": True, "value": value, "error": None}
+
+    # ------------------------------------------------------------------
+    # §3.4 spawn 后台帧:父帧不挂起,子帧独立预算后台运行;join 退化为读终态
+    # ------------------------------------------------------------------
+
+    async def spawn_frame(self, parent: SkillFrame, skill: str, input: dict[str, Any]) -> str:
+        """spawn 后台帧(§3.4):白名单/深度检查与 invoke 一致,返回子帧 frame_id。
+
+        子帧经 ``asyncio.create_task`` 后台运行并登记在 ``self._spawned``;
+        PRE/POST_SKILL_INVOKE 信号与 invoke 一致,payload 加 ``"background": True``。
+        """
+        parent_manifest = self.skills.get(parent.skill).manifest
+        if skill not in parent_manifest.permissions.skills:
+            raise SkillLoadError(
+                f"子技能 {skill} 不在技能 {parent_manifest.name} 的 skills 白名单"
+            )
+        await self.signals.emit(
+            self._sig(PRE_SKILL_INVOKE, parent, {"skill": skill, "background": True})
+        )
+        if parent.depth + 1 > self.config.max_depth:
+            raise MaxDepthExceeded(
+                f"调用子技能 {skill} 将达到 depth={parent.depth + 1},"
+                f"超过 max_depth={self.config.max_depth}"
+            )
+        child = self.skills.make_frame(SkillCall(name=skill, args=dict(input)), parent)
+        task = asyncio.create_task(self.run_frame(child))
+        self._spawned[child.frame_id] = task
+        # spawn-and-forget 的子帧异常由 StatusBoard 记录(failed);提前 retrieve,
+        # 避免无人 wait 时事件循环 "exception was never retrieved" 噪音——
+        # wait_frame 的 await 仍会原样上抛,语义不变
+        task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+        await self.signals.emit(
+            self._sig(
+                POST_SKILL_INVOKE, parent, {"skill": skill, "ok": True, "background": True}
+            )
+        )
+        return child.frame_id
+
+    async def wait_frame(self, frame_id: str) -> Any:
+        """join 退化为读终态(§3.4):子帧失败把异常原样上抛,交给 code 技能处理。"""
+        task = self._spawned.get(frame_id)
+        if task is None:
+            raise SkillLoadError(f"未知的后台帧 {frame_id}(未 spawn 或已回收)")
+        return await task
+
+    # ------------------------------------------------------------------
+    # §12.2 StatusBoard:帧状态滚动写入 status 命名空间(后台帧的滚动状态通道)
+    # ------------------------------------------------------------------
+
+    async def _board_status(self, frame: SkillFrame, value: dict[str, Any]) -> None:
+        """帧状态写入 ``status`` 命名空间;写失败只记日志,不阻断主流程。"""
+        if self.blackboard is None:
+            return
+        try:
+            await self.blackboard.put("status", frame.frame_id, value)
+        except Exception:  # noqa: BLE001 — 状态通道故障不得拖垮 run(§5.3 同旨)
+            _log.warning(
+                "StatusBoard 写入失败(忽略):frame=%s value=%r",
+                frame.frame_id,
+                value,
+                exc_info=True,
+            )
 
     @staticmethod
     def _tool_message(call: ToolCall, payload: dict[str, Any]) -> Message:

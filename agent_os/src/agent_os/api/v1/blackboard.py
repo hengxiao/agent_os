@@ -11,7 +11,14 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-__all__ = ["Blackboard", "Envelope"]
+__all__ = ["Blackboard", "BlackboardConflict", "Envelope"]
+
+
+class BlackboardConflict(Exception):
+    """CAS 乐观锁冲突(§12.2):``cas_version`` 与当前版本不符(含 key 不存在而 cas 非 None)。
+
+    读记版本、写时校验、失败重读重做——调用方收到本异常后应重读再重试。
+    """
 
 
 @dataclass

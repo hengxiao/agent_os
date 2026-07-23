@@ -6,7 +6,8 @@ stdout/stderr 捕获(``contextlib.redirect_stdout/stderr`` → StringIO);
 mem_peak_mb 不支持记 0;超时 → LIMIT_EXCEEDED。
 入口两种形态:``source`` 为源码文本 → exec 后取 ``entry``;为可 import 的模块路径
 (code 技能,§6.3)→ ``importlib.import_module`` 后 ``getattr``。
-硬失败(RunAborted/MaxDepthExceeded)不折成 ExecResult,原样上抛(§3.2)。
+硬失败(RunAborted/MaxDepthExceeded)与权限仲裁失败(SkillLoadError,如 spawn/invoke
+白名单拒绝、board 命名空间拒绝)不折成 ExecResult,原样上抛(§3.2;fail-closed)。
 明确不做:内存限额、隔离、网络管控——那是 PythonSandboxLogicKernel(M5)存在的意义。
 """
 
@@ -30,7 +31,7 @@ from agent_os.api.v1 import (
     LogicError,
     TrustLevel,
 )
-from agent_os.kernel.errors import MaxDepthExceeded, RunAborted
+from agent_os.kernel.errors import MaxDepthExceeded, RunAborted, SkillLoadError
 
 _DEFAULT_WALL_TIME = 30.0
 
@@ -79,8 +80,8 @@ class InProcessLogicKernel:
                 error=ExecError(kind=LogicError.LIMIT_EXCEEDED, message=f"超过 wall_time={wall}s"),
                 usage=self._usage(wall_start, cpu_start),
             )
-        except (RunAborted, MaxDepthExceeded):
-            raise  # 硬失败不折成 ExecResult,沿调用栈弹到 Run 边界(§3.2)
+        except (RunAborted, MaxDepthExceeded, SkillLoadError):
+            raise  # 硬失败/权限仲裁失败不折成 ExecResult,沿调用栈弹到 Run 边界(§3.2)
         except Exception:  # noqa: BLE001 — 执行边界故意兜底:任意异常归一化为 RUNTIME_ERROR(§9.7)
             tb = traceback.format_exc()
             return ExecResult(

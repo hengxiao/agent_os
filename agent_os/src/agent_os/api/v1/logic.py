@@ -115,12 +115,15 @@ class LogicKernel(Protocol):
 class LogicContext(Protocol):
     """§9.3:TRUSTED 模式下 code 技能的组合能力(编排者)。
 
-    ``invoke`` / ``call_tool`` 全部回到内核分发路径:白名单、信号、记账一样不少。
+    ``invoke`` / ``call_tool`` / ``spawn`` 全部回到内核分发路径:白名单、信号、
+    记账一样不少;``spawn``/``wait`` 为 §3.4 后台帧原语(父帧不挂起,join 退化为
+    读终态);``board`` 为黑板命名空间代理(§12,无黑板时为 None)。
     """
 
     frame_id: str
     blob: BlobStore
     log: logging.Logger
+    board: Any  # 黑板命名空间代理(§12:按 manifest.permissions.blackboard 仲裁);None = 无黑板
 
     async def invoke(self, skill: str, input: dict[str, Any]) -> Any:
         """调子技能 → 压栈。"""
@@ -128,4 +131,12 @@ class LogicContext(Protocol):
 
     async def call_tool(self, tool: str, args: dict[str, Any]) -> Any:
         """调工具 → 走 Tool Registry。"""
+        ...
+
+    async def spawn(self, skill: str, input: dict[str, Any]) -> str:
+        """§3.4 后台帧:父帧不挂起,子帧独立后台运行;返回子帧 frame_id。"""
+        ...
+
+    async def wait(self, frame_id: str) -> Any:
+        """§3.4:join 退化为读终态;子帧失败原样上抛。"""
         ...

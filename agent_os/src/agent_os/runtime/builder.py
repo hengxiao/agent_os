@@ -90,19 +90,18 @@ class KernelBuilder:
     def build(self) -> Kernel:
         """组装 Kernel(注入信号总线 / FrameStack / Dispatcher / RunControl 等内核件)。
 
-        本纵向切片的装配边界:memory/blackboard 尚未接线,
+        本纵向切片的装配边界:memory 尚未接线,
         传入了为避免静默丢弃直接拒绝(各自里程碑再做);缺省补 ContextManager
         (M3:RollingWindowCompressor + 状态注入 + pre/post:compress 信号,§7);
         logic_kernels 按 TrustLevel 索引装配为 LogicKernelRouter(§9.2);
         sidecars(M4)装配 RunControlImpl + SidecarSupervisor 并注册到总线(§5);
         telemetry(M5a)作为总线特权订阅者接入(§5.1:全量订阅,不算 sidecar);
+        blackboard(M5b)接线到 kernel.blackboard(§12:StatusBoard 与帧间消息);
         装配期权限闸门(§6.1):manifest 声明的工具必须在注册表中,缺失即拒绝加载。
         """
         unsupported: list[str] = []
         if self._memory is not None:
             unsupported.append("memory")
-        if self._blackboard is not None:
-            unsupported.append("blackboard")
         if unsupported:
             raise NotImplementedError(
                 f"M0 纵向切片不接入 {', '.join(unsupported)}(后续里程碑);"
@@ -140,6 +139,7 @@ class KernelBuilder:
             logic=LogicKernelRouter(list(self._logic_kernels)),
             signals=bus,
             telemetry=self._telemetry,
+            blackboard=self._blackboard,
             stack=FrameStack(max_depth=self.config.max_depth),
         )
         if self._sidecars:

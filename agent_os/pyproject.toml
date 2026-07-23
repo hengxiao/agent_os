@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-os"
+version = "0.0.1"
+description = "Agent OS: a microkernel agentic engine (contracts + skeleton, see DESIGN.md)"
+readme = { text = "Agent OS architecture scaffold. Authoritative design: ../DESIGN.md", content-type = "text/plain" }
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "jsonschema>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "hypothesis",
+    "ruff",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_os"]
+
+# ---------------------------------------------------------------------------
+# 扩展点 entry point 组(DESIGN.md §14.3)。
+# 骨架阶段不注册任何插件,仅以注释预留组名;第三方包在自身 pyproject 中声明:
+#
+#   [project.entry-points."agent_os.providers"]      # 新 LLM Provider
+#   [project.entry-points."agent_os.tools"]          # 新工具
+#   [project.entry-points."agent_os.skills"]         # 新技能源
+#   [project.entry-points."agent_os.sidecars"]       # 新 sidecar
+#   [project.entry-points."agent_os.compressors"]    # 新压缩策略
+#   [project.entry-points."agent_os.logic_kernels"]  # 新逻辑执行后端(JS/Wasm/远程)
+#   [project.entry-points."agent_os.telemetry"]      # 新遥测 exporter
+#   [project.entry-points."agent_os.memory"]         # 新记忆服务
+#   [project.entry-points."agent_os.blackboard"]     # 新黑板后端
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

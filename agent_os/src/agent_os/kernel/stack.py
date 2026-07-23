@@ -56,6 +56,10 @@ class FrameStack:
         if frame in self._frames:
             self._frames.remove(frame)
 
+    def get(self, frame_id: str) -> SkillFrame | None:
+        """按 frame_id 查帧(RunControl 寻址,§5.2);不存在返回 None。"""
+        return self._by_id.get(frame_id)
+
     @property
     def depth(self) -> int:
         """活动帧数(当前栈深)。"""

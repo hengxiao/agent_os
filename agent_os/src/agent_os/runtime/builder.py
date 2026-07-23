@@ -26,11 +26,13 @@ from agent_os.api.v1 import RunConfig
 from agent_os.context.manager import ContextManager
 from agent_os.context.rolling_window import RollingWindowCompressor
 from agent_os.kernel import Kernel
+from agent_os.kernel.control import RunControlImpl
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.kernel.logic_router import LogicKernelRouter
 from agent_os.kernel.signals import InProcessSignalBus
 from agent_os.kernel.stack import FrameStack
 from agent_os.providers.manager import ProviderManager
+from agent_os.sidecars.supervisor import SidecarSupervisor
 from agent_os.tools.local_registry import LocalPythonToolRegistry
 
 
@@ -88,15 +90,14 @@ class KernelBuilder:
     def build(self) -> Kernel:
         """组装 Kernel(注入信号总线 / FrameStack / Dispatcher / RunControl 等内核件)。
 
-        本纵向切片的装配边界:sidecars/telemetry/memory/blackboard 尚未接线,
+        本纵向切片的装配边界:telemetry/memory/blackboard 尚未接线,
         传入了为避免静默丢弃直接拒绝(各自里程碑再做);缺省补 ContextManager
         (M3:RollingWindowCompressor + 状态注入 + pre/post:compress 信号,§7);
         logic_kernels 按 TrustLevel 索引装配为 LogicKernelRouter(§9.2);
-        装配期校验各技能 manifest.permissions.tools 都在工具注册表中(§6.1 权限闸门)。
+        sidecars(M4)装配 RunControlImpl + SidecarSupervisor 并注册到总线(§5);
+        装配期权限闸门(§6.1):manifest 声明的工具必须在注册表中,缺失即拒绝加载。
         """
         unsupported: list[str] = []
-        if self._sidecars:
-            unsupported.append("sidecars")
         if self._telemetry is not None:
             unsupported.append("telemetry")
         if self._memory is not None:
@@ -114,12 +115,11 @@ class KernelBuilder:
         skills = self._skills
         if skills is not None:
             skills.load()
-            for m in skills.manifests():
-                missing = [t for t in m.permissions.tools if not tools.has(t)]
-                if missing:
-                    raise SkillLoadError(
-                        f"技能 {m.name} 声明的工具未在工具注册表中注册: {missing}(§6.1 权限闸门)"
-                    )
+            missing = sorted(
+                {t for m in skills.manifests() for t in m.permissions.tools if not tools.has(t)}
+            )
+            if missing:
+                raise SkillLoadError(f"manifest 声明的工具未注册(§6.1 权限闸门): {missing}")
         context = self._context or ContextManager.default(
             RollingWindowCompressor(),
             skills=skills,
@@ -129,7 +129,7 @@ class KernelBuilder:
         )
         if hasattr(tools, "bind_signals"):
             tools.bind_signals(bus)
-        return Kernel(
+        kernel = Kernel(
             config=self.config,
             providers=providers,
             tools=tools,
@@ -139,3 +139,12 @@ class KernelBuilder:
             signals=bus,
             stack=FrameStack(max_depth=self.config.max_depth),
         )
+        if self._sidecars:
+            # §5.2/§5.3:RunControl 是 sidecar 操控运行的唯一通道;supervisor 统一托管
+            ctl = RunControlImpl(kernel)
+            supervisor = SidecarSupervisor(bus, ctl)
+            for sidecar in self._sidecars:
+                supervisor.register(sidecar)
+            kernel.sidecars = supervisor
+            kernel.ctl = ctl
+        return kernel

@@ -43,3 +43,4 @@ packages = ["src/agent_os"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+

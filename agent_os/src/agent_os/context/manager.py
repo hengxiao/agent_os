@@ -123,26 +123,48 @@ class ContextManager:
 
     async def maintain(self, frame: SkillFrame) -> None:
         manifest = self._skills.get(frame.skill).manifest
-        policy = manifest.context_policy
         estimate = self._estimator.estimate(frame.context.messages)
         frame.context.token_estimate = estimate
-        # §7.1:compression "off"(RunConfig 消融档或 manifest 档)全部策略短路
+        cap = self._cap(manifest.context_policy)
+        if cap is None:
+            return  # §7.1:compression "off"(RunConfig 消融档或 manifest 档)全部策略短路
+        if estimate <= cap or self._compressor is None:
+            return  # 未超限,或无 compressor 可压(静默跳过,估算已更新)
+        await self._compress(frame, estimate, cap)
+
+    async def force_compress(self, frame: SkillFrame) -> None:
+        """§7.1 外部强制触发(sidecar ``ForceCompress`` / ``RunControl.force_compress``):
+
+        无视 cap 是否触发,强制执行一次压缩;``compression == "off"`` 仍短路(消融档)。
+        """
+        manifest = self._skills.get(frame.skill).manifest
+        estimate = self._estimator.estimate(frame.context.messages)
+        frame.context.token_estimate = estimate
+        cap = self._cap(manifest.context_policy)
+        if cap is None or self._compressor is None:
+            return
+        await self._compress(frame, estimate, cap, forced=True)
+
+    def _cap(self, policy: Any) -> int | None:
+        """帧上下文软上限;``compression == "off"`` 时返回 None(全部策略短路)。"""
         if self._config.compression == "off" or (
             policy is not None and policy.compress == "off"
         ):
-            return
-        cap = (
+            return None
+        return (
             policy.max_tokens
             if policy is not None and policy.max_tokens
             else self._default_max_tokens
         )
-        if estimate <= cap or self._compressor is None:
-            return  # 未超限,或无 compressor 可压(静默跳过,估算已更新)
-        await self._emit(
-            PRE_COMPRESS,
-            frame,
-            {"frame_id": frame.frame_id, "estimate": estimate, "cap": cap},
-        )
+
+    async def _compress(
+        self, frame: SkillFrame, estimate: int, cap: int, *, forced: bool = False
+    ) -> None:
+        """压缩路径(maintain 超限触发与 force_compress 外部强制共用,§7.1/§7.4)。"""
+        pre_payload = {"frame_id": frame.frame_id, "estimate": estimate, "cap": cap}
+        if forced:
+            pre_payload["forced"] = True
+        await self._emit(PRE_COMPRESS, frame, pre_payload)
         report = await self._compressor.compress(
             frame.context, int(cap * self._target_ratio), self._svc()
         )

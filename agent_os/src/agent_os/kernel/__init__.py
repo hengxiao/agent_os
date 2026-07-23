@@ -3,7 +3,7 @@
 async 调用链即 Skill 调用栈(§3.1)。本包为骨架,方法体一律 ``NotImplementedError``。
 """
 
-from .control import KernelRunControl
+from .control import KernelRunControl, RunControlImpl
 from .dispatch import Dispatcher
 from .run import Run
 from .runner import Kernel, run_frame
@@ -17,5 +17,6 @@ __all__ = [
     "Kernel",
     "KernelRunControl",
     "Run",
+    "RunControlImpl",
     "run_frame",
 ]

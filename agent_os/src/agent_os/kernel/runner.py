@@ -1,7 +1,10 @@
-"""内核 runner(DESIGN.md §3.1 语义伪码的落点;M0 单帧 runner,M2 调用栈/压栈挂起)。
+"""内核 runner(DESIGN.md §3.1 语义伪码的落点;M0 单帧 runner,M2 调用栈/压栈挂起,
+M4 verdict 仲裁与 sidecar 接线)。
 
-agent loop 顺序:pre:step 检查点 → context.maintain/build → providers.chat →
-终止判断(outputs 校验 + verifier)→ 分发(工具走 Tool Registry,``skill__*`` 压栈)→
+agent loop 顺序:safe point(run 中止标志)→ pre:step 检查点(verdict 仲裁,§5.2)
+→ 强制压缩检查 → context.maintain/build → providers.chat →
+终止判断(outputs 校验 + verifier)→ 分发(pre:tool.call 可 Veto/Modify/Stop;
+工具走 Tool Registry,``skill__*`` 压栈)→ post:step(调用签名列表)→
 记账与预算检查。弹栈前 ``pre:frame.pop`` 同步可否决(§3.1 pop())。
 
 硬失败传播边界(§3.2):MaxDepthExceeded / RunAborted(含 BudgetExceeded)不可被
@@ -11,6 +14,7 @@ agent loop 顺序:pre:step 检查点 → context.maintain/build → providers.ch
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import uuid
@@ -24,6 +28,7 @@ from agent_os.api.v1 import (
     POST_LLM_RESPONSE,
     POST_LOGIC_EXEC,
     POST_SKILL_INVOKE,
+    POST_STEP,
     POST_TOOL_CALL,
     PRE_FRAME_POP,
     PRE_FRAME_PUSH,
@@ -35,10 +40,15 @@ from agent_os.api.v1 import (
     RUN_ABORTED,
     RUN_FINISHED,
     RUN_STARTED,
+    Allow,
     ChatUsage,
     ExecRequest,
+    ForceCompress,
     FrameContext,
+    InjectMessage,
     Message,
+    Modify,
+    Pause,
     ResourceLimits,
     Role,
     RunConfig,
@@ -51,11 +61,14 @@ from agent_os.api.v1 import (
     SkillManifest,
     SkillRef,
     Source,
+    Stop,
     ToolCall,
     ToolErrorKind,
     ToolResult,
     TrustLevel,
+    Veto,
 )
+from agent_os.kernel.control import FORCE_COMPRESS_KEY
 from agent_os.kernel.errors import (
     BudgetExceeded,
     MaxDepthExceeded,
@@ -105,6 +118,15 @@ def _result_payload(result: ToolResult) -> dict[str, Any]:
     return {"ok": result.ok, "value": result.value, "error": error}
 
 
+def _call_sig(call: ToolCall) -> str:
+    """调用签名(post:step 载荷,§5.4 LoopDetector 观察面):
+
+    ``sha1(name + json.dumps(args, sort_keys=True))`` 前 12 位。
+    """
+    raw = call.name + json.dumps(call.args, sort_keys=True)
+    return hashlib.sha1(raw.encode()).hexdigest()[:12]
+
+
 class Kernel:
     """微内核本体:持有九个子系统的契约句柄,驱动 agent loop。
 
@@ -140,6 +162,12 @@ class Kernel:
         self.blackboard = blackboard
         self.stack = stack or FrameStack(max_depth=self.config.max_depth)
         self._runs: dict[str, Run] = {}
+        #: run 中止标志表(dict[run_id, reason];RunControl.stop/pause 置位,
+        #: runner 在 pre:step safe point 检查并抛 RunAborted,§3.1/§5.2)
+        self._stop_flags: dict[str, str] = {}
+        #: RunControl 句柄(装配 sidecars 时由 KernelBuilder 注入;pre:step 的
+        #: InjectMessage/ForceCompress verdict 经它落地)
+        self.ctl: Any = None
 
     # ------------------------------------------------------------------
     # §13 生命周期入口
@@ -173,18 +201,25 @@ class Kernel:
             Signal(name=RUN_STARTED, run_id=run.run_id, payload={"skill": str(skill_obj.ref)})
         )
         try:
-            result = await self.run_frame(root)
-        except Exception as e:
-            run.state.status = RunStatus.ABORTED if isinstance(e, RunAborted) else RunStatus.FAILED
-            run.state.error = f"{type(e).__name__}: {e}"
-            await self.signals.emit(
-                Signal(name=RUN_ABORTED, run_id=run.run_id, payload={"error": run.state.error})
-            )
-            raise
-        run.state.status = RunStatus.DONE
-        run.state.result = result
-        await self.signals.emit(Signal(name=RUN_FINISHED, run_id=run.run_id, payload={}))
-        return result
+            try:
+                result = await self.run_frame(root)
+            except Exception as e:
+                run.state.status = (
+                    RunStatus.ABORTED if isinstance(e, RunAborted) else RunStatus.FAILED
+                )
+                run.state.error = f"{type(e).__name__}: {e}"
+                await self.signals.emit(
+                    Signal(name=RUN_ABORTED, run_id=run.run_id, payload={"error": run.state.error})
+                )
+                raise
+            run.state.status = RunStatus.DONE
+            run.state.result = result
+            await self.signals.emit(Signal(name=RUN_FINISHED, run_id=run.run_id, payload={}))
+            return result
+        finally:
+            # run 收尾:取消在跑的 ASYNC sidecar 任务(§5.3)
+            if self.sidecars is not None:
+                await self.sidecars.close()
 
     # ------------------------------------------------------------------
     # §3.1 单帧 agent loop
@@ -195,35 +230,113 @@ class Kernel:
         payload.update(extra or {})
         return Signal(name=name, run_id=frame.run_id, frame_id=frame.frame_id, payload=payload)
 
+    # ------------------------------------------------------------------
+    # §5.2/§5.3 verdict 仲裁(内核职责,§1 公理 3):策略在 sidecar,仲裁在内核
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _arbitrate_pre(verdicts: list[Any]) -> Any:
+        """首个非 ``Allow`` verdict(emit 已按订阅/priority 序返回;None 视为 Allow)。"""
+        for verdict in verdicts:
+            if verdict is not None and not isinstance(verdict, Allow):
+                return verdict
+        return None
+
+    async def _apply_pre_step(self, frame: SkillFrame, verdicts: list[Any]) -> None:
+        """pre:step 检查点(§3.1 步骤 1):否决/暂停/强停即中止 run;注入/强压落地后继续。"""
+        verdict = self._arbitrate_pre(verdicts)
+        if verdict is None:
+            return
+        if isinstance(verdict, (Stop, Veto)):
+            # pre:step 否决即中止(§5.2)
+            raise RunAborted(verdict.reason)
+        if isinstance(verdict, Pause):
+            raise RunAborted(f"paused: {verdict.reason}")
+        if isinstance(verdict, InjectMessage) and self.ctl is not None:
+            await self.ctl.inject_message(verdict.frame_id, verdict.msg)
+        elif isinstance(verdict, ForceCompress) and self.ctl is not None:
+            await self.ctl.force_compress(verdict.frame_id)  # 置帧标志,maintain 前生效
+
+    async def _force_compress(self, frame: SkillFrame) -> None:
+        """强制压缩一次(§7.1 外部强制触发):无视 cap,走 context manager 压缩路径。"""
+        force = getattr(self.context, "force_compress", None)
+        if force is not None:
+            await force(frame)
+
+    @staticmethod
+    def _usage_payload(usage: ChatUsage | None) -> dict[str, Any]:
+        """post:llm.response 的 usage 载荷(BudgetGuard 的记账数据源,§5.4)。"""
+        if usage is None:
+            return {"prompt": 0, "completion": 0, "cost": 0.0}
+        return {"prompt": usage.prompt, "completion": usage.completion, "cost": usage.cost}
+
     async def run_frame(self, frame: SkillFrame) -> Any:
-        """单帧 agent loop(§3.1):压栈 → loop → outputs 校验 → 弹栈。"""
+        """单帧 agent loop(§3.1):压栈 → loop → outputs 校验 → 弹栈。
+
+        弹栈前 ``pre:frame.pop`` 同步可否决(§3.1 pop()):Veto → 纠偏观察写入
+        帧上下文并回到 loop 继续(不弹栈);Stop → RunAborted;无否决才 pop_ok。
+        """
         skill_obj = self.skills.get(frame.skill)
         await self.signals.emit(self._sig(PRE_FRAME_PUSH, frame))
         self.stack.push(frame)  # 深度兜底检查在 push 时(§3.2)
         await self.signals.emit(self._sig(POST_FRAME_PUSH, frame))
-        try:
-            if skill_obj.manifest.kind is SkillKind.CODE:
-                result = await self._run_code_frame(frame, skill_obj)
-            else:
-                result = await self._frame_loop(frame, skill_obj)
-        except BaseException as err:
-            self.stack.pop_err(frame, err)
-            raise
-        await self.signals.emit(self._sig(PRE_FRAME_POP, frame))
+        while True:
+            try:
+                result = await self._execute_frame(frame, skill_obj)
+            except BaseException as err:
+                self.stack.pop_err(frame, err)
+                raise
+            verdicts = await self.signals.emit(
+                self._sig(PRE_FRAME_POP, frame, {"result": result})
+            )
+            verdict = self._arbitrate_pre(verdicts)
+            if isinstance(verdict, Stop):
+                raise RunAborted(verdict.reason)
+            if not isinstance(verdict, Veto):
+                break  # 无否决,正常弹栈
+            # reviewer 打回:纠偏观察入帧上下文,回到 loop 继续(§3.1)
+            frame.context.messages.append(
+                Message(
+                    role=Role.USER,
+                    content=f"reviewer 打回:{verdict.reason}。请继续完成任务。",
+                    source=Source.INJECTED,
+                )
+            )
         self.stack.pop_ok(frame, result)
         await self.signals.emit(self._sig(POST_FRAME_POP, frame))
         return result
+
+    async def _execute_frame(self, frame: SkillFrame, skill_obj: Skill) -> Any:
+        """按技能形态执行一帧:code 技能交 Logic Kernel,prompt 技能跑 agent loop。"""
+        if skill_obj.manifest.kind is SkillKind.CODE:
+            return await self._run_code_frame(frame, skill_obj)
+        return await self._frame_loop(frame, skill_obj)
 
     async def _frame_loop(self, frame: SkillFrame, skill_obj: Skill) -> Any:
         manifest = skill_obj.manifest
         output_failures = 0
         while True:
-            await self.signals.emit(self._sig(PRE_STEP, frame, {"step": frame.usage.steps + 1}))
+            # safe point(§3.1):先查 run 中止标志(RunControl.stop/pause,§5.2)
+            reason = self._stop_flags.get(frame.run_id)
+            if reason is not None:
+                raise RunAborted(reason)
+            verdicts = await self.signals.emit(
+                self._sig(PRE_STEP, frame, {"step": frame.usage.steps + 1})
+            )
+            await self._apply_pre_step(frame, verdicts)
+            if frame.context.working.pop(FORCE_COMPRESS_KEY, False):
+                await self._force_compress(frame)
             await self.context.maintain(frame)
             req = await self.context.build(frame)
             await self.signals.emit(self._sig(PRE_LLM_REQUEST, frame, {"model": req.model}))
             resp = await self.providers.chat(req)
-            await self.signals.emit(self._sig(POST_LLM_RESPONSE, frame, {"model": req.model}))
+            await self.signals.emit(
+                self._sig(
+                    POST_LLM_RESPONSE,
+                    frame,
+                    {"model": req.model, "usage": self._usage_payload(resp.usage)},
+                )
+            )
             frame.context.messages.append(resp.message)
             self.account(frame, resp.usage)
             if not resp.message.tool_calls:
@@ -259,6 +372,20 @@ class Kernel:
                     frame.context.messages.append(self._tool_message(call, payload))
                     raise
                 frame.context.messages.append(self._tool_message(call, payload))
+            # post:step:本步调用签名列表(LoopDetector/StallDetector 的观察面,§5.4)
+            await self.signals.emit(
+                self._sig(
+                    POST_STEP,
+                    frame,
+                    {
+                        "step": frame.usage.steps,
+                        "calls": [
+                            {"name": c.name, "sig": _call_sig(c)}
+                            for c in resp.message.tool_calls
+                        ],
+                    },
+                )
+            )
 
     # ------------------------------------------------------------------
     # §9.4 code 技能帧:Logic Kernel 是唯一执行点(§9)
@@ -333,7 +460,23 @@ class Kernel:
                     f"工具 {call.name} 不在技能 {manifest.name} 的 tools 白名单",
                 ),
             }
-        await self.signals.emit(self._sig(PRE_TOOL_CALL, frame, {"tool": call.name}))
+        verdicts = await self.signals.emit(
+            self._sig(PRE_TOOL_CALL, frame, {"tool": call.name, "args": dict(call.args)})
+        )
+        verdict = self._arbitrate_pre(verdicts)
+        if isinstance(verdict, Veto):
+            # 跳过分发:Veto 理由作为错误观察回写帧上下文(§5.2;不发 post:tool.call)
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(ToolErrorKind.VETOED, verdict.reason),
+            }
+        if isinstance(verdict, Stop):
+            raise RunAborted(verdict.reason)
+        if isinstance(verdict, Pause):
+            raise RunAborted(f"paused: {verdict.reason}")
+        if isinstance(verdict, Modify):
+            call.args.update(verdict.patch)  # pre 可改参数(§5.1)
         result = await self.tools.dispatch(
             call,
             ToolDispatchContext(

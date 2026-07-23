@@ -15,7 +15,10 @@ import types
 import typing
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import httpx
 
 import jsonschema
 
@@ -44,17 +47,25 @@ class ToolDispatchContext:
 
 
 class _FunctionTool:
-    """decorator 产物:把普通 Python 函数包装成 ``agent_os.api.v1.Tool``。"""
+    """decorator 产物:把普通 Python 函数包装成 ``agent_os.api.v1.Tool``。
+
+    约定:签名中名为 ``ctx`` 的参数由分发方注入 ``ToolContext``(不进 schema);
+    函数返回 ``ToolResult`` 时直接透传(工具自行构造结构化错误),否则包成 ``ok=True``。
+    """
 
     def __init__(self, func: Callable, spec: ToolSpec) -> None:
         self.spec = spec
         self._func = func
+        self._wants_ctx = "ctx" in inspect.signature(func).parameters
 
     async def __call__(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        kwargs = {**args, "ctx": ctx} if self._wants_ctx else dict(args)
         if inspect.iscoroutinefunction(self._func):
-            value = await self._func(**args)
+            value = await self._func(**kwargs)
         else:
-            value = await asyncio.to_thread(self._func, **args)
+            value = await asyncio.to_thread(self._func, **kwargs)
+        if isinstance(value, ToolResult):
+            return value
         return ToolResult(ok=True, value=value)
 
 
@@ -198,9 +209,29 @@ class LocalPythonToolRegistry:
         return wd
 
     @classmethod
-    def with_builtins(cls) -> LocalPythonToolRegistry:
-        """§14.2 组装示例入口:注册 §8.3 内置工具(fs_read/fs_write/shell_exec 等)。"""
-        raise NotImplementedError("M1")
+    def with_builtins(
+        cls, http_transport: httpx.AsyncBaseTransport | None = None
+    ) -> LocalPythonToolRegistry:
+        """§14.2 组装示例入口:注册 §8.3 内置工具四件套(fs_read/fs_write/shell_exec/http_fetch)。
+
+        何时用:单技能 agent 起步与测试的默认工具面;边界:fs 工具限定 run 工作目录(§2.2),
+        shell_exec 为一次性子进程(持久会话形态后续里程碑),http_fetch 结果标记
+        ``untrusted_source``(§2.2 来源标记,注入防御);``http_transport`` 供测试注入
+        httpx MockTransport,不碰真实网络。
+        """
+        from agent_os.tools.builtins import (
+            fs_read,
+            fs_write,
+            http_fetch_tool,
+            shell_exec,
+        )
+
+        reg = cls()
+        reg.tool(permission=Permission.READ)(fs_read)
+        reg.tool(permission=Permission.WRITE)(fs_write)
+        reg.tool(permission=Permission.EXEC)(shell_exec)
+        reg.register(http_fetch_tool(transport=http_transport))
+        return reg
 
 
 _BASIC_TYPES: dict[type, str] = {str: "string", int: "integer", float: "number", bool: "boolean"}
@@ -224,11 +255,16 @@ def _json_schema(annotation: Any) -> dict[str, Any]:
 
 
 def derive_spec(func: Callable, *, permission: Permission, timeout: float, **spec_kw: Any) -> ToolSpec:
-    """从函数签名推导 ToolSpec(§8.4 推导规则)。"""
+    """从函数签名推导 ToolSpec(§8.4 推导规则)。
+
+    约定:名为 ``ctx`` 的参数视为 ``ToolContext`` 注入点,不进 schema(见 ``_FunctionTool``)。
+    """
     hints = typing.get_type_hints(func)
     properties: dict[str, Any] = {}
     required: list[str] = []
     for name, param in inspect.signature(func).parameters.items():
+        if name == "ctx":
+            continue
         properties[name] = _json_schema(hints.get(name, str))
         if param.default is inspect.Parameter.empty:
             required.append(name)

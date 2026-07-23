@@ -224,8 +224,12 @@ def test_context_isolation_between_frames():
 
     second = reqs_5[1]
     # 第二次请求时,帧(5)上下文只有:SYSTEM 指令 + USER 输入 + assistant 调用 + 一条工具结果
-    assert [m.role for m in second.messages] == [Role.SYSTEM, Role.USER, Role.ASSISTANT, Role.TOOL]
-    child_result = json.loads(second.messages[-1].content)
+    # (M3 起尾部可能追加 status 元消息,meta["kind"]=="status",§7.3;不参与业务语义)
+    roles = [m.role for m in second.messages]
+    assert roles[:4] == [Role.SYSTEM, Role.USER, Role.ASSISTANT, Role.TOOL]
+    assert all(m.meta.get("kind") == "status" for m in second.messages[4:])
+    tool_msgs = [m for m in second.messages if m.role is Role.TOOL]
+    child_result = json.loads(tool_msgs[-1].content)
     assert child_result["ok"] is True
     assert child_result["value"] == {"seq": [0, 1, 1, 2]}  # fib(4) 的返回值,整段子帧轨迹已折叠
 

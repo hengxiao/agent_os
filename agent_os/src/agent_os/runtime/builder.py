@@ -23,7 +23,8 @@ from __future__ import annotations
 from typing import Any
 
 from agent_os.api.v1 import RunConfig
-from agent_os.context.manager import MinimalContextManager
+from agent_os.context.manager import ContextManager
+from agent_os.context.rolling_window import RollingWindowCompressor
 from agent_os.kernel import Kernel
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.kernel.logic_router import LogicKernelRouter
@@ -88,7 +89,8 @@ class KernelBuilder:
         """组装 Kernel(注入信号总线 / FrameStack / Dispatcher / RunControl 等内核件)。
 
         本纵向切片的装配边界:sidecars/telemetry/memory/blackboard 尚未接线,
-        传入了为避免静默丢弃直接拒绝(各自里程碑再做);缺省补 MinimalContextManager;
+        传入了为避免静默丢弃直接拒绝(各自里程碑再做);缺省补 ContextManager
+        (M3:RollingWindowCompressor + 状态注入 + pre/post:compress 信号,§7);
         logic_kernels 按 TrustLevel 索引装配为 LogicKernelRouter(§9.2);
         装配期校验各技能 manifest.permissions.tools 都在工具注册表中(§6.1 权限闸门)。
         """
@@ -118,7 +120,13 @@ class KernelBuilder:
                     raise SkillLoadError(
                         f"技能 {m.name} 声明的工具未在工具注册表中注册: {missing}(§6.1 权限闸门)"
                     )
-        context = self._context or MinimalContextManager(skills=skills, tools=tools, config=self.config)
+        context = self._context or ContextManager.default(
+            RollingWindowCompressor(),
+            skills=skills,
+            tools=tools,
+            config=self.config,
+            signals=bus,
+        )
         if hasattr(tools, "bind_signals"):
             tools.bind_signals(bus)
         return Kernel(

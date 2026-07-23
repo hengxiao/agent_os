@@ -212,7 +212,7 @@ class LocalPythonToolRegistry:
     def with_builtins(
         cls, http_transport: httpx.AsyncBaseTransport | None = None
     ) -> LocalPythonToolRegistry:
-        """§14.2 组装示例入口:注册 §8.3 内置工具四件套(fs_read/fs_write/shell_exec/http_fetch)。
+        """§14.2 组装示例入口:注册 §8.3 内置工具(fs_read/fs_write/fs_edit/shell_exec/http_fetch)。
 
         何时用:单技能 agent 起步与测试的默认工具面;边界:fs 工具限定 run 工作目录(§2.2),
         shell_exec 为一次性子进程(持久会话形态后续里程碑),http_fetch 结果标记
@@ -220,6 +220,7 @@ class LocalPythonToolRegistry:
         httpx MockTransport,不碰真实网络。
         """
         from agent_os.tools.builtins import (
+            fs_edit,
             fs_read,
             fs_write,
             http_fetch_tool,
@@ -229,6 +230,7 @@ class LocalPythonToolRegistry:
         reg = cls()
         reg.tool(permission=Permission.READ)(fs_read)
         reg.tool(permission=Permission.WRITE)(fs_write)
+        reg.tool(permission=Permission.WRITE, timeout=10.0)(fs_edit)
         reg.tool(permission=Permission.EXEC)(shell_exec)
         reg.register(http_fetch_tool(transport=http_transport))
         return reg

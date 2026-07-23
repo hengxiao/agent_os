@@ -29,6 +29,7 @@ from agent_os.api.v1 import (
     ToolErrorKind,
     ToolResult,
     ToolSpec,
+    Veto,
 )
 from agent_os.tools.local_registry import _FunctionTool, derive_spec
 
@@ -96,9 +97,49 @@ async def fs_write(path: str, content: str, ctx: ToolContext | None = None) -> s
     return f"已写入 {path}({len(content)} 字符)"
 
 
-async def fs_edit(path: str, old_string: str, new_string: str) -> str:
-    """局部编辑(old_string→new_string 唯一匹配,否则报错,§8.3)。"""
-    raise NotImplementedError("M5")
+async def fs_edit(
+    path: str, old_string: str, new_string: str, ctx: ToolContext | None = None
+) -> str | ToolResult:
+    """局部编辑(old_string→new_string **唯一匹配**才替换,§8.3)。
+
+    Use when 只需局部修改文件;Do not use when 整体覆盖(用 fs_write)。
+    未找到 / 多处匹配 → INVALID_ARGS(多处时请带更多上下文使匹配唯一);
+    文件不存在 → NOT_FOUND;路径越出帧工作目录 → INVALID_ARGS(同 fs_read)。
+    """
+    target = _resolve_in_workdir(ctx, path)
+    if isinstance(target, ToolResult):
+        return target
+    if not target.is_file():
+        return ToolResult(
+            ok=False,
+            error=ToolError(
+                kind=ToolErrorKind.NOT_FOUND,
+                message=f"文件不存在: {path}",
+                retryable=False,
+            ),
+        )
+    content = target.read_text(encoding="utf-8")
+    count = content.count(old_string)
+    if count == 0:
+        return ToolResult(
+            ok=False,
+            error=ToolError(
+                kind=ToolErrorKind.INVALID_ARGS,
+                message=f"未找到 old_string: {old_string[:80]!r}(文件 {path})",
+                retryable=False,
+            ),
+        )
+    if count > 1:
+        return ToolResult(
+            ok=False,
+            error=ToolError(
+                kind=ToolErrorKind.INVALID_ARGS,
+                message=f"old_string 不唯一,多处匹配(×{count}):请提供更多上下文使匹配唯一",
+                retryable=False,
+            ),
+        )
+    target.write_text(content.replace(old_string, new_string), encoding="utf-8")
+    return f"已编辑 {path}(替换 1 处)"
 
 
 async def shell_exec(command: str, timeout: int = 30, ctx: ToolContext | None = None) -> str | ToolResult:
@@ -199,7 +240,9 @@ def python_exec_tool(kernel: LogicKernel) -> Tool:
 
     value 形状 ``{"stdout", "stderr", "result"}``;执行错误 → TIMEOUT(LIMIT_EXCEEDED)
     或 INTERNAL,hint 带 stderr 尾部。提供可选 ``bind(signals)``:KernelBuilder 装配时
-    注入总线,执行前后发 ``pre:logic.exec`` / ``post:logic.exec``(§9.5)。
+    注入总线,执行前后发 ``pre:logic.exec`` / ``post:logic.exec``(§9.5);
+    ``pre`` 载荷带 ``source``/``language`` 供 CodeScanner 扫描,任一 ``Veto`` →
+    不执行,返回 ``ToolError(kind=VETOED, message=理由)``(与 veto 回写语义一致,§5.2)。
     """
 
     class PythonExecTool:
@@ -227,18 +270,36 @@ def python_exec_tool(kernel: LogicKernel) -> Tool:
             """KernelBuilder 装配钩子:注入信号总线(§9.5 监督信号)。"""
             self._signals = signals
 
-        async def _emit(self, name: str, ctx: ToolContext, payload: dict[str, Any]) -> None:
-            if self._signals is not None:
-                await self._signals.emit(
-                    Signal(name=name, run_id=ctx.run_id, frame_id=ctx.frame_id, payload=payload)
-                )
+        async def _emit(
+            self, name: str, ctx: ToolContext, payload: dict[str, Any]
+        ) -> list[Any]:
+            if self._signals is None:
+                return []
+            return await self._signals.emit(
+                Signal(name=name, run_id=ctx.run_id, frame_id=ctx.frame_id, payload=payload)
+            )
 
         async def __call__(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
             req = ExecRequest(
                 source=args["code"],
                 limits=ResourceLimits(wall_time=10, cpu_time=5, memory_mb=256, stdout_bytes=100_000),
             )
-            await self._emit(PRE_LOGIC_EXEC, ctx, {"tool": "python_exec"})
+            verdicts = await self._emit(
+                PRE_LOGIC_EXEC,
+                ctx,
+                {"tool": "python_exec", "source": args["code"], "language": "python"},
+            )
+            for verdict in verdicts:
+                if isinstance(verdict, Veto):
+                    # pre:logic.exec 否决(如 CodeScanner):不执行,理由回写(§9.5/§5.2)
+                    return ToolResult(
+                        ok=False,
+                        error=ToolError(
+                            kind=ToolErrorKind.VETOED,
+                            message=verdict.reason,
+                            retryable=False,
+                        ),
+                    )
             res = await self._kernel.execute(req)
             await self._emit(POST_LOGIC_EXEC, ctx, {"tool": "python_exec", "ok": res.error is None})
             if res.error is not None:

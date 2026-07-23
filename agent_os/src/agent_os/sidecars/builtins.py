@@ -202,7 +202,11 @@ class ToolGuard:
 class CodeScanner:
     """§5.4:订阅 ``pre:logic.exec``;动态代码静态模式扫描(危险 import、ctypes、
 
-    可疑网络调用)→ ``Veto``(§9.5)。"""
+    可疑网络调用)→ ``Veto``(§9.5)。扫描对象是 ``payload["source"]``(执行方
+    在 pre 载荷里带上的待执行源码);无 ``source`` 的 pre:logic.exec(如 code 技能
+    帧执行)无可扫描对象,放行。能力上限同 ToolGuard:正则只是辅助,防护主体是
+    沙箱(§9.2)+ 权限(§8.2)。
+    """
 
     name: ClassVar[str] = "code_scanner"
     subscriptions: ClassVar[list[SignalPattern]] = ["pre:logic.exec"]
@@ -210,8 +214,24 @@ class CodeScanner:
     priority: ClassVar[int] = 10
     needs_free_text: ClassVar[bool] = False
 
+    #: 默认危险模式集(§5.4)
+    DEFAULT_PATTERNS: ClassVar[list[str]] = [
+        r"\bimport\s+os\b",
+        r"\bos\.system\b",
+        r"\bctypes\b",
+        r"\bsubprocess\b",
+        r"\bsocket\b",
+    ]
+
+    def __init__(self, patterns: list[str] | None = None) -> None:
+        self.patterns = list(self.DEFAULT_PATTERNS if patterns is None else patterns)
+
     async def on_signal(self, sig: Signal, ctl: RunControl) -> Verdict:
-        raise NotImplementedError("M5")
+        source = sig.payload.get("source") or ""
+        for pat in self.patterns:
+            if re.search(pat, source):
+                return Veto(f"CodeScanner: 命中危险模式 {pat}")
+        return Allow()
 
 
 class HumanApproval:

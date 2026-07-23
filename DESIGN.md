@@ -663,7 +663,7 @@ ExecResult = {
 - **动态代码永远走 SANDBOX**,无配置项可关闭;
 - code 技能默认 TRUSTED,manifest 可声明 `logic: {mode: sandbox}` 主动提升隔离;
 - `RunConfig.logic_policy.force_sandbox = True` 时一切逻辑代码强制沙箱(多租户宿主场景);
-- 隔离阶梯(后端替换,契约不变):subprocess+rlimits(v1)→ OS 级(seccomp/nsjail)→ 容器 → microVM。警示:**venv 不是沙箱**(只隔离包依赖,文件系统/网络/进程全无约束)。
+- 隔离阶梯(后端替换,契约不变):subprocess+rlimits(v1)→ **容器(DockerPythonSandboxLogicKernel,已实现:**`--network none` 系统级断网、cgroup 限额、只读根 fs、cap-drop ALL;退出码 137 → LIMIT_EXCEEDED;wall 超时 `docker kill` 兜底**)**→ OS 级(seccomp/nsjail)→ microVM。警示:**venv 不是沙箱**(只隔离包依赖,文件系统/网络/进程全无约束)。
 
 ### 9.3 LogicContext 与沙箱回调通道
 
@@ -889,7 +889,7 @@ agent_os/                  # 工作区(DESIGN.md / reports/ / ai-agent-book/)
     │   ├── tools/             # local_registry.py(decorator+schema 推导)+ builtins + blob store
     │   ├── skills/            # local_file.py(skills.yaml 加载)+ manifest / loader
     │   ├── sidecars/          # supervisor + budget / loop / stall / guard / scanner / approval
-    │   ├── logic/             # inprocess.py(M2)/ python_sandbox.py(M5)/ limits.py
+    │   ├── logic/             # inprocess.py(M2)/ python_sandbox.py(M5)/ docker_sandbox.py(容器层)/ limits.py
     │   ├── telemetry/         # sink + jsonl_exporter(M5);OTLP/RL 导出后续
     │   ├── memory/            # local_file.py(M6)
     │   ├── blackboard/        # local.py(M5)

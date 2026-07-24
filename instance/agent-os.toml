@@ -1,0 +1,37 @@
+# Agent OS Web UI 实例配置(instance/)
+# 当前为演示模式:mock 大脑,无 API key 也能跑通 fib 全流程。
+# 切换真实模型:注释掉 [providers.mock],启用 kimi 或 anthropic 区,
+#   export MOONSHOT_API_KEY=sk-...  /  export ANTHROPIC_API_KEY=sk-ant-...
+# 并把 skills.yaml 里技能的 model.prefer 改成你的模型。
+
+[run]
+model = "mock/fib"
+max_depth = 8
+max_steps = 200
+max_cost = 2.0
+max_wall_time = 1800
+compression = "off"
+
+[providers.mock]
+brain = "brains:fib_brain"
+
+# [providers.kimi]
+# [providers.anthropic]
+
+[tools]
+builtins = true
+python_exec = "docker"          # 本机有 docker;没有就改 "subprocess"
+
+[skills]
+path = "/home/hengx/agent_os/instance/skills.yaml"
+
+[sidecars]
+budget_guard = { max_cost = 2.0 }
+loop_detector = { threshold = 3, max_strikes = 2 }
+
+[telemetry]
+dir = "/home/hengx/agent_os/instance/traces"
+
+[retry]
+max_attempts = 3
+backoff_base = 0.5

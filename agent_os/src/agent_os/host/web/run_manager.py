@@ -10,6 +10,16 @@
   集合;订阅者事件循环在订阅时捕获,worker 线程经 ``loop.call_soon_threadsafe``
   投递;SSE 客户端先收回放缓冲,后收实时(``subscribe`` 在同一把锁内完成登记与
   快照,回放与实时之间无遗漏、无重复)。
+
+R4 增量(§4.3/§4.4):
+
+- 每个内核装配时附带 :class:`_StopBridge`(no-op ASYNC sidecar),保证
+  ``kernel.ctl`` 恒存在 → ``stop_run`` 经 ``ctl.stop`` 在下一个 safe point 中止;
+- ``resume_run``:用同一 config 新建内核,经 host/shared 的 ``execute_resume``
+  从该 run 的 checkpoint.json 恢复,产物与内存态写回原 run;resume 期间换一只
+  新 hub(原 hub 已在首次 run 结束时关闭),SSE 可继续观察;
+- ``reload_skills``:共享一份 skills registry(惰性装配,仅供查询/reload;
+  每 run 的内核仍各自重建 registry,reload 只影响后续新建的 run,§6.1)。
 """
 
 from __future__ import annotations
@@ -20,10 +30,10 @@ import threading
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
-from agent_os.api.v1 import RUN_STARTED, Signal
-from agent_os.host.shared.artifacts import execute_run
+from agent_os.api.v1 import RUN_STARTED, Allow, Mode, RunControl, Signal
+from agent_os.host.shared.artifacts import execute_resume, execute_run
 from agent_os.host.shared.runrecord import STATUS_FAILED
 from agent_os.runtime.config import build_kernel
 
@@ -34,11 +44,34 @@ HUB_CLOSED: Any = object()
 BUFFER_MAXLEN = 2000
 
 
+class _StopBridge:
+    """内部 no-op ASYNC sidecar(R4 stop 通道的装配占位)。
+
+    M4 起 KernelBuilder **有 sidecar 才**装配 ``kernel.ctl``(RunControlImpl);
+    Web 的 stop(``POST /api/runs/{id}/stop`` → ``ctl.stop``)要求每个 run 的内核
+    都有 ctl,与配置文件是否声明 sidecar 无关。本 sidecar 不订阅任何信号,
+    唯一作用是让 builder 走 sidecar 装配路径。
+    """
+
+    name: ClassVar[str] = "_stop_bridge"
+    subscriptions: ClassVar[list[str]] = []
+    mode: ClassVar[Mode] = Mode.ASYNC
+    priority: ClassVar[int] = 100
+    needs_free_text: ClassVar[bool] = False
+
+    async def on_signal(self, sig: Signal, ctl: RunControl) -> Allow:
+        return Allow()
+
+
 class RunValidationError(RuntimeError):
     """run 未开始即失败的校验类错误(技能不存在/输入不合 schema/装配失败)。
 
     与 CLI 退出码 2 同类(§3.3);Web 侧由路由层归 ``200 + {"status": "failed"}``。
     """
+
+
+class ResumeConflictError(RuntimeError):
+    """resume 与在途 run 冲突(§4.3:在跑的 run 不能 resume,先 stop);路由层归 409。"""
 
 
 def _jsonable(value: Any) -> Any:
@@ -123,7 +156,7 @@ class RunManager:
     """单进程、单管路的 run 管理器(§4.2):状态只留内存 + 产物目录。
 
     ``_active[run_id] = {"task": Thread, "status", "record", "skill", "error",
-    "started_at"}``;历史 run 重启后由路由层从产物目录重建(冷数据,§4.2)。
+    "started_at", "kernel"}``;历史 run 重启后由路由层从产物目录重建(冷数据,§4.2)。
     """
 
     def __init__(self, config_path: str | Path, artifacts_root: Path) -> None:
@@ -132,6 +165,11 @@ class RunManager:
         self._lock = threading.Lock()
         self._active: dict[str, dict[str, Any]] = {}
         self._hubs: dict[str, SignalHub] = {}
+        self._skills_registry: Any = None  # 惰性装配的共享 registry(reload/查询用)
+
+    def _assemble_kernel(self) -> Any:
+        """按 config 装配一个 run 的内核;恒附带 _StopBridge 保证 ctl 存在(stop 通道)。"""
+        return build_kernel(self._config_path, extra_sidecars=[_StopBridge()])
 
     async def start_run(self, skill: str, input: dict[str, Any], wait: bool = False) -> str:
         """启动一个 run 并返回 run_id;``wait=True`` 时阻塞到 run 结束。
@@ -150,6 +188,7 @@ class RunManager:
             "skill": skill,
             "error": None,
             "started_at": datetime.now(UTC).isoformat(),
+            "kernel": None,
         }
 
         def _register(run_id: str) -> None:
@@ -161,7 +200,8 @@ class RunManager:
 
         def _work() -> None:
             try:
-                kernel = build_kernel(self._config_path)
+                kernel = self._assemble_kernel()
+                state["kernel"] = kernel
 
                 async def _fan(sig: Signal) -> None:
                     hub.publish(signal_row(sig))
@@ -194,6 +234,101 @@ class RunManager:
         if wait:
             await asyncio.to_thread(done.wait)
         return run_id
+
+    async def stop_run(self, run_id: str) -> bool:
+        """``POST stop``(§4.3):``RunControl.stop`` 置中止标志,run 在下一个 safe point 中止。
+
+        run 不在内存态或已结束 → ``False``(路由层归 409)。``ctl.stop`` 只写
+        中止标志表,跨线程 await 无事件循环亲和性问题。
+        """
+        state = self.state_of(run_id)
+        if state is None or state.get("status") != "running":
+            return False
+        ctl = getattr(state.get("kernel"), "ctl", None)
+        if ctl is None:
+            return False
+        await ctl.stop(run_id, "web stop")
+        return True
+
+    async def resume_run(self, run_id: str) -> dict[str, Any]:
+        """``POST resume``(§4.3):从该 run 产物目录的 checkpoint.json 恢复 run。
+
+        用同一 config 新建内核,经 ``execute_resume`` 恢复;产物(result/checkpoint)
+        与内存态写回原 run。阻塞到恢复结束,返回 RunRecord dict。checkpoint 缺失
+        抛 ``FileNotFoundError``(路由层归 404),畸形抛 ``ValueError``(归 400),
+        在途 run 抛 :class:`ResumeConflictError`(归 409)。
+        """
+        run_dir = self._artifacts_root / "runs" / run_id
+        checkpoint_path = run_dir / "checkpoint.json"
+        if not checkpoint_path.is_file():
+            raise FileNotFoundError(f"找不到 checkpoint: {run_id}")
+        state = self.state_of(run_id)
+        if state is not None and state.get("status") == "running":
+            raise ResumeConflictError(f"run {run_id} 仍在进行,不能 resume")
+        hub = SignalHub()  # 原 hub 已随首次 run 关闭;resume 期间换新,SSE 可继续观察
+        with self._lock:
+            self._hubs[run_id] = hub
+            if state is None:
+                state = self._cold_state(run_dir)
+                self._active[run_id] = state
+            state["status"] = "running"
+
+        def _work() -> None:
+            try:
+                kernel = self._assemble_kernel()
+                state["kernel"] = kernel
+
+                async def _fan(sig: Signal) -> None:
+                    hub.publish(signal_row(sig))
+
+                kernel.signals.subscribe("*", _fan)
+                record = execute_resume(
+                    kernel, checkpoint_path, artifacts_root=self._artifacts_root, host="web"
+                )
+                state["status"] = record["status"]
+                state["record"] = record
+            except Exception:
+                state["status"] = STATUS_FAILED
+                raise
+            finally:
+                hub.close()
+
+        await asyncio.to_thread(_work)
+        return state["record"]
+
+    @staticmethod
+    def _cold_state(run_dir: Path) -> dict[str, Any]:
+        """冷数据 run(进程重启后无内存态)的 resume 用 state 骨架,skill 等取 meta.json。"""
+        meta: dict[str, Any] = {}
+        try:
+            meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+        return {
+            "task": None,
+            "status": "running",
+            "record": None,
+            "skill": meta.get("skill"),
+            "error": None,
+            "started_at": meta.get("started_at") or datetime.now(UTC).isoformat(),
+            "kernel": None,
+        }
+
+    def reload_skills(self) -> bool:
+        """``POST /api/skills/reload``(§4.3):共享 registry 的热重载(mtime 检查,§6.1)。
+
+        返回是否真重载;registry 惰性装配(首次调用时按 config 建一只内核取其
+        skills registry)。配置未装配 skills → :class:`RunValidationError`。
+        reload 只影响后续新建的 run(每 run 独立内核、独立 registry),在跑的
+        run 钉住旧版。
+        """
+        registry = self._skills_registry
+        if registry is None:
+            registry = self._assemble_kernel().skills
+            if registry is None:
+                raise RunValidationError("配置未装配 skills registry(缺 [skills].path)")
+            self._skills_registry = registry
+        return bool(registry.reload())
 
     def state_of(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:

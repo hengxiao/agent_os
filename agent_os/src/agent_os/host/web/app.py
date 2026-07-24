@@ -26,12 +26,15 @@ from agent_os.host.shared.artifacts import (
     read_result,
     read_trace,
 )
+from agent_os.host.web.rca import locate_first_error, usage_panel
 from agent_os.host.web.run_manager import (
     HUB_CLOSED,
+    ResumeConflictError,
     RunManager,
     RunValidationError,
     _jsonable,
 )
+from agent_os.kernel.errors import SkillLoadError
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -218,6 +221,55 @@ def create_app(config_path: str | Path, artifacts_root: Path = Path(".agent-os")
             # 帧上下文逐条:"模型那一步看到了什么"(§2.3 RCA 核心)
             "messages": (frame.get("context") or {}).get("messages", []),
         }
+
+    @app.get("/api/runs/{run_id}/rca")
+    def get_rca(run_id: str) -> dict[str, Any]:
+        """失败定位(§4.4):首个错误的结构化位置(vetoed/tool_error/aborted)。"""
+        run_dir = _run_dir(root, run_id)
+        if not run_dir.is_dir() and manager.state_of(run_id) is None:
+            raise HTTPException(status_code=404, detail=f"找不到 run: {run_id}")
+        return locate_first_error(run_dir)
+
+    @app.get("/api/runs/{run_id}/usage")
+    def get_usage(run_id: str) -> dict[str, Any]:
+        """usage 面板(§4.4):run 汇总(九字段)+ 按帧分列。"""
+        run_dir = _run_dir(root, run_id)
+        if not (run_dir / "checkpoint.json").is_file():
+            raise HTTPException(status_code=404, detail=f"找不到 checkpoint: {run_id}")
+        try:
+            return usage_panel(run_dir)
+        except (OSError, json.JSONDecodeError) as e:
+            raise HTTPException(status_code=404, detail="run 产物落盘中,请重试") from e
+
+    @app.post("/api/runs/{run_id}/stop")
+    async def stop_run(run_id: str) -> dict[str, Any]:
+        """stop(§4.3):RunControl.stop,run 在下一个 safe point 中止。"""
+        if manager.state_of(run_id) is None and not _run_dir(root, run_id).is_dir():
+            raise HTTPException(status_code=404, detail=f"找不到 run: {run_id}")
+        if not await manager.stop_run(run_id):
+            raise HTTPException(status_code=409, detail=f"run {run_id} 已结束,无法 stop")
+        return {"ok": True}
+
+    @app.post("/api/runs/{run_id}/resume")
+    async def resume_run(run_id: str) -> dict[str, Any]:
+        """resume(§4.3):从该 run 的 checkpoint.json 恢复,返回 RunRecord JSON。"""
+        try:
+            record = await manager.resume_run(run_id)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ResumeConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"checkpoint 畸形: {e}") from e
+        return _jsonable(record)
+
+    @app.post("/api/skills/reload")
+    def reload_skills() -> dict[str, Any]:
+        """热重载 skills 文件(§4.3;mtime 检查,只影响后续新建的 run,§6.1)。"""
+        try:
+            return {"reloaded": manager.reload_skills()}
+        except (RunValidationError, SkillLoadError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @app.get("/api/runs/{run_id}/stream")
     async def stream_run(run_id: str) -> StreamingResponse:

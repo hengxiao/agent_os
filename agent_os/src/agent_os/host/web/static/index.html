@@ -44,13 +44,33 @@
   .msg .veto { color:var(--error); } .msg .inject { color:var(--sidecar); }
   details { margin-top:4px; } summary { cursor:pointer; color:var(--dim); font-size:11px; }
   #empty { color:var(--dim); padding:24px; text-align:center; }
+  #toolbar { display:flex; gap:6px; margin-left:auto; }
+  #toolbar button { background:var(--panel); color:var(--fg); border:1px solid var(--border);
+                    border-radius:6px; padding:3px 10px; cursor:pointer; font-size:12px; }
+  #toolbar button:hover { border-color:var(--dim); }
+  #toolbar button.warn { color:var(--error); }
+  #panel { display:none; position:fixed; right:16px; top:48px; z-index:10; max-width:60vw;
+           max-height:70vh; overflow:auto; background:var(--panel); border:1px solid var(--border);
+           border-radius:8px; padding:10px 12px; box-shadow:0 4px 16px rgba(0,0,0,.5); }
+  #panel .close { float:right; cursor:pointer; color:var(--dim); }
+  #panel table { border-collapse:collapse; font-family:ui-monospace,monospace; font-size:11px; }
+  #panel th,#panel td { border:1px solid var(--border); padding:2px 8px; text-align:left; }
+  #panel th { color:var(--dim); }
 </style>
 </head>
 <body>
 <header>
   <h1>Agent OS</h1>
   <div id="usage"></div>
+  <div id="toolbar">
+    <button id="btn-rca" title="Jump to first error">失败定位</button>
+    <button id="btn-usage">usage 面板</button>
+    <button id="btn-stop" class="warn" style="display:none">stop</button>
+    <button id="btn-resume" class="warn" style="display:none">resume</button>
+    <button id="btn-reload">reload skills</button>
+  </div>
 </header>
+<div id="panel"></div>
 <main>
   <section id="runs"><h2>Runs</h2><div id="run-list"></div></section>
   <section id="frames"><h2>帧树</h2><div id="frame-tree"><div id="empty">选择 run</div></div></section>
@@ -110,11 +130,63 @@ async function loadDetail() {
     </div>`).join("") || `<div id="empty">run 进行中…</div>`;
   document.querySelectorAll(".frame").forEach(el =>
     el.onclick = () => showFrame(el.dataset.id));
+  // stop/resume 按钮按 run 状态显隐(§4.4:进行中显 stop,失败/中止显 resume)
+  $("btn-stop").style.display = d.status === "running" ? "" : "none";
+  $("btn-resume").style.display = ["failed", "aborted"].includes(d.status) ? "" : "none";
   const sigs = await (await fetch(`/api/runs/${current}/signals`)).json();
   $("timeline").innerHTML = "";
   sigs.forEach(appendSignal);
   return d;
 }
+
+function showPanel(html) {
+  $("panel").innerHTML = `<span class="close" onclick="$('panel').style.display='none'">✕</span>` + html;
+  $("panel").style.display = "block";
+}
+
+// R4:失败定位(§4.4 "Jump to first error")——首个错误高亮并定位到对应帧
+$("btn-rca").onclick = async () => {
+  if (!current) return;
+  const rca = await (await fetch(`/api/runs/${current}/rca`)).json();
+  const err = rca.first_error;
+  if (!err) { showPanel(`<b>未发现错误</b>(status: ${esc(rca.status ?? "running")})`); return; }
+  showPanel(
+    `<div><b style="color:var(--error)">${esc(err.kind)}</b> · ${esc(err.skill ?? "")}</div>` +
+    `<pre>${esc(err.message ?? "")}</pre>` +
+    (err.call ? `<details open><summary>call</summary><pre>${esc(fmt(err.call))}</pre></details>` : ""));
+  if (err.frame_id) showFrame(err.frame_id);
+};
+
+// R4:usage 面板——按帧分列(steps/tokens/cache/thinking/cost)
+$("btn-usage").onclick = async () => {
+  if (!current) return;
+  const u = await (await fetch(`/api/runs/${current}/usage`)).json();
+  const cols = ["skill", "depth", "status", "steps", "prompt_tokens", "completion_tokens",
+    "cache_read_tokens", "cache_write_tokens", "thinking_tokens", "cost"];
+  const row = (tag, cells) => `<tr>${cells.map(c => `<${tag}>${esc(c ?? 0)}</${tag}>`).join("")}</tr>`;
+  showPanel(`<table><thead>${row("th", cols)}</thead><tbody>` +
+    (u.frames || []).map(f => row("td", cols.map(c => f[c]))).join("") +
+    `</tbody></table>`);
+};
+
+$("btn-stop").onclick = async () => {
+  if (!current) return;
+  await fetch(`/api/runs/${current}/stop`, { method: "POST" });
+  refreshRuns();
+};
+
+$("btn-resume").onclick = async () => {
+  if (!current) return;
+  await fetch(`/api/runs/${current}/resume`, { method: "POST" });
+  await loadDetail();
+  attachStream();
+  refreshRuns();
+};
+
+$("btn-reload").onclick = async () => {
+  const r = await (await fetch("/api/skills/reload", { method: "POST" })).json();
+  showPanel(`skills reload: reloaded = <b>${esc(r.reloaded)}</b>`);
+};
 
 function appendSignal(row) {
   const div = document.createElement("div");

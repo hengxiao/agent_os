@@ -7,7 +7,7 @@
     [providers.*]→ kimi/anthropic/openai(兼容端点)/mock(dotted path 应答函数)
     [tools]      → builtins 内置工具;python_exec = docker|subprocess|off
     [skills]     → LocalFileSkillRegistry
-    [sidecars]   → BudgetGuard / LoopDetector(缺省不加)
+    [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加)
     [telemetry]  → JsonlTelemetrySink(目录自动创建)
     [retry]      → ProviderManager 的 max_attempts / backoff_base
 
@@ -21,7 +21,7 @@ import importlib
 import logging
 import os
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +37,7 @@ from agent_os.providers.kimi import KimiProvider
 from agent_os.providers.mock import MockProvider
 from agent_os.providers.openai_compatible import OpenAICompatibleProvider
 from agent_os.runtime.builder import KernelBuilder
-from agent_os.sidecars.builtins import BudgetGuard, LoopDetector
+from agent_os.sidecars.builtins import BudgetGuard, LoopDetector, ToolGuard
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.telemetry.jsonl_exporter import JsonlTelemetrySink
 from agent_os.tools.builtins import python_exec_tool
@@ -136,7 +136,7 @@ def _sandbox_kernel(mode: str) -> Any | None:
 
 def _sidecars(cfg: dict[str, Any]) -> list[Any]:
     sidecars: list[Any] = []
-    unknown = sorted(set(cfg) - {"budget_guard", "loop_detector"})
+    unknown = sorted(set(cfg) - {"budget_guard", "loop_detector", "tool_guard_rules"})
     if unknown:
         raise ConfigError(f"[sidecars] 含未知 sidecar: {unknown}")
     if "budget_guard" in cfg:
@@ -156,16 +156,28 @@ def _sidecars(cfg: dict[str, Any]) -> list[Any]:
                 max_strikes=ld.get("max_strikes", 2),
             )
         )
+    if "tool_guard_rules" in cfg:
+        rules: list[tuple[str, str, str]] = []
+        for rule in cfg["tool_guard_rules"] or []:
+            if len(rule) != 3:
+                raise ConfigError(
+                    f"[sidecars] tool_guard_rules 每项应为 [tool, pattern, reason],得到: {rule!r}"
+                )
+            rules.append((str(rule[0]), str(rule[1]), str(rule[2])))
+        sidecars.append(ToolGuard(rules=rules))
     return sidecars
 
 
-def build_kernel(config: str | Path | dict[str, Any]) -> Any:
+def build_kernel(config: str | Path | dict[str, Any], *, extra_sidecars: Iterable[Any] = ()) -> Any:
     """按 RUNNERS.md §2.1 把 ``agent-os.toml``(或等价 dict)装配为 Kernel。
 
     缺省:无 ``[run]`` 用 RunConfig 默认;无 ``[providers]`` → 空 Manager
     (运行时才报"provider 前缀未注册");无 ``[skills]``/``[telemetry]``/``[sidecars]``
     对应子系统不接线。启用 ``python_exec`` 即把 RunConfig 全局权限上限提到 EXEC
     (§8.2:工具自报 EXEC 级,不提上限必被分发层拒绝,配置即授权)。
+
+    ``extra_sidecars``:配置文件之外由宿主追加的 sidecar(Web runner 的 stop
+    通道占位 sidecar;M4 起仅有 sidecar 时 builder 才装配 ``kernel.ctl``)。
     """
     cfg = load_config(config) if isinstance(config, (str, Path)) else dict(config)
     run_cfg = _run_config(cfg.get("run") or {})
@@ -191,7 +203,7 @@ def build_kernel(config: str | Path | dict[str, Any]) -> Any:
     skills_path = (cfg.get("skills") or {}).get("path")
     if skills_path:
         builder.skills(LocalFileSkillRegistry(skills_path))
-    sidecars = _sidecars(cfg.get("sidecars") or {})
+    sidecars = [*_sidecars(cfg.get("sidecars") or {}), *extra_sidecars]
     if sidecars:
         builder.sidecars(*sidecars)
     telemetry_dir = (cfg.get("telemetry") or {}).get("dir")

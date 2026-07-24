@@ -21,9 +21,14 @@ dev = [
     "hypothesis",
     "ruff",
 ]
+web = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+]
 
 [project.scripts]
 agent-os = "agent_os.host.cli.main:main"
+agent-os-web = "agent_os.host.web.serve:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_os"]
@@ -45,6 +50,7 @@ packages = ["src/agent_os"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
 
 
 

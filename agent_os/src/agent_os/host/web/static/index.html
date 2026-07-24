@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Agent OS — Web UI</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --dim:#8b949e;
+          --llm:#58a6ff; --tool:#3fb950; --sidecar:#d29922; --error:#f85149; --run:#bc8cff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 -apple-system,"Segoe UI",sans-serif; }
+  header { display:flex; gap:16px; align-items:center; padding:8px 16px; background:var(--panel);
+           border-bottom:1px solid var(--border); position:sticky; top:0; }
+  header h1 { font-size:14px; margin:0; color:var(--dim); }
+  #usage { display:flex; gap:12px; font-family:ui-monospace,monospace; font-size:12px; }
+  #usage b { color:var(--fg); } #usage span { color:var(--dim); }
+  main { display:grid; grid-template-columns:220px 240px 1fr 1fr; height:calc(100vh - 41px); }
+  section { overflow-y:auto; border-right:1px solid var(--border); padding:8px; }
+  section h2 { font-size:11px; text-transform:uppercase; color:var(--dim); margin:4px 0 8px; }
+  .run { padding:4px 8px; border-radius:6px; cursor:pointer; font-family:ui-monospace,monospace;
+         white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .run:hover, .run.sel { background:var(--panel); }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+  .done { background:var(--tool); } .failed,.aborted { background:var(--error); }
+  .running { background:var(--sidecar); animation:blink 1s infinite; }
+  @keyframes blink { 50% { opacity:.3; } }
+  .frame { padding:2px 8px; cursor:pointer; font-family:ui-monospace,monospace; font-size:12px;
+           border-left:2px solid var(--border); }
+  .frame:hover, .frame.sel { background:var(--panel); }
+  .frame .st-done { color:var(--tool); } .frame .st-failed { color:var(--error); }
+  .frame .st-running { color:var(--sidecar); }
+  .sig { padding:1px 8px; font-family:ui-monospace,monospace; font-size:12px; cursor:pointer;
+         border-left:2px solid transparent; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sig:hover { background:var(--panel); }
+  .sig.k-llm { color:var(--llm); } .sig.k-tool { color:var(--tool); }
+  .sig.k-sidecar { color:var(--sidecar); } .sig.k-run { color:var(--run); }
+  .sig.k-error { color:var(--error); font-weight:600; }
+  .sig.k-other { color:var(--dim); }
+  .msg { margin:0 0 10px; padding:6px 8px; background:var(--panel); border-radius:6px;
+         border-left:3px solid var(--border); }
+  .msg .meta { font-size:11px; color:var(--dim); margin-bottom:4px; }
+  .msg pre { margin:0; white-space:pre-wrap; word-break:break-word; font-size:12px; }
+  .msg.r-assistant { border-left-color:var(--llm); } .msg.r-tool { border-left-color:var(--tool); }
+  .msg.r-user,.msg.r-system { border-left-color:var(--run); }
+  .msg .veto { color:var(--error); } .msg .inject { color:var(--sidecar); }
+  details { margin-top:4px; } summary { cursor:pointer; color:var(--dim); font-size:11px; }
+  #empty { color:var(--dim); padding:24px; text-align:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent OS</h1>
+  <div id="usage"></div>
+</header>
+<main>
+  <section id="runs"><h2>Runs</h2><div id="run-list"></div></section>
+  <section id="frames"><h2>帧树</h2><div id="frame-tree"><div id="empty">选择 run</div></div></section>
+  <section id="signals"><h2>信号时间线</h2><div id="timeline"></div></section>
+  <section id="context"><h2>帧上下文</h2><div id="messages"><div id="empty">点击信号或帧</div></div></section>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+let current = null, es = null, selFrame = null;
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = (v) => typeof v === "string" ? v : JSON.stringify(v, null, 1);
+
+function kindOf(name) {
+  if (/llm/.test(name)) return "llm";
+  if (/tool|logic/.test(name)) return "tool";
+  if (/budget|veto|sidecar/.test(name)) return "sidecar";
+  if (/aborted|failed|error/.test(name)) return "error";
+  if (/^run\./.test(name)) return "run";
+  return "other";
+}
+
+async function refreshRuns() {
+  try {
+    const runs = await (await fetch("/api/runs")).json();
+    $("run-list").innerHTML = runs.map(r =>
+      `<div class="run ${r.run_id === current ? "sel" : ""}" data-id="${esc(r.run_id)}"
+            title="${esc(r.run_id)}">
+        <span class="dot ${esc(r.status)}"></span>${esc(r.skill)} · ${esc(r.status)}
+      </div>`).join("");
+    document.querySelectorAll(".run").forEach(el =>
+      el.onclick = () => selectRun(el.dataset.id));
+  } catch (e) { /* 服务未就绪时静默,下个周期重试 */ }
+}
+
+async function selectRun(runId) {
+  current = runId; selFrame = null;
+  if (es) { es.close(); es = null; }
+  await loadDetail();
+  attachStream();
+  refreshRuns();
+}
+
+async function loadDetail() {
+  if (!current) return;
+  const d = await (await fetch(`/api/runs/${current}`)).json();
+  const u = d.usage || {};
+  $("usage").innerHTML = ["steps", "prompt_tokens", "completion_tokens",
+    "cache_read_tokens", "cache_write_tokens", "thinking_tokens", "cost"]
+    .map(k => `<span>${k}: <b>${esc(u[k] ?? 0)}</b></span>`).join("");
+  $("frame-tree").innerHTML = (d.frames || []).map(f =>
+    `<div class="frame" data-id="${esc(f.frame_id)}" style="margin-left:${(f.depth - 1) * 14}px">
+      <span class="st-${esc(f.status)}">●</span> ${esc(f.skill)}
+      <span style="color:var(--dim)">· ${f.usage.steps} 步</span>
+    </div>`).join("") || `<div id="empty">run 进行中…</div>`;
+  document.querySelectorAll(".frame").forEach(el =>
+    el.onclick = () => showFrame(el.dataset.id));
+  const sigs = await (await fetch(`/api/runs/${current}/signals`)).json();
+  $("timeline").innerHTML = "";
+  sigs.forEach(appendSignal);
+  return d;
+}
+
+function appendSignal(row) {
+  const div = document.createElement("div");
+  div.className = `sig k-${kindOf(row.name || "")}`;
+  const t = row.ts ? new Date(row.ts * 1000).toLocaleTimeString() : "";
+  div.textContent = `${t} ${row.name}`;
+  div.title = JSON.stringify(row.payload ?? {}, null, 1).slice(0, 2000);
+  if (row.frame_id) div.onclick = () => showFrame(row.frame_id);
+  $("timeline").appendChild(div);
+  div.scrollIntoView({ block: "nearest" });
+}
+
+function attachStream() {
+  fetch(`/api/runs/${current}`).then(r => r.json()).then(d => {
+    if (d.status !== "running" || es || current === null) return;
+    es = new EventSource(`/api/runs/${current}/stream`);
+    es.onmessage = (e) => appendSignal(JSON.parse(e.data));
+    es.addEventListener("end", () => { es.close(); es = null; loadDetail(); refreshRuns(); });
+  });
+}
+
+async function showFrame(fid) {
+  selFrame = fid;
+  document.querySelectorAll(".frame").forEach(el =>
+    el.classList.toggle("sel", el.dataset.id === fid));
+  const f = await (await fetch(`/api/runs/${current}/frames/${fid}`)).json();
+  const box = $("messages");
+  box.innerHTML = (f.messages || []).map(m => {
+    const calls = (m.tool_calls || []).map(c =>
+      `<details><summary>tool_call: ${esc(c.name || c.tool || "")}</summary><pre>${esc(fmt(c.arguments ?? c.args ?? c))}</pre></details>`).join("");
+    const tags = [m.role, m.source].filter(Boolean).map(x => esc(x)).join(" · ");
+    return `<div class="msg r-${esc(m.role)}"><div class="meta">${tags}</div>
+      <pre>${esc(fmt(m.content))}</pre>${calls}</div>`;
+  }).join("") || `<div id="empty">无消息</div>`;
+  const head = document.createElement("div");
+  head.className = "msg";
+  head.innerHTML = `<div class="meta">${esc(fid)} · ${esc(f.skill)} · ${esc(f.status)}</div>
+    <pre>input: ${esc(fmt(f.input))}\nresult: ${esc(fmt(f.result))}${f.error ? "\nerror: " + esc(f.error) : ""}</pre>`;
+  box.prepend(head);
+}
+
+setInterval(refreshRuns, 2000);
+refreshRuns();
+</script>
+</body>
+</html>

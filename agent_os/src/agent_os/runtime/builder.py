@@ -50,6 +50,7 @@ class KernelBuilder:
         self._telemetry: Any = None
         self._memory: Any = None
         self._blackboard: Any = None
+        self._retry: dict[str, Any] = {}
 
     def providers(self, *providers: Any) -> KernelBuilder:
         self._providers.extend(providers)
@@ -87,6 +88,16 @@ class KernelBuilder:
         self._blackboard = blackboard
         return self
 
+    def retry(
+        self, *, max_attempts: int | None = None, backoff_base: float | None = None
+    ) -> KernelBuilder:
+        """ProviderManager 重试参数(RUNNERS.md §2.1 ``[retry]``;None 保持 Manager 默认)。"""
+        if max_attempts is not None:
+            self._retry["max_attempts"] = max_attempts
+        if backoff_base is not None:
+            self._retry["backoff_base"] = backoff_base
+        return self
+
     def build(self) -> Kernel:
         """组装 Kernel(注入信号总线 / FrameStack / Dispatcher / RunControl 等内核件)。
 
@@ -108,7 +119,7 @@ class KernelBuilder:
                 f"传入了会被静默丢弃,故直接拒绝"
             )
         bus = InProcessSignalBus()
-        providers = ProviderManager(list(self._providers))
+        providers = ProviderManager(list(self._providers), **self._retry)
         tools = self._tools if self._tools is not None else LocalPythonToolRegistry()
         skills = self._skills
         if skills is not None:

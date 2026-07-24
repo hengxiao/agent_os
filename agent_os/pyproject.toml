@@ -22,6 +22,9 @@ dev = [
     "ruff",
 ]
 
+[project.scripts]
+agent-os = "agent_os.host.cli.main:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_os"]
 
@@ -42,5 +45,6 @@ packages = ["src/agent_os"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
 
 

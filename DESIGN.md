@@ -869,7 +869,7 @@ result = await kernel.run("web_research", {"question": "..."})
 | 新遥测导出 | 实现 Telemetry exporter | `agent_os.telemetry` |
 | 新记忆服务 | 实现 `MemoryService` | `agent_os.memory` |
 | 新黑板后端 | 实现 `Blackboard` | `agent_os.blackboard` |
-| 服务化(HTTP/RPC 壳;A2A 为协议候选) | 薄层包装 KernelBuilder API,不进内核 | — |
+| 服务化(HTTP/RPC 壳;A2A 为协议候选) | 薄层包装 KernelBuilder API,不进内核;开发测试用宿主见 RUNNERS.md(CLI / Web UI 两个 runner) | — |
 
 ---
 

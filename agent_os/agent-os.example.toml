@@ -1,0 +1,46 @@
+# Agent OS 本地部署示例配置(RUNNERS.md §2.1)
+# 用法:cp agent-os.example.toml agent-os.toml,按需修改
+
+[run]
+# 模型路由:<provider 前缀>/<模型名>,可被技能 manifest 的 model.prefer 覆盖
+model = "kimi/kimi-k2-thinking"      # 或 "anthropic/claude-sonnet-4-20250514"
+max_depth = 8
+max_steps = 200
+max_cost = 2.0
+max_wall_time = 1800
+compression = "hierarchical"          # off = 消融档(裸模型基线)
+
+# —— Provider 区(取消注释启用;API key 走环境变量,不写进文件)——
+# Kimi(Moonshot):export MOONSHOT_API_KEY=sk-...(国内站需另传 base_url,见 runtime/config.py)
+[providers.kimi]
+
+# Claude(Anthropic):export ANTHROPIC_API_KEY=sk-ant-...
+# [providers.anthropic]
+
+# OpenAI 兼容端点(vLLM/Ollama/官方):export OPENAI_API_KEY=...
+# [providers.openai]
+# base_url = "http://localhost:8000/v1"
+# api_key_env = "OPENAI_API_KEY"
+
+# 本地无 key 冒烟:MockProvider 脚本化应答(brain 为 dotted path,需在 PYTHONPATH 上)
+# [providers.mock]
+# brain = "my_tests.brains:fib_brain"
+
+[tools]
+builtins = true                       # fs_read/fs_write/fs_edit/shell_exec/http_fetch
+python_exec = "docker"                # docker(推荐,需本机 docker)| subprocess | off
+
+[skills]
+path = "./skills.yaml"
+
+[sidecars]
+budget_guard = { max_cost = 2.0 }
+loop_detector = { threshold = 3, max_strikes = 2 }
+# tool_guard_rules = [["shell_exec", "rm\\s+-rf", "禁止危险命令"]]
+
+[telemetry]
+dir = ".agent-os/traces"
+
+[retry]
+max_attempts = 3
+backoff_base = 0.5

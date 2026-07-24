@@ -53,6 +53,39 @@ export const emptyBlock = (title, hint) =>
   `<span class="empty-hint">${esc(hint)}</span>` +
   `</div>`;
 
+/* ── 路由规则描述(§4.6/§4.7):"Use when / Do not use when" 前缀分行高亮 ── */
+
+/* description → [{ kind: "plain"|"use"|"avoid", text }](纯函数,node 单测可载)。
+   按 "Use when" / "Do not use when" 标记切分(行内出现同样切开);
+   标记前的前缀为 plain,标记段分别归 use / avoid。 */
+export function splitRouteDescription(desc) {
+  const text = String(desc ?? "").trim();
+  if (!text) return [];
+  const marks = [];
+  const re = /Do not use when|Use when/g;
+  let m;
+  while ((m = re.exec(text))) marks.push({ mark: m[0], start: m.index });
+  if (!marks.length) return [{ kind: "plain", text }];
+  const segs = [];
+  const head = text.slice(0, marks[0].start).trim();
+  if (head) segs.push({ kind: "plain", text: head });
+  marks.forEach(({ mark, start }, i) => {
+    const end = i + 1 < marks.length ? marks[i + 1].start : text.length;
+    const body = text.slice(start, end).trim();
+    if (body) segs.push({ kind: mark === "Use when" ? "use" : "avoid", text: body });
+  });
+  return segs;
+}
+
+/* 路由规则描述 → 分行 HTML(use/avoid 段左色条高亮,样式 .desc-seg 在 app.css) */
+export function routeDescHtml(desc) {
+  const segs = splitRouteDescription(desc);
+  if (!segs.length) return `<div class="desc-seg" data-kind="plain">(无描述)</div>`;
+  return segs
+    .map((s) => `<div class="desc-seg" data-kind="${s.kind}">${esc(s.text)}</div>`)
+    .join("");
+}
+
 /* ── 复制(§5:run_id / 消息 / 帧 JSON 等一键复制)────────────────── */
 
 export const COPY_SVG =
@@ -91,12 +124,17 @@ export function toast(msg, kind = "info") {
   el.className = "toast";
   el.dataset.kind = kind;
   el.setAttribute("role", "status");
-  el.innerHTML =
-    `<span class="toast-msg"></span>` +
-    `<button class="toast-close" aria-label="关闭">✕</button>`;
-  el.querySelector(".toast-msg").textContent = msg;
+  const msgEl = document.createElement("span");
+  msgEl.className = "toast-msg";
+  msgEl.textContent = msg;
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "toast-close";
+  closeBtn.setAttribute("aria-label", "关闭");
+  closeBtn.textContent = "✕";
+  el.appendChild(msgEl);
+  el.appendChild(closeBtn);
   const remove = () => el.remove();
-  el.querySelector(".toast-close").addEventListener("click", remove);
+  closeBtn.addEventListener("click", remove);
   document.querySelector("#toastStack").appendChild(el);
   setTimeout(remove, 3000);
 }

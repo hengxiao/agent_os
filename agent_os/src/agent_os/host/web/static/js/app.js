@@ -8,6 +8,8 @@ import { getJson } from "./api.js";
 import { statusPill } from "./components/status-pill.js";
 import { absTime, copyText, emptyBlock, esc, fmtCost, relTime, toast } from "./util.js";
 import { openLaunchDialog } from "./components/launch-dialog.js";
+import { closeSkillsView, openSkillsView } from "./components/skills-view.js";
+import { closeToolsView, openToolsView } from "./components/tools-view.js";
 import { closeWorkbench, openWorkbench, workbenchClick, workbenchKeydown } from "./workbench.js";
 
 const POLL_INTERVAL = 5000; // §4.1:列表 5s 轮询;兼作 API 健康检查
@@ -21,7 +23,7 @@ const ui = {
 };
 
 /* ── hash 路由(§4.1 深链接:#/runs、#/runs/<id>?frame=<fid>&signal=<i>、
-      #/skills、#/tools)────────────────────────────────────────────── */
+      #/skills、#/skills/<name>、#/tools、#/tools/<name>)────────────────── */
 
 function parseRoute(hash) {
   const raw = (hash || "").replace(/^#/, "");
@@ -31,8 +33,8 @@ function parseRoute(hash) {
   if (seg[0] === "runs" && seg[1]) {
     return { name: "run-detail", runId: seg[1], frame: q.get("frame"), signal: q.get("signal") };
   }
-  if (seg[0] === "skills") return { name: "skills", runId: null };
-  if (seg[0] === "tools") return { name: "tools", runId: null };
+  if (seg[0] === "skills") return { name: "skills", runId: null, itemName: seg[1] ?? null };
+  if (seg[0] === "tools") return { name: "tools", runId: null, itemName: seg[1] ?? null };
   return { name: "runs", runId: null };
 }
 
@@ -123,21 +125,20 @@ function renderChips() {
   });
 }
 
-/* ── 渲染:主区(Runs 空态引导 / Run Workbench(D2)/ Skills / Tools)── */
-
-const placeholderPage = (title, hint) =>
-  `<h1 class="page-head">${esc(title)}</h1>` + emptyBlock(hint, "该页面在里程碑 D4 交付");
+/* ── 渲染:主区(Runs 空态引导 / Run Workbench(D2)/ Skills·Tools 浏览器(D4))── */
 
 function renderMain() {
   const main = $("#main");
   const route = store.get("route");
   if (route.name !== "run-detail") closeWorkbench(); // 离开 Workbench:live 会话收尾
+  if (route.name !== "skills") closeSkillsView();
+  if (route.name !== "tools") closeToolsView();
   if (route.name === "skills") {
-    main.innerHTML = placeholderPage("Skills", "施工中 — Skills 浏览器 D4 交付");
+    openSkillsView(main, route.itemName); // §4.6(#/skills 与 #/skills/<name> 深链接恢复)
     return;
   }
   if (route.name === "tools") {
-    main.innerHTML = placeholderPage("Tools", "施工中 — Tools 浏览器 D4 交付");
+    openToolsView(main, route.itemName); // §4.7
     return;
   }
   if (route.name === "run-detail") {

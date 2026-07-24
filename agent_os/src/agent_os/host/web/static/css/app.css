@@ -1048,3 +1048,231 @@ textarea.input {
   animation: spin 0.9s linear infinite;
 }
 .ft-new { animation: ft-in 0.24s ease; }
+
+/* ── Skills / Tools 浏览器(§4.6/§4.7):工具栏 + 左列表 + 右详情 ── */
+.brw {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  height: 100%;
+  min-height: 0;
+}
+.brw-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  flex-shrink: 0;
+}
+.brw-toolbar .brw-search { max-width: calc(var(--s8) * 10); flex: 1; }
+.brw-toolbar .spacer { flex: 1; }
+.brw-cols {
+  display: flex;
+  gap: var(--s3);
+  flex: 1;
+  min-height: 0;
+}
+.brw-list {
+  width: var(--sidebar-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  background: var(--bg-1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-lg);
+  padding: var(--s2);
+  overflow-y: auto;
+  min-height: 0;
+}
+.brw-detail {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-lg);
+  padding: var(--s4);
+  overflow-y: auto;
+  min-height: 0;
+}
+.brw-detail > * + * { margin-top: var(--s3); }
+
+/* 列表项(与 run-item 同语汇:name 行 + meta 行;选中左色条) */
+.brw-item {
+  position: relative;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.brw-item:hover { background: var(--bg-3); }
+.brw-item[aria-selected="true"],
+.brw-item[aria-selected="true"]:hover { background: var(--bg-2); }
+.brw-item[aria-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: var(--s1);
+  bottom: var(--s1);
+  width: var(--stroke-strong);
+  border-radius: var(--stroke-strong);
+  background: var(--live);
+}
+.brw-item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.brw-item-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brw-item-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.kind-chip {
+  padding: 0 var(--s1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.cycle-warn { color: var(--warn); flex-shrink: 0; } /* §4.6:循环依赖 --warn 警示 */
+
+/* 详情头部:name + 大 PermBadge + 操作 */
+.brw-detail-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s3);
+}
+.brw-title { font-size: var(--text-xl); font-weight: 600; }
+.brw-detail-head .spacer { flex: 1; }
+.exec-warning {
+  font-size: var(--text-xs);
+  color: var(--danger); /* §4.7:EXEC 级提示行 */
+}
+
+/* 详情分区(Meta / Description / Inputs / Outputs / Permissions / …) */
+.dsec { border-top: var(--stroke) solid var(--line); padding-top: var(--s2); }
+.brw-detail-head + .dsec, .banner + .dsec { border-top: none; }
+.dsec-title {
+  margin: 0 0 var(--s2);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--fg-1);
+}
+.kv { display: flex; gap: var(--s2); padding: var(--s1) 0; font-size: var(--text-sm); }
+.kv-label { flex-shrink: 0; min-width: calc(var(--s8) * 3); color: var(--fg-2); }
+.kv-value { min-width: 0; overflow-wrap: anywhere; }
+.fg-2 { color: var(--fg-2); font-size: var(--text-sm); }
+
+/* description 路由规则渲染(§4.6/§4.7):Use when / Do not use when 分行高亮 */
+.desc { display: flex; flex-direction: column; gap: var(--s1); }
+.desc-seg {
+  padding: var(--s1) var(--s2);
+  border-left: var(--stroke-strong) solid transparent;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+.desc-seg[data-kind="use"] { border-left-color: var(--ok); background: var(--bg-2); }
+.desc-seg[data-kind="avoid"] { border-left-color: var(--danger); background: var(--bg-2); }
+
+/* Permissions 的 skills 可点击链接(§4.6 依赖跳转) */
+.brw a { color: var(--live); text-decoration: none; }
+.brw a:hover { text-decoration: underline; }
+.skill-link { margin-right: var(--s1); }
+
+/* lint 横幅内容(§4.6:技能作者自检入口) */
+.lint-list { margin: var(--s1) 0 0; padding-left: var(--s4); }
+
+/* Prompt 模板 / Examples:mono 只读卡片(§4.6/§4.7) */
+.prompt-wrap { position: relative; }
+.prompt-block,
+.example-card {
+  margin: 0;
+  padding: var(--s3);
+  background: var(--bg-0);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--fg-1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.prompt-block { max-height: calc(var(--s8) * 10); overflow-y: auto; }
+.prompt-copy {
+  position: absolute;
+  top: var(--s2);
+  right: var(--s2);
+  background: var(--bg-2);
+}
+.example-card { font-size: var(--text-xs); }
+.example-card + .example-card { margin-top: var(--s2); }
+
+/* PermBadge(§3.3/§4.7):四级权限色 + 文字双编码 */
+.perm-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: 0 var(--s2);
+  border: var(--stroke) solid;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.perm-dot { width: var(--s1); height: var(--s1); border-radius: 50%; background: currentColor; }
+.perm-badge[data-perm="READ"] { color: var(--perm-read); border-color: var(--perm-read); }
+.perm-badge[data-perm="WRITE"] { color: var(--perm-write); border-color: var(--perm-write); }
+.perm-badge[data-perm="NET"] { color: var(--perm-net); border-color: var(--perm-net); }
+.perm-badge[data-perm="EXEC"] { color: var(--perm-exec); border-color: var(--perm-exec); }
+.perm-badge-lg { padding: var(--s1) var(--s3); font-size: var(--text-sm); }
+
+/* 权限筛选 chips 选中态按 --perm-* 着色(§4.7) */
+.chip.is-active[data-perm="READ"] { color: var(--perm-read); border-color: var(--perm-read); }
+.chip.is-active[data-perm="WRITE"] { color: var(--perm-write); border-color: var(--perm-write); }
+.chip.is-active[data-perm="NET"] { color: var(--perm-net); border-color: var(--perm-net); }
+.chip.is-active[data-perm="EXEC"] { color: var(--perm-exec); border-color: var(--perm-exec); }
+
+/* 执行属性 chips(§4.7) */
+.prop-chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+.prop-chip {
+  padding: var(--s1) var(--s2);
+  background: var(--bg-2);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-1);
+}
+.prop-chip b { color: var(--fg-0); }
+
+/* SchemaView(§3.3/§4.6/§4.7):JSON Schema 可读字段表 */
+.schema-view { display: flex; flex-direction: column; }
+.sv-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  padding: var(--s1) 0;
+  padding-left: calc(var(--s6) * var(--depth)); /* 嵌套对象缩进 */
+}
+.sv-name { font-family: var(--font-mono); color: var(--fg-0); }
+.sv-name.is-required { font-weight: 700; } /* required 加粗 */
+.sv-req {
+  margin-left: var(--s1);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--warn);
+}
+.sv-type { font-size: var(--text-xs); color: var(--fg-1); }
+.sv-constraints { font-size: var(--text-xs); color: var(--fg-2); } /* 约束灰注 */
+.sv-empty { font-size: var(--text-xs); color: var(--fg-2); }

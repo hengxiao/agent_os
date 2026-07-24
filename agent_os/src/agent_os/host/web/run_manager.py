@@ -28,6 +28,12 @@ D3 增量(WEB-UI.md §4.3/§6.2):
   私有的 config dict 副本上,不污染共享配置(后续 run 与 reload 路径不受影响);
 - ``skills_manifests`` / ``skill_manifest``:共享 registry 的只读查询
   (``GET /api/skills`` 数据源),与 ``reload_skills`` 共用惰性装配路径。
+
+D4 增量(WEB-UI.md §4.7/§6.2):
+
+- ``tools_specs``:共享 tools registry 的全量 ToolSpec(``GET /api/tools``
+  数据源);与 skills 共享 registry 同一惰性装配路径,但 ``[tools].builtins``
+  恒视为 True——浏览器展示宿主全量工具面,与单 run 的 ``[tools]`` 开关无关。
 """
 
 from __future__ import annotations
@@ -177,6 +183,7 @@ class RunManager:
         self._active: dict[str, dict[str, Any]] = {}
         self._hubs: dict[str, SignalHub] = {}
         self._skills_registry: Any = None  # 惰性装配的共享 registry(reload/查询用)
+        self._tools_registry: Any = None  # 惰性装配的共享 tools registry(D4 查询用)
 
     def _assemble_kernel(self, overrides: dict[str, Any] | None = None) -> Any:
         """按 config 装配一个 run 的内核;恒附带 _StopBridge 保证 ctl 存在(stop 通道)。
@@ -374,6 +381,31 @@ class RunManager:
     def skill_manifest(self, name: str) -> Any | None:
         """按名字取 manifest;不存在返回 ``None``(路由层归 404)。"""
         return next((m for m in self.skills_manifests() if m.name == name), None)
+
+    def _shared_tools(self) -> Any:
+        """惰性装配共享 tools registry(``GET /api/tools`` 数据源;D4)。
+
+        装配路径与 skills 共享 registry 相同(惰性 + 缓存),区别只在把
+        ``[tools].builtins`` 视为 True:Tools 浏览器回答"宿主能装配哪些工具"
+        (§4.7 注册表全量 ToolSpec),与单个 run 的 ``[tools]`` 开关无关。
+        装配用查询专用内核:摘掉 skills/telemetry/sidecars,技能文件损坏或
+        telemetry 目录异常不影响工具目录。
+        """
+        registry = self._tools_registry
+        if registry is None:
+            cfg = load_config(self._config_path)
+            tools_cfg = dict(cfg.get("tools") or {})
+            tools_cfg["builtins"] = True
+            cfg["tools"] = tools_cfg
+            for section in ("skills", "telemetry", "sidecars"):
+                cfg.pop(section, None)
+            registry = build_kernel(cfg).tools
+            self._tools_registry = registry
+        return registry
+
+    def tools_specs(self) -> list[Any]:
+        """``GET /api/tools``(WEB-UI.md §6.2):共享 tools registry 的全量 ToolSpec(注册序)。"""
+        return list(self._shared_tools().specs())
 
     def state_of(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:

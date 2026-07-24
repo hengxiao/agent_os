@@ -35,6 +35,7 @@ from agent_os.host.web.run_manager import (
     _jsonable,
 )
 from agent_os.kernel.errors import SkillLoadError
+from agent_os.skills.manifest import validate_manifest
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -179,7 +180,12 @@ def _skill_summary(manifest: Any) -> dict[str, Any]:
 
 
 def _skill_doc(manifest: Any) -> dict[str, Any]:
-    """全量 manifest 文档(``GET /api/skills/{name}``;D3 Launch Modal 取 inputs schema)。"""
+    """全量 manifest 文档(``GET /api/skills/{name}``;D3 Launch Modal 取 inputs schema)。
+
+    D4 增补(WEB-UI.md §4.6):``lint`` = description 自洽性 lint 警告列表
+    (与加载期同一套 :func:`validate_manifest`,警告不阻断;Skills 浏览器
+    详情顶部横幅数据源)。
+    """
     doc = _skill_summary(manifest)
     model = manifest.model
     limits = manifest.limits
@@ -204,8 +210,31 @@ def _skill_doc(manifest: Any) -> dict[str, Any]:
             "prompt": manifest.prompt,
             "entry": manifest.entry,
             "handler": manifest.handler,
+            "lint": validate_manifest(manifest),
         }
     )
+    return doc
+
+
+def _tool_doc(spec: Any) -> dict[str, Any]:
+    """ToolSpec 摘要(WEB-UI.md §6.2,``GET /api/tools``;Tools 浏览器数据源)。
+
+    ``examples`` 为空则省略(§6.2 契约:缺失字段省略即可);布尔执行属性
+    (idempotent/cacheable/concurrency_safe/untrusted_source)恒带。
+    """
+    doc: dict[str, Any] = {
+        "name": spec.name,
+        "description": spec.description,
+        "permission": getattr(spec.permission, "name", str(spec.permission)),
+        "parameters": spec.parameters or {},
+        "timeout": spec.timeout,
+        "idempotent": bool(spec.idempotent),
+        "cacheable": bool(spec.cacheable),
+        "concurrency_safe": bool(spec.concurrency_safe),
+        "untrusted_source": bool(spec.untrusted_source),
+    }
+    if getattr(spec, "examples", None):
+        doc["examples"] = _jsonable(spec.examples)
     return doc
 
 
@@ -359,6 +388,11 @@ def create_app(config_path: str | Path, artifacts_root: Path = Path(".agent-os")
             return {"reloaded": manager.reload_skills()}
         except (RunValidationError, SkillLoadError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.get("/api/tools")
+    def list_tools() -> list[dict[str, Any]]:
+        """工具清单(WEB-UI.md §6.2):共享 tools registry 的全量 ToolSpec 摘要(Tools 浏览器)。"""
+        return [_tool_doc(s) for s in manager.tools_specs()]
 
     @app.get("/api/runs/{run_id}/stream")
     async def stream_run(run_id: str) -> StreamingResponse:

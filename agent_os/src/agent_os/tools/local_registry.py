@@ -98,6 +98,10 @@ class LocalPythonToolRegistry:
     def has(self, name: str) -> bool:
         return name in self._tools
 
+    def specs(self) -> list[ToolSpec]:
+        """全部已注册工具的 ToolSpec(注册序;WEB-UI.md §6.2 Tools 浏览器数据源)。"""
+        return [tool.spec for tool in self._tools.values()]
+
     def get(self, name: str) -> Tool:
         try:
             return self._tools[name]

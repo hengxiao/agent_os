@@ -1,9 +1,15 @@
-/* DOM stub(D3 冒烟测试用):launch-dialog / progress-bar 用到的最小 DOM 面。
-   只实现被测代码真实消费的 API:createElement / appendChild / remove /
-   classList / dataset / setAttribute / addEventListener·removeEventListener·trigger /
-   closest / contains / querySelector(简单选择器:.class / #id / tag / [data-x])/
-   innerHTML(仅存字符串,不解析)/ textContent / value / disabled / hidden / focus。
-   不做:布局、样式计算、事件冒泡(trigger 只打当前目标监听器)。 */
+/* DOM stub(D3/D4/D5 冒烟测试用):被测代码真实消费的最小 DOM 面。
+   实现:createElement / appendChild / remove / classList / dataset /
+   setAttribute / addEventListener·removeEventListener·trigger / closest / contains /
+   querySelector·querySelectorAll(简单选择器:.class / #id / tag / [data-x])/
+   innerHTML / textContent / value / disabled / hidden / focus / scrollIntoView /
+   滚动面(scrollTop·clientHeight·scrollHeight,窗口化冒烟用)。
+   innerHTML 仅存字符串不解析;D5 起支持"区域提取":querySelector 简单选择器
+   若在 innerHTML 串中命中(id="x" / class 含 x / <tag / [data-x]=),返回持久
+   虚拟元素(可写 innerHTML、可挂监听、可被断言),无命中返回 null。
+   不做:布局、样式计算、事件冒泡(trigger 只打当前目标监听器)、复合选择器。 */
+
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export class StubEl {
   constructor(tag) {
@@ -23,9 +29,14 @@ export class StubEl {
     this.spellcheck = true;
     this.placeholder = "";
     this.focused = false;
+    this.isContentEditable = false;
+    this.scrollTop = 0;
+    this.clientHeight = 600;
+    this.scrollHeight = 0;
     this.ownerDocument = null;
     this._innerHTML = "";
     this._classes = new Set();
+    this._regions = new Map(); // 选择器 → 虚拟元素(innerHTML 串内区域,D5)
   }
 
   get className() {
@@ -53,7 +64,8 @@ export class StubEl {
 
   set innerHTML(v) {
     this._innerHTML = String(v);
-    this.children = []; // 不解析:子树清空(被测代码的后续查询会拿到 null 并走守卫)
+    this.children = []; // 不解析:子树清空(真实子元素随之失效)
+    this._regions = new Map(); // 区域提取缓存随内容重建
   }
 
   get innerHTML() {
@@ -108,6 +120,26 @@ export class StubEl {
     return null;
   }
 
+  /* 区域提取(D5):简单选择器在 innerHTML 串中命中时返回持久虚拟元素;
+     持久化保证"写入 innerHTML / 挂监听 / 后续断言"对同一区域生效。 */
+  _regionFor(sel) {
+    const s = String(sel).trim();
+    let pattern = null;
+    if (s.startsWith("#")) pattern = new RegExp(`id="${escapeRe(s.slice(1))}"`);
+    else if (s.startsWith(".")) pattern = new RegExp(`class="[^"]*\\b${escapeRe(s.slice(1))}\\b`);
+    else if (s.startsWith("[data-") && s.endsWith("]") && !s.includes("=")) {
+      pattern = new RegExp(`${escapeRe(s.slice(1, -1))}=`);
+    } else if (/^[a-zA-Z][\w-]*$/.test(s)) pattern = new RegExp(`<${escapeRe(s)}[\\s>]`);
+    if (!pattern || !pattern.test(this._innerHTML)) return null;
+    if (!this._regions.has(s)) {
+      const el = new StubEl("div");
+      el.ownerDocument = this.ownerDocument;
+      el.parentNode = this; // closest() 可上溯到宿主
+      this._regions.set(s, el);
+    }
+    return this._regions.get(s);
+  }
+
   querySelector(sel) {
     const walk = (node) => {
       for (const c of node.children) {
@@ -117,7 +149,19 @@ export class StubEl {
       }
       return null;
     };
-    return walk(this);
+    return walk(this) ?? this._regionFor(sel);
+  }
+
+  querySelectorAll(sel) {
+    const out = [];
+    const walk = (node) => {
+      for (const c of node.children) {
+        if (c.matches(sel)) out.push(c);
+        walk(c);
+      }
+    };
+    walk(this);
+    return out; // 不做区域提取(行集断言走 innerHTML 字符串)
   }
 
   addEventListener(type, fn) {
@@ -137,6 +181,10 @@ export class StubEl {
     this.focused = true;
     if (this.ownerDocument) this.ownerDocument.activeElement = this;
   }
+
+  scrollIntoView() {} // 布局无关 noop(真实浏览器负责滚动)
+
+  select() {} // input 全选 noop
 }
 
 export function makeDocument() {

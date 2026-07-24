@@ -103,7 +103,8 @@ button, input { font: inherit; color: inherit; }
    breathe — Skeleton 呼吸
    slide-in— Toast 滑入
    spin    — running 帧行内旋转指示(§4.3)
-   ft-in   — live 新帧滑入(§4.3 帧树实时生长) */
+   ft-in   — live 新帧滑入(§4.3 帧树实时生长)
+   rca-pulse — RCA 出错卡片一次性脉冲(§4.4) */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
@@ -122,6 +123,11 @@ button, input { font: inherit; color: inherit; }
 @keyframes ft-in {
   from { transform: translateX(calc(var(--s2) * -1)); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
+}
+/* rca-pulse — RCA 定位出错卡片的一次性脉冲(§4.4;色值 = --danger 的 alpha 序列) */
+@keyframes rca-pulse {
+  0% { box-shadow: 0 0 0 0 rgb(229 83 75 / 0.55); }
+  100% { box-shadow: 0 0 0 12px rgb(229 83 75 / 0); }
 }
 
 /* §6.4:prefers-reduced-motion 时关闭脉冲/呼吸/滑入等一切动效 */

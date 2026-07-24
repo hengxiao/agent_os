@@ -98,6 +98,11 @@ body {
   background: var(--warn);
   animation: none;
 }
+/* SSE 断线(§5):黄点 + "已断开,点击重连"(点击重建该 run 的 SSE) */
+.live-indicator[data-state="down"] {
+  background: var(--warn);
+  animation: pulse 2s ease-in-out infinite;
+}
 
 /* ── 按钮 ─────────────────────────────────────────────────── */
 .btn {
@@ -544,7 +549,7 @@ body[data-route="tools"] .sidebar { display: none; }
 }
 .wb > .banner { flex-shrink: 0; }
 
-/* Usage 折叠底栏占位(D5 交付,§4.5) */
+/* Usage 折叠底栏(§4.5):按帧表格 + 合计行;挂载逻辑 usage-panel.js */
 .wb-usage {
   flex-shrink: 0;
   background: var(--bg-1);
@@ -1276,3 +1281,268 @@ textarea.input {
 .sv-type { font-size: var(--text-xs); color: var(--fg-1); }
 .sv-constraints { font-size: var(--text-xs); color: var(--fg-2); } /* 约束灰注 */
 .sv-empty { font-size: var(--text-xs); color: var(--fg-2); }
+
+/* ── RCA 模式(§4.4):异常 Banner 动作区 / veto 归因卡 / 出错卡片高亮脉冲 ── */
+.rca-banner { align-items: center; }
+.rca-banner .banner-main { flex: 1; min-width: 0; }
+.rca-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* veto 归因卡(§4.4:裁决来源 / 理由全文 / 被否决参数 JSON 折叠+复制) */
+.rca-veto {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+  padding: var(--s2) var(--s3);
+  background: var(--bg-2);
+  border: var(--stroke) solid var(--danger);
+  border-left: var(--stroke-strong) solid var(--danger);
+  border-radius: var(--r-md);
+}
+.rca-veto-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+.rca-veto-badge {
+  padding: 0 var(--s2);
+  background: var(--danger);
+  color: var(--bg-0);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.rca-veto-src { font-size: var(--text-xs); color: var(--fg-1); }
+.rca-veto-src b { color: var(--danger); }
+.rca-veto-skill {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.rca-veto-msg { font-size: var(--text-sm); color: var(--fg-0); word-break: break-word; }
+.rca-veto-call {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  font-size: var(--text-xs);
+  color: var(--fg-1);
+}
+.rca-veto-args { flex-basis: 100%; }
+.rca-veto-args summary { cursor: pointer; color: var(--fg-2); }
+.rca-veto-args .msg-pre { margin-top: var(--s1); }
+
+/* 出错卡片(§4.4 动线第三步):红色高亮(rca-target 持久)+ 一次性脉冲(rca-pulse) */
+.rca-target {
+  outline: var(--stroke-strong) solid var(--danger);
+  outline-offset: calc(var(--stroke-strong) * -1);
+  border-radius: var(--r-md);
+}
+.rca-pulse { animation: rca-pulse 1.2s ease-out 1; }
+
+/* ── Usage 表格(§4.5):列排序 / cost 内联条 / cache 读写分色 / 合计行固定 ── */
+.us-summary-totals {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.us-body {
+  max-height: calc(var(--s8) * 10);
+  overflow: auto;
+}
+.us-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.us-table th,
+.us-table td {
+  padding: var(--s1) var(--s2);
+  text-align: left;
+  border-bottom: var(--stroke) solid var(--line);
+  white-space: nowrap;
+}
+.us-table .num { text-align: right; font-family: var(--font-mono); font-size: var(--text-xs); }
+.us-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-1);
+}
+.us-table tfoot td {
+  position: sticky; /* 合计行固定底部(§4.5) */
+  bottom: 0;
+  background: var(--bg-1);
+}
+.us-sort {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-1);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.us-sort:hover { color: var(--fg-0); }
+th.is-sorted .us-sort { color: var(--live); }
+.us-cache-read { color: var(--ok); } /* cache_read 读 = --ok 系(§4.5) */
+.us-cache-write { color: var(--warn); } /* cache_write 写 = --warn 系(§4.5) */
+.us-bar {
+  display: inline-block;
+  width: calc(var(--s8) * 2);
+  height: var(--s2);
+  margin-right: var(--s2);
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.us-bar span {
+  display: block;
+  height: 100%;
+  background: var(--live);
+  border-radius: var(--r-sm);
+}
+.us-totals-row td {
+  font-weight: 600;
+  border-bottom: none;
+  border-top: var(--stroke) solid var(--line);
+}
+
+/* ── 时间线窗口化占位行(§6.3:上下被裁行高度补齐 +"还有 N 条")── */
+.tl-gap { display: flex; justify-content: center; }
+.tl-gap-text {
+  padding: var(--s1) var(--s3);
+  background: var(--bg-2);
+  border-radius: var(--r-lg);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.tl-gap[data-side="top"] { align-items: flex-start; }
+.tl-gap[data-side="top"] .tl-gap-text { position: sticky; top: var(--s2); }
+.tl-gap[data-side="bottom"] { align-items: flex-end; }
+.tl-gap[data-side="bottom"] .tl-gap-text { position: sticky; bottom: var(--s2); }
+
+/* ── ⌘K 命令条(§5):居中 Modal + fuzzy 过滤列表 ───────────────── */
+.cp-overlay { padding-top: calc(var(--s8) * 3); }
+.cp-modal { width: calc(var(--s8) * 16); }
+.cp-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3);
+  border-bottom: var(--stroke) solid var(--line);
+}
+.cp-glyph {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.cp-input { border: none; background: transparent; padding: 0; }
+.cp-list {
+  max-height: calc(var(--s8) * 10);
+  overflow-y: auto;
+  padding: var(--s2);
+}
+.cp-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.cp-item.is-active { background: var(--bg-2); }
+.cp-item-glyph {
+  width: var(--s4);
+  flex-shrink: 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  color: var(--fg-2);
+}
+.cp-item-title { font-weight: 600; white-space: nowrap; }
+.cp-item-hint {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.cp-keys {
+  padding: 0 var(--s1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.cp-empty {
+  padding: var(--s4);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--fg-2);
+}
+
+/* ── `?` 快捷键面板(§5)────────────────────────────────────── */
+.sk-modal { width: calc(var(--s8) * 14); }
+.sk-group + .sk-group { margin-top: var(--s3); }
+.sk-group-title {
+  margin-bottom: var(--s1);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.sk-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s1) 0;
+}
+.sk-keys {
+  min-width: calc(var(--s8) * 3);
+  padding: var(--s1) var(--s2);
+  background: var(--bg-0);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+.sk-desc { font-size: var(--text-sm); color: var(--fg-1); }
+
+/* ── 打印样式(§6.3:RCA 页可打印贴 issue)──────────────────────
+   隐藏侧栏 / TopBar / 按钮;Workbench 三栏转单栏(帧树摘要 → 时间线 →
+   检视器,DOM 序即此序);Banner 保留(§4.4 异常摘要是打印核心)。 */
+@media print {
+  .app-topbar,
+  .sidebar,
+  .toast-stack,
+  .tl-follow,
+  .btn,
+  .icon-btn,
+  .copy-btn { display: none !important; }
+  body { height: auto; overflow: visible; }
+  .app-shell,
+  .app-main { height: auto; overflow: visible; }
+  .app-main { padding: 0; }
+  .wb,
+  .wb-cols { height: auto; overflow: visible; }
+  .wb-cols { flex-direction: column; }
+  .wb-tree,
+  .wb-timeline,
+  .wb-inspector { width: auto; flex: none; }
+  .wb-panel { overflow: visible; }
+  .banner { display: flex !important; } /* Banner 保留 */
+  .rca-veto { break-inside: avoid; }
+  .msg { break-inside: avoid; }
+}

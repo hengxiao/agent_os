@@ -29,4 +29,8 @@ export const store = createStore({
   runsStatus: "loading", // loading | ready | error
   selectedRunId: null,
   selection: null,
+  // SSE 连接态(§5 live 指示,workbench 写、app 渲染 TopBar):
+  // null = 无 live 会话(按 API 健康渲染)| "connecting" | "ok"(蓝点脉冲)|
+  // "down"(黄点 + "已断开,点击重连",点击重建该 run 的 SSE)
+  liveConn: null,
 });

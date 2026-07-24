@@ -214,6 +214,12 @@ export function mountLiveBar(container, { onStop } = {}) {
       phase = "ended";
       container.innerHTML = endBannerHtml(status, error);
     },
+    /* 命令条 Stop(§5 ⌘K):programmatic 进入确认条,复用同一不可逆确认流 */
+    requestStop() {
+      if (phase !== "live") return;
+      phase = "confirm";
+      render();
+    },
     destroy() {
       container.removeEventListener("click", onClick);
     },

@@ -6,7 +6,11 @@
      groupSignals(signals, opts)          §4.2 规则 2:信号流 → step 分组(每组 = 一次 loop 迭代)
      deriveTimelineView(signals, selection, opts)  §4.2 规则 1:过滤/聚焦/展开态的派生视图
      summarizeSignal(sig)                 关键 payload 摘要(tool 名/模型/ok…)
-   renderTimeline 返回 HTML 字符串;滚动/事件由 workbench 承担。
+     windowRange(total, scrollTop, rowH, viewportH, buffer)  §6.3 窗口化可见行区间
+     flattenTimelineRows(groups)          派生视图 → 平铺渲染行(组头 + 展开行,带估算高)
+     findRowPosition(rows, signalIndex)   信号下标 → 平铺行位置(窗口化滚动定位用)
+   renderTimeline 返回 HTML 字符串(opts.window 传窗口时只渲染切片 + 上下占位行);
+   滚动/事件由 workbench 承担。
 
    分组规则(§4.2 规则 2):每组 = 一次 loop 迭代——pre:step 开新组(组头取 step 号
    与帧 skill,pre:step 本身不占行),帧边界(frame_id 变化)强制收尾当前组;
@@ -125,7 +129,8 @@ export function groupSignals(signals, opts = {}) {
 export function deriveTimelineView(signals, selection, opts = {}) {
   const groups = groupSignals(signals, opts);
   const collapsed = opts.collapsed ?? new Set();
-  const filtering = Boolean(selection?.frameId) && selection?.source !== "timeline";
+  // 过滤仅"帧树选帧"(source "tree");timeline/rca 来源保持全量 + 聚焦滚动(§4.2/§4.4)
+  const filtering = Boolean(selection?.frameId) && selection?.source === "tree";
   const visible = filtering ? groups.filter((g) => g.frameId === selection.frameId) : groups;
   let focused = null;
   if (selection?.signalIndex != null) {
@@ -239,8 +244,87 @@ function groupHtml(g, selection, t0) {
   );
 }
 
-/* 时间线整体 HTML:过滤提示条(§4.2 规则 1:"已过滤 f-x,点击清除")+ 分组列表。 */
-export function renderTimeline(signals, view, { selection = null, frameSkill = null } = {}) {
+/* ── 窗口化(§6.3:>500 信号行只渲染视窗 ±buffer,上下占位行)─────── */
+
+export const WINDOW_THRESHOLD = 500; // 渲染行数超过此值才启用窗口化
+export const WINDOW_BUFFER = 50; // 视窗上下各多渲染的行数
+export const ROW_H = 28; // 信号行估算高(px,与 .tl-row 行高一致)
+export const HEAD_H = 32; // 组头估算高(px)
+
+/* 可见窗口纯函数:总行数 + 滚动位置 → [start, end) 行区间(边界 clamp)。 */
+export function windowRange(total, scrollTop, rowH, viewportH, buffer = WINDOW_BUFFER) {
+  const t = Math.max(0, Math.floor(Number(total) || 0));
+  if (!t) return { start: 0, end: 0 };
+  const rh = Number(rowH) > 0 ? Number(rowH) : ROW_H;
+  const st = Math.max(0, Number(scrollTop) || 0);
+  const vh = Math.max(0, Number(viewportH) || 0);
+  const buf = Math.max(0, Math.floor(Number(buffer) || 0));
+  const start = Math.max(0, Math.min(t - 1, Math.floor(st / rh)) - buf);
+  const end = Math.min(t, Math.max(Math.ceil((st + vh) / rh), Math.floor(st / rh) + 1) + buf);
+  return { start, end: Math.max(start, end) };
+}
+
+/* 派生视图 → 平铺渲染行(组头 + 展开组的信号行,折叠组只出头);
+   每行带估算高 h(占位行高度前缀和用)。 */
+export function flattenTimelineRows(groups) {
+  const rows = [];
+  for (const g of groups ?? []) {
+    rows.push({ type: "head", group: g, h: HEAD_H });
+    if (g.expanded) for (const it of g.items) rows.push({ type: "row", item: it, group: g, h: ROW_H });
+  }
+  return rows;
+}
+
+/* 信号全局下标 → 平铺行位置 { index(行下标), offset(距顶估算 px) };
+   行不可见(折叠组内)返回 null。 */
+export function findRowPosition(rows, signalIndex) {
+  let offset = 0;
+  for (let i = 0; i < (rows ?? []).length; i += 1) {
+    const r = rows[i];
+    if (r.type === "row" && r.item.index === signalIndex) return { index: i, offset };
+    offset += r.h;
+  }
+  return null;
+}
+
+/* 窗口切片 → 组序列(复用 groupHtml):首片落在组中时补该组头(保持语境),
+   切片内行全部展开渲染。 */
+function sliceRowsToGroups(rows, start, end) {
+  const out = [];
+  let cur = null;
+  for (let i = start; i < end && i < rows.length; i += 1) {
+    const r = rows[i];
+    if (!r) continue;
+    if (r.type === "head") {
+      cur = { ...r.group, items: [], expanded: true };
+      out.push(cur);
+    } else {
+      if (!cur) {
+        cur = { ...r.group, items: [], expanded: true };
+        out.push(cur);
+      }
+      cur.items.push(r.item);
+    }
+  }
+  return out;
+}
+
+/* 占位行(§6.3:"还有 N 条"):高度 = 被裁行估算高之和,维持滚动位置;
+   被裁段全是折叠组头(count=0)时仍补高度,只省略计数文案。 */
+function gapHtml(count, height, side) {
+  if (height <= 0) return "";
+  return (
+    `<div class="tl-gap" data-side="${side}" style="height:${Math.max(0, Math.round(height))}px"` +
+    ` aria-hidden="true">` +
+    (count > 0 ? `<span class="tl-gap-text">还有 ${count} 条信号</span>` : "") +
+    `</div>`
+  );
+}
+
+/* 时间线整体 HTML:过滤提示条(§4.2 规则 1:"已过滤 f-x,点击清除")+ 分组列表。
+   opts.window(窗口化,§6.3)= { start, end, topPad, bottomPad, topCount, bottomCount }:
+   只渲染 [start,end) 平铺行,上下以占位行补齐高度;缺省渲染全部。 */
+export function renderTimeline(signals, view, { selection = null, frameSkill = null, window: win = null } = {}) {
   const rows = Array.isArray(signals) ? signals : [];
   if (!rows.length) return "";
   const t0 = Number(rows[0]?.ts);
@@ -251,10 +335,17 @@ export function renderTimeline(signals, view, { selection = null, frameSkill = n
       `<span class="tl-filter-hint">点击清除 ✕</span>` +
       `</div>`
     : "";
+  const groupsHtml = win
+    ? gapHtml(win.topCount, win.topPad, "top") +
+      sliceRowsToGroups(flattenTimelineRows(view.groups), win.start, win.end)
+        .map((g) => groupHtml(g, selection, t0))
+        .join("") +
+      gapHtml(win.bottomCount, win.bottomPad, "bottom")
+    : view.groups.map((g) => groupHtml(g, selection, t0)).join("");
   return (
     filterBar +
     `<div class="tl-list" role="listbox" aria-label="信号时间线">` +
-    view.groups.map((g) => groupHtml(g, selection, t0)).join("") +
+    groupsHtml +
     `</div>`
   );
 }

@@ -1,9 +1,11 @@
 /* Run Workbench 页面(WEB-UI.md §4.2):run 头 + 异常 Banner + 三栏
-   (帧树 260px / 信号时间线 flex / 上下文检视器 420px)+ Usage 折叠占位栏。
+   (帧树 260px / 信号时间线 flex / 上下文检视器 420px)+ Usage 折叠栏(§4.5)。
 
    三联动(§4.2 规则 1,共享 selection store,订阅按键拆分、只重绘受影响栏):
      帧树选帧 → selection.source="tree":时间线过滤到该帧(提示条可清除),检视器懒加载该帧;
      时间线选信号 → source="timeline":帧树展开祖先+滚动选中所属帧,检视器滚动到对应消息卡片;
+     RCA 定位 → source="rca"(§4.4):帧树选中展开祖先,时间线滚动到出错信号,
+     检视器 veto 归因卡 + 出错卡片红色高亮(一次性脉冲);
      深链接 #/runs/<id>?frame=<fid>&signal=<i>(§4.1)载入后恢复 selection。
 
    Live 变体(§4.3,detail.status==="running"):
@@ -14,9 +16,22 @@
      (视窗在底则跟随,上翻暂停并浮现"回到底部");Stop → 不可逆确认条 → POST
      /stop → loading → Toast;结束(SSE event:end 或轮询发现终态)→ 进度条区
      替换为结果 Banner(done 绿 / failed 红 / aborted 紫),live 熄灭,停止追加。
+     SSE onerror(§5):store.liveConn 转 "down"(TopBar 黄点 + "已断开,点击重连",
+     点击经 reconnectLive() 重建该 run 的 SSE),同时回退轮询保数据不断。
 
-   本模块持有页面私有状态(wb):折叠集、帧上下文缓存(Map,懒加载 + 三态)、live 会话。
-   组件纯函数在 components/*;本文件只做取数、DOM 写入与事件接线。 */
+   RCA 模式(§4.4,异常 run):顶部 rcaBanner(定位首个错误 ⌘J / Resume ▶);
+     wbJumpFirstError:GET /rca(载入时已随 detail 拉取)→ planRcaJump 纯函数规划 →
+     帧树展开祖先选中 first_error.frame_id → 时间线展开所在组并滚动到出错信号
+     (无对应信号回退该帧最后信号)→ 检视器 veto 归因卡 + 出错卡片高亮脉冲。
+     Resume → POST /resume(后端阻塞到恢复结束,产物写回原 run)→ Toast → 重新 load。
+
+   性能(§6.3):信号渲染行 >500 启用窗口化(windowRange 视窗 ±50 行,上下占位行
+   显示"还有 N 条"),滚动时节流增量替换;j/k/gg/G 键盘导航与 RCA 滚动定位经
+   findRowPosition 先落窗再 scrollIntoView。
+
+   本模块持有页面私有状态(wb):折叠集、帧上下文缓存(Map,懒加载 + 三态)、live 会话、
+   RCA 缓存、Usage 面板句柄、窗口化行集。组件纯函数在 components/*;本文件只做取数、
+   DOM 写入与事件接线。 */
 
 import { store } from "./store.js";
 import { ApiError, getJson, postJson } from "./api.js";
@@ -40,7 +55,16 @@ import {
   findPath,
   renderFrameTree,
 } from "./components/frame-tree.js";
-import { deriveTimelineView, renderTimeline } from "./components/timeline.js";
+import {
+  ROW_H,
+  WINDOW_BUFFER,
+  WINDOW_THRESHOLD,
+  deriveTimelineView,
+  flattenTimelineRows,
+  findRowPosition,
+  renderTimeline,
+  windowRange,
+} from "./components/timeline.js";
 import { focusMessageIndex, renderMessages } from "./components/message-card.js";
 import {
   createLiveState,
@@ -49,11 +73,15 @@ import {
   mergeSignal,
   mountLiveBar,
 } from "./components/progress-bar.js";
+import { planRcaJump, rcaBannerHtml, vetoCardHtml } from "./components/rca-panel.js";
+import { mountUsagePanel } from "./components/usage-panel.js";
 
 /* live 轮询回退间隔(§4.3:SSE 不可用时 2s 轮询 detail) */
 const LIVE_POLL_MS = 2000;
 /* 已用时长走动间隔(§5:live 时长秒级更新) */
 const LIVE_TICK_MS = 200;
+/* 窗口化滚动重渲染节流(ms,§6.3) */
+const SCROLL_RENDER_MS = 80;
 
 /* ── 页面私有状态(每次切换 run 整体重置)────────────────────────── */
 
@@ -71,6 +99,11 @@ const wb = {
   frames: new Map(), // 帧上下文缓存:fid -> { status, data?, error? }
   pendingQuery: null, // 深链接 ?frame&signal,ready 后恢复
   lastView: null, // 最近一次 deriveTimelineView 结果(检视器聚焦查组用)
+  lastRows: [], // 最近一次 flattenTimelineRows 结果(窗口化/键盘导航用)
+  lastScrollRender: 0, // 窗口化滚动重渲染节流时间戳
+  scrollTimer: null, // 窗口化滚动节流 trailing 定时器
+  rca: null, // GET /rca 缓存(异常 run 载入时拉取;{ status, first_error })
+  usage: null, // Usage 折叠栏挂载句柄(§4.5,mountUsagePanel 返回)
   metaKey: "", // runs 列表元信息指纹(轮询时仅元信息变化才重绘页头)
   els: null, // { head, live, tree, timeline, inspector } 面板引用
   live: null, // live 会话(§4.3):{ state, es, pollId, tickId, follow, ending, knownFrames, bar, startMs }
@@ -97,6 +130,8 @@ export function openWorkbench(main, runId, query = null) {
   wb.main = main;
   if (wb.runId !== runId) {
     teardownLive(); // 换 run:旧 live 会话(SSE/定时器)先收尾
+    wb.usage?.destroy?.();
+    if (wb.scrollTimer) clearTimeout(wb.scrollTimer);
     wb.runId = runId;
     wb.status = "loading";
     wb.detail = null;
@@ -109,6 +144,11 @@ export function openWorkbench(main, runId, query = null) {
     wb.frames = new Map();
     wb.pendingQuery = query;
     wb.lastView = null;
+    wb.lastRows = [];
+    wb.lastScrollRender = 0;
+    wb.scrollTimer = null;
+    wb.rca = null;
+    wb.usage = null;
     wb.metaKey = "";
     wb.els = null;
     store.set({ selection: null }); // 换 run 清空三联动
@@ -122,6 +162,11 @@ export function openWorkbench(main, runId, query = null) {
 /* 离开 run 详情页(app.js 路由分发时调用,幂等):live 会话与页面态整体收尾 */
 export function closeWorkbench() {
   teardownLive();
+  wb.usage?.destroy?.();
+  if (wb.scrollTimer) clearTimeout(wb.scrollTimer);
+  wb.scrollTimer = null;
+  wb.usage = null;
+  wb.rca = null;
   wb.main = null;
   wb.runId = null;
   wb.status = "idle";
@@ -129,6 +174,7 @@ export function closeWorkbench() {
   wb.signals = [];
   wb.error = null;
   wb.roots = [];
+  wb.lastRows = [];
   wb.els = null;
 }
 
@@ -151,6 +197,16 @@ async function load() {
     wb.failedFrameIds = (detail?.frames ?? [])
       .filter((f) => f?.status === "failed")
       .map((f) => f.frame_id);
+    // §4.4:异常 run 随载入拉取 RCA 缓存(定位动线 / veto 归因卡数据源);失败降级 null
+    wb.rca = null;
+    if (detail?.status === "failed" || detail?.status === "aborted") {
+      try {
+        wb.rca = await getJson(`/api/runs/${encodeURIComponent(runId)}/rca`);
+      } catch {
+        wb.rca = null;
+      }
+      if (wb.runId !== runId || !wbRouteMatches(runId)) return;
+    }
     wb.status = "ready";
     renderShell();
     const q = wb.pendingQuery;
@@ -224,10 +280,7 @@ function renderShell() {
     `<section class="wb-panel wb-timeline" id="wbTimeline" aria-label="信号时间线"></section>` +
     `<section class="wb-panel wb-inspector" id="wbInspector" aria-label="上下文检视器"></section>` +
     `</div>` +
-    `<details class="wb-usage" id="wbUsage">` +
-    `<summary>Usage 按帧 <span class="wb-tag">D5 交付</span></summary>` +
-    `<div class="wb-usage-body">${skeletonStack}</div>` +
-    `</details>` +
+    `<details class="wb-usage" id="wbUsage"></details>` + // §4.5 Usage 折叠栏(mountUsagePanel 填充)
     `</div>`;
   wb.els = {
     head: main.querySelector("#wbHead"),
@@ -240,12 +293,19 @@ function renderShell() {
   wb.els.timeline.addEventListener("scroll", () => {
     const live = wb.live;
     const el = wb.els?.timeline;
-    if (!live || live.ending || !el) return;
-    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
-    if (atBottom !== live.follow) {
-      live.follow = atBottom;
-      syncFollowBtn();
+    if (live && !live.ending && el) {
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
+      if (atBottom !== live.follow) {
+        live.follow = atBottom;
+        syncFollowBtn();
+      }
     }
+    onTimelineScrollWindow(); // §6.3 窗口化:滚动时节流增量替换
+  });
+  // §4.5 Usage 折叠栏(默认收起,展开懒加载 /api/runs/{id}/usage)
+  wb.usage?.destroy?.();
+  wb.usage = mountUsagePanel(main.querySelector("#wbUsage"), {
+    load: () => getJson(`/api/runs/${encodeURIComponent(wb.runId)}/usage`),
   });
   renderHeader();
   renderTreePanel();
@@ -253,8 +313,61 @@ function renderShell() {
   renderInspectorPanel();
 }
 
+/* ── 时间线窗口化(§6.3:>500 渲染行只渲染视窗 ±WINDOW_BUFFER)────── */
+
+const sumHeight = (rows, from, to) => {
+  let h = 0;
+  for (let i = from; i < to && i < rows.length; i += 1) h += rows[i]?.h ?? ROW_H;
+  return h;
+};
+
+const countSignalRows = (rows, from, to) => {
+  let n = 0;
+  for (let i = from; i < to && i < rows.length; i += 1) if (rows[i]?.type === "row") n += 1;
+  return n;
+};
+
+const windowed = () => (wb.lastRows?.length ?? 0) > WINDOW_THRESHOLD;
+
+/* 滚动 → 窗口变化时节流重渲染(80ms + trailing,占位行高度维持滚动位置) */
+function onTimelineScrollWindow() {
+  if (!windowed()) return;
+  const now = Date.now();
+  const since = now - wb.lastScrollRender;
+  if (since >= SCROLL_RENDER_MS) {
+    wb.lastScrollRender = now;
+    renderTimelinePanel({ skipScroll: true });
+    return;
+  }
+  if (!wb.scrollTimer) {
+    wb.scrollTimer = setTimeout(() => {
+      wb.scrollTimer = null;
+      wb.lastScrollRender = Date.now();
+      if (wb.els?.timeline) renderTimelinePanel({ skipScroll: true });
+    }, SCROLL_RENDER_MS - since);
+  }
+}
+
+/* 选中信号滚动定位(时间线/RCA 来源):窗口化时先按行位置落窗(scrollTop 置中)
+   再重渲染切片,最后 scrollIntoView 微调;非窗口化直接 scrollIntoView。 */
+function scrollSignalIntoView(signalIndex) {
+  const el = wb.els?.timeline;
+  if (!el) return;
+  if (windowed()) {
+    const pos = findRowPosition(wb.lastRows, signalIndex);
+    if (pos) {
+      const vh = el.clientHeight || 0;
+      if (pos.offset < el.scrollTop || pos.offset + ROW_H > el.scrollTop + vh) {
+        el.scrollTop = Math.max(0, pos.offset - vh / 2);
+        renderTimelinePanel({ skipScroll: true }); // 目标行进入新窗口切片
+      }
+    }
+  }
+  el.querySelector(`[data-signal-index="${signalIndex}"]`)?.scrollIntoView({ block: "nearest" });
+}
+
 /* ── 渲染:run 头(§4.2:skill/StatusPill/run_id/started_at/result 摘要)
-      + 异常 run Banner(status + error + RCA D5 注)────────────────── */
+      + 异常 run RCA Banner(§4.4:status + error 摘要 + 定位 ⌘J + Resume)── */
 
 function renderHeader() {
   const el = wb.els?.head;
@@ -287,12 +400,8 @@ function renderHeader() {
     `<span class="run-cost mono">${esc(fmtCost(cost))}</span>` +
     `<span class="wb-result mono" title="result 摘要">result: ${esc(resultSummary)}</span>` +
     `</div>` +
-    (status === "failed"
-      ? banner("danger", `run failed — ${esc(d.error ?? "未知错误")}`, "RCA 一键定位 D5 交付")
-      : "") +
-    (status === "aborted"
-      ? banner("aborted", `run aborted — ${esc(d.error ?? "已中止")}`, "RCA 一键定位 D5 交付")
-      : "");
+    // §4.4 异常 Banner:status + error 摘要 + 定位首个错误 ⌘J + Resume ▶
+    (status === "failed" || status === "aborted" ? rcaBannerHtml(status, d.error) : "");
 }
 
 /* ── 渲染:帧树(左栏)───────────────────────────────────────────── */
@@ -307,11 +416,12 @@ function renderTreePanel() {
   el.innerHTML = html || emptyBlock("无帧数据", "该 run 尚未产生帧(checkpoint 缺失)");
 }
 
-/* 选中态定点更新(不整树重绘);时间线来源时展开祖先并滚动到所属帧(§4.2 规则 1) */
+/* 选中态定点更新(不整树重绘);时间线/RCA 来源时展开祖先并滚动到所属帧(§4.2 规则 1/§4.4) */
 function updateTreeSelection(sel) {
   const el = wb.els?.tree;
   if (!el) return;
-  if (sel?.frameId && sel.source === "timeline") {
+  const guided = sel?.source === "timeline" || sel?.source === "rca";
+  if (sel?.frameId && guided) {
     const path = findPath(wb.roots, sel.frameId);
     const collapsedAncestors = (path ?? [])
       .slice(0, -1)
@@ -324,14 +434,14 @@ function updateTreeSelection(sel) {
   el.querySelectorAll(".ft-row").forEach((row) => {
     row.setAttribute("aria-selected", String(row.dataset.frameId === (sel?.frameId ?? null)));
   });
-  if (sel?.frameId && sel.source === "timeline") {
+  if (sel?.frameId && guided) {
     el.querySelector(`.ft-row[data-frame-id="${sel.frameId}"]`)?.scrollIntoView({ block: "nearest" });
   }
 }
 
-/* ── 渲染:信号时间线(中栏)────────────────────────────────────── */
+/* ── 渲染:信号时间线(中栏,§6.3 窗口化)──────────────────────── */
 
-function renderTimelinePanel() {
+function renderTimelinePanel({ skipScroll = false } = {}) {
   const el = wb.els?.timeline;
   if (!el) return;
   const sel = store.get("selection");
@@ -340,14 +450,33 @@ function renderTimelinePanel() {
     failedFrameIds: wb.failedFrameIds,
   });
   wb.lastView = view;
+  const rows = flattenTimelineRows(view.groups);
+  wb.lastRows = rows;
+  let win = null;
+  if (rows.length > WINDOW_THRESHOLD) {
+    // live 跟随时窗口直接按底部计算(渲染后 applyFollow 才落 scrollTop)
+    const follow = Boolean(wb.live) && !wb.live.ending && wb.live.follow;
+    const st = follow ? Math.max(0, sumHeight(rows, 0, rows.length) - (el.clientHeight || 0)) : el.scrollTop;
+    const { start, end } = windowRange(rows.length, st, ROW_H, el.clientHeight || 0, WINDOW_BUFFER);
+    win = {
+      start,
+      end,
+      topPad: sumHeight(rows, 0, start),
+      bottomPad: sumHeight(rows, end, rows.length),
+      topCount: countSignalRows(rows, 0, start),
+      bottomCount: countSignalRows(rows, end, rows.length),
+    };
+  }
   el.innerHTML = wb.signals.length
     ? renderTimeline(wb.signals, view, {
         selection: sel,
         frameSkill: view.filterFrameId ? shortSkill(findFrame(view.filterFrameId)?.skill) : null,
+        window: win,
       })
     : emptyBlock("无信号数据", "trace.jsonl 缺失或该 run 尚未产生信号");
-  if (sel?.source === "timeline" && sel.signalIndex != null && view.focused?.visible) {
-    el.querySelector(`[data-signal-index="${sel.signalIndex}"]`)?.scrollIntoView({ block: "nearest" });
+  const guided = sel?.source === "timeline" || sel?.source === "rca"; // §4.2/§4.4 聚焦滚动
+  if (!skipScroll && guided && sel.signalIndex != null && view.focused?.visible) {
+    scrollSignalIntoView(sel.signalIndex);
   }
   applyFollow(); // live:新信号到达时视窗在底则自动跟随(§4.2 规则 2 live 半)
 }
@@ -419,35 +548,58 @@ function startLive() {
     live.bar?.setElapsed(fmtElapsed(live.startMs, Date.now()));
   }, LIVE_TICK_MS);
   if (typeof EventSource === "function") {
-    const es = new EventSource(`/api/runs/${encodeURIComponent(wb.runId)}/stream`);
-    live.es = es;
-    es.onopen = () => {
-      // 服务端 subscribe 原子回放环形缓冲,与 REST 快照重复:清空重折叠,幂等防重
-      live.state = createLiveState();
-      wb.signals = [];
-    };
-    es.onmessage = (ev) => {
-      let row = null;
-      try {
-        row = JSON.parse(ev.data);
-      } catch {
-        return; // keepalive 注释行不到这里;畸形行跳过
-      }
-      onLiveSignal(row);
-    };
-    es.addEventListener("end", () => {
-      es.close();
-      finishLive(); // SSE 终止事件:run 已结束,切结束态
-    });
-    es.onerror = () => {
-      if (live.ending || wb.live !== live) return;
-      es.close();
-      toast("实时连接中断,回退 2s 轮询", "info");
-      startPolling();
-    };
+    connectSse(live);
   } else {
     startPolling();
   }
+}
+
+/* SSE 连接(§4.3/§5):open → liveConn "ok"(TopBar 蓝点)并停轮询回退;
+   error → liveConn "down"(TopBar 黄点 + "已断开,点击重连")+ 回退 2s 轮询;
+   event:end → 结束态切换。重连(reconnectLive)复用本函数。 */
+function connectSse(live) {
+  const es = new EventSource(`/api/runs/${encodeURIComponent(wb.runId)}/stream`);
+  live.es = es;
+  es.onopen = () => {
+    // 服务端 subscribe 原子回放环形缓冲,与 REST 快照重复:清空重折叠,幂等防重
+    live.state = createLiveState();
+    wb.signals = [];
+    store.set({ liveConn: "ok" });
+    if (live.pollId != null) {
+      clearInterval(live.pollId); // SSE 恢复:停轮询回退
+      live.pollId = null;
+    }
+  };
+  es.onmessage = (ev) => {
+    let row = null;
+    try {
+      row = JSON.parse(ev.data);
+    } catch {
+      return; // keepalive 注释行不到这里;畸形行跳过
+    }
+    onLiveSignal(row);
+  };
+  es.addEventListener("end", () => {
+    es.close();
+    finishLive(); // SSE 终止事件:run 已结束,切结束态
+  });
+  es.onerror = () => {
+    if (live.ending || wb.live !== live) return;
+    es.close();
+    store.set({ liveConn: "down" }); // §5:TopBar 黄点 + "已断开,点击重连"
+    toast("实时连接中断,回退 2s 轮询;可点击 TopBar live 点重连", "info");
+    startPolling();
+  };
+}
+
+/* TopBar live 点点击重连(§5):重建该 run 的 SSE;非 live 会话返回 false */
+export function reconnectLive() {
+  const live = wb.live;
+  if (!live || live.ending || wb.detail?.status !== "running") return false;
+  live.es?.close();
+  store.set({ liveConn: "connecting" });
+  connectSse(live);
+  return true;
 }
 
 function onLiveSignal(row) {
@@ -520,6 +672,14 @@ async function finishLive() {
     }
     wb.roots = buildFrameTree(frames, pushOrder(wb.signals));
     wb.failedFrameIds = frames.filter((f) => f?.status === "failed").map((f) => f.frame_id);
+    // §4.4:终态为异常时刷新 RCA 缓存(刚失败的 run 立即可一键定位)
+    if (wb.detail?.status === "failed" || wb.detail?.status === "aborted") {
+      try {
+        wb.rca = await getJson(`/api/runs/${encodeURIComponent(runId)}/rca`);
+      } catch {
+        /* RCA 拉取失败保持旧缓存 */
+      }
+    }
   } catch {
     /* 终态拉取失败:仍按现有 detail 收尾(Banner/页头显示已知状态) */
   }
@@ -541,6 +701,7 @@ function teardownLive() {
   if (live.tickId != null) clearInterval(live.tickId);
   live.bar?.destroy();
   wb.live = null;
+  if (store.get("liveConn") != null) store.set({ liveConn: null }); // TopBar 回到 API 健康指示
 }
 
 /* Stop 流(§4.3/§5):确认条由 live bar 组件承担;成功后等 safe point 生效 */
@@ -553,6 +714,135 @@ async function doStop() {
     toast(e.message ?? "stop 失败", "error");
     return false;
   }
+}
+
+/* ── RCA 模式(§4.4):一键定位首个错误 + Resume ────────────────── */
+
+/* 异常 run 判定(⌘J / 命令条"定位首个错误"可见性) */
+export const wbRcaAvailable = () => {
+  const s = wb.detail?.status;
+  return wbActive() && (s === "failed" || s === "aborted");
+};
+
+export const wbRunning = () => wbActive() && wb.detail?.status === "running";
+
+/* 一键定位(§4.4;Banner 按钮 / ⌘J / ⌘K 命令):
+   planRcaJump 纯函数规划 → 帧树展开祖先选中 → 时间线展开所在组滚动到出错信号 →
+   检视器(source "rca")veto 归因卡 + 出错卡片红色高亮脉冲。三步经一次
+   selection 写入联动完成。 */
+export async function wbJumpFirstError() {
+  if (!wbActive()) return false;
+  if (!wbRcaAvailable()) {
+    toast("仅异常 run(failed/aborted)支持定位首个错误", "info");
+    return false;
+  }
+  if (!wb.rca) {
+    // 缓存缺失(载入时拉取失败):现场补拉一次
+    try {
+      wb.rca = await getJson(`/api/runs/${encodeURIComponent(wb.runId)}/rca`);
+    } catch (e) {
+      toast(e.message ?? "RCA 数据拉取失败", "error");
+      return false;
+    }
+    if (!wbActive()) return false;
+  }
+  const plan = planRcaJump(wb.rca, wb.detail?.frames ?? [], wb.signals);
+  if (!plan.frameId) {
+    toast(
+      plan.reason === "no-error" ? "未检测到可定位的错误信号" : "错误帧不在当前产物中(可能已被压缩/清理)",
+      "info");
+    return false;
+  }
+  // 帧树:展开祖先(updateTreeSelection 对 source "rca" 同样处理,此处提前展开
+  // 保证整树一次重绘);时间线:展开出错信号所在组(异常组本自动展开,aborted 回退信号可能折叠)
+  if (plan.signalIndex != null) {
+    const g = (wb.lastView?.all ?? []).find((gr) =>
+      gr.items.some((it) => it.index === plan.signalIndex));
+    if (g) wb.collapsedGroups.delete(g.key);
+  }
+  store.set({
+    selection: { frameId: plan.frameId, signalIndex: plan.signalIndex, source: "rca" },
+  });
+  return true;
+}
+
+/* Resume(§4.4 Banner / ⌘K 命令):POST /resume 后端阻塞到恢复结束,
+   产物写回原 run → Toast → 重新 load(恢复期间 run 转 running,回来即终态)。 */
+async function doResume() {
+  const btn = wb.els?.head?.querySelector('[data-action="wb-resume"]');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "恢复中…";
+    btn.setAttribute("aria-busy", "true");
+  }
+  try {
+    await postJson(`/api/runs/${encodeURIComponent(wb.runId)}/resume`);
+    toast("已从 checkpoint 恢复执行", "success");
+  } catch (e) {
+    toast(e.message ?? "resume 失败", "error");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Resume ▶";
+      btn.removeAttribute("aria-busy");
+    }
+    return false;
+  }
+  if (wbRouteMatches(wb.runId)) await load(); // 恢复产物已落盘:整页刷新(终态 Banner)
+  return true;
+}
+
+/* ⌘K Stop(§5):复用 live bar 的不可逆确认条(不直接中止) */
+export function wbRequestStop() {
+  if (!wbRunning()) return false;
+  wb.live?.bar?.requestStop();
+  return true;
+}
+
+/* ⌘K Resume(§5):仅 run 详情页可用 */
+export const wbResumable = () => wbActive() && !wbRunning();
+
+export function wbDoResume() {
+  if (!wbResumable()) return false;
+  return doResume();
+}
+
+/* ── 键盘信号导航(§5:j/k 下/上一条,gg/G 首/尾)────────────────
+   在当前可见行集(deriveTimelineView 可见组 × 展开态,尊重帧过滤与折叠)中移动;
+   选中经 selection store(source "timeline")走既有三联动。 */
+function visibleSignalIndexes() {
+  return (wb.lastView?.groups ?? [])
+    .filter((g) => g.expanded)
+    .flatMap((g) => g.items.map((it) => it.index));
+}
+
+export function wbNavSignal(delta) {
+  if (!wbActive() || !wb.signals.length) return false;
+  const order = visibleSignalIndexes();
+  if (!order.length) return false;
+  const cur = store.get("selection")?.signalIndex;
+  let next;
+  if (cur == null) {
+    next = delta >= 0 ? order[0] : order[order.length - 1];
+  } else {
+    const i = order.indexOf(cur);
+    const j = i < 0 ? 0 : Math.min(order.length - 1, Math.max(0, i + (delta >= 0 ? 1 : -1)));
+    next = order[j];
+  }
+  store.set({
+    selection: { frameId: wb.signals[next]?.frame_id ?? null, signalIndex: next, source: "timeline" },
+  });
+  return true;
+}
+
+export function wbNavEdge(which) {
+  if (!wbActive() || !wb.signals.length) return false;
+  const order = visibleSignalIndexes();
+  if (!order.length) return false;
+  const next = which === "first" ? order[0] : order[order.length - 1];
+  store.set({
+    selection: { frameId: wb.signals[next]?.frame_id ?? null, signalIndex: next, source: "timeline" },
+  });
+  return true;
 }
 
 /* ── 渲染:上下文检视器(右栏,三态:Skeleton/空提示/错误重试)─────── */
@@ -597,6 +887,33 @@ function renderInspectorPanel() {
   const msgs = Array.isArray(f.messages) ? f.messages : [];
   const steps = f.usage?.steps;
   const cost = f.usage?.cost;
+  // §4.4 RCA 来源:出错卡片定位(成对渲染的 tc-result;孤儿 tool 消息回退 focusMessageIndex)
+  const isRca = sel?.source === "rca";
+  const fe = isRca ? wb.rca?.first_error : null;
+  const signal = sel?.signalIndex != null ? wb.signals[sel.signalIndex] : null;
+  const group = signal
+    ? (wb.lastView?.all ?? []).find((g) => g.items.some((it) => it.index === sel.signalIndex))
+    : null;
+  const focusIdx = signal ? focusMessageIndex(signal, group?.step ?? null, msgs) : null;
+  let msgsHtml = msgs.length
+    ? renderMessages(msgs)
+    : emptyBlock("该帧无上下文消息", "frame.context.messages 为空");
+  if (isRca && fe) {
+    // 出错卡片:红色高亮 + 一次性脉冲(优先精确命中 focusIdx 对应的失败 tool 结果)
+    const exact =
+      focusIdx != null
+        ? `class="tc-result" data-ok="false" data-msg-index="${focusIdx}"`
+        : null;
+    if (exact && msgsHtml.includes(exact)) {
+      msgsHtml = msgsHtml.replace(
+        exact,
+        `class="tc-result rca-target rca-pulse" data-ok="false" data-msg-index="${focusIdx}"`);
+    } else {
+      msgsHtml = msgsHtml.replace(
+        `class="tc-result" data-ok="false"`,
+        `class="tc-result rca-target rca-pulse" data-ok="false"`);
+    }
+  }
   el.innerHTML =
     `<div class="insp-head">` +
     `<span class="insp-title">${esc(shortSkill(f.skill))} · f-${esc(shortId(fid))}</span>` +
@@ -605,19 +922,22 @@ function renderInspectorPanel() {
     (cost != null ? `<span class="chip chip-static mono">${esc(fmtCost(cost))}</span>` : "") +
     `<button class="btn btn-mini" data-action="wb-copy-frame" data-tip="复制该帧全部消息 JSON">复制全部 JSON</button>` +
     `</div>` +
+    // §4.4 veto 归因卡(出错卡片上方):裁决来源 kind / 理由全文 / 被否决参数 JSON
+    (fe?.kind === "vetoed" ? vetoCardHtml(fe) : "") +
     (f.error
       ? banner("danger", "帧错误", esc(typeof f.error === "string" ? f.error : JSON.stringify(f.error)))
       : "") +
-    (msgs.length ? renderMessages(msgs) : emptyBlock("该帧无上下文消息", "frame.context.messages 为空"));
-  // 时间线选中 → 滚动到该信号对应的消息卡片(§4.2 规则 1)
-  if (sel?.signalIndex != null) {
-    const signal = wb.signals[sel.signalIndex];
-    const group = (wb.lastView?.all ?? []).find((g) =>
-      g.items.some((it) => it.index === sel.signalIndex));
-    const idx = focusMessageIndex(signal, group?.step ?? null, msgs);
-    if (idx != null) {
-      el.querySelector(`[data-msg-index="${idx}"]`)?.scrollIntoView({ block: "start" });
+    msgsHtml;
+  // RCA:滚动到出错卡片(红色高亮目标);其余:时间线选中 → 滚动到对应消息卡片(§4.2 规则 1)
+  if (isRca) {
+    const target = el.querySelector(".rca-target");
+    if (target) {
+      target.scrollIntoView({ block: "center" });
+      return;
     }
+  }
+  if (focusIdx != null) {
+    el.querySelector(`[data-msg-index="${focusIdx}"]`)?.scrollIntoView({ block: "start" });
   }
 }
 
@@ -697,6 +1017,10 @@ export function workbenchClick(e, action) {
     if (act === "wb-retry-frame") return loadFrame(action.dataset.frameId), true;
     if (act === "wb-copy-frame") return copyFrame(), true;
     if (act === "wb-copy-msg") return copyMessage(Number(action.dataset.msgIndex)), true;
+    if (act === "wb-rca-jump") return wbJumpFirstError(), true; // §4.4 定位首个错误
+    if (act === "wb-resume") return doResume(), true; // §4.4 Resume
+    if (act === "us-sort") return wb.usage?.sortBy(action.dataset.key), true; // §4.5 列排序
+    if (act === "us-retry") return wb.usage?.reload(), true;
     if (act === "ft-toggle") {
       const fid = action.dataset.frameId;
       if (wb.collapsedFrames.has(fid)) wb.collapsedFrames.delete(fid);

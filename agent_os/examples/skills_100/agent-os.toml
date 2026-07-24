@@ -1,0 +1,27 @@
+# skills_100 压测调试配置(供 CLI/Web 直接加载;tests/test_examples.py 锚点)
+# mega_pipeline 深链为纯 code 技能,不发起 LLM 请求,故 providers 区留空。
+# 用法(仓库根目录):
+#   PYTHONPATH=examples/skills_100 .venv/bin/agent-os run mega_pipeline \
+#     --input '{"seed": 0}' --config examples/skills_100/agent-os.toml --json
+
+[run]
+model = "mock/ops"                # 占位;纯 code 链不会路由到任何 provider
+max_depth = 12                    # 深链恰好 12 层,正好顶到上限
+
+# providers 区留空:本例无 mock brain(mega 链纯 code)
+# [providers.mock]
+# brain = "skills100_handlers:..."   # 如需 LLM 环节再启用
+
+[tools]
+builtins = true                   # fs_read/fs_write/fs_edit/shell_exec/http_fetch
+python_exec = "docker"            # docker 不可用时自动回退 subprocess 沙箱
+
+[skills]
+path = "examples/skills_100/skills.yaml"
+
+[sidecars]
+budget_guard = { max_cost = 2.0 }
+loop_detector = { threshold = 3, max_strikes = 2 }
+
+[telemetry]
+dir = "examples/skills_100/traces"

@@ -1,0 +1,25 @@
+# research_pipeline 调试配置(供 CLI/Web 直接加载;tests/test_examples.py 锚点同拓扑)
+# 用法(仓库根目录):
+#   PYTHONPATH=examples/research_pipeline .venv/bin/agent-os run research_report \
+#     --input '{"question": "测试"}' --config examples/research_pipeline/agent-os.toml --json
+
+[run]
+model = "mock/ops"                # 技能 manifest 的 model.prefer 同值;路由到 mock provider
+max_depth = 12                    # 调用树最深 4 层,留足调试余量
+
+[providers.mock]
+brain = "brains:ops_brain"        # 通用表驱动 mock 大脑(需在 PYTHONPATH 上,见上用法)
+
+[tools]
+builtins = true                   # fs_read/fs_write/fs_edit/shell_exec/http_fetch
+python_exec = "docker"            # docker 不可用时自动回退 subprocess 沙箱
+
+[skills]
+path = "examples/research_pipeline/skills.yaml"
+
+[sidecars]
+budget_guard = { max_cost = 2.0 }
+loop_detector = { threshold = 3, max_strikes = 2 }
+
+[telemetry]
+dir = "examples/research_pipeline/traces"

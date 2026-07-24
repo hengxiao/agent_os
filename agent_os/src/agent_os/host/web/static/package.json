@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "private": true,
+  "description": "浏览器 ESM 源码目录标记:使 Node 能以 ESM 语义 import 本目录下的 .js(供 static/tests 单测使用;不参与构建,无依赖)"
+}

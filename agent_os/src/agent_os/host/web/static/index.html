@@ -1,235 +1,52 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Agent OS — Web UI</title>
-<style>
-  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --dim:#8b949e;
-          --llm:#58a6ff; --tool:#3fb950; --sidecar:#d29922; --error:#f85149; --run:#bc8cff; }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.5 -apple-system,"Segoe UI",sans-serif; }
-  header { display:flex; gap:16px; align-items:center; padding:8px 16px; background:var(--panel);
-           border-bottom:1px solid var(--border); position:sticky; top:0; }
-  header h1 { font-size:14px; margin:0; color:var(--dim); }
-  #usage { display:flex; gap:12px; font-family:ui-monospace,monospace; font-size:12px; }
-  #usage b { color:var(--fg); } #usage span { color:var(--dim); }
-  main { display:grid; grid-template-columns:220px 240px 1fr 1fr; height:calc(100vh - 41px); }
-  section { overflow-y:auto; border-right:1px solid var(--border); padding:8px; }
-  section h2 { font-size:11px; text-transform:uppercase; color:var(--dim); margin:4px 0 8px; }
-  .run { padding:4px 8px; border-radius:6px; cursor:pointer; font-family:ui-monospace,monospace;
-         white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .run:hover, .run.sel { background:var(--panel); }
-  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
-  .done { background:var(--tool); } .failed,.aborted { background:var(--error); }
-  .running { background:var(--sidecar); animation:blink 1s infinite; }
-  @keyframes blink { 50% { opacity:.3; } }
-  .frame { padding:2px 8px; cursor:pointer; font-family:ui-monospace,monospace; font-size:12px;
-           border-left:2px solid var(--border); }
-  .frame:hover, .frame.sel { background:var(--panel); }
-  .frame .st-done { color:var(--tool); } .frame .st-failed { color:var(--error); }
-  .frame .st-running { color:var(--sidecar); }
-  .sig { padding:1px 8px; font-family:ui-monospace,monospace; font-size:12px; cursor:pointer;
-         border-left:2px solid transparent; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .sig:hover { background:var(--panel); }
-  .sig.k-llm { color:var(--llm); } .sig.k-tool { color:var(--tool); }
-  .sig.k-sidecar { color:var(--sidecar); } .sig.k-run { color:var(--run); }
-  .sig.k-error { color:var(--error); font-weight:600; }
-  .sig.k-other { color:var(--dim); }
-  .msg { margin:0 0 10px; padding:6px 8px; background:var(--panel); border-radius:6px;
-         border-left:3px solid var(--border); }
-  .msg .meta { font-size:11px; color:var(--dim); margin-bottom:4px; }
-  .msg pre { margin:0; white-space:pre-wrap; word-break:break-word; font-size:12px; }
-  .msg.r-assistant { border-left-color:var(--llm); } .msg.r-tool { border-left-color:var(--tool); }
-  .msg.r-user,.msg.r-system { border-left-color:var(--run); }
-  .msg .veto { color:var(--error); } .msg .inject { color:var(--sidecar); }
-  details { margin-top:4px; } summary { cursor:pointer; color:var(--dim); font-size:11px; }
-  #empty { color:var(--dim); padding:24px; text-align:center; }
-  #toolbar { display:flex; gap:6px; margin-left:auto; }
-  #toolbar button { background:var(--panel); color:var(--fg); border:1px solid var(--border);
-                    border-radius:6px; padding:3px 10px; cursor:pointer; font-size:12px; }
-  #toolbar button:hover { border-color:var(--dim); }
-  #toolbar button.warn { color:var(--error); }
-  #panel { display:none; position:fixed; right:16px; top:48px; z-index:10; max-width:60vw;
-           max-height:70vh; overflow:auto; background:var(--panel); border:1px solid var(--border);
-           border-radius:8px; padding:10px 12px; box-shadow:0 4px 16px rgba(0,0,0,.5); }
-  #panel .close { float:right; cursor:pointer; color:var(--dim); }
-  #panel table { border-collapse:collapse; font-family:ui-monospace,monospace; font-size:11px; }
-  #panel th,#panel td { border:1px solid var(--border); padding:2px 8px; text-align:left; }
-  #panel th { color:var(--dim); }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent OS</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body>
-<header>
-  <h1>Agent OS</h1>
-  <div id="usage"></div>
-  <div id="toolbar">
-    <button id="btn-rca" title="Jump to first error">失败定位</button>
-    <button id="btn-usage">usage 面板</button>
-    <button id="btn-stop" class="warn" style="display:none">stop</button>
-    <button id="btn-resume" class="warn" style="display:none">resume</button>
-    <button id="btn-reload">reload skills</button>
+<body data-route="runs">
+<header class="app-topbar">
+  <div class="brand"><span class="brand-mark" aria-hidden="true">▎</span>Agent OS</div>
+  <nav class="topnav" aria-label="主导航">
+    <a class="nav-item" href="#/runs" data-nav="runs" aria-current="page">Runs</a>
+    <a class="nav-item" href="#/skills" data-nav="skills">Skills</a>
+    <a class="nav-item" href="#/tools" data-nav="tools">Tools</a>
+  </nav>
+  <div class="topbar-side">
+    <button class="live-indicator" id="liveIndicator" data-state="connecting"
+            title="连接中…" aria-label="API 连接状态,点击立即重试"></button>
+    <button class="btn btn-primary" id="newRunBtn" data-tip="D3 交付">+ New Run</button>
   </div>
 </header>
-<div id="panel"></div>
-<main>
-  <section id="runs"><h2>Runs</h2><div id="run-list"></div></section>
-  <section id="frames"><h2>帧树</h2><div id="frame-tree"><div id="empty">选择 run</div></div></section>
-  <section id="signals"><h2>信号时间线</h2><div id="timeline"></div></section>
-  <section id="context"><h2>帧上下文</h2><div id="messages"><div id="empty">点击信号或帧</div></div></section>
-</main>
-<script>
-"use strict";
-const $ = (id) => document.getElementById(id);
-let current = null, es = null, selFrame = null;
-
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c =>
-  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const fmt = (v) => typeof v === "string" ? v : JSON.stringify(v, null, 1);
-
-function kindOf(name) {
-  if (/llm/.test(name)) return "llm";
-  if (/tool|logic/.test(name)) return "tool";
-  if (/budget|veto|sidecar/.test(name)) return "sidecar";
-  if (/aborted|failed|error/.test(name)) return "error";
-  if (/^run\./.test(name)) return "run";
-  return "other";
-}
-
-async function refreshRuns() {
-  try {
-    const runs = await (await fetch("/api/runs")).json();
-    $("run-list").innerHTML = runs.map(r =>
-      `<div class="run ${r.run_id === current ? "sel" : ""}" data-id="${esc(r.run_id)}"
-            title="${esc(r.run_id)}">
-        <span class="dot ${esc(r.status)}"></span>${esc(r.skill)} · ${esc(r.status)}
-      </div>`).join("");
-    document.querySelectorAll(".run").forEach(el =>
-      el.onclick = () => selectRun(el.dataset.id));
-  } catch (e) { /* 服务未就绪时静默,下个周期重试 */ }
-}
-
-async function selectRun(runId) {
-  current = runId; selFrame = null;
-  if (es) { es.close(); es = null; }
-  await loadDetail();
-  attachStream();
-  refreshRuns();
-}
-
-async function loadDetail() {
-  if (!current) return;
-  const d = await (await fetch(`/api/runs/${current}`)).json();
-  const u = d.usage || {};
-  $("usage").innerHTML = ["steps", "prompt_tokens", "completion_tokens",
-    "cache_read_tokens", "cache_write_tokens", "thinking_tokens", "cost"]
-    .map(k => `<span>${k}: <b>${esc(u[k] ?? 0)}</b></span>`).join("");
-  $("frame-tree").innerHTML = (d.frames || []).map(f =>
-    `<div class="frame" data-id="${esc(f.frame_id)}" style="margin-left:${(f.depth - 1) * 14}px">
-      <span class="st-${esc(f.status)}">●</span> ${esc(f.skill)}
-      <span style="color:var(--dim)">· ${f.usage.steps} 步</span>
-    </div>`).join("") || `<div id="empty">run 进行中…</div>`;
-  document.querySelectorAll(".frame").forEach(el =>
-    el.onclick = () => showFrame(el.dataset.id));
-  // stop/resume 按钮按 run 状态显隐(§4.4:进行中显 stop,失败/中止显 resume)
-  $("btn-stop").style.display = d.status === "running" ? "" : "none";
-  $("btn-resume").style.display = ["failed", "aborted"].includes(d.status) ? "" : "none";
-  const sigs = await (await fetch(`/api/runs/${current}/signals`)).json();
-  $("timeline").innerHTML = "";
-  sigs.forEach(appendSignal);
-  return d;
-}
-
-function showPanel(html) {
-  $("panel").innerHTML = `<span class="close" onclick="$('panel').style.display='none'">✕</span>` + html;
-  $("panel").style.display = "block";
-}
-
-// R4:失败定位(§4.4 "Jump to first error")——首个错误高亮并定位到对应帧
-$("btn-rca").onclick = async () => {
-  if (!current) return;
-  const rca = await (await fetch(`/api/runs/${current}/rca`)).json();
-  const err = rca.first_error;
-  if (!err) { showPanel(`<b>未发现错误</b>(status: ${esc(rca.status ?? "running")})`); return; }
-  showPanel(
-    `<div><b style="color:var(--error)">${esc(err.kind)}</b> · ${esc(err.skill ?? "")}</div>` +
-    `<pre>${esc(err.message ?? "")}</pre>` +
-    (err.call ? `<details open><summary>call</summary><pre>${esc(fmt(err.call))}</pre></details>` : ""));
-  if (err.frame_id) showFrame(err.frame_id);
-};
-
-// R4:usage 面板——按帧分列(steps/tokens/cache/thinking/cost)
-$("btn-usage").onclick = async () => {
-  if (!current) return;
-  const u = await (await fetch(`/api/runs/${current}/usage`)).json();
-  const cols = ["skill", "depth", "status", "steps", "prompt_tokens", "completion_tokens",
-    "cache_read_tokens", "cache_write_tokens", "thinking_tokens", "cost"];
-  const row = (tag, cells) => `<tr>${cells.map(c => `<${tag}>${esc(c ?? 0)}</${tag}>`).join("")}</tr>`;
-  showPanel(`<table><thead>${row("th", cols)}</thead><tbody>` +
-    (u.frames || []).map(f => row("td", cols.map(c => f[c]))).join("") +
-    `</tbody></table>`);
-};
-
-$("btn-stop").onclick = async () => {
-  if (!current) return;
-  await fetch(`/api/runs/${current}/stop`, { method: "POST" });
-  refreshRuns();
-};
-
-$("btn-resume").onclick = async () => {
-  if (!current) return;
-  await fetch(`/api/runs/${current}/resume`, { method: "POST" });
-  await loadDetail();
-  attachStream();
-  refreshRuns();
-};
-
-$("btn-reload").onclick = async () => {
-  const r = await (await fetch("/api/skills/reload", { method: "POST" })).json();
-  showPanel(`skills reload: reloaded = <b>${esc(r.reloaded)}</b>`);
-};
-
-function appendSignal(row) {
-  const div = document.createElement("div");
-  div.className = `sig k-${kindOf(row.name || "")}`;
-  const t = row.ts ? new Date(row.ts * 1000).toLocaleTimeString() : "";
-  div.textContent = `${t} ${row.name}`;
-  div.title = JSON.stringify(row.payload ?? {}, null, 1).slice(0, 2000);
-  if (row.frame_id) div.onclick = () => showFrame(row.frame_id);
-  $("timeline").appendChild(div);
-  div.scrollIntoView({ block: "nearest" });
-}
-
-function attachStream() {
-  fetch(`/api/runs/${current}`).then(r => r.json()).then(d => {
-    if (d.status !== "running" || es || current === null) return;
-    es = new EventSource(`/api/runs/${current}/stream`);
-    es.onmessage = (e) => appendSignal(JSON.parse(e.data));
-    es.addEventListener("end", () => { es.close(); es = null; loadDetail(); refreshRuns(); });
-  });
-}
-
-async function showFrame(fid) {
-  selFrame = fid;
-  document.querySelectorAll(".frame").forEach(el =>
-    el.classList.toggle("sel", el.dataset.id === fid));
-  const f = await (await fetch(`/api/runs/${current}/frames/${fid}`)).json();
-  const box = $("messages");
-  box.innerHTML = (f.messages || []).map(m => {
-    const calls = (m.tool_calls || []).map(c =>
-      `<details><summary>tool_call: ${esc(c.name || c.tool || "")}</summary><pre>${esc(fmt(c.arguments ?? c.args ?? c))}</pre></details>`).join("");
-    const tags = [m.role, m.source].filter(Boolean).map(x => esc(x)).join(" · ");
-    return `<div class="msg r-${esc(m.role)}"><div class="meta">${tags}</div>
-      <pre>${esc(fmt(m.content))}</pre>${calls}</div>`;
-  }).join("") || `<div id="empty">无消息</div>`;
-  const head = document.createElement("div");
-  head.className = "msg";
-  head.innerHTML = `<div class="meta">${esc(fid)} · ${esc(f.skill)} · ${esc(f.status)}</div>
-    <pre>input: ${esc(fmt(f.input))}\nresult: ${esc(fmt(f.result))}${f.error ? "\nerror: " + esc(f.error) : ""}</pre>`;
-  box.prepend(head);
-}
-
-setInterval(refreshRuns, 2000);
-refreshRuns();
-</script>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar" aria-label="Run 列表">
+    <div class="sidebar-head">
+      <span class="sidebar-title">Runs</span>
+      <button class="icon-btn collapse-btn" id="collapseBtn" title="折叠侧栏" aria-label="折叠侧栏">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M10 3 L5 8 L10 13"/>
+        </svg>
+      </button>
+    </div>
+    <div class="sidebar-tools">
+      <input class="search-input" id="searchInput" type="search"
+             placeholder="按技能名搜索…" aria-label="按技能名搜索">
+      <div class="chips" id="statusChips" role="group" aria-label="状态筛选">
+        <button class="chip is-active" data-status="all">全部</button>
+        <button class="chip" data-status="failed">失败</button>
+        <button class="chip" data-status="aborted">中止</button>
+        <button class="chip" data-status="running">进行中</button>
+      </div>
+    </div>
+    <div class="run-list" id="runList" role="listbox" aria-label="Run 列表"></div>
+  </aside>
+  <main class="app-main" id="main"></main>
+</div>
+<div class="toast-stack" id="toastStack" aria-live="polite"></div>
+<script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

@@ -1,0 +1,123 @@
+/* Agent OS 设计系统 token(WEB-UI.md §3)——单文件 token 源。
+   约束:全部样式只消费 token,不写散值;本文件只放 token 与全局基元
+   (reset / focus 环 / 滚动条 / 动效 keyframes / reduced-motion 基线),不写组件样式。 */
+
+:root {
+  /* ── §3.1 色板(dark-first):基底 ───────────────────────────── */
+  --bg-0: #0b0e14;   /* 应用底色 */
+  --bg-1: #11151d;   /* 面板 */
+  --bg-2: #171d29;   /* 悬浮/选中 */
+  --bg-3: #1f2837;   /* 悬停 */
+  --line: #263043;   /* 分割线 */
+  --fg-0: #e6ebf2;   /* 主文本 */
+  --fg-1: #9aa7ba;   /* 次文本 */
+  --fg-2: #5d6b82;   /* 弱化/占位 */
+
+  /* 语义:run/frame 状态(状态永远"颜色 + 图标/文字"双编码) */
+  --ok:      #3fb68b;   /* done / success */
+  --warn:    #d9a03f;   /* paused / degraded */
+  --danger:  #e5534b;   /* failed / veto / error */
+  --aborted: #9e6bde;   /* aborted(独立一色,中止≠失败) */
+  --live:    #3b9eff;   /* running / live 指示(带脉冲动效) */
+
+  /* 语义:信号类型 */
+  --sig-llm:      #6f9fff;
+  --sig-tool:     #3fb68b;
+  --sig-sidecar:  #d9a03f;
+  --sig-compress: #8b7cf6;
+  --sig-budget:   #e5534b;
+  --sig-frame:    #5d6b82;
+
+  /* 语义:工具权限等级 */
+  --perm-read:  #5d6b82;
+  --perm-write: #d9a03f;
+  --perm-net:   #6f9fff;
+  --perm-exec:  #e5534b;
+
+  /* ── §3.2 字体与排版 ───────────────────────────────────────── */
+  --font-ui:  system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+
+  --text-xs: 11px;    /* 元信息、时间戳 */
+  --text-sm: 12.5px;  /* 列表正文、表格 */
+  --text-md: 14px;    /* 检视器正文 */
+  --text-lg: 16px;    /* 面板标题 */
+  --text-xl: 20px;    /* 页头 */
+
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+  --r-sm: 4px; --r-md: 8px; --r-lg: 12px;
+
+  /* ── 布局基元(应用壳尺寸,§4.1)───────────────────────────── */
+  --topbar-h: 48px;        /* TopBar 固定高 */
+  --sidebar-w: 280px;      /* Runs 侧栏展开宽 */
+  --sidebar-w-icon: 48px;  /* 侧栏折叠后的图标栏宽 */
+
+  /* ── 描边与阴影基元 ────────────────────────────────────────── */
+  --stroke: 1px;           /* 常规描边 */
+  --stroke-strong: 2px;    /* 选中边条 / focus 环 */
+  --shadow-pop: 0 4px 16px rgb(0 0 0 / 0.5);  /* Toast / Tooltip 浮层 */
+}
+
+/* ── 全局基元 ───────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { color-scheme: dark; }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input { font: inherit; color: inherit; }
+
+/* 可见 focus 环(§6.4 可访问性基线:键盘可达 + 可见 focus 环) */
+:focus-visible {
+  outline: var(--stroke-strong) solid var(--live);
+  outline-offset: var(--stroke-strong);
+  border-radius: var(--r-sm);
+}
+
+/* 滚动条(dark 适配):细轨、thumb 用面板悬浮色 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-3) transparent;
+}
+*::-webkit-scrollbar { width: var(--s2); height: var(--s2); }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: var(--r-sm); }
+*::-webkit-scrollbar-thumb:hover { background: var(--line); }
+*::-webkit-scrollbar-corner { background: transparent; }
+
+/* 动效基元(组件样式在 app.css 消费):
+   pulse   — live/running 脉冲(§3.1:live 指示带脉冲动效)
+   breathe — Skeleton 呼吸
+   slide-in— Toast 滑入 */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+@keyframes slide-in {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* §6.4:prefers-reduced-motion 时关闭脉冲/呼吸/滑入等一切动效 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

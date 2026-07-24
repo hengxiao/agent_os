@@ -51,6 +51,8 @@
   --topbar-h: 48px;        /* TopBar 固定高 */
   --sidebar-w: 280px;      /* Runs 侧栏展开宽 */
   --sidebar-w-icon: 48px;  /* 侧栏折叠后的图标栏宽 */
+  --wb-tree-w: 260px;      /* Workbench 帧树栏宽(§4.2) */
+  --wb-inspector-w: 420px; /* Workbench 上下文检视器栏宽(§4.2) */
 
   /* ── 描边与阴影基元 ────────────────────────────────────────── */
   --stroke: 1px;           /* 常规描边 */

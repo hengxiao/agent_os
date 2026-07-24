@@ -19,10 +19,14 @@ export function createStore(initial = {}) {
   };
 }
 
-/* 全局应用状态(§6.1):路由、run 列表、列表加载态、当前选中 run。 */
+/* 全局应用状态(§6.1):路由、run 列表、列表加载态、当前选中 run、Workbench 三联动选择。
+   selection(§4.2 规则 1):{ frameId, signalIndex, source } | null;
+   source ∈ "tree"(帧树选帧→时间线过滤)/ "timeline"(时间线选信号→帧树定位、检视器滚动);
+   signalIndex 为信号在 run 信号流中的全局下标;frameId 与 signalIndex 均可为 null。 */
 export const store = createStore({
   route: { name: "runs", runId: null }, // runs | run-detail | skills | tools
   runs: [],
   runsStatus: "loading", // loading | ready | error
   selectedRunId: null,
+  selection: null,
 });

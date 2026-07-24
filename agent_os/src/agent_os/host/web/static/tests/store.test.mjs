@@ -46,13 +46,14 @@ import { createStore, store } from "../js/store.js";
   assert.equal(n2, 1);
 }
 
-// 全局单例:带 §6.1 约定的四个键与初始加载态
+// 全局单例:带 §6.1 约定的初始键与加载态
 {
-  for (const k of ["route", "runs", "runsStatus", "selectedRunId"]) {
+  for (const k of ["route", "runs", "runsStatus", "selectedRunId", "selection"]) {
     assert.ok(k in store.get(), `缺少初始键 ${k}`);
   }
   assert.equal(store.get("runsStatus"), "loading");
   assert.deepEqual(store.get("runs"), []);
+  assert.equal(store.get("selection"), null, "selection(§4.2 三联动)初始为空");
 }
 
 console.log("store.test.mjs: all assertions passed");

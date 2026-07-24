@@ -194,6 +194,11 @@ def read_checkpoint(run_dir: str | Path) -> dict[str, Any]:
     return json.loads((Path(run_dir) / "checkpoint.json").read_text(encoding="utf-8"))
 
 
+def read_result(run_dir: str | Path) -> dict[str, Any]:
+    """读产物目录的 result.json({status, result, error, usage 汇总},§2.2)。"""
+    return json.loads((Path(run_dir) / "result.json").read_text(encoding="utf-8"))
+
+
 def frame_tree(checkpoint: dict[str, Any]) -> list[dict[str, Any]]:
     """checkpoint → 按 depth 排序的帧摘要列表(frame_id/skill/depth/status/usage.steps)。"""
     frames = sorted(checkpoint.get("frames", []), key=lambda f: f.get("depth", 0))

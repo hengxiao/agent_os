@@ -1,4 +1,4 @@
-"""agent-os CLI(RUNNERS.md §3;R1 核心:run/trace/inspect/resume)。
+"""agent-os CLI(RUNNERS.md §3;R1 核心:run/trace/inspect/resume;R2 复现:replay/diff/skills)。
 
 面向 coding agent 的薄宿主:stdout = RunRecord JSON(``--json`` 时唯一输出;
 缺省人读摘要 + 末行 JSON,§3.3),stderr 人类可读日志。退出码(§3.3):
@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from agent_os.host.shared.artifacts import (
     execute_resume,
     execute_run,
@@ -26,9 +28,11 @@ from agent_os.host.shared.artifacts import (
     read_checkpoint,
     read_trace,
 )
+from agent_os.host.shared.replay import build_mock_script, diff_runs, replace_providers
 from agent_os.host.shared.runrecord import STATUS_DONE, dumps
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.runtime.config import build_kernel
+from agent_os.skills.local_file import LocalFileSkillRegistry
 
 
 class _InfraError(RuntimeError):
@@ -183,6 +187,110 @@ def _cmd_resume(args: argparse.Namespace) -> int:
     return 0 if record["status"] == STATUS_DONE else 3
 
 
+def _cmd_replay(args: argparse.Namespace) -> int:
+    """replay(§3.4):trace + checkpoint 重建 MockProvider 脚本,确定性重放为新 run。"""
+    run_dir = _run_dir(args)
+    for name in ("meta.json", "trace.jsonl", "checkpoint.json"):
+        if not (run_dir / name).is_file():
+            print(f"找不到 run 产物目录: {run_dir}", file=sys.stderr)
+            return 2
+    try:
+        meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+        script = build_mock_script(run_dir)
+    except (OSError, ValueError) as e:  # 产物畸形 / 信号与 checkpoint 对不齐
+        print(f"replay 产物无效: {e}", file=sys.stderr)
+        return 2
+    try:
+        kernel = _build_kernel(args.config)
+    except SkillLoadError as e:
+        print(f"技能校验错误: {e}", file=sys.stderr)
+        return 2
+    except _InfraError as e:
+        print(f"基础设施错误: {e}", file=sys.stderr)
+        return 4
+    replace_providers(kernel, script)
+    try:
+        record = execute_run(
+            kernel,
+            meta.get("skill"),
+            meta.get("input") or {},
+            artifacts_root=Path(args.artifacts),
+            host="cli",
+        )
+    except SkillLoadError as e:
+        print(f"校验错误: {e}", file=sys.stderr)
+        return 2
+    _emit_record(record, args.json)
+    return 0 if record["status"] == STATUS_DONE else 3
+
+
+def _emit_report(report: dict[str, Any], as_json: bool, summary: list[str]) -> None:
+    """diff/skills 报告的输出契约:``--json`` → 仅 JSON;否则人读摘要 + 末行 JSON。"""
+    line = json.dumps(report, ensure_ascii=False, default=repr)
+    if as_json:
+        print(line)
+        return
+    for row in summary:
+        print(row)
+    print(line)
+
+
+def _cmd_diff(args: argparse.Namespace) -> int:
+    """diff(§3.2):两次 run 的结构化对比;查询而非判决,算出报告即退出码 0。"""
+    dir_a = Path(args.artifacts) / "runs" / args.run_id_a
+    dir_b = Path(args.artifacts) / "runs" / args.run_id_b
+    for run_dir in (dir_a, dir_b):
+        if not (run_dir / "result.json").is_file() or not (run_dir / "trace.jsonl").is_file():
+            print(f"找不到 run 产物目录: {run_dir}", file=sys.stderr)
+            return 2
+    report = diff_runs(dir_a, dir_b)
+    counts = report["signal_counts"]
+    _emit_report(
+        report,
+        args.json,
+        [
+            f"result_equal: {report['result_equal']}",
+            f"signals_equal: {report['signals_equal']}",
+            f"signal_counts: a={counts['a']} b={counts['b']}",
+            f"first_divergence: {report['first_divergence']}",
+        ],
+    )
+    return 0
+
+
+def _cmd_skills(args: argparse.Namespace) -> int:
+    """skills validate|list(§3.2):构造即加载走完整校验管线,失败退出码 2。"""
+    try:
+        registry = LocalFileSkillRegistry(args.path)
+    except (SkillLoadError, OSError, yaml.YAMLError) as e:
+        report: dict[str, Any] = {"ok": False, "skills": [], "errors": [str(e)]}
+    else:
+        report = {
+            "ok": True,
+            "skills": [
+                {
+                    "name": m.name,
+                    "version": m.version,
+                    "kind": m.kind.value,
+                    "description": m.description,
+                    "tools": list(m.permissions.tools),
+                    "skills": list(m.permissions.skills),
+                }
+                for m in registry.manifests()
+            ],
+            "errors": [],
+        }
+    if report["ok"]:
+        summary = [
+            f"{s['name']} {s['version']} {s['kind']}: {s['description']}"
+            for s in report["skills"]
+        ]
+    else:
+        summary = [f"error: {e}" for e in report["errors"]]
+    _emit_report(report, args.json, summary)
+    return 0 if report["ok"] else 2
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-os",
@@ -218,6 +326,28 @@ def _parser() -> argparse.ArgumentParser:
     p_resume.add_argument("--artifacts", default=".agent-os")
     p_resume.add_argument("--json", action="store_true")
     p_resume.set_defaults(func=_cmd_resume)
+
+    p_replay = sub.add_parser("replay", help="重建 MockProvider 脚本,确定性重放该 run(§3.4)")
+    p_replay.add_argument("run_id")
+    p_replay.add_argument("--config", default="agent-os.toml")
+    p_replay.add_argument("--artifacts", default=".agent-os")
+    p_replay.add_argument("--json", action="store_true")
+    p_replay.set_defaults(func=_cmd_replay)
+
+    p_diff = sub.add_parser("diff", help="两次 run 的结构化 diff(result/usage/信号序列)")
+    p_diff.add_argument("run_id_a")
+    p_diff.add_argument("run_id_b")
+    p_diff.add_argument("--artifacts", default=".agent-os")
+    p_diff.add_argument("--json", action="store_true")
+    p_diff.set_defaults(func=_cmd_diff)
+
+    p_skills = sub.add_parser("skills", help="skills.yaml lint(manifest 校验 + 依赖图检查)")
+    skills_sub = p_skills.add_subparsers(dest="skills_command", required=True)
+    for action in ("validate", "list"):
+        sp = skills_sub.add_parser(action, help="同一校验报告;失败退出码 2")
+        sp.add_argument("path", help="skills.yaml 路径")
+        sp.add_argument("--json", action="store_true")
+        sp.set_defaults(func=_cmd_skills)
     return parser
 
 

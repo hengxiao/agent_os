@@ -20,6 +20,14 @@ R4 增量(§4.3/§4.4):
   新 hub(原 hub 已在首次 run 结束时关闭),SSE 可继续观察;
 - ``reload_skills``:共享一份 skills registry(惰性装配,仅供查询/reload;
   每 run 的内核仍各自重建 registry,reload 只影响后续新建的 run,§6.1)。
+
+D3 增量(WEB-UI.md §4.3/§6.2):
+
+- ``start_run(..., overrides=...)``:``{model?, max_cost?, max_steps?}`` 合并进
+  本次 run 的 RunConfig——每次重新 ``load_config`` 读文件,改动只落在该 run
+  私有的 config dict 副本上,不污染共享配置(后续 run 与 reload 路径不受影响);
+- ``skills_manifests`` / ``skill_manifest``:共享 registry 的只读查询
+  (``GET /api/skills`` 数据源),与 ``reload_skills`` 共用惰性装配路径。
 """
 
 from __future__ import annotations
@@ -35,13 +43,16 @@ from typing import Any, ClassVar
 from agent_os.api.v1 import RUN_STARTED, Allow, Mode, RunControl, Signal
 from agent_os.host.shared.artifacts import execute_resume, execute_run
 from agent_os.host.shared.runrecord import STATUS_FAILED
-from agent_os.runtime.config import build_kernel
+from agent_os.runtime.config import build_kernel, load_config
 
 #: hub 关闭时投递给订阅者的哨兵(§4.2:run 结束后 SSE 发终止事件并关闭)
 HUB_CLOSED: Any = object()
 
 #: 环形缓冲容量(§4.2 默认 2000 条)
 BUFFER_MAXLEN = 2000
+
+#: ``POST /api/runs`` 的 ``overrides`` 允许覆盖的 RunConfig 字段(WEB-UI.md §4.3 高级区)
+OVERRIDE_FIELDS = ("model", "max_cost", "max_steps")
 
 
 class _StopBridge:
@@ -167,15 +178,35 @@ class RunManager:
         self._hubs: dict[str, SignalHub] = {}
         self._skills_registry: Any = None  # 惰性装配的共享 registry(reload/查询用)
 
-    def _assemble_kernel(self) -> Any:
-        """按 config 装配一个 run 的内核;恒附带 _StopBridge 保证 ctl 存在(stop 通道)。"""
-        return build_kernel(self._config_path, extra_sidecars=[_StopBridge()])
+    def _assemble_kernel(self, overrides: dict[str, Any] | None = None) -> Any:
+        """按 config 装配一个 run 的内核;恒附带 _StopBridge 保证 ctl 存在(stop 通道)。
 
-    async def start_run(self, skill: str, input: dict[str, Any], wait: bool = False) -> str:
+        ``overrides``(D3,WEB-UI.md §4.3):``{model?, max_cost?, max_steps?}`` 合并进
+        本次 run 的 ``[run]`` 配置。配置文件每次重新读取,改动只落在本 run 私有的
+        dict 副本上——只影响本次 run,不泄漏到后续 run 或共享 registry(D3 锚点)。
+        """
+        if not overrides:
+            return build_kernel(self._config_path, extra_sidecars=[_StopBridge()])
+        cfg = load_config(self._config_path)
+        run_section = dict(cfg.get("run") or {})
+        for key in OVERRIDE_FIELDS:
+            if key in overrides and overrides[key] is not None:
+                run_section[key] = overrides[key]
+        cfg["run"] = run_section
+        return build_kernel(cfg, extra_sidecars=[_StopBridge()])
+
+    async def start_run(
+        self,
+        skill: str,
+        input: dict[str, Any],
+        wait: bool = False,
+        overrides: dict[str, Any] | None = None,
+    ) -> str:
         """启动一个 run 并返回 run_id;``wait=True`` 时阻塞到 run 结束。
 
         run_id 从 ``run.started`` 信号捕获:无论 wait 与否都先等到 run 真正开始
         (或开始即失败)再返回;run 未开始的校验错抛 :class:`RunValidationError`。
+        ``overrides`` 见 :meth:`_assemble_kernel`(D3,只影响本次 run)。
         """
         hub = SignalHub()
         started = threading.Event()
@@ -200,7 +231,7 @@ class RunManager:
 
         def _work() -> None:
             try:
-                kernel = self._assemble_kernel()
+                kernel = self._assemble_kernel(overrides)
                 state["kernel"] = kernel
 
                 async def _fan(sig: Signal) -> None:
@@ -314,13 +345,11 @@ class RunManager:
             "kernel": None,
         }
 
-    def reload_skills(self) -> bool:
-        """``POST /api/skills/reload``(§4.3):共享 registry 的热重载(mtime 检查,§6.1)。
+    def _shared_registry(self) -> Any:
+        """惰性装配共享 skills registry(reload/只读查询用)。
 
-        返回是否真重载;registry 惰性装配(首次调用时按 config 建一只内核取其
-        skills registry)。配置未装配 skills → :class:`RunValidationError`。
-        reload 只影响后续新建的 run(每 run 独立内核、独立 registry),在跑的
-        run 钉住旧版。
+        配置未装配 skills → :class:`RunValidationError`。每 run 的内核仍各自重建
+        registry(§6.1),本 registry 仅供 ``GET /api/skills`` 与 reload。
         """
         registry = self._skills_registry
         if registry is None:
@@ -328,7 +357,23 @@ class RunManager:
             if registry is None:
                 raise RunValidationError("配置未装配 skills registry(缺 [skills].path)")
             self._skills_registry = registry
-        return bool(registry.reload())
+        return registry
+
+    def reload_skills(self) -> bool:
+        """``POST /api/skills/reload``(§4.3):共享 registry 的热重载(mtime 检查,§6.1)。
+
+        返回是否真重载。reload 只影响后续新建的 run(每 run 独立内核、独立
+        registry),在跑的 run 钉住旧版。
+        """
+        return bool(self._shared_registry().reload())
+
+    def skills_manifests(self) -> list[Any]:
+        """``GET /api/skills``(WEB-UI.md §6.2):共享 registry 的 manifest 列表(拓扑序)。"""
+        return list(self._shared_registry().manifests())
+
+    def skill_manifest(self, name: str) -> Any | None:
+        """按名字取 manifest;不存在返回 ``None``(路由层归 404)。"""
+        return next((m for m in self.skills_manifests() if m.name == name), None)
 
     def state_of(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:

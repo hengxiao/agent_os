@@ -1,0 +1,132 @@
+{
+  "v": 1,
+  "run": {
+    "run_id": "af6cbc2c765c4519935f13049eda5cd8",
+    "status": "aborted",
+    "usage": {
+      "prompt_tokens": 2,
+      "cache_write_tokens": 0,
+      "steps": 2,
+      "completion_tokens": 2,
+      "ttft_ms": 0,
+      "thinking_tokens": 0,
+      "cost": 0.0,
+      "total_ms": 0,
+      "cache_read_tokens": 0
+    },
+    "result": null,
+    "error": "RunAborted: run 总步数 2 超过 max_steps=1"
+  },
+  "frames": [
+    {
+      "frame_id": "944dde9d23ac47c6ab328b724bc3bc92",
+      "skill": "local:fib@1.0.0",
+      "parent_id": null,
+      "input": {
+        "n": 3
+      },
+      "depth": 1,
+      "status": "running",
+      "result": null,
+      "error": "run 总步数 2 超过 max_steps=1",
+      "call_id": null,
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "steps": 1,
+        "completion_tokens": 1,
+        "ttft_ms": 0,
+        "thinking_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 3}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-3",
+                "name": "skill__fib",
+                "args": {
+                  "n": 2
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    },
+    {
+      "frame_id": "b674f0021e034b6d92099fda16eec8b1",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "944dde9d23ac47c6ab328b724bc3bc92",
+      "input": {
+        "n": 2
+      },
+      "depth": 2,
+      "status": "running",
+      "result": null,
+      "error": "run 总步数 2 超过 max_steps=1",
+      "call_id": "call-fib-3",
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "steps": 1,
+        "completion_tokens": 1,
+        "ttft_ms": 0,
+        "thinking_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 2}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"seq\": [0, 1]}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    }
+  ]
+}

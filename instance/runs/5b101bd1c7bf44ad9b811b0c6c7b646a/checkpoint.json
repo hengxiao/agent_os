@@ -1,0 +1,782 @@
+{
+  "v": 1,
+  "run": {
+    "run_id": "5b101bd1c7bf44ad9b811b0c6c7b646a",
+    "status": "done",
+    "usage": {
+      "prompt_tokens": 19,
+      "cache_write_tokens": 0,
+      "steps": 19,
+      "completion_tokens": 19,
+      "ttft_ms": 0,
+      "thinking_tokens": 0,
+      "cost": 0.0,
+      "total_ms": 0,
+      "cache_read_tokens": 0
+    },
+    "result": {
+      "seq": [
+        0,
+        1,
+        1,
+        2,
+        3,
+        5,
+        8,
+        13
+      ]
+    },
+    "error": null
+  },
+  "frames": [
+    {
+      "frame_id": "3b3f9db81a5749248babf5d127800f77",
+      "skill": "local:fib@1.0.0",
+      "parent_id": null,
+      "input": {
+        "n": 8
+      },
+      "depth": 1,
+      "status": "done",
+      "result": {
+        "seq": [
+          0,
+          1,
+          1,
+          2,
+          3,
+          5,
+          8,
+          13
+        ]
+      },
+      "error": null,
+      "call_id": null,
+      "usage": {
+        "prompt_tokens": 3,
+        "cache_write_tokens": 0,
+        "steps": 3,
+        "completion_tokens": 3,
+        "ttft_ms": 0,
+        "thinking_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 8}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-8",
+                "name": "skill__fib",
+                "args": {
+                  "n": 7
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"seq\": [0, 1, 1, 2, 3, 5, 8]}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-fib-8",
+            "name": "skill__fib",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-py-8",
+                "name": "python_exec",
+                "args": {
+                  "code": "result = 5 + 8\nprint(result)"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"stdout\": \"13\\n\", \"stderr\": \"\", \"result\": 13}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-py-8",
+            "name": "python_exec",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"seq\": [0, 1, 1, 2, 3, 5, 8, 13]}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 74
+      }
+    },
+    {
+      "frame_id": "5ffc221a378a4e538d8d22a192145b8f",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "3b3f9db81a5749248babf5d127800f77",
+      "input": {
+        "n": 7
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "seq": [
+          0,
+          1,
+          1,
+          2,
+          3,
+          5,
+          8
+        ]
+      },
+      "error": null,
+      "call_id": "call-fib-8",
+      "usage": {
+        "prompt_tokens": 3,
+        "cache_write_tokens": 0,
+        "steps": 3,
+        "completion_tokens": 3,
+        "ttft_ms": 0,
+        "thinking_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 7}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-7",
+                "name": "skill__fib",
+                "args": {
+                  "n": 6
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"seq\": [0, 1, 1, 2, 3, 5]}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-fib-7",
+            "name": "skill__fib",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-py-7",
+                "name": "python_exec",
+                "args": {
+                  "code": "result = 3 + 5\nprint(result)"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"stdout\": \"8\\n\", \"stderr\": \"\", \"result\": 8}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-py-7",
+            "name": "python_exec",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"seq\": [0, 1, 1, 2, 3, 5, 8]}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 72
+      }
+    },
+    {
+      "frame_id": "f336a63d481745aab7cabe717085e50e",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "5ffc221a378a4e538d8d22a192145b8f",
+      "input": {
+        "n": 6
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "seq": [
+          0,
+          1,
+          1,
+          2,
+          3,
+          5
+        ]
+      },
+      "error": null,
+      "call_id": "call-fib-7",
+      "usage": {
+        "prompt_tokens": 3,
+        "cache_write_tokens": 0,
+        "steps": 3,
+        "completion_tokens": 3,
+        "ttft_ms": 0,
+        "thinking_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 6}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-6",
+                "name": "skill__fib",
+                "args": {
+                  "n": 5
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"seq\": [0, 1, 1, 2, 3]}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-fib-6",
+            "name": "skill__fib",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-py-6",
+                "name": "python_exec",
+                "args": {
+                  "code": "result = 2 + 3\nprint(result)"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"stdout\": \"5\\n\", \"stderr\": \"\", \"result\": 5}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-py-6",
+            "name": "python_exec",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"seq\": [0, 1, 1, 2, 3, 5]}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 71
+      }
+    },
+    {
+      "frame_id": "bc77909e84834d5e87aaa94b75769bb0",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "f336a63d481745aab7cabe717085e50e",
+      "input": {
+        "n": 5
+      },
+      "depth": 4,
+      "status": "done",
+      "result": {
+        "seq": [
+          0,
+          1,
+          1,
+          2,
+          3
+        ]
+      },
+      "error": null,
+      "call_id": "call-fib-6",
+      "usage": {
+        "prompt_tokens": 3,
+        "cache_write_tokens": 0,
+        "steps": 3,
+        "completion_tokens": 3,
+        "ttft_ms": 0,
+        "thinking_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 5}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-5",
+                "name": "skill__fib",
+                "args": {
+                  "n": 4
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"seq\": [0, 1, 1, 2]}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-fib-5",
+            "name": "skill__fib",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-py-5",
+                "name": "python_exec",
+                "args": {
+                  "code": "result = 1 + 2\nprint(result)"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"stdout\": \"3\\n\", \"stderr\": \"\", \"result\": 3}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-py-5",
+            "name": "python_exec",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"seq\": [0, 1, 1, 2, 3]}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 70
+      }
+    },
+    {
+      "frame_id": "556f2184acdc4f32bad272e4faadcbba",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "bc77909e84834d5e87aaa94b75769bb0",
+      "input": {
+        "n": 4
+      },
+      "depth": 5,
+      "status": "done",
+      "result": {
+        "seq": [
+          0,
+          1,
+          1,
+          2
+        ]
+      },
+      "error": null,
+      "call_id": "call-fib-5",
+      "usage": {
+        "prompt_tokens": 3,
+        "cache_write_tokens": 0,
+        "steps": 3,
+        "completion_tokens": 3,
+        "ttft_ms": 0,
+        "thinking_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 4}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-4",
+                "name": "skill__fib",
+                "args": {
+                  "n": 3
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"seq\": [0, 1, 1]}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-fib-4",
+            "name": "skill__fib",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-py-4",
+                "name": "python_exec",
+                "args": {
+                  "code": "result = 1 + 1\nprint(result)"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"stdout\": \"2\\n\", \"stderr\": \"\", \"result\": 2}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-py-4",
+            "name": "python_exec",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"seq\": [0, 1, 1, 2]}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 70
+      }
+    },
+    {
+      "frame_id": "6dd9c7c9ca02423285514b6b3fe32c56",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "556f2184acdc4f32bad272e4faadcbba",
+      "input": {
+        "n": 3
+      },
+      "depth": 6,
+      "status": "done",
+      "result": {
+        "seq": [
+          0,
+          1,
+          1
+        ]
+      },
+      "error": null,
+      "call_id": "call-fib-4",
+      "usage": {
+        "prompt_tokens": 3,
+        "cache_write_tokens": 0,
+        "steps": 3,
+        "completion_tokens": 3,
+        "ttft_ms": 0,
+        "thinking_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 3}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-3",
+                "name": "skill__fib",
+                "args": {
+                  "n": 2
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"seq\": [0, 1]}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-fib-3",
+            "name": "skill__fib",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-py-3",
+                "name": "python_exec",
+                "args": {
+                  "code": "result = 0 + 1\nprint(result)"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"stdout\": \"1\\n\", \"stderr\": \"\", \"result\": 1}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-py-3",
+            "name": "python_exec",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"seq\": [0, 1, 1]}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 69
+      }
+    },
+    {
+      "frame_id": "0d61cf03799944a1bcb50bc2a56db07c",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "6dd9c7c9ca02423285514b6b3fe32c56",
+      "input": {
+        "n": 2
+      },
+      "depth": 7,
+      "status": "done",
+      "result": {
+        "seq": [
+          0,
+          1
+        ]
+      },
+      "error": null,
+      "call_id": "call-fib-3",
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "steps": 1,
+        "completion_tokens": 1,
+        "ttft_ms": 0,
+        "thinking_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 2}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"seq\": [0, 1]}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    }
+  ]
+}

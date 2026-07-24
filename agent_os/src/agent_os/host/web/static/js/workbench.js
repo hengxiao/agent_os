@@ -6,11 +6,20 @@
      时间线选信号 → source="timeline":帧树展开祖先+滚动选中所属帧,检视器滚动到对应消息卡片;
      深链接 #/runs/<id>?frame=<fid>&signal=<i>(§4.1)载入后恢复 selection。
 
-   本模块持有页面私有状态(wb):折叠集、帧上下文缓存(Map,懒加载 + 三态)。
+   Live 变体(§4.3,detail.status==="running"):
+     顶部进度条区(live 脉冲 / 已用时长秒级走动 / steps+cost 双 ProgressBar /
+     右侧常驻 Stop);数据优先 SSE(/api/runs/{id}/stream,回放与 REST 快照重复,
+     open 时清空重折叠保幂等),SSE 不可用回退 2s 轮询 detail+signals;帧树随
+     frame.push/pop 实时生长(新帧滑入,running 帧旋转指示);时间线自动跟随
+     (视窗在底则跟随,上翻暂停并浮现"回到底部");Stop → 不可逆确认条 → POST
+     /stop → loading → Toast;结束(SSE event:end 或轮询发现终态)→ 进度条区
+     替换为结果 Banner(done 绿 / failed 红 / aborted 紫),live 熄灭,停止追加。
+
+   本模块持有页面私有状态(wb):折叠集、帧上下文缓存(Map,懒加载 + 三态)、live 会话。
    组件纯函数在 components/*;本文件只做取数、DOM 写入与事件接线。 */
 
 import { store } from "./store.js";
-import { ApiError, getJson } from "./api.js";
+import { ApiError, getJson, postJson } from "./api.js";
 import {
   COPY_SVG,
   absTime,
@@ -33,6 +42,18 @@ import {
 } from "./components/frame-tree.js";
 import { deriveTimelineView, renderTimeline } from "./components/timeline.js";
 import { focusMessageIndex, renderMessages } from "./components/message-card.js";
+import {
+  createLiveState,
+  deriveProgress,
+  fmtElapsed,
+  mergeSignal,
+  mountLiveBar,
+} from "./components/progress-bar.js";
+
+/* live 轮询回退间隔(§4.3:SSE 不可用时 2s 轮询 detail) */
+const LIVE_POLL_MS = 2000;
+/* 已用时长走动间隔(§5:live 时长秒级更新) */
+const LIVE_TICK_MS = 200;
 
 /* ── 页面私有状态(每次切换 run 整体重置)────────────────────────── */
 
@@ -51,7 +72,8 @@ const wb = {
   pendingQuery: null, // 深链接 ?frame&signal,ready 后恢复
   lastView: null, // 最近一次 deriveTimelineView 结果(检视器聚焦查组用)
   metaKey: "", // runs 列表元信息指纹(轮询时仅元信息变化才重绘页头)
-  els: null, // { head, tree, timeline, inspector } 面板引用
+  els: null, // { head, live, tree, timeline, inspector } 面板引用
+  live: null, // live 会话(§4.3):{ state, es, pollId, tickId, follow, ending, knownFrames, bar, startMs }
 };
 
 const wbActive = () =>
@@ -74,6 +96,7 @@ const findFrame = (fid) =>
 export function openWorkbench(main, runId, query = null) {
   wb.main = main;
   if (wb.runId !== runId) {
+    teardownLive(); // 换 run:旧 live 会话(SSE/定时器)先收尾
     wb.runId = runId;
     wb.status = "loading";
     wb.detail = null;
@@ -94,6 +117,19 @@ export function openWorkbench(main, runId, query = null) {
   }
   // 同 run:仅查询参数变化(手动编辑 hash)时恢复 selection
   if (query?.frame && wb.status === "ready") applyPendingQuery(query);
+}
+
+/* 离开 run 详情页(app.js 路由分发时调用,幂等):live 会话与页面态整体收尾 */
+export function closeWorkbench() {
+  teardownLive();
+  wb.main = null;
+  wb.runId = null;
+  wb.status = "idle";
+  wb.detail = null;
+  wb.signals = [];
+  wb.error = null;
+  wb.roots = [];
+  wb.els = null;
 }
 
 /* ── 取数:detail + signals 并行;帧上下文按选中懒加载 ────────────── */
@@ -120,6 +156,7 @@ async function load() {
     const q = wb.pendingQuery;
     wb.pendingQuery = null;
     if (q?.frame) applyPendingQuery(q); // 深链接恢复(§4.1)
+    if (detail?.status === "running") startLive(); // §4.3:进行中 run 进 live 变体
   } catch (e) {
     if (wb.runId !== runId) return;
     wb.status = "error";
@@ -181,6 +218,7 @@ function renderShell() {
   main.innerHTML =
     `<div class="wb">` +
     `<div id="wbHead"></div>` +
+    `<div id="wbLive" class="wb-live"></div>` +
     `<div class="wb-cols">` +
     `<section class="wb-panel wb-tree" id="wbTree" aria-label="帧树"></section>` +
     `<section class="wb-panel wb-timeline" id="wbTimeline" aria-label="信号时间线"></section>` +
@@ -193,10 +231,22 @@ function renderShell() {
     `</div>`;
   wb.els = {
     head: main.querySelector("#wbHead"),
+    live: main.querySelector("#wbLive"),
     tree: main.querySelector("#wbTree"),
     timeline: main.querySelector("#wbTimeline"),
     inspector: main.querySelector("#wbInspector"),
   };
+  // live 时间线自动跟随(§4.2 规则 2 live 半):用户上翻暂停跟随,回到底部恢复
+  wb.els.timeline.addEventListener("scroll", () => {
+    const live = wb.live;
+    const el = wb.els?.timeline;
+    if (!live || live.ending || !el) return;
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 24;
+    if (atBottom !== live.follow) {
+      live.follow = atBottom;
+      syncFollowBtn();
+    }
+  });
   renderHeader();
   renderTreePanel();
   renderTimelinePanel();
@@ -299,6 +349,210 @@ function renderTimelinePanel() {
   if (sel?.source === "timeline" && sel.signalIndex != null && view.focused?.visible) {
     el.querySelector(`[data-signal-index="${sel.signalIndex}"]`)?.scrollIntoView({ block: "nearest" });
   }
+  applyFollow(); // live:新信号到达时视窗在底则自动跟随(§4.2 规则 2 live 半)
+}
+
+/* ── Live(§4.3):进度条区 / SSE 驱动 / 轮询回退 / Stop / 结束态 ──── */
+
+/* 自动跟随:follow 时滚到底;"回到底部"悬浮钮按 follow 态浮现/移除 */
+function applyFollow() {
+  const live = wb.live;
+  const el = wb.els?.timeline;
+  if (!el) return;
+  if (live && !live.ending && live.follow) el.scrollTop = el.scrollHeight;
+  syncFollowBtn();
+}
+
+function syncFollowBtn() {
+  const live = wb.live;
+  const el = wb.els?.timeline;
+  if (!el) return;
+  const show = Boolean(live) && !live.ending && !live.follow;
+  let btn = el.querySelector(".tl-follow");
+  if (!show) {
+    btn?.remove();
+    return;
+  }
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.className = "tl-follow";
+    btn.dataset.action = "wb-follow";
+    btn.textContent = "↓ 回到底部";
+    el.appendChild(btn);
+  }
+}
+
+/* 帧树实时生长(§4.3):live.state.frames 重建树,新帧行加滑入动画类 */
+function refreshLiveTree() {
+  const live = wb.live;
+  if (!live) return;
+  wb.roots = buildFrameTree(live.state.frames, pushOrder(wb.signals));
+  renderTreePanel();
+  const el = wb.els?.tree;
+  if (!el) return;
+  for (const f of live.state.frames) {
+    if (live.knownFrames.has(f.frame_id)) continue;
+    live.knownFrames.add(f.frame_id);
+    el.querySelector(`.ft-row[data-frame-id="${f.frame_id}"]`)?.classList.add("ft-new");
+  }
+}
+
+function startLive() {
+  const live = (wb.live = {
+    state: createLiveState(),
+    es: null,
+    pollId: null,
+    tickId: null,
+    follow: true,
+    ending: false,
+    knownFrames: new Set(),
+    bar: null,
+    startMs: Date.parse(wb.detail?.started_at ?? "") || Date.now(),
+  });
+  // REST 快照(初始 signals)先折叠进 live 状态:帧树/进度与时间线同源
+  for (const s of wb.signals) mergeSignal(live.state, s);
+  refreshLiveTree();
+  live.bar = mountLiveBar(wb.els.live, { onStop: doStop });
+  live.bar.update(deriveProgress(wb.detail, wb.signals));
+  live.bar.setElapsed(fmtElapsed(live.startMs, Date.now()));
+  live.tickId = setInterval(() => {
+    live.bar?.setElapsed(fmtElapsed(live.startMs, Date.now()));
+  }, LIVE_TICK_MS);
+  if (typeof EventSource === "function") {
+    const es = new EventSource(`/api/runs/${encodeURIComponent(wb.runId)}/stream`);
+    live.es = es;
+    es.onopen = () => {
+      // 服务端 subscribe 原子回放环形缓冲,与 REST 快照重复:清空重折叠,幂等防重
+      live.state = createLiveState();
+      wb.signals = [];
+    };
+    es.onmessage = (ev) => {
+      let row = null;
+      try {
+        row = JSON.parse(ev.data);
+      } catch {
+        return; // keepalive 注释行不到这里;畸形行跳过
+      }
+      onLiveSignal(row);
+    };
+    es.addEventListener("end", () => {
+      es.close();
+      finishLive(); // SSE 终止事件:run 已结束,切结束态
+    });
+    es.onerror = () => {
+      if (live.ending || wb.live !== live) return;
+      es.close();
+      toast("实时连接中断,回退 2s 轮询", "info");
+      startPolling();
+    };
+  } else {
+    startPolling();
+  }
+}
+
+function onLiveSignal(row) {
+  const live = wb.live;
+  if (!live || live.ending) return;
+  mergeSignal(live.state, row);
+  wb.signals = live.state.signals;
+  if (live.state.lastEffect === "tree" || live.state.lastEffect === "chip") {
+    refreshLiveTree(); // frame.push/pop 或帧 steps/cost 变化
+  }
+  renderTimelinePanel(); // 含 applyFollow
+  live.bar?.update(deriveProgress(wb.detail, wb.signals));
+}
+
+/* SSE 不可用(浏览器无 EventSource / 连接失败):回退 2s 轮询 detail+signals */
+function startPolling() {
+  const live = wb.live;
+  if (!live || live.pollId != null) return;
+  live.pollId = setInterval(pollTick, LIVE_POLL_MS);
+}
+
+async function pollTick() {
+  const live = wb.live;
+  const runId = wb.runId;
+  if (!live || live.ending) return;
+  try {
+    const [detail, signals] = await Promise.all([
+      getJson(`/api/runs/${encodeURIComponent(runId)}`),
+      getJson(`/api/runs/${encodeURIComponent(runId)}/signals`),
+    ]);
+    if (wb.runId !== runId || !wbRouteMatches(runId) || wb.live !== live || live.ending) return;
+    wb.detail = detail;
+    live.state = createLiveState(); // 轮询拿全量快照:整体重折叠,天然幂等
+    for (const s of signals ?? []) mergeSignal(live.state, s);
+    wb.signals = live.state.signals;
+    if (detail?.status && detail.status !== "running") {
+      await finishLive(); // 轮询发现终态:切结束态
+      return;
+    }
+    refreshLiveTree();
+    renderTimelinePanel();
+    live.bar?.update(deriveProgress(detail, wb.signals));
+  } catch {
+    /* 单次轮询失败静默:下个周期重试(连接异常 Toast 由 app 健康轮询承担) */
+  }
+}
+
+/* 结束态切换(§4.3):进度条区 → 结果 Banner;live 脉冲熄灭;时间线停止追加 */
+async function finishLive() {
+  const live = wb.live;
+  const runId = wb.runId;
+  if (!live || live.ending) return;
+  live.ending = true;
+  live.es?.close();
+  if (live.pollId != null) clearInterval(live.pollId);
+  if (live.tickId != null) clearInterval(live.tickId);
+  try {
+    const [detail, signals] = await Promise.all([
+      getJson(`/api/runs/${encodeURIComponent(runId)}`),
+      getJson(`/api/runs/${encodeURIComponent(runId)}/signals`),
+    ]);
+    if (wb.runId !== runId || !wbRouteMatches(runId)) return;
+    wb.detail = detail ?? wb.detail;
+    if (Array.isArray(signals) && signals.length) wb.signals = signals;
+    // 终态帧树:优先 checkpoint 重建的真实帧;产物半写窗口回退 live 帧(标终态)
+    let frames = wb.detail?.frames ?? [];
+    if (!frames.length && live.state.frames.length) {
+      const st = wb.detail?.status === "aborted" ? "aborted" : wb.detail?.status === "failed" ? "failed" : "done";
+      frames = live.state.frames.map((f) => (f.status === "running" ? { ...f, status: st } : f));
+    }
+    wb.roots = buildFrameTree(frames, pushOrder(wb.signals));
+    wb.failedFrameIds = frames.filter((f) => f?.status === "failed").map((f) => f.frame_id);
+  } catch {
+    /* 终态拉取失败:仍按现有 detail 收尾(Banner/页头显示已知状态) */
+  }
+  if (wb.runId !== runId) return;
+  live.bar?.end(wb.detail?.status ?? "done", wb.detail?.error);
+  live.bar?.destroy();
+  wb.live = null; // 时间线停止追加(onLiveSignal/pollTick 均守卫 wb.live)
+  renderHeader();
+  renderTreePanel();
+  renderTimelinePanel();
+}
+
+function teardownLive() {
+  const live = wb.live;
+  if (!live) return;
+  live.ending = true;
+  live.es?.close();
+  if (live.pollId != null) clearInterval(live.pollId);
+  if (live.tickId != null) clearInterval(live.tickId);
+  live.bar?.destroy();
+  wb.live = null;
+}
+
+/* Stop 流(§4.3/§5):确认条由 live bar 组件承担;成功后等 safe point 生效 */
+async function doStop() {
+  try {
+    await postJson(`/api/runs/${encodeURIComponent(wb.runId)}/stop`);
+    toast("已请求中止,run 将在下一个 safe point 停止", "success");
+    return true;
+  } catch (e) {
+    toast(e.message ?? "stop 失败", "error");
+    return false;
+  }
 }
 
 /* ── 渲染:上下文检视器(右栏,三态:Skeleton/空提示/错误重试)─────── */
@@ -323,9 +577,17 @@ function renderInspectorPanel() {
   }
   if (cached.status === "error") {
     const notFound = cached.error instanceof ApiError && cached.error.status === 404;
+    // live 中帧上下文尚未落盘(checkpoint 在 run 结束后才可检视),文案区分
+    const running = wb.detail?.status === "running";
     el.innerHTML =
       `<div class="panel-error">` +
-      `<span class="error-msg">${notFound ? "未找到该帧(可能已被压缩/清理)" : "加载帧上下文失败"}</span>` +
+      `<span class="error-msg">${
+        notFound
+          ? running
+            ? "该帧仍在进行,上下文待 run 结束后落盘"
+            : "未找到该帧(可能已被压缩/清理)"
+          : "加载帧上下文失败"
+      }</span>` +
       `<span class="mono">f-${esc(shortId(fid))}</span>` +
       `<button class="btn" data-action="wb-retry-frame" data-frame-id="${esc(fid)}">重试</button>` +
       `</div>`;
@@ -448,6 +710,15 @@ export function workbenchClick(e, action) {
       return renderTimelinePanel(), true;
     }
     if (act === "tl-clear") return store.set({ selection: null }), true;
+    if (act === "wb-follow") {
+      // "回到底部"悬浮钮(§4.2 规则 2 live 半):恢复自动跟随
+      const live = wb.live;
+      if (live) {
+        live.follow = true;
+        applyFollow();
+      }
+      return true;
+    }
     return false;
   }
   const ftRow = e.target.closest(".ft-row");

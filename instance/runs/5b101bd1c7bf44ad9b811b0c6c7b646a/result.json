@@ -1,0 +1,27 @@
+{
+  "status": "done",
+  "result": {
+    "seq": [
+      0,
+      1,
+      1,
+      2,
+      3,
+      5,
+      8,
+      13
+    ]
+  },
+  "error": null,
+  "usage": {
+    "prompt_tokens": 19,
+    "cache_write_tokens": 0,
+    "steps": 19,
+    "completion_tokens": 19,
+    "ttft_ms": 0,
+    "thinking_tokens": 0,
+    "cost": 0.0,
+    "total_ms": 0,
+    "cache_read_tokens": 0
+  }
+}

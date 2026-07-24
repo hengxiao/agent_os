@@ -847,3 +847,204 @@ body[data-route="tools"] .sidebar { display: none; }
 .tc-ok[data-ok="false"] { color: var(--danger); }
 .tc-ok[data-ok="unknown"] { color: var(--fg-2); }
 .tc-tool-name { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg-2); }
+
+/* ── Banner ok 色调(D3 结束态:done 绿,§4.3)────────────────── */
+.banner[data-tone="ok"] { border-left-color: var(--ok); }
+.banner[data-tone="ok"] .banner-icon { color: var(--ok); }
+
+/* ── 禁用按钮通用态(D3:Run 校验禁用 / Stop loading)────────── */
+.btn[disabled] { opacity: 0.6; cursor: default; }
+.btn[disabled]:hover { background: var(--bg-2); filter: none; }
+
+/* ── Modal(§3.3 组件原语;§4.3 New Run Launch Dialog)───────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: calc(var(--s8) * 2) var(--s4) var(--s4);
+  background: var(--overlay);
+}
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: calc(var(--s8) * 18);
+  max-width: 100%;
+  max-height: 100%;
+  background: var(--bg-1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s3) var(--s4);
+  border-bottom: var(--stroke) solid var(--line);
+  flex-shrink: 0;
+}
+.modal-title { font-size: var(--text-lg); font-weight: 600; }
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  overflow-y: auto;
+}
+.modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-top: var(--stroke) solid var(--line);
+  flex-shrink: 0;
+}
+
+/* 表单原语(Launch Dialog 首个消费者;D4+ 复用) */
+.field { display: flex; flex-direction: column; gap: var(--s1); }
+.field-inline { flex-direction: row; align-items: center; gap: var(--s2); }
+.field-inline .field-label { width: calc(var(--s8) * 2.5); flex-shrink: 0; }
+.field-label { font-size: var(--text-xs); color: var(--fg-1); }
+.input {
+  width: 100%;
+  padding: var(--s1) var(--s2);
+  background: var(--bg-0);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md);
+  font-size: var(--text-sm);
+}
+.input:focus-visible { border-color: var(--live); }
+textarea.input {
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+.input.is-invalid { border-color: var(--danger); } /* 校验错误红框(§4.3) */
+
+/* Launch Dialog 专有:技能摘要 / 错误条 / 高级区 */
+.ld-skill-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s2) var(--s3);
+  background: var(--bg-2);
+  border-radius: var(--r-md);
+}
+.ld-skill-info:empty { display: none; }
+.ld-skill-desc { font-size: var(--text-xs); color: var(--fg-1); }
+.ld-warn { color: var(--warn); }
+.ld-skill-inputs {
+  margin: 0;
+  padding-left: var(--s4);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.ld-errors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  padding: var(--s2) var(--s3);
+  background: var(--bg-2);
+  border-left: var(--stroke-strong) solid var(--danger);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+  color: var(--danger);
+}
+.ld-modal-error {
+  padding: var(--s2) var(--s3);
+  background: var(--bg-2);
+  border-left: var(--stroke-strong) solid var(--danger);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+  color: var(--danger);
+}
+.ld-adv summary { cursor: pointer; font-size: var(--text-xs); color: var(--fg-1); }
+.ld-adv-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding-top: var(--s2);
+}
+
+/* ── Live 进度区(§4.3):脉冲点 / 已用时长 / 双 ProgressBar / Stop ── */
+.wb-live:empty { display: none; }
+.wb-live .card { flex-shrink: 0; }
+.live-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s3);
+  padding: var(--s2) var(--s3);
+}
+.live-dot {
+  width: var(--s2);
+  height: var(--s2);
+  border-radius: 50%;
+  background: var(--live);
+  animation: pulse 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.live-elapsed { font-size: var(--text-xs); color: var(--fg-1); }
+.pb { display: flex; align-items: center; gap: var(--s2); min-width: 0; }
+.pb-label { font-size: var(--text-xs); color: var(--fg-2); }
+.pb-track {
+  position: relative;
+  width: calc(var(--s8) * 4);
+  height: var(--s2);
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.pb-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--live);
+  border-radius: var(--r-sm);
+  transition: width 0.3s ease;
+}
+.pb.is-warn .pb-fill { background: var(--warn); } /* >80% 转警示色(§4.3) */
+.pb.is-warn .pb-text { color: var(--warn); }
+.pb-text { font-size: var(--text-xs); color: var(--fg-1); }
+.live-stop-area {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+}
+.stop-confirm { font-size: var(--text-xs); color: var(--warn); }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+
+/* "回到底部"悬浮钮(§4.2 规则 2 live 半:上翻暂停跟随时浮现) */
+.wb-timeline { position: relative; }
+.tl-follow {
+  position: sticky;
+  bottom: var(--s2);
+  display: block;
+  width: fit-content;
+  margin-left: auto;
+  padding: var(--s1) var(--s3);
+  background: var(--bg-3);
+  color: var(--fg-0);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.tl-follow:hover { background: var(--bg-2); }
+
+/* running 帧行内旋转指示 + live 新帧滑入(§4.3 帧树实时生长) */
+.ft-spin {
+  width: var(--s3);
+  height: var(--s3);
+  flex-shrink: 0;
+  border: var(--stroke-strong) solid var(--bg-3);
+  border-top-color: var(--live);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+.ft-new { animation: ft-in 0.24s ease; }

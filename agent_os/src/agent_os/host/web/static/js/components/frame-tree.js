@@ -113,6 +113,10 @@ function rowHtml({ node, hasChildren, collapsed }, selection) {
     toggle +
     statusDot(f.status) +
     `<span class="ft-skill">${esc(shortSkill(f.skill))}</span>` +
+    // running 帧行内旋转指示(§4.3:不止文本"运行中";reduced-motion 全局关闭)
+    (normalizeStatus(f.status) === "running"
+      ? `<span class="ft-spin" title="运行中" aria-label="运行中"></span>`
+      : "") +
     `<span class="ft-chips">${frameChips(f)}</span>` +
     `</div>`
   );

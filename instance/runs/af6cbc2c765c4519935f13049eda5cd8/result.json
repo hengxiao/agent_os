@@ -1,0 +1,16 @@
+{
+  "status": "aborted",
+  "result": null,
+  "error": "RunAborted: run 总步数 2 超过 max_steps=1",
+  "usage": {
+    "prompt_tokens": 2,
+    "cache_write_tokens": 0,
+    "steps": 2,
+    "completion_tokens": 2,
+    "ttft_ms": 0,
+    "thinking_tokens": 0,
+    "cost": 0.0,
+    "total_ms": 0,
+    "cache_read_tokens": 0
+  }
+}

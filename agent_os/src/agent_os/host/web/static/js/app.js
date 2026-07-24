@@ -7,7 +7,8 @@ import { store } from "./store.js";
 import { getJson } from "./api.js";
 import { statusPill } from "./components/status-pill.js";
 import { absTime, copyText, emptyBlock, esc, fmtCost, relTime, toast } from "./util.js";
-import { openWorkbench, workbenchClick, workbenchKeydown } from "./workbench.js";
+import { openLaunchDialog } from "./components/launch-dialog.js";
+import { closeWorkbench, openWorkbench, workbenchClick, workbenchKeydown } from "./workbench.js";
 
 const POLL_INTERVAL = 5000; // §4.1:列表 5s 轮询;兼作 API 健康检查
 
@@ -130,6 +131,7 @@ const placeholderPage = (title, hint) =>
 function renderMain() {
   const main = $("#main");
   const route = store.get("route");
+  if (route.name !== "run-detail") closeWorkbench(); // 离开 Workbench:live 会话收尾
   if (route.name === "skills") {
     main.innerHTML = placeholderPage("Skills", "施工中 — Skills 浏览器 D4 交付");
     return;
@@ -242,7 +244,8 @@ $("#collapseBtn").addEventListener("click", () => {
 });
 
 $("#liveIndicator").addEventListener("click", poll);
-// + New Run 主按钮:D3 交付,当前仅展示 Tooltip(data-tip),点击 no-op
+// + New Run 主按钮(§4.3):打开 Launch Modal(不打断当前页;成功后跳 #/runs/<id> 进 live)
+$("#newRunBtn").addEventListener("click", () => openLaunchDialog());
 
 window.addEventListener("hashchange", applyRoute);
 

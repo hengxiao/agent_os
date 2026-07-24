@@ -51,12 +51,21 @@ _KIND_HINTS = {
 }
 
 
+class RunOverrides(BaseModel):
+    """``POST /api/runs`` 的 ``overrides``(WEB-UI.md §4.3 高级区):合并进本次 run 的 RunConfig。"""
+
+    model: str | None = None
+    max_cost: float | None = None
+    max_steps: int | None = None
+
+
 class RunBody(BaseModel):
-    """``POST /api/runs`` 请求体(§4.3 ``{skill, input, wait?}``)。"""
+    """``POST /api/runs`` 请求体(§4.3 ``{skill, input, overrides?, wait?}``)。"""
 
     skill: str
     input: dict[str, Any]
     wait: bool = False
+    overrides: RunOverrides | None = None
 
 
 def _run_dir(artifacts_root: Path, run_id: str) -> Path:
@@ -84,6 +93,8 @@ def _detail(artifacts_root: Path, manager: RunManager, run_id: str) -> dict[str,
     state = manager.state_of(run_id)
     if state is None:
         return None
+    kernel = state.get("kernel")
+    cfg = getattr(kernel, "config", None)
     return {
         "run_id": run_id,
         "status": state["status"],
@@ -91,6 +102,14 @@ def _detail(artifacts_root: Path, manager: RunManager, run_id: str) -> dict[str,
         "error": state.get("error"),
         "usage": (state.get("record") or {}).get("usage") or {},
         "frames": [],
+        # D3 live 视图数据源(§4.3):已用时长起点 + 本次 run 生效的 RunConfig
+        # (steps/cost 双 ProgressBar 的分母;含 overrides 合并后的值)
+        "started_at": state.get("started_at"),
+        "config": (
+            {"model": cfg.model, "max_steps": cfg.max_steps, "max_cost": cfg.max_cost}
+            if cfg is not None
+            else None
+        ),
     }
 
 
@@ -143,6 +162,53 @@ def _filter_kind(rows: list[dict[str, Any]], kind: str | None) -> list[dict[str,
     return [r for r in rows if any(h in (r.get("name") or "") for h in hints)]
 
 
+def _skill_summary(manifest: Any) -> dict[str, Any]:
+    """manifest 摘要(WEB-UI.md §6.2):name/version/kind/description/permissions。"""
+    perms = manifest.permissions
+    return {
+        "name": manifest.name,
+        "version": manifest.version,
+        "kind": getattr(manifest.kind, "value", manifest.kind),
+        "description": manifest.description,
+        "permissions": {
+            "tools": list(perms.tools),
+            "skills": list(perms.skills),
+            "blackboard": list(perms.blackboard),
+        },
+    }
+
+
+def _skill_doc(manifest: Any) -> dict[str, Any]:
+    """全量 manifest 文档(``GET /api/skills/{name}``;D3 Launch Modal 取 inputs schema)。"""
+    doc = _skill_summary(manifest)
+    model = manifest.model
+    limits = manifest.limits
+    doc.update(
+        {
+            "inputs": manifest.inputs or {},
+            "outputs": manifest.outputs or {},
+            "model": (
+                {"prefer": list(model.prefer), "temperature": model.temperature}
+                if model
+                else None
+            ),
+            "limits": (
+                {
+                    "max_steps": limits.max_steps,
+                    "timeout": limits.timeout,
+                    "retry": limits.retry,
+                }
+                if limits
+                else None
+            ),
+            "prompt": manifest.prompt,
+            "entry": manifest.entry,
+            "handler": manifest.handler,
+        }
+    )
+    return doc
+
+
 def _sse_line(row: dict[str, Any]) -> str:
     return f"data: {json.dumps(row, ensure_ascii=False, default=repr)}\n\n"
 
@@ -160,8 +226,11 @@ def create_app(config_path: str | Path, artifacts_root: Path = Path(".agent-os")
 
     @app.post("/api/runs")
     async def post_run(body: RunBody) -> dict[str, Any]:
+        overrides = body.overrides.model_dump(exclude_none=True) if body.overrides else None
         try:
-            run_id = await manager.start_run(body.skill, body.input, wait=body.wait)
+            run_id = await manager.start_run(
+                body.skill, body.input, wait=body.wait, overrides=overrides
+            )
         except RunValidationError as e:
             return {"status": "failed", "error": str(e)}
         if body.wait:
@@ -262,6 +331,26 @@ def create_app(config_path: str | Path, artifacts_root: Path = Path(".agent-os")
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"checkpoint 畸形: {e}") from e
         return _jsonable(record)
+
+    @app.get("/api/skills")
+    def list_skills() -> list[dict[str, Any]]:
+        """技能清单(WEB-UI.md §6.2):共享 registry 的 manifest 摘要列表(Launch Modal 下拉)。"""
+        try:
+            manifests = manager.skills_manifests()
+        except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return [_skill_summary(m) for m in manifests]
+
+    @app.get("/api/skills/{name}")
+    def get_skill(name: str) -> dict[str, Any]:
+        """单个技能的全量 manifest(§6.2;Launch Modal 的 inputs schema 数据源)。"""
+        try:
+            manifest = manager.skill_manifest(name)
+        except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        if manifest is None:
+            raise HTTPException(status_code=404, detail=f"找不到技能: {name}")
+        return _skill_doc(manifest)
 
     @app.post("/api/skills/reload")
     def reload_skills() -> dict[str, Any]:

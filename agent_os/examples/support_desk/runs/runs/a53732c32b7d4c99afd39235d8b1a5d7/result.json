@@ -1,0 +1,21 @@
+{
+  "status": "done",
+  "result": {
+    "status": "answered",
+    "ticket_id": "T-1004",
+    "refund_cents": 0,
+    "response": "赵四 您好,关于订单 o4 的咨询:会员积分按实付金额每 1 元累计 1 分,订单完成后 24 小时内自动到账。如有其他问题欢迎随时联系。"
+  },
+  "error": null,
+  "usage": {
+    "cost": 0.0,
+    "cache_write_tokens": 0,
+    "cache_read_tokens": 0,
+    "total_ms": 0,
+    "prompt_tokens": 11,
+    "ttft_ms": 0,
+    "completion_tokens": 11,
+    "thinking_tokens": 0,
+    "steps": 11
+  }
+}

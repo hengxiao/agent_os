@@ -17,11 +17,11 @@ builtins = true                   # fs_read/fs_write/fs_edit/shell_exec/http_fet
 python_exec = "docker"            # docker 不可用时自动回退 subprocess 沙箱
 
 [skills]
-path = "examples/skills_100/skills.yaml"
+path = "/home/hengx/agent_os/agent_os/examples/skills_100/skills.yaml"
 
 [sidecars]
 budget_guard = { max_cost = 2.0 }
 loop_detector = { threshold = 3, max_strikes = 2 }
 
 [telemetry]
-dir = "examples/skills_100/traces"
+dir = "/home/hengx/agent_os/agent_os/examples/skills_100/traces"

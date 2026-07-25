@@ -66,7 +66,7 @@ skills:
   - name: classify_ticket
     version: 1.0.0
     kind: prompt
-    description: 读工单原文分类,支持退款/投诉/咨询/破损四类。Use when 工单类目未知需要路由;Do not use when 类目已由上游给定。
+    description: 读工单原文分类。Use when 工单类目未知需要路由;Do not use when 类目已由上游给定。
     inputs:
       type: object
       properties: { ticket_id: { type: string } }

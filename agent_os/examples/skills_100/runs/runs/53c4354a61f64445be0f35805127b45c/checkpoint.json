@@ -1,0 +1,540 @@
+{
+  "v": 1,
+  "run": {
+    "run_id": "53c4354a61f64445be0f35805127b45c",
+    "status": "done",
+    "usage": {
+      "steps": 0,
+      "cache_write_tokens": 0,
+      "ttft_ms": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_ms": 0,
+      "thinking_tokens": 0,
+      "cache_read_tokens": 0,
+      "cost": 0.0
+    },
+    "result": {
+      "total": 45
+    },
+    "error": null
+  },
+  "frames": [
+    {
+      "frame_id": "4f374874c4cd456e84885f3a061ceaad",
+      "skill": "local:mega_pipeline@1.0.0",
+      "parent_id": null,
+      "input": {
+        "seed": 0
+      },
+      "depth": 1,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": null,
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"seed\": 0}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "d6854fa088e94916beb224a9989b1821",
+      "skill": "local:chain_00@1.0.0",
+      "parent_id": "4f374874c4cd456e84885f3a061ceaad",
+      "input": {
+        "acc": 0
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "6cf770e6893e4888a3a1e3a0eae7d5e8",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 0}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "78cb7b48231f40e3b39639d6f60bf121",
+      "skill": "local:chain_01@1.0.0",
+      "parent_id": "d6854fa088e94916beb224a9989b1821",
+      "input": {
+        "acc": 0
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "802257828c704a93b66e258e4d70d624",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 0}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "33195a12575c48e89c5b8a30af002932",
+      "skill": "local:chain_02@1.0.0",
+      "parent_id": "78cb7b48231f40e3b39639d6f60bf121",
+      "input": {
+        "acc": 1
+      },
+      "depth": 4,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "da014081f5c24672bdfc396a52b7e946",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 1}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "f7e1999858ee4a2a8aca61423aada46b",
+      "skill": "local:chain_03@1.0.0",
+      "parent_id": "33195a12575c48e89c5b8a30af002932",
+      "input": {
+        "acc": 3
+      },
+      "depth": 5,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "5509aefcd9034f51b9e1e802a06902a6",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 3}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "c31a4eeacbca48368b3df5ba4be7af7d",
+      "skill": "local:chain_04@1.0.0",
+      "parent_id": "f7e1999858ee4a2a8aca61423aada46b",
+      "input": {
+        "acc": 6
+      },
+      "depth": 6,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "1fd45ed8bbc04db7a666690458ebfd46",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 6}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "8946345d6a6b4febb439acb413e4fddd",
+      "skill": "local:chain_05@1.0.0",
+      "parent_id": "c31a4eeacbca48368b3df5ba4be7af7d",
+      "input": {
+        "acc": 10
+      },
+      "depth": 7,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "e73532ab320a45d5a7232985392307ce",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 10}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "92870d289e7a43d3820236c595fee38c",
+      "skill": "local:chain_06@1.0.0",
+      "parent_id": "8946345d6a6b4febb439acb413e4fddd",
+      "input": {
+        "acc": 15
+      },
+      "depth": 8,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "92a7647aba864c8aac071782888608cd",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 15}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "f0d62d9c21db4e44a648881b0240294b",
+      "skill": "local:chain_07@1.0.0",
+      "parent_id": "92870d289e7a43d3820236c595fee38c",
+      "input": {
+        "acc": 21
+      },
+      "depth": 9,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "eaa82ca46abc43e2b6f7cd42c5eb223a",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 21}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "235dfd7e2c6f4fd482e9a93003816664",
+      "skill": "local:chain_08@1.0.0",
+      "parent_id": "f0d62d9c21db4e44a648881b0240294b",
+      "input": {
+        "acc": 28
+      },
+      "depth": 10,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "d47a616b5092404988bd975ac623bb8f",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 28}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "2b512a95a9bb477faf63cc308531d82f",
+      "skill": "local:chain_09@1.0.0",
+      "parent_id": "235dfd7e2c6f4fd482e9a93003816664",
+      "input": {
+        "acc": 36
+      },
+      "depth": 11,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "f9d133f9f76345898200bf9981ee5d82",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 36}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "02c0187526da440a84edaf9b48adbdf9",
+      "skill": "local:hub_agg@1.0.0",
+      "parent_id": "2b512a95a9bb477faf63cc308531d82f",
+      "input": {
+        "acc": 45
+      },
+      "depth": 12,
+      "status": "done",
+      "result": {
+        "total": 45
+      },
+      "error": null,
+      "call_id": "da203246f3aa4682b40d5147ae373028",
+      "usage": {
+        "steps": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "cache_read_tokens": 0,
+        "cost": 0.0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"acc\": 45}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    }
+  ]
+}

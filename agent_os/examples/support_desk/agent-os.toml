@@ -18,11 +18,11 @@ python_exec = "off"               # 本场景不需要 python_exec 沙箱
 module = "support_tools:register" # 宿主自定义场景工具(get_ticket/issue_refund 等 7 个)
 
 [skills]
-path = "examples/support_desk/skills.yaml"
+path = "/home/hengx/agent_os/agent_os/examples/support_desk/skills.yaml"
 
 [sidecars]
 budget_guard = { max_cost = 2.0 }
 loop_detector = { threshold = 3, max_strikes = 2 }
 
 [telemetry]
-dir = "examples/support_desk/traces"
+dir = "/home/hengx/agent_os/agent_os/examples/support_desk/traces"

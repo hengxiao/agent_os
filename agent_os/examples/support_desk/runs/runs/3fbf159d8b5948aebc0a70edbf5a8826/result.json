@@ -1,0 +1,21 @@
+{
+  "status": "done",
+  "result": {
+    "status": "escalated",
+    "ticket_id": "T-1003",
+    "refund_cents": 0,
+    "response": "您的问题已升级人工客服(升级单 E-T-1003),专项组将在 24 小时内与您联系。工单号 T-1003。非常抱歉给您带来不便。"
+  },
+  "error": null,
+  "usage": {
+    "completion_tokens": 14,
+    "thinking_tokens": 0,
+    "steps": 14,
+    "ttft_ms": 0,
+    "cost": 0.0,
+    "cache_write_tokens": 0,
+    "prompt_tokens": 14,
+    "total_ms": 0,
+    "cache_read_tokens": 0
+  }
+}

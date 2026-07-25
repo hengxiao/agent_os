@@ -1,0 +1,1062 @@
+{
+  "v": 1,
+  "run": {
+    "run_id": "3fbf159d8b5948aebc0a70edbf5a8826",
+    "status": "done",
+    "usage": {
+      "completion_tokens": 14,
+      "thinking_tokens": 0,
+      "steps": 14,
+      "ttft_ms": 0,
+      "cost": 0.0,
+      "cache_write_tokens": 0,
+      "prompt_tokens": 14,
+      "total_ms": 0,
+      "cache_read_tokens": 0
+    },
+    "result": {
+      "status": "escalated",
+      "ticket_id": "T-1003",
+      "refund_cents": 0,
+      "response": "您的问题已升级人工客服(升级单 E-T-1003),专项组将在 24 小时内与您联系。工单号 T-1003。非常抱歉给您带来不便。"
+    },
+    "error": null
+  },
+  "frames": [
+    {
+      "frame_id": "f78f26b2430c4b43b0ba05c0ebb15303",
+      "skill": "local:handle_ticket@1.0.0",
+      "parent_id": null,
+      "input": {
+        "ticket_id": "T-1003"
+      },
+      "depth": 1,
+      "status": "done",
+      "result": {
+        "status": "escalated",
+        "ticket_id": "T-1003",
+        "refund_cents": 0,
+        "response": "您的问题已升级人工客服(升级单 E-T-1003),专项组将在 24 小时内与您联系。工单号 T-1003。非常抱歉给您带来不便。"
+      },
+      "error": null,
+      "call_id": null,
+      "usage": {
+        "completion_tokens": 7,
+        "thinking_tokens": 0,
+        "steps": 7,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 7,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1003\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-0",
+                "name": "skill__classify_ticket",
+                "args": {
+                  "ticket_id": "T-1003"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"category\": \"damaged\", \"confidence\": 0.95}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-0",
+            "name": "skill__classify_ticket",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-1",
+                "name": "skill__gather_context",
+                "args": {
+                  "ticket_id": "T-1003"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"ticket\": {\"ticket_id\": \"T-1003\", \"user_id\": \"u3\", \"order_id\": \"o3\", \"subject\": \"\\u4e1c\\u897f\\u788e\\u4e86,\\u00a55000 \\u7684\\u4e1c\\u897f!\", \"body\": \"\\u521a\\u7b7e\\u6536\\u4e24\\u5929,\\u5f00\\u7bb1\\u53d1\\u73b0\\u5c4f\\u5e55\\u6574\\u4e2a\\u788e\\u88c2\\u3002\\u4e94\\u5343\\u5757\\u4e70\\u7684\\u4e1c\\u897f\\u554a,\\u5fc5\\u987b\\u7ed9\\u4e2a\\u8bf4\\u6cd5!\", \"channel\": \"phone\", \"status\": \"open\", \"created_at\": \"2026-07-20T12:00:00+00:00\"}, \"order\": {\"order_id\": \"o3\", \"user_id\": \"u3\", \"total_cents\": 500000, \"currency\": \"CNY\", \"status\": \"delivered\", \"created_at\": \"2026-07-15T12:00:00+00:00\", \"delivered_at\": \"2026-07-18T12:00:00+00:00\", \"items\": [{\"sku\": \"MON-4K-27\", \"title\": \"27 \\u5bf8 4K \\u663e\\u793a\\u5668\", \"qty\": 1}]}, \"user\": {\"user_id\": \"u3\", \"name\": \"\\u97e9\\u6885\\u6885\", \"email\": \"hanmeimei@example.com\", \"tier\": \"normal\"}, \"facts\": {\"order_total_cents\": 500000, \"currency\": \"CNY\", \"order_delivered\": true, \"hours_since_created\": 120, \"days_since_created\": 5, \"hours_since_delivered\": 48, \"days_since_delivered\": 2, \"user_tier\": \"normal\"}}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-1",
+            "name": "skill__gather_context",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-2",
+                "name": "skill__estimate_priority",
+                "args": {
+                  "category": "damaged",
+                  "facts": {
+                    "order_total_cents": 500000,
+                    "currency": "CNY",
+                    "order_delivered": true,
+                    "hours_since_created": 120,
+                    "days_since_created": 5,
+                    "hours_since_delivered": 48,
+                    "days_since_delivered": 2,
+                    "user_tier": "normal"
+                  }
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"priority\": \"urgent\", \"score\": 90}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-2",
+            "name": "skill__estimate_priority",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-3",
+                "name": "skill__assess_refund",
+                "args": {
+                  "category": "damaged",
+                  "facts": {
+                    "order_total_cents": 500000,
+                    "currency": "CNY",
+                    "order_delivered": true,
+                    "hours_since_created": 120,
+                    "days_since_created": 5,
+                    "hours_since_delivered": 48,
+                    "days_since_delivered": 2,
+                    "user_tier": "normal"
+                  },
+                  "order": {
+                    "order_id": "o3",
+                    "user_id": "u3",
+                    "total_cents": 500000,
+                    "currency": "CNY",
+                    "status": "delivered",
+                    "created_at": "2026-07-15T12:00:00+00:00",
+                    "delivered_at": "2026-07-18T12:00:00+00:00",
+                    "items": [
+                      {
+                        "sku": "MON-4K-27",
+                        "title": "27 寸 4K 显示器",
+                        "qty": 1
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"decision\": \"escalate\", \"reasoning\": \"\\u7834\\u635f\\u62a5\\u635f\\u5728\\u7b7e\\u6536\\u540e 48 \\u5c0f\\u65f6\\u5185\\u63d0\\u51fa,\\u672a\\u8d85 48 \\u5c0f\\u65f6\\u62a5\\u635f\\u7a97\\u53e3;\\u4f46\\u9000\\u6b3e\\u91d1\\u989d 500000 \\u5206\\u8d85\\u8fc7\\u81ea\\u52a8\\u5ba1\\u6279\\u4e0a\\u9650 100000 \\u5206,\\u8d85\\u51fa\\u81ea\\u52a8\\u5904\\u7406\\u6743\\u9650,\\u5347\\u7ea7\\u4eba\\u5de5\\u5ba1\\u6838\\u3002\"}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-3",
+            "name": "skill__assess_refund",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-4",
+                "name": "skill__escalate_ticket",
+                "args": {
+                  "ticket_id": "T-1003",
+                  "reason": "破损报损在签收后 48 小时内提出,未超 48 小时报损窗口;但退款金额 500000 分超过自动审批上限 100000 分,超出自动处理权限,升级人工审核。",
+                  "priority": "urgent"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"escalation_id\": \"E-T-1003\", \"queue\": \"refund-specialists\"}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-4",
+            "name": "skill__escalate_ticket",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-5",
+                "name": "skill__write_case_summary",
+                "args": {
+                  "ticket_id": "T-1003",
+                  "category": "damaged",
+                  "decision": "escalate",
+                  "refund_cents": 0,
+                  "priority": "urgent",
+                  "user": {
+                    "user_id": "u3",
+                    "name": "韩梅梅",
+                    "email": "hanmeimei@example.com",
+                    "tier": "normal"
+                  }
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"summary\": \"\\u5de5\\u5355 T-1003(damaged)\\u5904\\u7406\\u5b8c\\u6210:\\u51b3\\u7b56 escalate,\\u9000\\u6b3e 0 \\u5206,\\u4f18\\u5148\\u7ea7 urgent\\u3002\\u5ba2\\u6237:\\u97e9\\u6885\\u6885 <***@***>\\nEN: [EN] \\u5de5\\u5355 T-1003(damaged)\\u5904\\u7406\\u5b8c\\u6210:\\u51b3\\u7b56 escalate,\\u9000\\u6b3e 0 \\u5206,\\u4f18\\u5148\\u7ea7 urgent\\u3002\\u5ba2\\u6237:\\u97e9\\u6885\\u6885 <***@***>\\n\\u5ba1\\u8ba1\\u7f16\\u53f7: AUDIT-T-1003-ESCALATE-6851\"}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-5",
+            "name": "skill__write_case_summary",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"status\": \"escalated\", \"ticket_id\": \"T-1003\", \"refund_cents\": 0, \"response\": \"您的问题已升级人工客服(升级单 E-T-1003),专项组将在 24 小时内与您联系。工单号 T-1003。非常抱歉给您带来不便。\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 888
+      }
+    },
+    {
+      "frame_id": "9dad70af8a97405aa9d95dda8ff8d75d",
+      "skill": "local:classify_ticket@1.0.0",
+      "parent_id": "f78f26b2430c4b43b0ba05c0ebb15303",
+      "input": {
+        "ticket_id": "T-1003"
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "category": "damaged",
+        "confidence": 0.95
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-0",
+      "usage": {
+        "completion_tokens": 2,
+        "thinking_tokens": 0,
+        "steps": 2,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 2,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1003\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-classify_ticket-0",
+                "name": "get_ticket",
+                "args": {
+                  "ticket_id": "T-1003"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"ticket_id\": \"T-1003\", \"user_id\": \"u3\", \"order_id\": \"o3\", \"subject\": \"\\u4e1c\\u897f\\u788e\\u4e86,\\u00a55000 \\u7684\\u4e1c\\u897f!\", \"body\": \"\\u521a\\u7b7e\\u6536\\u4e24\\u5929,\\u5f00\\u7bb1\\u53d1\\u73b0\\u5c4f\\u5e55\\u6574\\u4e2a\\u788e\\u88c2\\u3002\\u4e94\\u5343\\u5757\\u4e70\\u7684\\u4e1c\\u897f\\u554a,\\u5fc5\\u987b\\u7ed9\\u4e2a\\u8bf4\\u6cd5!\", \"channel\": \"phone\", \"status\": \"open\", \"created_at\": \"2026-07-20T12:00:00+00:00\"}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-classify_ticket-0",
+            "name": "get_ticket",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"category\": \"damaged\", \"confidence\": 0.95}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 133
+      }
+    },
+    {
+      "frame_id": "9f02763fb7b74a58af859625d207bab0",
+      "skill": "local:gather_context@1.0.0",
+      "parent_id": "f78f26b2430c4b43b0ba05c0ebb15303",
+      "input": {
+        "ticket_id": "T-1003"
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "ticket": {
+          "ticket_id": "T-1003",
+          "user_id": "u3",
+          "order_id": "o3",
+          "subject": "东西碎了,¥5000 的东西!",
+          "body": "刚签收两天,开箱发现屏幕整个碎裂。五千块买的东西啊,必须给个说法!",
+          "channel": "phone",
+          "status": "open",
+          "created_at": "2026-07-20T12:00:00+00:00"
+        },
+        "order": {
+          "order_id": "o3",
+          "user_id": "u3",
+          "total_cents": 500000,
+          "currency": "CNY",
+          "status": "delivered",
+          "created_at": "2026-07-15T12:00:00+00:00",
+          "delivered_at": "2026-07-18T12:00:00+00:00",
+          "items": [
+            {
+              "sku": "MON-4K-27",
+              "title": "27 寸 4K 显示器",
+              "qty": 1
+            }
+          ]
+        },
+        "user": {
+          "user_id": "u3",
+          "name": "韩梅梅",
+          "email": "hanmeimei@example.com",
+          "tier": "normal"
+        },
+        "facts": {
+          "order_total_cents": 500000,
+          "currency": "CNY",
+          "order_delivered": true,
+          "hours_since_created": 120,
+          "days_since_created": 5,
+          "hours_since_delivered": 48,
+          "days_since_delivered": 2,
+          "user_tier": "normal"
+        }
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-1",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1003\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "aeb0dacd470640b49405835e21329614",
+      "skill": "local:estimate_priority@1.0.0",
+      "parent_id": "f78f26b2430c4b43b0ba05c0ebb15303",
+      "input": {
+        "category": "damaged",
+        "facts": {
+          "order_total_cents": 500000,
+          "currency": "CNY",
+          "order_delivered": true,
+          "hours_since_created": 120,
+          "days_since_created": 5,
+          "hours_since_delivered": 48,
+          "days_since_delivered": 2,
+          "user_tier": "normal"
+        }
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "priority": "urgent",
+        "score": 90
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-2",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"category\": \"damaged\", \"facts\": {\"order_total_cents\": 500000, \"currency\": \"CNY\", \"order_delivered\": true, \"hours_since_created\": 120, \"days_since_created\": 5, \"hours_since_delivered\": 48, \"days_since_delivered\": 2, \"user_tier\": \"normal\"}}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "3eec7497840b4d1d9a3c64329001ab0e",
+      "skill": "local:assess_refund@1.0.0",
+      "parent_id": "f78f26b2430c4b43b0ba05c0ebb15303",
+      "input": {
+        "category": "damaged",
+        "facts": {
+          "order_total_cents": 500000,
+          "currency": "CNY",
+          "order_delivered": true,
+          "hours_since_created": 120,
+          "days_since_created": 5,
+          "hours_since_delivered": 48,
+          "days_since_delivered": 2,
+          "user_tier": "normal"
+        },
+        "order": {
+          "order_id": "o3",
+          "user_id": "u3",
+          "total_cents": 500000,
+          "currency": "CNY",
+          "status": "delivered",
+          "created_at": "2026-07-15T12:00:00+00:00",
+          "delivered_at": "2026-07-18T12:00:00+00:00",
+          "items": [
+            {
+              "sku": "MON-4K-27",
+              "title": "27 寸 4K 显示器",
+              "qty": 1
+            }
+          ]
+        }
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "decision": "escalate",
+        "reasoning": "破损报损在签收后 48 小时内提出,未超 48 小时报损窗口;但退款金额 500000 分超过自动审批上限 100000 分,超出自动处理权限,升级人工审核。"
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-3",
+      "usage": {
+        "completion_tokens": 4,
+        "thinking_tokens": 0,
+        "steps": 4,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 4,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"category\": \"damaged\", \"facts\": {\"order_total_cents\": 500000, \"currency\": \"CNY\", \"order_delivered\": true, \"hours_since_created\": 120, \"days_since_created\": 5, \"hours_since_delivered\": 48, \"days_since_delivered\": 2, \"user_tier\": \"normal\"}, \"order\": {\"order_id\": \"o3\", \"user_id\": \"u3\", \"total_cents\": 500000, \"currency\": \"CNY\", \"status\": \"delivered\", \"created_at\": \"2026-07-15T12:00:00+00:00\", \"delivered_at\": \"2026-07-18T12:00:00+00:00\", \"items\": [{\"sku\": \"MON-4K-27\", \"title\": \"27 \\u5bf8 4K \\u663e\\u793a\\u5668\", \"qty\": 1}]}}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-assess_refund-0",
+                "name": "skill__check_policy",
+                "args": {
+                  "category": "damaged",
+                  "facts": {
+                    "order_total_cents": 500000,
+                    "currency": "CNY",
+                    "order_delivered": true,
+                    "hours_since_created": 120,
+                    "days_since_created": 5,
+                    "hours_since_delivered": 48,
+                    "days_since_delivered": 2,
+                    "user_tier": "normal"
+                  }
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"eligible\": true, \"reasons\": [\"\\u7834\\u635f\\u62a5\\u635f\\u5728\\u7b7e\\u6536\\u540e 48 \\u5c0f\\u65f6\\u5185\\u63d0\\u51fa,\\u672a\\u8d85 48 \\u5c0f\\u65f6\\u62a5\\u635f\\u7a97\\u53e3\"]}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-assess_refund-0",
+            "name": "skill__check_policy",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-assess_refund-1",
+                "name": "skill__compute_refund",
+                "args": {
+                  "order": {
+                    "order_id": "o3",
+                    "user_id": "u3",
+                    "total_cents": 500000,
+                    "currency": "CNY",
+                    "status": "delivered",
+                    "created_at": "2026-07-15T12:00:00+00:00",
+                    "delivered_at": "2026-07-18T12:00:00+00:00",
+                    "items": [
+                      {
+                        "sku": "MON-4K-27",
+                        "title": "27 寸 4K 显示器",
+                        "qty": 1
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"amount_cents\": 500000}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-assess_refund-1",
+            "name": "skill__compute_refund",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-assess_refund-2",
+                "name": "search_policy",
+                "args": {
+                  "query": "auto approve limit"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"query\": \"auto approve limit\", \"policies\": {\"version\": \"2026-07-01\", \"refund_windows\": {\"not_delivered_normal_days\": 30, \"not_delivered_vip_days\": 45, \"delivered_no_questions_days\": 7, \"damaged_report_hours\": 48}, \"auto_approve_limit_cents\": 100000, \"escalation\": {\"queue\": \"refund-specialists\", \"sla_hours\": 24}, \"notes\": [\"\\u672a\\u7b7e\\u6536\\u8ba2\\u5355\\u9000\\u6b3e\\u7a97\\u53e3:\\u666e\\u901a\\u7528\\u6237\\u81ea\\u8ba2\\u5355\\u521b\\u5efa\\u8d77 30 \\u5929,VIP \\u7528\\u6237 45 \\u5929\", \"\\u5df2\\u7b7e\\u6536\\u8ba2\\u5355:\\u7b7e\\u6536\\u540e 7 \\u5929\\u65e0\\u7406\\u7531\\u9000\\u6b3e\", \"\\u5546\\u54c1\\u7834\\u635f:\\u7b7e\\u6536\\u540e 48 \\u5c0f\\u65f6\\u5185\\u62a5\\u635f\\u53ef\\u6309\\u9000\\u6b3e\\u5904\\u7406\", \"\\u5355\\u7b14\\u9000\\u6b3e\\u91d1\\u989d\\u8d85\\u8fc7\\u81ea\\u52a8\\u5ba1\\u6279\\u4e0a\\u9650(100000 \\u5206)\\u4e00\\u5f8b\\u5347\\u7ea7\\u4eba\\u5de5\\u5ba1\\u6838\"]}}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-assess_refund-2",
+            "name": "search_policy",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"decision\": \"escalate\", \"reasoning\": \"破损报损在签收后 48 小时内提出,未超 48 小时报损窗口;但退款金额 500000 分超过自动审批上限 100000 分,超出自动处理权限,升级人工审核。\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 581
+      }
+    },
+    {
+      "frame_id": "0388f496595f47be94488b52696ab17b",
+      "skill": "local:check_policy@1.0.0",
+      "parent_id": "3eec7497840b4d1d9a3c64329001ab0e",
+      "input": {
+        "category": "damaged",
+        "facts": {
+          "order_total_cents": 500000,
+          "currency": "CNY",
+          "order_delivered": true,
+          "hours_since_created": 120,
+          "days_since_created": 5,
+          "hours_since_delivered": 48,
+          "days_since_delivered": 2,
+          "user_tier": "normal"
+        }
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "eligible": true,
+        "reasons": [
+          "破损报损在签收后 48 小时内提出,未超 48 小时报损窗口"
+        ]
+      },
+      "error": null,
+      "call_id": "call-assess_refund-0",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"category\": \"damaged\", \"facts\": {\"order_total_cents\": 500000, \"currency\": \"CNY\", \"order_delivered\": true, \"hours_since_created\": 120, \"days_since_created\": 5, \"hours_since_delivered\": 48, \"days_since_delivered\": 2, \"user_tier\": \"normal\"}}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "d5b190a280624a849402e66b529322da",
+      "skill": "local:compute_refund@1.0.0",
+      "parent_id": "3eec7497840b4d1d9a3c64329001ab0e",
+      "input": {
+        "order": {
+          "order_id": "o3",
+          "user_id": "u3",
+          "total_cents": 500000,
+          "currency": "CNY",
+          "status": "delivered",
+          "created_at": "2026-07-15T12:00:00+00:00",
+          "delivered_at": "2026-07-18T12:00:00+00:00",
+          "items": [
+            {
+              "sku": "MON-4K-27",
+              "title": "27 寸 4K 显示器",
+              "qty": 1
+            }
+          ]
+        }
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "amount_cents": 500000
+      },
+      "error": null,
+      "call_id": "call-assess_refund-1",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"order\": {\"order_id\": \"o3\", \"user_id\": \"u3\", \"total_cents\": 500000, \"currency\": \"CNY\", \"status\": \"delivered\", \"created_at\": \"2026-07-15T12:00:00+00:00\", \"delivered_at\": \"2026-07-18T12:00:00+00:00\", \"items\": [{\"sku\": \"MON-4K-27\", \"title\": \"27 \\u5bf8 4K \\u663e\\u793a\\u5668\", \"qty\": 1}]}}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "85722e7802dd403aa75424c9176f4a7c",
+      "skill": "local:escalate_ticket@1.0.0",
+      "parent_id": "f78f26b2430c4b43b0ba05c0ebb15303",
+      "input": {
+        "ticket_id": "T-1003",
+        "reason": "破损报损在签收后 48 小时内提出,未超 48 小时报损窗口;但退款金额 500000 分超过自动审批上限 100000 分,超出自动处理权限,升级人工审核。",
+        "priority": "urgent"
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "escalation_id": "E-T-1003",
+        "queue": "refund-specialists"
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-4",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1003\", \"reason\": \"\\u7834\\u635f\\u62a5\\u635f\\u5728\\u7b7e\\u6536\\u540e 48 \\u5c0f\\u65f6\\u5185\\u63d0\\u51fa,\\u672a\\u8d85 48 \\u5c0f\\u65f6\\u62a5\\u635f\\u7a97\\u53e3;\\u4f46\\u9000\\u6b3e\\u91d1\\u989d 500000 \\u5206\\u8d85\\u8fc7\\u81ea\\u52a8\\u5ba1\\u6279\\u4e0a\\u9650 100000 \\u5206,\\u8d85\\u51fa\\u81ea\\u52a8\\u5904\\u7406\\u6743\\u9650,\\u5347\\u7ea7\\u4eba\\u5de5\\u5ba1\\u6838\\u3002\", \"priority\": \"urgent\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "ce9d2ba5dad240cbaae420063a8bc9fb",
+      "skill": "local:write_case_summary@1.0.0",
+      "parent_id": "f78f26b2430c4b43b0ba05c0ebb15303",
+      "input": {
+        "ticket_id": "T-1003",
+        "category": "damaged",
+        "decision": "escalate",
+        "refund_cents": 0,
+        "priority": "urgent",
+        "user": {
+          "user_id": "u3",
+          "name": "韩梅梅",
+          "email": "hanmeimei@example.com",
+          "tier": "normal"
+        }
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "summary": "工单 T-1003(damaged)处理完成:决策 escalate,退款 0 分,优先级 urgent。客户:韩梅梅 <***@***>\nEN: [EN] 工单 T-1003(damaged)处理完成:决策 escalate,退款 0 分,优先级 urgent。客户:韩梅梅 <***@***>\n审计编号: AUDIT-T-1003-ESCALATE-6851"
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-5",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1003\", \"category\": \"damaged\", \"decision\": \"escalate\", \"refund_cents\": 0, \"priority\": \"urgent\", \"user\": {\"user_id\": \"u3\", \"name\": \"\\u97e9\\u6885\\u6885\", \"email\": \"hanmeimei@example.com\", \"tier\": \"normal\"}}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "e6bf88af9c6240d09d0fa571feb8c81d",
+      "skill": "local:redact_pii@1.0.0",
+      "parent_id": "ce9d2ba5dad240cbaae420063a8bc9fb",
+      "input": {
+        "text": "工单 T-1003(damaged)处理完成:决策 escalate,退款 0 分,优先级 urgent。客户:韩梅梅 <hanmeimei@example.com>"
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "text": "工单 T-1003(damaged)处理完成:决策 escalate,退款 0 分,优先级 urgent。客户:韩梅梅 <***@***>"
+      },
+      "error": null,
+      "call_id": "f7bc31a92e70400dacab89f782b28dde",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"text\": \"\\u5de5\\u5355 T-1003(damaged)\\u5904\\u7406\\u5b8c\\u6210:\\u51b3\\u7b56 escalate,\\u9000\\u6b3e 0 \\u5206,\\u4f18\\u5148\\u7ea7 urgent\\u3002\\u5ba2\\u6237:\\u97e9\\u6885\\u6885 <hanmeimei@example.com>\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "f74bef88c9a54c3c8d36592c2a488ded",
+      "skill": "local:build_audit_log@1.0.0",
+      "parent_id": "ce9d2ba5dad240cbaae420063a8bc9fb",
+      "input": {
+        "ticket_id": "T-1003",
+        "decision": "escalate",
+        "amount_cents": 0
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "audit": "AUDIT-T-1003-ESCALATE-6851"
+      },
+      "error": null,
+      "call_id": "510d2c4f91e34c0c8658fb5db0f8ff03",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1003\", \"decision\": \"escalate\", \"amount_cents\": 0}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "c752222a5b5642de88d3d3a3d679e02b",
+      "skill": "local:translate_en@1.0.0",
+      "parent_id": "ce9d2ba5dad240cbaae420063a8bc9fb",
+      "input": {
+        "text": "工单 T-1003(damaged)处理完成:决策 escalate,退款 0 分,优先级 urgent。客户:韩梅梅 <***@***>"
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "translation": "[EN] 工单 T-1003(damaged)处理完成:决策 escalate,退款 0 分,优先级 urgent。客户:韩梅梅 <***@***>"
+      },
+      "error": null,
+      "call_id": "2af6c7ce6f7a4d0da2c63759580cee1f",
+      "usage": {
+        "completion_tokens": 1,
+        "thinking_tokens": 0,
+        "steps": 1,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 1,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"text\": \"\\u5de5\\u5355 T-1003(damaged)\\u5904\\u7406\\u5b8c\\u6210:\\u51b3\\u7b56 escalate,\\u9000\\u6b3e 0 \\u5206,\\u4f18\\u5148\\u7ea7 urgent\\u3002\\u5ba2\\u6237:\\u97e9\\u6885\\u6885 <***@***>\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"translation\": \"[EN] 工单 T-1003(damaged)处理完成:决策 escalate,退款 0 分,优先级 urgent。客户:韩梅梅 <***@***>\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 49
+      }
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 /* frame-tree.js 纯逻辑单测(WEB-UI.md §4.2 左栏):
    buildFrameTree(depth 平表 → 树;pushOrder 修正同 depth 交叠的兄弟归属)、
-   defaultCollapsedIds(depth>3 且有子帧)、findPath(联动展开祖先)。
+   defaultCollapsedIds(depth>3 且有子帧)、findPath(联动展开祖先)、
+   frameDurations(帧首末信号 ts 差)、spanBlockModel(块头视图模型 / metadata 省略规则)、
+   renderFrameTree(嵌套跨度块 HTML)。
    运行:node static/tests/frame-tree.test.mjs(无需 DOM、无第三方依赖)。 */
 
 import assert from "node:assert/strict";
@@ -9,7 +11,9 @@ import {
   defaultCollapsedIds,
   findPath,
   flattenVisible,
+  frameDurations,
   renderFrameTree,
+  spanBlockModel,
 } from "../js/components/frame-tree.js";
 import { makeBranchFrames, makeFrames, makeSignals } from "./fixtures.mjs";
 
@@ -68,19 +72,99 @@ import { makeBranchFrames, makeFrames, makeSignals } from "./fixtures.mjs";
   assert.equal(findPath(roots, "ghost"), null);
 }
 
-/* ── renderFrameTree:行结构 / chips / 选中态 ───────────────────── */
+/* ── renderFrameTree:嵌套块结构 / metadata / 选中态 ────────────── */
 {
   const html = renderFrameTree(buildFrameTree(makeFrames()), {
     selection: { frameId: "f2", signalIndex: null, source: "tree" },
   });
-  assert.match(html, /data-frame-id="f2"[^>]*aria-selected="true"/, "选中行 aria-selected");
+  assert.match(html, /data-frame-id="f2"[^>]*aria-selected="true"/, "选中块头 aria-selected");
   assert.match(html, /data-frame-id="f1"[^>]*aria-selected="false"/);
-  assert.match(html, /3 steps/, "steps chip");
-  assert.match(html, /ft-guide/, "缩进引导线");
+  assert.match(html, /3 steps/, "metadata steps 段");
+  assert.match(html, /ft-block/, "跨度块");
+  assert.match(html, /ft-kids/, "子块容器(嵌套)");
   assert.match(html, /status-dot/, "状态点");
   assert.match(html, />fib</, "skill 缩写");
+  // 子块嵌在父块内部(c1 的 HTML 出现在父块闭合前由嵌套结构保证,此处校验顺序)
+  assert.ok(
+    html.indexOf('data-frame-id="f2"') > html.indexOf('data-frame-id="f1"'),
+    "子帧块在父帧块之后(嵌套渲染)");
   // 空树
   assert.equal(renderFrameTree([]), "");
+}
+
+/* ── frameDurations:帧首末信号 ts 差(§4.2 块头时长)────────────── */
+{
+  // fixture 信号 ts 全 0 → 时长 0
+  assert.equal(frameDurations(makeSignals()).get("f1"), 0);
+  const sigs = [
+    { name: "run.started", frame_id: null, ts: 9 }, // 无 frame_id:忽略
+    { name: "pre:frame.push", frame_id: "a", ts: 10 },
+    { name: "pre:llm.request", frame_id: "a", ts: 11.5 },
+    { name: "pre:frame.push", frame_id: "b", ts: "bad" }, // 非数值 ts:忽略
+    { name: "post:frame.pop", frame_id: "b", ts: 12.25 },
+  ];
+  const d = frameDurations(sigs);
+  assert.equal(d.get("a"), 1500, "首末 ts 差 → ms");
+  assert.equal(d.get("b"), 0, "单有效信号帧时长 0");
+  assert.equal(frameDurations(null).size, 0, "非数组输入 → 空 Map");
+}
+
+/* ── spanBlockModel:视图模型与 metadata 无值省略 ──────────────── */
+{
+  const f = {
+    frame_id: "f1",
+    skill: "local:handle_ticket@1.0.0",
+    depth: 1,
+    status: "done",
+    usage: { steps: 6 },
+  };
+  const m = spanBlockModel(f, { kind: "prompt", tokens: 128, cost: 0.02, durationMs: 1400 });
+  assert.equal(m.skill, "handle_ticket");
+  assert.equal(m.kind, "prompt");
+  assert.deepEqual(m.meta, [
+    { key: "steps", text: "6 steps" },
+    { key: "tok", text: "128 tok" },
+    { key: "cost", text: "$0.02" },
+    { key: "dur", text: "1.4s" },
+  ]);
+  assert.equal(m.metaText, "6 steps · 128 tok · $0.02 · 1.4s");
+  // 单数:1 step(非 "1 steps")
+  assert.equal(spanBlockModel({ ...f, usage: { steps: 1 } }).metaText, "1 step");
+  // 无值省略:0 tok / $0.00 / 0ms 不出现(§4.2:0 值是噪音)
+  assert.deepEqual(
+    spanBlockModel(f, { kind: "code", tokens: 0, cost: 0, durationMs: 0 }).meta,
+    [{ key: "steps", text: "6 steps" }]);
+  // tokens 紧凑格式化 + 时长分级
+  assert.equal(spanBlockModel(f, { tokens: 1540, durationMs: 380 }).metaText,
+    "6 steps · 1.5k tok · 380ms");
+  assert.equal(spanBlockModel(f, { durationMs: 65000 }).metaText, "6 steps · 1m 5s");
+  assert.equal(spanBlockModel(f, { durationMs: 3.82 }).metaText, "6 steps · 3.8ms");
+  // 无 extras:steps/cost 回落 frame.usage,kind → null(不渲染 chip)
+  const m3 = spanBlockModel({ ...f, usage: { steps: 2, cost: 0.5 } });
+  assert.equal(m3.metaText, "2 steps · $0.50");
+  assert.equal(m3.kind, null);
+  assert.equal(m3.status, "done");
+}
+
+/* ── renderFrameTree + extras:kind chip / +N 折叠计数 / 状态 accent ── */
+{
+  const frames = [
+    { frame_id: "p", skill: "local:orchestrator@1.0.0", depth: 1, status: "done", usage: { steps: 4 } },
+    { frame_id: "c1", skill: "local:fetch@1.0.0", depth: 2, status: "done", usage: { steps: 0 } },
+    { frame_id: "c2", skill: "local:summarize@1.0.0", depth: 2, status: "failed", usage: { steps: 1 } },
+  ];
+  const roots = buildFrameTree(frames);
+  const extras = new Map([
+    ["p", { kind: "prompt", tokens: 1200, cost: 0.03, durationMs: 2300 }],
+  ]);
+  const open = renderFrameTree(roots, { extras });
+  assert.match(open, /ft-block[^>]*data-status="failed"/, "状态 accent 按 data-status");
+  assert.match(open, /ft-kind[^>]*>prompt</, "kind chip");
+  assert.match(open, /4 steps · 1\.2k tok · \$0\.03 · 2\.3s/, "metadata 行(弱色 mono)");
+  assert.match(open, /ft-kids/, "展开渲染子块容器");
+  const collapsedHtml = renderFrameTree(roots, { extras, collapsed: new Set(["p"]) });
+  assert.match(collapsedHtml, /\+2</, "折叠块子帧计数 +N");
+  assert.ok(!collapsedHtml.includes("ft-kids"), "折叠后不渲染子块容器");
 }
 
 /* ── 与信号流联动:pushOrder 来自 pre:frame.push ────────────────── */

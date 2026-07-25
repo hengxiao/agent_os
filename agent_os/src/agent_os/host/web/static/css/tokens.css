@@ -54,19 +54,21 @@
   --ring-live:    rgb(59 158 255 / 0.28);
   --ring-neutral: rgb(93 107 130 / 0.25);
 
-  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
-  --r-sm: 4px; --r-md: 8px; --r-lg: 12px;
+  --s1: 4px; --s1-5: 6px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+  --r-sm: 4px; --r-conn: 6px; --r-md: 8px; --r-lg: 12px; /* r-conn:树连接线拐角 */
 
   /* ── 布局基元(应用壳尺寸,§4.1)───────────────────────────── */
   --topbar-h: 48px;        /* TopBar 固定高 */
   --sidebar-w: 280px;      /* Runs 侧栏展开宽 */
   --sidebar-w-icon: 48px;  /* 侧栏折叠后的图标栏宽 */
-  --wb-tree-w: 260px;      /* Workbench 帧树栏宽(§4.2) */
+  --wb-tree-w: 320px;      /* Workbench 帧树栏宽(§4.2;嵌套跨度块 + metadata 需要) */
   --wb-inspector-w: 420px; /* Workbench 上下文检视器栏宽(§4.2) */
 
   /* ── 描边与阴影基元 ────────────────────────────────────────── */
   --stroke: 1px;           /* 常规描边 */
   --stroke-strong: 2px;    /* 选中边条 / focus 环 */
+  --stroke-accent: 3px;    /* 帧块状态 accent 边条(§4.2 帧树跨度块) */
+  --stroke-accent-strong: 4px; /* 选中帧块的加粗 accent */
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);   /* 面板级极轻阴影(浮起感) */
   --shadow-md: 0 12px 32px rgb(0 0 0 / 0.45); /* Modal 级浮层阴影 */
   --shadow-pop: 0 4px 16px rgb(0 0 0 / 0.5);  /* Toast / Tooltip 浮层 */
@@ -120,6 +122,7 @@ button, input { font: inherit; color: inherit; }
    slide-in— Toast 滑入
    spin    — running 帧行内旋转指示(§4.3)
    ft-in   — live 新帧滑入(§4.3 帧树实时生长)
+   ft-accent-pulse — running 帧块 accent 边条呼吸(§4.2)
    rca-pulse — RCA 出错卡片一次性脉冲(§4.4) */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -139,6 +142,11 @@ button, input { font: inherit; color: inherit; }
 @keyframes ft-in {
   from { transform: translateX(calc(var(--s2) * -1)); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
+}
+/* ft-accent-pulse — running 帧块 accent 边条呼吸(§4.2;色值 = --live 的 alpha 序列) */
+@keyframes ft-accent-pulse {
+  0%, 100% { box-shadow: inset var(--stroke-accent) 0 0 var(--live); }
+  50% { box-shadow: inset var(--stroke-accent) 0 0 rgb(59 158 255 / 0.3); }
 }
 /* rca-pulse — RCA 定位出错卡片的一次性脉冲(§4.4;色值 = --danger 的 alpha 序列) */
 @keyframes rca-pulse {

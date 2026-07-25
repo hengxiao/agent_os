@@ -1,5 +1,5 @@
 /* Run Workbench 页面(WEB-UI.md §4.2):run 头 + 异常 Banner + 三栏
-   (帧树 260px / 信号时间线 flex / 上下文检视器 420px)+ Usage 折叠栏(§4.5)。
+   (帧树 320px / 信号时间线 flex / 上下文检视器 420px)+ Usage 折叠栏(§4.5)。
 
    三联动(§4.2 规则 1,共享 selection store,订阅按键拆分、只重绘受影响栏):
      帧树选帧 → selection.source="tree":时间线过滤到该帧(提示条可清除),检视器懒加载该帧;
@@ -53,6 +53,7 @@ import {
   buildFrameTree,
   defaultCollapsedIds,
   findPath,
+  frameDurations,
   renderFrameTree,
 } from "./components/frame-tree.js";
 import {
@@ -104,6 +105,10 @@ const wb = {
   scrollTimer: null, // 窗口化滚动节流 trailing 定时器
   rca: null, // GET /rca 缓存(异常 run 载入时拉取;{ status, first_error })
   usage: null, // Usage 折叠栏挂载句柄(§4.5,mountUsagePanel 返回)
+  skills: null, // GET /api/skills 缓存(§4.2 帧块 kind chip;每次载入拉一次)
+  kindByName: new Map(), // skill 名 → kind(prompt/code)
+  usageByFid: new Map(), // frame_id → /usage 帧行(tokens/cost)
+  durations: new Map(), // frame_id → 帧时长 ms(frameDurations 纯函数)
   metaKey: "", // runs 列表元信息指纹(轮询时仅元信息变化才重绘页头)
   els: null, // { head, live, tree, timeline, inspector } 面板引用
   live: null, // live 会话(§4.3):{ state, es, pollId, tickId, follow, ending, knownFrames, bar, startMs }
@@ -149,6 +154,10 @@ export function openWorkbench(main, runId, query = null) {
     wb.scrollTimer = null;
     wb.rca = null;
     wb.usage = null;
+    wb.skills = null;
+    wb.kindByName = new Map();
+    wb.usageByFid = new Map();
+    wb.durations = new Map();
     wb.metaKey = "";
     wb.els = null;
     store.set({ selection: null }); // 换 run 清空三联动
@@ -176,6 +185,10 @@ export function closeWorkbench() {
   wb.roots = [];
   wb.lastRows = [];
   wb.els = null;
+  wb.skills = null;
+  wb.kindByName = new Map();
+  wb.usageByFid = new Map();
+  wb.durations = new Map();
 }
 
 /* ── 取数:detail + signals 并行;帧上下文按选中懒加载 ────────────── */
@@ -185,13 +198,23 @@ async function load() {
   wb.status = "loading";
   renderShell();
   try {
-    const [detail, signals] = await Promise.all([
+    // detail + signals 并行;skills(kind chip)与 usage(tokens/cost)随载入拉取,
+    // 失败降级为空(帧块少 chip/metadata,不阻塞页面,§5 降级原则)
+    const [detail, signals, skills, usage] = await Promise.all([
       getJson(`/api/runs/${encodeURIComponent(runId)}`),
       getJson(`/api/runs/${encodeURIComponent(runId)}/signals`),
+      getJson("/api/skills").catch(() => []),
+      getJson(`/api/runs/${encodeURIComponent(runId)}/usage`).catch(() => null),
     ]);
     if (wb.runId !== runId || !wbRouteMatches(runId)) return; // 加载期间路由已切走
     wb.detail = detail;
     wb.signals = Array.isArray(signals) ? signals : [];
+    wb.skills = Array.isArray(skills) ? skills : [];
+    wb.kindByName = new Map(
+      wb.skills.filter((s) => s?.name).map((s) => [s.name, s.kind ?? null]));
+    wb.usageByFid = new Map(
+      (usage?.frames ?? []).filter((f) => f?.frame_id).map((f) => [f.frame_id, f]));
+    wb.durations = frameDurations(wb.signals);
     wb.roots = buildFrameTree(detail?.frames, pushOrder(wb.signals));
     wb.collapsedFrames = defaultCollapsedIds(wb.roots);
     wb.failedFrameIds = (detail?.frames ?? [])
@@ -420,12 +443,25 @@ function renderHeader() {
 
 /* ── 渲染:帧树(左栏)───────────────────────────────────────────── */
 
+/* 帧块旁挂数据(§4.2 块头 chip/metadata):kind 按 skill 名 join /api/skills(载入一次);
+   tokens/cost 按 frame_id join /usage;duration 取该帧首末信号 ts 差(frameDurations)。 */
+function frameExtras(frame) {
+  const u = wb.usageByFid.get(frame?.frame_id);
+  return {
+    kind: wb.kindByName.get(shortSkill(frame?.skill)) ?? null,
+    tokens: (Number(u?.prompt_tokens) || 0) + (Number(u?.completion_tokens) || 0),
+    cost: Number(u?.cost) || 0,
+    durationMs: wb.durations.get(frame?.frame_id) ?? null,
+  };
+}
+
 function renderTreePanel() {
   const el = wb.els?.tree;
   if (!el) return;
   const html = renderFrameTree(wb.roots, {
     collapsed: wb.collapsedFrames,
     selection: store.get("selection"),
+    extras: frameExtras,
   });
   el.innerHTML = html || emptyBlock("无帧数据", "该 run 尚未产生帧(checkpoint 缺失)", "layers");
 }
@@ -525,18 +561,19 @@ function syncFollowBtn() {
   }
 }
 
-/* 帧树实时生长(§4.3):live.state.frames 重建树,新帧行加滑入动画类 */
+/* 帧树实时生长(§4.3):live.state.frames 重建树,时长随信号流刷新,新帧块加滑入动画类 */
 function refreshLiveTree() {
   const live = wb.live;
   if (!live) return;
   wb.roots = buildFrameTree(live.state.frames, pushOrder(wb.signals));
+  wb.durations = frameDurations(wb.signals);
   renderTreePanel();
   const el = wb.els?.tree;
   if (!el) return;
   for (const f of live.state.frames) {
     if (live.knownFrames.has(f.frame_id)) continue;
     live.knownFrames.add(f.frame_id);
-    el.querySelector(`.ft-row[data-frame-id="${f.frame_id}"]`)?.classList.add("ft-new");
+    el.querySelector(`.ft-block[data-frame-id="${f.frame_id}"]`)?.classList.add("ft-new");
   }
 }
 
@@ -671,13 +708,20 @@ async function finishLive() {
   if (live.pollId != null) clearInterval(live.pollId);
   if (live.tickId != null) clearInterval(live.tickId);
   try {
-    const [detail, signals] = await Promise.all([
+    // 终态快照:usage 一并刷新(帧块 tokens/cost 只在 run 结束后齐备);失败降级 null
+    const [detail, signals, usage] = await Promise.all([
       getJson(`/api/runs/${encodeURIComponent(runId)}`),
       getJson(`/api/runs/${encodeURIComponent(runId)}/signals`),
+      getJson(`/api/runs/${encodeURIComponent(runId)}/usage`).catch(() => null),
     ]);
     if (wb.runId !== runId || !wbRouteMatches(runId)) return;
     wb.detail = detail ?? wb.detail;
     if (Array.isArray(signals) && signals.length) wb.signals = signals;
+    if (usage?.frames) {
+      wb.usageByFid = new Map(
+        usage.frames.filter((f) => f?.frame_id).map((f) => [f.frame_id, f]));
+    }
+    wb.durations = frameDurations(wb.signals);
     // 终态帧树:优先 checkpoint 重建的真实帧;产物半写窗口回退 live 帧(标终态)
     let frames = wb.detail?.frames ?? [];
     if (!frames.length && live.state.frames.length) {

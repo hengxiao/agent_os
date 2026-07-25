@@ -1,0 +1,21 @@
+{
+  "status": "done",
+  "result": {
+    "status": "resolved_refunded",
+    "ticket_id": "T-1001",
+    "refund_cents": 8900,
+    "response": "王薇 您好,关于订单 o1 的退款申请已审核通过:退款 ¥89.00 将按原支付路径退回,预计 1-3 个工作日到账。给您带来不便,非常抱歉。"
+  },
+  "error": null,
+  "usage": {
+    "cost": 0.0,
+    "cache_write_tokens": 0,
+    "cache_read_tokens": 0,
+    "total_ms": 0,
+    "prompt_tokens": 20,
+    "ttft_ms": 0,
+    "completion_tokens": 20,
+    "thinking_tokens": 0,
+    "steps": 20
+  }
+}

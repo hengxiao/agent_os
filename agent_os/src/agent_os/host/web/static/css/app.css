@@ -644,60 +644,143 @@ body[data-route="tools"] .sidebar { display: none; }
 .banner-title { font-size: var(--text-sm); font-weight: 600; }
 .banner-body { font-size: var(--text-xs); color: var(--fg-1); word-break: break-word; }
 
-/* ── 帧树(§4.2 左栏):引导线 / 状态点 / 折叠 / 选中边条 ────────── */
-.ft-tree { display: flex; flex-direction: column; }
-.ft-line { display: flex; align-items: stretch; }
-.ft-guide {
-  width: var(--s3);
-  flex-shrink: 0;
-  border-right: var(--stroke) solid var(--line-strong);
-}
-.ft-row {
+/* ── 帧树(§4.2 左栏):嵌套跨度块(状态 accent / 连接线 / 折叠)──────
+   每帧一个圆角块递归嵌套;左侧 3px 状态 accent 用 inset shadow(选中加粗到 4px 免位移);
+   兄弟块间 1px 连接线(::before 圆角拐角 + ::after 竖轨,末子块无 ::after 只到它自己)。 */
+.ft-tree { display: flex; flex-direction: column; gap: var(--s1-5); }
+.ft-block {
+  --ft-accent: var(--fg-2); /* 状态 accent 色(按 data-status 覆写) */
+  --ft-elbow: 14px; /* 连接线拐角落点 = 块头垂直中线 */
   position: relative;
+  container-type: inline-size; /* 块宽驱动的 metadata 逐级丢弃(见下方 @container) */
+  background: var(--bg-1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: inset var(--stroke-accent) 0 0 var(--ft-accent);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.ft-block[data-status="done"] { --ft-accent: var(--ok); }
+.ft-block[data-status="running"] {
+  --ft-accent: var(--live);
+  animation: ft-accent-pulse 1.6s ease-in-out infinite;
+}
+.ft-block[data-status="failed"] { --ft-accent: var(--danger); }
+.ft-block[data-status="aborted"] { --ft-accent: var(--aborted); }
+.ft-block[data-status="paused"] { --ft-accent: var(--warn); }
+/* hover 只作用最内层悬停块(嵌套块不连锁提亮):边框变亮 + --bg-3 悬停底色 + shadow-sm */
+.ft-block:hover:not(:has(.ft-block:hover)) {
+  background: var(--bg-3);
+  border-color: var(--line-strong);
+  box-shadow: inset var(--stroke-accent) 0 0 var(--ft-accent), var(--shadow-sm);
+}
+/* 选中块(§4.2):--bg-2 + accent 加粗 4px + --live 边框 */
+.ft-block:has(> .ft-row[aria-selected="true"]),
+.ft-block:has(> .ft-row[aria-selected="true"]):hover {
+  background: var(--bg-2);
+  border-color: var(--live);
+  box-shadow: inset var(--stroke-accent-strong) 0 0 var(--ft-accent);
+}
+
+/* 块头(单行不折行):chevron + 状态点 + skill 名 + kind chip + 右侧 metadata */
+.ft-row {
   display: flex;
   align-items: center;
   gap: var(--s1);
-  flex: 1;
   min-width: 0;
-  padding: var(--s1);
-  border-radius: var(--r-sm);
+  padding: var(--s1) var(--s2) var(--s1) calc(var(--stroke-accent) + var(--s1));
+  border-radius: var(--r-md);
   cursor: pointer;
-  transition: background 0.15s ease;
-}
-.ft-row:hover { background: var(--bg-3); }
-.ft-row[aria-selected="true"],
-.ft-row[aria-selected="true"]:hover { background: var(--bg-2); }
-.ft-row[aria-selected="true"]::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: var(--s1);
-  bottom: var(--s1);
-  width: var(--stroke-strong);
-  border-radius: var(--r-sm);
-  background: var(--live);
+  white-space: nowrap;
 }
 .ft-toggle { width: var(--s4); height: var(--s4); }
-.ft-toggle svg { transition: transform 0.18s ease; }
+.ft-toggle svg { transition: transform 0.12s ease; }
 .ft-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
 .ft-toggle-spacer { width: var(--s4); height: var(--s4); flex-shrink: 0; }
 .ft-skill {
+  min-width: 0;
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
+  font-weight: 600;
   color: var(--fg-0);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 帧行元信息(steps / cost):弱色纯文本,不用重描边 chip */
-.ft-chips {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-  margin-left: auto;
+/* kind chip(prompt/code,弱色小字,按 kind 弱着色) */
+.ft-kind {
   flex-shrink: 0;
+  padding: 0 var(--s1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: var(--s4);
+  color: var(--fg-2);
+}
+.ft-kind[data-kind="prompt"] { color: var(--sig-llm); }
+.ft-kind[data-kind="code"] { color: var(--sig-tool); }
+/* 折叠块的子帧计数(+N) */
+.ft-count {
+  flex-shrink: 0;
+  padding: 0 var(--s1);
+  border-radius: var(--r-sm);
+  background: var(--bg-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: var(--s4);
+  color: var(--fg-1);
+}
+/* 右侧 metadata:弱色 mono 单行(§4.2;无值段由 spanBlockModel 省略);
+   flex 收缩最后兜底省略号,完整串在 title(悬停可见) */
+.ft-meta {
+  margin-left: auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--fg-2);
+}
+/* 窄块逐级丢弃低优先级段(深层块必然挤,§6.3 密度约束;栏宽 --wb-tree-w 320px):
+   cost → duration → tok → kind chip → steps;分隔符在段首,隐藏不留残符;
+   阈值留 ~10px 字体渲染余量,完整串永远在 title 悬停可见 */
+@container (max-width: 339px) { .ft-seg-cost { display: none; } }
+@container (max-width: 309px) { .ft-seg-dur { display: none; } }
+@container (max-width: 294px) { .ft-seg-tok { display: none; } }
+@container (max-width: 279px) { .ft-kind { display: none; } }
+@container (max-width: 249px) { .ft-seg-steps { display: none; } }
+
+/* 子块容器:父块内缩进 12px,兄弟块间距 6px */
+.ft-kids {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1-5);
+  margin-left: var(--s3);
+  padding: var(--s1-5) var(--s1) var(--s1-5) 0;
+}
+/* 连接线:1px --line-strong,::before 画 6px 圆角拐角(向上跨入兄弟间距),
+   ::after 把竖轨续到下一兄弟;末子块无 ::after,连接线只到它自己 */
+.ft-kids > .ft-block::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--s2) * -1);
+  top: calc(var(--s1-5) * -1);
+  width: var(--s2);
+  height: calc(var(--ft-elbow) + var(--s1-5));
+  border-left: var(--stroke) solid var(--line-strong);
+  border-bottom: var(--stroke) solid var(--line-strong);
+  border-bottom-left-radius: var(--r-conn);
+  pointer-events: none;
+}
+.ft-kids > .ft-block:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--s2) * -1);
+  top: var(--ft-elbow);
+  bottom: calc(var(--s1-5) * -1);
+  border-left: var(--stroke) solid var(--line-strong);
+  pointer-events: none;
 }
 
 /* 状态点(StatusPill 的点,§4.2 帧树状态图标):状态色 + 同色低透明 ring */
@@ -1126,7 +1209,7 @@ textarea.input {
 }
 .tl-follow:hover { background: var(--bg-2); }
 
-/* running 帧行内旋转指示 + live 新帧滑入(§4.3 帧树实时生长) */
+/* running 帧块头右侧旋转指示 + live 新帧块滑入(§4.3 帧树实时生长) */
 .ft-spin {
   width: var(--s3);
   height: var(--s3);

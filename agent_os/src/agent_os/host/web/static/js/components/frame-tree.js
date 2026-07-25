@@ -1,12 +1,16 @@
-/* 帧树(WEB-UI.md §4.2 左栏 260px):树形渲染(缩进引导线 / 状态点 / 展开折叠)、
-   每帧行 skill 名 + chips(steps / cost)、选中态(--bg-2 + 左侧 --live 边条,样式在 app.css)。
+/* 帧树(WEB-UI.md §4.2 左栏 320px):嵌套跨度块(nested span blocks)——
+   每帧一个圆角块递归嵌套,左侧 3px 状态 accent 边条;块头单行(chevron + 状态点 +
+   skill 名 + kind chip + 右侧 metadata:steps · tok · cost · 时长);兄弟块间 1px 连接线;
+   选中态(--bg-2 + accent 加粗 + --live 边框),样式在 app.css(ft-block / ft-kids)。
 
    纯函数(不碰 DOM,node 单测可载):
      buildFrameTree(frames, pushOrder)  帧摘要平表 → 嵌套树
      defaultCollapsedIds(roots)         初始折叠:depth>3 且有子帧(§4.2/§6.3)
      findPath(roots, frameId)           帧 id → 根到该帧的节点路径(时间线联动展开祖先用)
-     flattenVisible(roots, collapsed)   可见行平铺(渲染用)
-   renderFrameTree 返回 HTML 字符串;选中/滚动等 DOM 更新由 workbench 承担。 */
+     flattenVisible(roots, collapsed)   可见行平铺(折叠语义单测用)
+     frameDurations(signals)            帧首末信号 ts 差 → Map<frameId, ms>
+     spanBlockModel(frame, extras)      帧摘要 + 旁挂数据(kind/tokens/cost/duration)→ 视图模型
+   renderFrameTree 返回 HTML 字符串(递归嵌套块);选中/滚动等 DOM 更新由 workbench 承担。 */
 
 import { esc, fmtCost, shortSkill } from "../util.js";
 import { normalizeStatus } from "./status-pill.js";
@@ -80,68 +84,153 @@ export function flattenVisible(roots, collapsed) {
   return rows;
 }
 
+/* 帧时长(§4.2 块头 metadata):该帧首末信号 ts 差 → Map<frameId, ms>。
+   frame_id 为空 / ts 非数值的信号跳过;单信号帧时长 0。 */
+export function frameDurations(signals) {
+  const span = new Map(); // fid -> [minTs, maxTs]
+  for (const s of Array.isArray(signals) ? signals : []) {
+    const fid = s?.frame_id;
+    const ts = Number(s?.ts);
+    if (!fid || !Number.isFinite(ts)) continue;
+    const cur = span.get(fid);
+    if (!cur) span.set(fid, [ts, ts]);
+    else {
+      if (ts < cur[0]) cur[0] = ts;
+      if (ts > cur[1]) cur[1] = ts;
+    }
+  }
+  const out = new Map();
+  for (const [fid, [lo, hi]] of span) out.set(fid, Math.max(0, (hi - lo) * 1000));
+  return out;
+}
+
+/* tokens 紧凑格式化:128 → "128",1540 → "1.5k" */
+export const fmtTokens = (n) => {
+  const v = Number(n) || 0;
+  return v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v);
+};
+
+/* 帧时长格式化:3.8ms / 20ms / 1.4s / 12s / 1m 5s(非法/非正值 → 空串) */
+export function fmtDuration(ms) {
+  const v = Number(ms);
+  if (!Number.isFinite(v) || v <= 0) return "";
+  if (v < 10) return `${Math.round(v * 10) / 10}ms`;
+  if (v < 1000) return `${Math.round(v)}ms`;
+  const s = v / 1000;
+  if (s < 10) return `${Math.round(s * 10) / 10}s`;
+  if (s < 60) return `${Math.round(s)}s`;
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+}
+
+/* 帧块视图模型:帧摘要 + extras({ kind, steps, tokens, cost, durationMs })→ 渲染字段。
+   meta 段按"无值省略"组装(0 steps / 0 tok / $0.00 / 0ms 不出现,§4.2:0 值是噪音),
+   每段带 key(app.css 按块宽 container query 逐级丢弃低优先级段:cost → tok → dur → steps);
+   steps/cost 缺省回落 frame.usage,kind 非空字符串才出 chip。 */
+export function spanBlockModel(frame, extras = null) {
+  const f = frame ?? {};
+  const ex = extras ?? {};
+  const steps = Number(ex.steps ?? f.usage?.steps) || 0;
+  const tokens = Number(ex.tokens) || 0;
+  const cost = Number(ex.cost ?? f.usage?.cost) || 0;
+  const durRaw = Number(ex.durationMs);
+  const durationMs = Number.isFinite(durRaw) && durRaw > 0 ? durRaw : null;
+  const meta = [];
+  if (steps > 0) meta.push({ key: "steps", text: steps === 1 ? "1 step" : `${steps} steps` });
+  if (tokens > 0) meta.push({ key: "tok", text: `${fmtTokens(tokens)} tok` });
+  if (cost > 0) meta.push({ key: "cost", text: fmtCost(cost) });
+  if (durationMs != null) meta.push({ key: "dur", text: fmtDuration(durationMs) });
+  return {
+    fid: String(f.frame_id ?? ""),
+    skill: shortSkill(f.skill),
+    fullSkill: String(f.skill ?? ""),
+    status: normalizeStatus(f.status),
+    kind: typeof ex.kind === "string" && ex.kind ? ex.kind : null,
+    steps,
+    tokens,
+    cost,
+    durationMs,
+    meta,
+    metaText: meta.map((s) => s.text).join(" · "),
+  };
+}
+
 /* 状态点(StatusPill 的点,§4.2:状态图标用 StatusPill 点;颜色 app.css 按 data-status) */
 export const statusDot = (status) =>
   `<span class="status-dot" data-status="${normalizeStatus(status)}"` +
   ` title="${esc(status ?? "unknown")}" aria-hidden="true"></span>`;
 
-/* 帧行元信息(§4.2):steps/cost 弱色纯文本(非重描边 chip);
-   0 值是噪音(0 steps / $0.00),不渲染。 */
-function frameChips(frame) {
-  const steps = Number(frame?.usage?.steps) || 0;
-  const cost = Number(frame?.usage?.cost) || 0;
-  let html = "";
-  if (steps > 0) html += `<span class="ft-meta">${esc(steps)} steps</span>`;
-  if (cost > 0) html += `<span class="ft-meta mono">${esc(fmtCost(cost))}</span>`;
-  return html;
-}
-
-function rowHtml({ node, hasChildren, collapsed }, selection) {
-  const f = node.frame;
-  const fid = String(f.frame_id ?? "");
-  const selected = selection?.frameId === f.frame_id;
+/* 块头(单行不折行):chevron(仅有子帧)+ 状态点 + skill 名(600)+ 折叠 +N 计数 +
+   kind chip + 右侧 metadata(弱色 mono," · " 连接)+ running 旋转指示(§4.3)。 */
+function headHtml(node, model, { collapsed, selection }) {
+  const hasChildren = node.children.length > 0;
+  const isCollapsed = collapsed.has(model.fid);
+  const selected = selection?.frameId === node.frame.frame_id;
   const toggle = hasChildren
-    ? `<button class="icon-btn ft-toggle" data-action="ft-toggle" data-frame-id="${esc(fid)}"` +
-      ` aria-label="${collapsed ? "展开子帧" : "折叠子帧"}" aria-expanded="${!collapsed}">` +
+    ? `<button class="icon-btn ft-toggle" data-action="ft-toggle" data-frame-id="${esc(model.fid)}"` +
+      ` aria-label="${isCollapsed ? "展开子帧" : "折叠子帧"}" aria-expanded="${!isCollapsed}">` +
       `<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor"` +
       ` stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
       `<path d="M6 3 L11 8 L6 13"/></svg></button>`
     : `<span class="ft-toggle-spacer" aria-hidden="true"></span>`;
+  // metadata 分段渲染:分隔符并入段首(某段被 container query 隐藏时不留 dangling "·");
+  // title 兜底完整 meta(窄块隐藏段悬停可见)
+  const metaHtml = model.meta
+    .map(
+      (s, i) =>
+        `<span class="ft-seg ft-seg-${s.key}">${esc((i > 0 ? " · " : "") + s.text)}</span>`)
+    .join("");
   return (
-    `<div class="ft-row" data-frame-id="${esc(fid)}" data-depth="${node.depth}"` +
-    ` role="treeitem" tabindex="0" aria-selected="${selected}"` +
-    (hasChildren ? ` aria-expanded="${!collapsed}"` : "") +
-    ` title="${esc(f.skill ?? "")} · ${esc(fid)}">` +
+    `<div class="ft-row" data-frame-id="${esc(model.fid)}" role="treeitem" tabindex="0"` +
+    ` aria-selected="${selected}"` +
+    (hasChildren ? ` aria-expanded="${!isCollapsed}"` : "") +
+    ` title="${esc(model.fullSkill)} · ${esc(model.fid)}">` +
     toggle +
-    statusDot(f.status) +
-    `<span class="ft-skill">${esc(shortSkill(f.skill))}</span>` +
-    // running 帧行内旋转指示(§4.3:不止文本"运行中";reduced-motion 全局关闭)
-    (normalizeStatus(f.status) === "running"
+    statusDot(node.frame.status) +
+    `<span class="ft-skill">${esc(model.skill)}</span>` +
+    (isCollapsed && hasChildren
+      ? `<span class="ft-count" title="${node.children.length} 个子帧已折叠">+${node.children.length}</span>`
+      : "") +
+    (model.kind
+      ? `<span class="ft-kind" data-kind="${esc(model.kind)}">${esc(model.kind)}</span>`
+      : "") +
+    `<span class="ft-meta"${model.metaText ? ` title="${esc(model.metaText)}"` : ""}>` +
+    metaHtml +
+    `</span>` +
+    (model.status === "running"
       ? `<span class="ft-spin" title="运行中" aria-label="运行中"></span>`
       : "") +
-    `<span class="ft-chips">${frameChips(f)}</span>` +
     `</div>`
   );
 }
 
-/* 树 HTML:引导线由 .ft-guides(每深度一条,样式 app.css)承担。 */
-export function renderFrameTree(roots, { collapsed = new Set(), selection = null } = {}) {
-  const rows = flattenVisible(roots, collapsed);
-  if (!rows.length) return "";
+/* 跨度块递归:块 = 头部 + 子块容器(折叠时不渲染;连接线在 app.css 经 ::before/::after) */
+function blockHtml(node, ctx) {
+  const model = spanBlockModel(node.frame, ctx.extraOf(node.frame));
+  const isCollapsed = ctx.collapsed.has(model.fid);
+  const kids =
+    node.children.length > 0 && !isCollapsed
+      ? `<div class="ft-kids" role="group">` +
+        node.children.map((c) => blockHtml(c, ctx)).join("") +
+        `</div>`
+      : "";
+  return (
+    `<div class="ft-block" data-frame-id="${esc(model.fid)}" data-depth="${node.depth}"` +
+    ` data-status="${model.status}">` +
+    headHtml(node, model, ctx) +
+    kids +
+    `</div>`
+  );
+}
+
+/* 树 HTML:根块平铺(块间距 app.css);extras 为 Map<frameId, 旁挂数据> 或 (frame) => 旁挂数据。 */
+export function renderFrameTree(roots, { collapsed = new Set(), selection = null, extras = null } = {}) {
+  if (!roots?.length) return "";
+  const extraOf =
+    typeof extras === "function" ? extras : (f) => extras?.get?.(f?.frame_id) ?? null;
+  const ctx = { collapsed, selection, extraOf };
   return (
     `<div class="ft-tree" role="tree" aria-label="帧树">` +
-    rows
-      .map((r) => {
-        const guides = Array.from({ length: Math.max(0, r.node.depth - 1) }, () =>
-          `<span class="ft-guide" aria-hidden="true"></span>`).join("");
-        return (
-          `<div class="ft-line" data-depth="${r.node.depth}">` +
-          guides +
-          rowHtml(r, selection) +
-          `</div>`
-        );
-      })
-      .join("") +
+    roots.map((r) => blockHtml(r, ctx)).join("") +
     `</div>`
   );
 }

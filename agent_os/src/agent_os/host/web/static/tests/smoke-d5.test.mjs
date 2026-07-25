@@ -101,6 +101,7 @@ globalThis.fetch = async (path) => {
   if (url === "/api/runs/r-long") return reply(DETAIL_LONG);
   if (url === "/api/runs/r-long/signals") return reply(LONG_SIGNALS);
   if (url === "/api/runs/r-long/usage") return reply({ run: {}, frames: [] });
+  if (url === "/api/skills") return reply([{ name: "fib", version: "1.0.0", kind: "prompt" }]);
   throw new Error(`未 stub 的请求: GET ${url}`);
 };
 

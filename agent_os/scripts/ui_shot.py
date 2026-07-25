@@ -85,8 +85,8 @@ def main() -> None:
                     if loc.count():
                         loc.click()
                         page.wait_for_timeout(600)
-                except Exception:
-                    pass
+                except Exception as e:  # noqa: BLE001 - 点击失败不阻断整页截图
+                    print(f"click {sel} skipped: {e}", file=sys.stderr)
             page.screenshot(path=str(out / f"{name}.png"))
             print(f"shot {name}: {hash_path}")
         # Launch Modal(若存在 + New Run 按钮)

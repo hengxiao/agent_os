@@ -127,12 +127,12 @@
 │ ● live  已用 12.4s │ steps 8/200 ▓▓░░ │ cost $0.31/$2.00 ▓░░     │
 ├──────────────┬───────────────────────┬──────────────────────────┤
 │ 帧树          │ 信号时间线             │ 上下文检视器              │
-│ (260px)      │ (flex)                │ (420px,可拖宽)            │
-│ ▾ f1 fib     │ ▶ step 3 ────────     │ ┌ system ──────────┐     │
-│   3s 12t     │  L llm.response       │ │ 你是菲波拉契…     │     │
-│ ▾ f2 fib ●   │  T python_exec ✓      │ └──────────────────┘     │
-│   运行中…     │  S ToolGuard ✖ veto   │ ┌ assistant ────────┐    │
-│              │    "rm -rf 被禁止"     │ │ tool_call #1      │    │
+│ (320px)      │ (flex)                │ (420px,可拖宽)            │
+│ ┌─●fib─────┐ │ ▶ step 3 ────────     │ ┌ system ──────────┐     │
+│ │▾ 6 steps·│ │  L llm.response       │ │ 你是菲波拉契…     │     │
+│ │ ┌●fib───┐│ │  T python_exec ✓      │ └──────────────────┘     │
+│ │ │运行中·││ │  S ToolGuard ✖ veto   │ ┌ assistant ────────┐    │
+│ └──────────┘ │    "rm -rf 被禁止"     │ │ tool_call #1      │    │
 │              │  …                    │ │ python_exec(…) ⎘  │    │
 │              │                       │ ├ tool_result ✖ ────┤    │
 │              │                       │ │ vetoed: 禁止危险…  │    │
@@ -141,6 +141,11 @@
 │ Usage 按帧 ▾(可折叠底栏)                                        │
 └──────────────────────────────────────────────────────────────────┘
 ```
+
+帧树为**嵌套跨度块**:每帧一个圆角块递归嵌套,左侧 3px 状态 accent(done/running 脉冲/failed/aborted);
+块头单行 = chevron + 状态点 + skill 名 + kind chip + 右侧 metadata(`6 steps · 128 tok · $0.02 · 1.4s`,
+无值字段省略,窄块按 cost→duration→tok→chip→steps 逐级丢弃,完整串在 title);兄弟块间 1px 连接线
+(末子块只到自身);选中块 --bg-2 + accent 加粗 4px + --live 边框;depth>3 默认折叠,折叠块显示 +N 子帧计数。
 
 三个联动规则(整页灵魂):
 

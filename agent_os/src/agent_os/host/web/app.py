@@ -1,10 +1,11 @@
 """FastAPI app(RUNNERS.md §4.3 API 契约;R3):Web UI Runner 的路由层。
 
-``create_app(config_path, artifacts_root=...)`` 返回 app;路由层只调用
+``create_app(config_path, artifacts_root=..., skillsets_dir=...)`` 返回 app;路由层只调用
 host/shared 的读取层与 :class:`RunManager`,不 import 内核私有实现(§4.5)。
 
 校验错归类(与 CLI 退出码 2 同类,§3.3):技能不存在/输入不合 schema 等
-"run 未开始"的失败统一返回 ``200 + {"status": "failed", "error": ...}``。
+"run 未开始"的失败统一返回 ``200 + {"status": "failed", "error": ...}``;
+``skill_set`` 未知(D6)属请求本身非法,归 400。
 """
 
 from __future__ import annotations
@@ -61,12 +62,19 @@ class RunOverrides(BaseModel):
 
 
 class RunBody(BaseModel):
-    """``POST /api/runs`` 请求体(§4.3 ``{skill, input, overrides?, wait?}``)。"""
+    """``POST /api/runs`` 请求体(§4.3 ``{skill, input, overrides?, wait?}``;D6 增 ``skill_set``)。"""
 
     skill: str
     input: dict[str, Any]
     wait: bool = False
     overrides: RunOverrides | None = None
+    skill_set: str | None = None
+
+
+class ReloadBody(BaseModel):
+    """``POST /api/skills/reload`` 请求体(D6):``skill_set`` 限定重载哪个 set,缺省全部。"""
+
+    skill_set: str | None = None
 
 
 def _run_dir(artifacts_root: Path, run_id: str) -> Path:
@@ -90,6 +98,8 @@ def _detail(artifacts_root: Path, manager: RunManager, run_id: str) -> dict[str,
                 "error": result_doc.get("error"),
                 "usage": result_doc.get("usage") or {},
                 "frames": frames,
+                # D6:历史产物无 skill_set 字段时归 "default"(全局 config 跑的 run)
+                "skill_set": result_doc.get("skill_set") or "default",
             }
     state = manager.state_of(run_id)
     if state is None:
@@ -103,6 +113,7 @@ def _detail(artifacts_root: Path, manager: RunManager, run_id: str) -> dict[str,
         "error": state.get("error"),
         "usage": (state.get("record") or {}).get("usage") or {},
         "frames": [],
+        "skill_set": state.get("skill_set") or "default",
         # D3 live 视图数据源(§4.3):已用时长起点 + 本次 run 生效的 RunConfig
         # (steps/cost 双 ProgressBar 的分母;含 overrides 合并后的值)
         "started_at": state.get("started_at"),
@@ -133,6 +144,8 @@ def _list_runs(artifacts_root: Path, manager: RunManager) -> list[dict[str, Any]
                 "status": "running",  # meta 在、result 未落:视为在途(崩溃/断电遗留)
                 "started_at": meta.get("started_at"),
                 "cost": 0.0,
+                # D6:历史产物无 skill_set 字段时归 "default"
+                "skill_set": meta.get("skill_set") or "default",
             }
             result_path = run_dir / "result.json"
             if result_path.is_file():
@@ -152,6 +165,8 @@ def _list_runs(artifacts_root: Path, manager: RunManager) -> list[dict[str, Any]
         }
         item["status"] = state["status"]
         item["cost"] = ((state.get("record") or {}).get("usage") or {}).get("cost", item["cost"])
+        # D6:在途 run 从内存态取 tag;已有产物条目以产物为准(内存态兜底 "default")
+        item["skill_set"] = state.get("skill_set") or item.get("skill_set") or "default"
         runs[run_id] = item
     return sorted(runs.values(), key=lambda r: r.get("started_at") or "", reverse=True)
 
@@ -242,9 +257,16 @@ def _sse_line(row: dict[str, Any]) -> str:
     return f"data: {json.dumps(row, ensure_ascii=False, default=repr)}\n\n"
 
 
-def create_app(config_path: str | Path, artifacts_root: Path = Path(".agent-os")) -> FastAPI:
-    """装配 Web UI Runner(§4.2):RunManager + REST + SSE + 静态 SPA。"""
-    manager = RunManager(config_path, Path(artifacts_root))
+def create_app(
+    config_path: str | Path,
+    artifacts_root: Path = Path(".agent-os"),
+    skillsets_dir: str | Path | None = None,
+) -> FastAPI:
+    """装配 Web UI Runner(§4.2):RunManager + REST + SSE + 静态 SPA。
+
+    ``skillsets_dir``(D6):一站多 skill set 根目录(``<root>/<set>/skills.yaml``)。
+    """
+    manager = RunManager(config_path, Path(artifacts_root), skillsets_dir=skillsets_dir)
     root = Path(artifacts_root)
     app = FastAPI(title="Agent OS Web UI")
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
@@ -255,10 +277,17 @@ def create_app(config_path: str | Path, artifacts_root: Path = Path(".agent-os")
 
     @app.post("/api/runs")
     async def post_run(body: RunBody) -> dict[str, Any]:
+        # D6:skill_set 未知属请求非法(400),与"run 未开始"的 200+failed 归类不同
+        if body.skill_set is not None and body.skill_set not in manager.skillsets():
+            raise HTTPException(status_code=400, detail=f"未知 skill set: {body.skill_set!r}")
         overrides = body.overrides.model_dump(exclude_none=True) if body.overrides else None
         try:
             run_id = await manager.start_run(
-                body.skill, body.input, wait=body.wait, overrides=overrides
+                body.skill,
+                body.input,
+                wait=body.wait,
+                overrides=overrides,
+                skill_set=body.skill_set,
             )
         except RunValidationError as e:
             return {"status": "failed", "error": str(e)}
@@ -361,20 +390,44 @@ def create_app(config_path: str | Path, artifacts_root: Path = Path(".agent-os")
             raise HTTPException(status_code=400, detail=f"checkpoint 畸形: {e}") from e
         return _jsonable(record)
 
+    @app.get("/api/skillsets")
+    def list_skillsets() -> list[dict[str, Any]]:
+        """一站多 skill set(D6):``[{name, skills(manifest 数), path}]``。
+
+        装配失败的 set(坏 skills.yaml/装配错)不拖垮列表:``skills`` 归 0 并带
+        ``error`` 字段,前端下拉仍可用其余 set。
+        """
+        out: list[dict[str, Any]] = []
+        for name, path in manager.skillsets().items():
+            item: dict[str, Any] = {"name": name, "path": str(path)}
+            try:
+                item["skills"] = len(manager.skills_manifests(name))
+            except Exception as e:  # noqa: BLE001 — 坏 set 隔离:错误透传给 dev 用户
+                item["skills"] = 0
+                item["error"] = f"{type(e).__name__}: {e}"
+            out.append(item)
+        return out
+
     @app.get("/api/skills")
-    def list_skills() -> list[dict[str, Any]]:
-        """技能清单(WEB-UI.md §6.2):共享 registry 的 manifest 摘要列表(Launch Modal 下拉)。"""
+    def list_skills(skill_set: str | None = None) -> list[dict[str, Any]]:
+        """技能清单(WEB-UI.md §6.2):共享 registry 的 manifest 摘要列表(Launch Modal 下拉)。
+
+        D6:``?skill_set=<name>`` 按 set 过滤(未知 set 归 400);不带参数维持全局行为。
+        """
         try:
-            manifests = manager.skills_manifests()
+            manifests = manager.skills_manifests(skill_set)
         except RunValidationError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return [_skill_summary(m) for m in manifests]
 
     @app.get("/api/skills/{name}")
-    def get_skill(name: str) -> dict[str, Any]:
-        """单个技能的全量 manifest(§6.2;Launch Modal 的 inputs schema 数据源)。"""
+    def get_skill(name: str, skill_set: str | None = None) -> dict[str, Any]:
+        """单个技能的全量 manifest(§6.2;Launch Modal 的 inputs schema 数据源)。
+
+        D6:``?skill_set=<name>`` 在多 set 下消歧(同名技能按 set 取装配)。
+        """
         try:
-            manifest = manager.skill_manifest(name)
+            manifest = manager.skill_manifest(name, skill_set)
         except RunValidationError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         if manifest is None:
@@ -382,10 +435,13 @@ def create_app(config_path: str | Path, artifacts_root: Path = Path(".agent-os")
         return _skill_doc(manifest)
 
     @app.post("/api/skills/reload")
-    def reload_skills() -> dict[str, Any]:
-        """热重载 skills 文件(§4.3;mtime 检查,只影响后续新建的 run,§6.1)。"""
+    def reload_skills(body: ReloadBody | None = None) -> dict[str, Any]:
+        """热重载 skills 文件(§4.3;mtime 检查,只影响后续新建的 run,§6.1)。
+
+        D6:body 可带 ``skill_set`` 限定重载哪个 set;缺省全部。
+        """
         try:
-            return {"reloaded": manager.reload_skills()}
+            return {"reloaded": manager.reload_skills(body.skill_set if body else None)}
         except (RunValidationError, SkillLoadError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

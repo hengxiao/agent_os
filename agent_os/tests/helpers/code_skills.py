@@ -52,3 +52,26 @@ async def spawn_naughty(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """spawn 白名单外的子技能(用于权限拒绝测试)。"""
     await ctx.spawn("fib", {"n": 2})
     return {"never": True}
+
+
+async def board_put_get(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """经 ctx.board 代理在白名单命名空间读写 KV(§12 内核中介仲裁)。"""
+    version = await ctx.board.put("shared", "answer", input["v"])
+    value, ver = await ctx.board.get("shared", "answer")
+    return {"value": value, "version": ver, "put_version": version}
+
+
+async def board_naughty(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """写白名单外命名空间(用于黑板权限拒绝测试)。"""
+    await ctx.board.put("secret", "k", 1)
+    return {"never": True}
+
+
+async def board_publish(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """经 ctx.board 代理向白名单命名空间发消息(Envelope 透传)。"""
+    from agent_os.api.v1 import Envelope
+
+    await ctx.board.publish(
+        "shared", Envelope(sender=ctx.frame_id, type="status_update", payload={"pct": input["pct"]})
+    )
+    return {"sent": True}

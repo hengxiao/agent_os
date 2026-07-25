@@ -14,26 +14,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_os.host.web.app import create_app
-from tests.test_cli_r1 import _write_config
+from tests.helpers.web import make_client as _client
+from tests.helpers.web import run_and_wait
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
 
-def _client(tmp_path: Path) -> TestClient:
-    cfg = _write_config(tmp_path)
-    return TestClient(create_app(cfg, artifacts_root=tmp_path / "runs"))
-
-
 def _run_fib(client: TestClient, n: int = 3) -> str:
-    r = client.post("/api/runs", json={"skill": "fib", "input": {"n": n}, "wait": True})
-    assert r.status_code == 200, r.text
-    return r.json()["run_id"]
+    return run_and_wait(client, "fib", {"n": n})
 
 
 # ---------------------------------------------------------------------------

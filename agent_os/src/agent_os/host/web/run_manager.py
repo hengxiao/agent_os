@@ -34,12 +34,27 @@ D4 增量(WEB-UI.md §4.7/§6.2):
 - ``tools_specs``:共享 tools registry 的全量 ToolSpec(``GET /api/tools``
   数据源);与 skills 共享 registry 同一惰性装配路径,但 ``[tools].builtins``
   恒视为 True——浏览器展示宿主全量工具面,与单 run 的 ``[tools]`` 开关无关。
+
+D6 增量(一站多 skill set;tests/test_skillsets.py 锚点):
+
+- ``skillsets_dir``:`<root>/<set>/skills.yaml`(必须)+ 可选 set 级
+  ``agent-os.toml``(与全局 config **深合并**,继承全局)+ 可选 py 模块;
+  ``_assemble_kernel(skill_set=...)`` 按 set 装配内核(每 set 惰性,共享 registry
+  与每 run 内核都走同一路径);
+- 装配前把 set 目录与全局配置目录钉到 ``sys.path`` 前两位并逐出同名外来缓存
+  模块(``_prepare_set_imports``):set 自己声明的 dotted path 解析到本 set,
+  深合并继承来的解析到全局配置目录,都不再依赖 PYTHONPATH。已知限制:code
+  技能 handler 是调用时惰性 import(§6.3),跨 set 同名 handler 模块不支持(改名规避);
+- ``start_run(..., skill_set=...)``:显式 set 用该 set 装配;未指定时唯一 set
+  自动生效,否则全局 config(向后兼容);run 记录(内存态 + meta.json/result.json)
+  带 ``skill_set``(全局 run 记 ``"default"``)。
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import threading
 from collections import deque
 from datetime import UTC, datetime
@@ -49,7 +64,7 @@ from typing import Any, ClassVar
 from agent_os.api.v1 import RUN_STARTED, Allow, Mode, RunControl, Signal
 from agent_os.host.shared.artifacts import execute_resume, execute_run
 from agent_os.host.shared.runrecord import STATUS_FAILED
-from agent_os.runtime.config import build_kernel, load_config
+from agent_os.runtime.config import build_kernel, load_config, load_skillsets
 
 #: hub 关闭时投递给订阅者的哨兵(§4.2:run 结束后 SSE 发终止事件并关闭)
 HUB_CLOSED: Any = object()
@@ -94,6 +109,51 @@ class ResumeConflictError(RuntimeError):
 def _jsonable(value: Any) -> Any:
     """任意值 → JSON 安全结构(不可序列化值 ``repr`` 兜底,与 sink 同策略)。"""
     return json.loads(json.dumps(value, ensure_ascii=False, default=repr))
+
+
+def _deep_merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    """配置深合并(D6 set 级 ``agent-os.toml`` 继承全局):table 递归合并,其余覆盖。"""
+    out = dict(base)
+    for key, val in over.items():
+        if isinstance(val, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], val)
+        else:
+            out[key] = val
+    return out
+
+
+def _evict_foreign_module(py: Path) -> None:
+    """``sys.modules`` 缓存的同名模块若不是 ``py`` 本身则逐出(让 importlib 重解析)。"""
+    mod = sys.modules.get(py.stem)
+    file = getattr(mod, "__file__", None)
+    if file is not None and Path(file).resolve() != py.resolve():
+        del sys.modules[py.stem]
+
+
+def _prepare_set_imports(set_dir: Path, global_dir: Path) -> None:
+    """把 set 目录与全局配置目录钉到 ``sys.path`` 前两位,并逐出同名外来缓存模块(D6)。
+
+    - set 目录优先(position 0):set 自己声明的 dotted path(brain/handler/
+      tools.custom)解析到本 set;全局配置目录其次(position 1):深合并**继承**
+      来的 dotted path(如全局 ``[providers.mock].brain``)解析到全局配置所在目录;
+    - 多 set 共进程时各 set 的顶层模块可能同名(如各自的 ``brains.py``):逐出
+      ``sys.modules`` 里与"本次装配应解析到的文件"不一致的同名缓存,保证
+      importlib 按上述顺序重新解析。已装配内核持有的 callable 是直接引用,不受影响。
+    已知限制:code 技能的 handler 是调用时惰性 import(§6.3),跨 set 同名 handler
+    模块不支持(改名规避)。
+    """
+    dirs = [set_dir] if set_dir == global_dir else [set_dir, global_dir]
+    for d in dirs:
+        entry = str(d)
+        while entry in sys.path:
+            sys.path.remove(entry)
+    for d in reversed(dirs):
+        sys.path.insert(0, str(d))
+    for py in set_dir.glob("*.py"):
+        _evict_foreign_module(py)
+    for py in global_dir.glob("*.py"):
+        if not (set_dir / py.name).is_file():  # set 目录同名文件优先(上面已按 set 处理)
+            _evict_foreign_module(py)
 
 
 def signal_row(sig: Signal) -> dict[str, Any]:
@@ -176,7 +236,12 @@ class RunManager:
     "started_at", "kernel"}``;历史 run 重启后由路由层从产物目录重建(冷数据,§4.2)。
     """
 
-    def __init__(self, config_path: str | Path, artifacts_root: Path) -> None:
+    def __init__(
+        self,
+        config_path: str | Path,
+        artifacts_root: Path,
+        skillsets_dir: str | Path | None = None,
+    ) -> None:
         self._config_path = config_path
         self._artifacts_root = Path(artifacts_root)
         self._lock = threading.Lock()
@@ -184,23 +249,85 @@ class RunManager:
         self._hubs: dict[str, SignalHub] = {}
         self._skills_registry: Any = None  # 惰性装配的共享 registry(reload/查询用)
         self._tools_registry: Any = None  # 惰性装配的共享 tools registry(D4 查询用)
+        #: D6 一站多 set:{set 名: set 目录(resolve 后,sys.path/模块逐出比较一致)}
+        self._sets: dict[str, Path] = (
+            {name: d.resolve() for name, d in load_skillsets(skillsets_dir).items()}
+            if skillsets_dir is not None
+            else {}
+        )
+        self._set_registries: dict[str, Any] = {}  # 每 set 惰性装配的共享 registry
+        #: 串行化"钉 sys.path + 逐出模块 + build_kernel"(跨 set 装配/并发 run 防串模块)
+        self._assemble_lock = threading.Lock()
 
-    def _assemble_kernel(self, overrides: dict[str, Any] | None = None) -> Any:
+    def skillsets(self) -> dict[str, Path]:
+        """全部 set(name → 目录,按名字序;``GET /api/skillsets`` 数据源,D6)。"""
+        return dict(self._sets)
+
+    def _set_dir(self, name: str) -> Path:
+        """set 名 → 目录;未知 set 抛 :class:`RunValidationError`(路由层归 400)。"""
+        try:
+            return self._sets[name]
+        except KeyError:
+            raise RunValidationError(
+                f"未知 skill set: {name!r}(可用: {sorted(self._sets) or '无'})"
+            ) from None
+
+    def _resolve_set(self, skill_set: str | None) -> str | None:
+        """生效 set(D6):显式指定(校验存在)> 唯一 set 自动 > ``None``(全局,向后兼容)。"""
+        if skill_set is not None:
+            self._set_dir(skill_set)
+            return skill_set
+        if len(self._sets) == 1:
+            return next(iter(self._sets))
+        return None
+
+    def _base_config(self, skill_set: str | None) -> str | Path | dict[str, Any]:
+        """run 内核装配的 base config(config 路径或等价 dict,见 :func:`build_kernel`)。
+
+        ``skill_set=None`` → 全局 config;否则(D6):先 ``_prepare_set_imports``
+        (dotted path 不依赖 PYTHONPATH),再按模型组配置——set 目录有
+        ``agent-os.toml`` 则与全局 config 深合并(set 级装配继承全局),无则用全局;
+        ``[skills].path`` 取 set toml 显式声明(相对路径相对 set 目录解析),
+        未声明恒指向 ``<set>/skills.yaml``(模型钉死:每 set 必有自己的 skills.yaml)。
+        """
+        if skill_set is None:
+            return self._config_path
+        set_dir = self._set_dir(skill_set)
+        _prepare_set_imports(set_dir, Path(self._config_path).resolve().parent)
+        set_toml = set_dir / "agent-os.toml"
+        set_cfg = load_config(set_toml) if set_toml.is_file() else {}
+        cfg = _deep_merge(load_config(self._config_path), set_cfg)
+        declared = (set_cfg.get("skills") or {}).get("path")
+        skills = dict(cfg.get("skills") or {})
+        skills["path"] = str(set_dir / declared) if declared else str(set_dir / "skills.yaml")
+        cfg["skills"] = skills
+        return cfg
+
+    def _assemble_kernel(
+        self,
+        overrides: dict[str, Any] | None = None,
+        skill_set: str | None = None,
+    ) -> Any:
         """按 config 装配一个 run 的内核;恒附带 _StopBridge 保证 ctl 存在(stop 通道)。
 
         ``overrides``(D3,WEB-UI.md §4.3):``{model?, max_cost?, max_steps?}`` 合并进
         本次 run 的 ``[run]`` 配置。配置文件每次重新读取,改动只落在本 run 私有的
         dict 副本上——只影响本次 run,不泄漏到后续 run 或共享 registry(D3 锚点)。
+
+        ``skill_set``(D6):用该 set 的装配(``_base_config``);全程持
+        ``_assemble_lock``,与并发 run/其它 set 的装配串行化(sys.path 是进程全局)。
         """
-        if not overrides:
-            return build_kernel(self._config_path, extra_sidecars=[_StopBridge()])
-        cfg = load_config(self._config_path)
-        run_section = dict(cfg.get("run") or {})
-        for key in OVERRIDE_FIELDS:
-            if key in overrides and overrides[key] is not None:
-                run_section[key] = overrides[key]
-        cfg["run"] = run_section
-        return build_kernel(cfg, extra_sidecars=[_StopBridge()])
+        with self._assemble_lock:
+            base = self._base_config(skill_set)
+            if not overrides:
+                return build_kernel(base, extra_sidecars=[_StopBridge()])
+            cfg = load_config(base) if isinstance(base, (str, Path)) else dict(base)
+            run_section = dict(cfg.get("run") or {})
+            for key in OVERRIDE_FIELDS:
+                if key in overrides and overrides[key] is not None:
+                    run_section[key] = overrides[key]
+            cfg["run"] = run_section
+            return build_kernel(cfg, extra_sidecars=[_StopBridge()])
 
     async def start_run(
         self,
@@ -208,13 +335,18 @@ class RunManager:
         input: dict[str, Any],
         wait: bool = False,
         overrides: dict[str, Any] | None = None,
+        skill_set: str | None = None,
     ) -> str:
         """启动一个 run 并返回 run_id;``wait=True`` 时阻塞到 run 结束。
 
         run_id 从 ``run.started`` 信号捕获:无论 wait 与否都先等到 run 真正开始
         (或开始即失败)再返回;run 未开始的校验错抛 :class:`RunValidationError`。
         ``overrides`` 见 :meth:`_assemble_kernel`(D3,只影响本次 run)。
+        ``skill_set``(D6):用该 set 的装配;缺省见 :meth:`_resolve_set`;run 记录
+        (内存态 + meta.json/result.json)带 ``skill_set``(全局 run 记 ``"default"``)。
         """
+        effective = self._resolve_set(skill_set)
+        tag = effective or "default"
         hub = SignalHub()
         started = threading.Event()
         done = threading.Event()
@@ -224,6 +356,7 @@ class RunManager:
             "status": "running",
             "record": None,
             "skill": skill,
+            "skill_set": tag,
             "error": None,
             "started_at": datetime.now(UTC).isoformat(),
             "kernel": None,
@@ -238,7 +371,7 @@ class RunManager:
 
         def _work() -> None:
             try:
-                kernel = self._assemble_kernel(overrides)
+                kernel = self._assemble_kernel(overrides, skill_set=effective)
                 state["kernel"] = kernel
 
                 async def _fan(sig: Signal) -> None:
@@ -252,6 +385,8 @@ class RunManager:
                 record = execute_run(
                     kernel, skill, input, artifacts_root=self._artifacts_root, host="web"
                 )
+                record["skill_set"] = tag
+                self._tag_artifacts(record["run_id"], tag)
                 state["status"] = record["status"]
                 state["record"] = record
             except Exception as e:  # noqa: BLE001 — 与 execute_run 同旨:校验/装配错归 RunRecord,不炸宿主(§3.3)
@@ -272,6 +407,20 @@ class RunManager:
         if wait:
             await asyncio.to_thread(done.wait)
         return run_id
+
+    def _tag_artifacts(self, run_id: str, tag: str) -> None:
+        """把 ``skill_set`` 写进产物 meta.json/result.json(D6:列表/详情与冷数据重建)。"""
+        run_dir = self._artifacts_root / "runs" / run_id
+        for name in ("meta.json", "result.json"):
+            path = run_dir / name
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue  # 产物落盘半写窗口:跳过,内存态仍带 tag
+            doc["skill_set"] = tag
+            path.write_text(
+                json.dumps(doc, ensure_ascii=False, indent=2, default=repr), encoding="utf-8"
+            )
 
     async def stop_run(self, run_id: str) -> bool:
         """``POST stop``(§4.3):``RunControl.stop`` 置中止标志,run 在下一个 safe point 中止。
@@ -310,10 +459,13 @@ class RunManager:
                 state = self._cold_state(run_dir)
                 self._active[run_id] = state
             state["status"] = "running"
+        # D6:resume 沿用原 run 的 set 装配("default"/缺失 → 全局 config)
+        tag = state.get("skill_set")
+        effective = tag if tag and tag != "default" else None
 
         def _work() -> None:
             try:
-                kernel = self._assemble_kernel()
+                kernel = self._assemble_kernel(skill_set=effective)
                 state["kernel"] = kernel
 
                 async def _fan(sig: Signal) -> None:
@@ -347,17 +499,28 @@ class RunManager:
             "status": "running",
             "record": None,
             "skill": meta.get("skill"),
+            "skill_set": meta.get("skill_set") or "default",
             "error": None,
             "started_at": meta.get("started_at") or datetime.now(UTC).isoformat(),
             "kernel": None,
         }
 
-    def _shared_registry(self) -> Any:
+    def _shared_registry(self, skill_set: str | None = None) -> Any:
         """惰性装配共享 skills registry(reload/只读查询用)。
 
+        ``skill_set``(D6)指定 set 的装配(每 set 各自缓存);``None`` 用全局配置。
         配置未装配 skills → :class:`RunValidationError`。每 run 的内核仍各自重建
         registry(§6.1),本 registry 仅供 ``GET /api/skills`` 与 reload。
         """
+        if skill_set is not None:
+            self._set_dir(skill_set)  # 未知 set → RunValidationError(路由层归 400)
+            registry = self._set_registries.get(skill_set)
+            if registry is None:
+                registry = self._assemble_kernel(skill_set=skill_set).skills
+                if registry is None:  # [skills].path 恒被 set 装配钉上,此处纯防御
+                    raise RunValidationError(f"set {skill_set!r} 未装配 skills registry")
+                self._set_registries[skill_set] = registry
+            return registry
         registry = self._skills_registry
         if registry is None:
             registry = self._assemble_kernel().skills
@@ -366,21 +529,35 @@ class RunManager:
             self._skills_registry = registry
         return registry
 
-    def reload_skills(self) -> bool:
+    def reload_skills(self, skill_set: str | None = None) -> bool:
         """``POST /api/skills/reload``(§4.3):共享 registry 的热重载(mtime 检查,§6.1)。
 
-        返回是否真重载。reload 只影响后续新建的 run(每 run 独立内核、独立
-        registry),在跑的 run 钉住旧版。
+        ``skill_set``(D6)限定重载哪个 set;缺省重载全部——有 sets 时重载所有
+        **已装配**的共享 registry(全局 + 各 set,未装配的不值得装配了再重载),
+        无 sets 时维持原行为(全局,未装配则装配)。返回是否真重载。reload 只影响
+        后续新建的 run(每 run 独立内核、独立 registry),在跑的 run 钉住旧版。
         """
+        if skill_set is not None:
+            return bool(self._shared_registry(skill_set).reload())
+        if self._sets:
+            reloaded = False
+            if self._skills_registry is not None:
+                reloaded = bool(self._skills_registry.reload()) or reloaded
+            for registry in self._set_registries.values():
+                reloaded = bool(registry.reload()) or reloaded
+            return reloaded
         return bool(self._shared_registry().reload())
 
-    def skills_manifests(self) -> list[Any]:
-        """``GET /api/skills``(WEB-UI.md §6.2):共享 registry 的 manifest 列表(拓扑序)。"""
-        return list(self._shared_registry().manifests())
+    def skills_manifests(self, skill_set: str | None = None) -> list[Any]:
+        """``GET /api/skills``(WEB-UI.md §6.2):共享 registry 的 manifest 列表(拓扑序)。
 
-    def skill_manifest(self, name: str) -> Any | None:
+        ``skill_set``(D6)限定某个 set 的 registry(``?skill_set=`` 过滤)。
+        """
+        return list(self._shared_registry(skill_set).manifests())
+
+    def skill_manifest(self, name: str, skill_set: str | None = None) -> Any | None:
         """按名字取 manifest;不存在返回 ``None``(路由层归 404)。"""
-        return next((m for m in self.skills_manifests() if m.name == name), None)
+        return next((m for m in self.skills_manifests(skill_set) if m.name == name), None)
 
     def _shared_tools(self) -> Any:
         """惰性装配共享 tools registry(``GET /api/tools`` 数据源;D4)。

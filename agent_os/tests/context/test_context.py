@@ -309,3 +309,83 @@ def test_prefix_stability_between_builds(tmp_path):
 
     strip = lambda r: [(m.role, m.content) for m in r.messages if m.meta.get("kind") != "status"]
     assert strip(req1) == strip(req2)
+
+
+# ---------------------------------------------------------------------------
+# force_compress(§7.1 外部强制触发)与无 compressor 短路
+# ---------------------------------------------------------------------------
+
+
+def test_force_compress_runs_below_cap(tmp_path):
+    """未超 cap 也强制压缩一次;pre:compress 载荷带 forced=True。"""
+    reg = _registry(tmp_path)
+    mgr, bus = _manager(reg)
+    msgs = [_sys_msg(), *_group(0, size=400)]  # 远低于 cap 4000
+    frame = _frame(msgs, pinned=["sys-0"])
+
+    asyncio.run(mgr.maintain(frame))
+    assert not any(s.name == PRE_COMPRESS for s in bus.seen), "未超限 maintain 不应压缩"
+
+    asyncio.run(mgr.force_compress(frame))
+    pre = [s for s in bus.seen if s.name == PRE_COMPRESS]
+    post = [s for s in bus.seen if s.name == POST_COMPRESS]
+    assert len(pre) == 1 and len(post) == 1
+    assert pre[0].payload.get("forced") is True
+    assert _pairing_ok(frame.context.messages)
+
+
+def test_force_compress_respects_compression_off(tmp_path):
+    """消融档(compression off)下强制触发仍短路(§7.1)。"""
+    reg = _registry(tmp_path)
+    mgr, bus = _manager(reg, compress="off")
+    frame = _frame([_sys_msg(), *_group(0, size=400)], pinned=["sys-0"])
+
+    asyncio.run(mgr.force_compress(frame))
+    assert not any(s.name == PRE_COMPRESS for s in bus.seen)
+
+
+def test_maintain_without_compressor_updates_estimate_only(tmp_path):
+    """无 compressor:静默跳过压缩,但 token 估算照常更新。"""
+    reg = _registry(tmp_path)
+    mgr = ContextManager(
+        skills=reg,
+        tools=LocalPythonToolRegistry(),
+        config=RunConfig(compression="truncate", max_cost=2.0),
+        compressor=None,
+        estimator=TokenEstimator(),
+        default_max_tokens=100,  # 极低 cap,必然超限
+    )
+    msgs = [_sys_msg(), *_group(0, size=4000)]
+    frame = _frame(msgs)
+    before = len(frame.context.messages)
+
+    asyncio.run(mgr.maintain(frame))
+
+    assert len(frame.context.messages) == before
+    assert frame.context.token_estimate > 100
+
+
+# ---------------------------------------------------------------------------
+# MinimalContextManager(M0 纵向切片最小实现)
+# ---------------------------------------------------------------------------
+
+
+def test_minimal_manager_builds_same_shape_without_status(tmp_path):
+    """组装逻辑与 ContextManager 一致,但无状态注入、maintain 为 no-op。"""
+    from agent_os.context.manager import MinimalContextManager
+
+    reg = _registry(tmp_path)
+    mgr = MinimalContextManager(
+        skills=reg, tools=LocalPythonToolRegistry(), config=RunConfig(model="mock/fallback")
+    )
+    frame = _frame([Message(role=Role.USER, content="{}")])
+
+    req = asyncio.run(mgr.build(frame))
+
+    assert req.messages[0].role is Role.SYSTEM and req.messages[0].content == "闲聊"
+    assert req.model == "mock/x"  # manifest model.prefer 优先于 RunConfig
+    assert all(m.meta.get("kind") != "status" for m in req.messages)
+
+    before = list(frame.context.messages)
+    asyncio.run(mgr.maintain(frame))  # no-op
+    assert frame.context.messages == before

@@ -16,7 +16,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests.test_cli_r1 import SKILLS_YAML, _run_cli, _write_config
+from tests.helpers.config import run_cli as _run_cli
+from tests.helpers.config import write_config as _write_config
+from tests.helpers.kernels import FIB_SKILLS_YAML as SKILLS_YAML
 
 
 def _completed_run(tmp_path: Path, capsys, n: int) -> str:

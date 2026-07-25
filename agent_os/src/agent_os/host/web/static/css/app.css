@@ -237,6 +237,18 @@ body[data-route="tools"] .sidebar { display: none; }
   outline: none;
 }
 
+/* D6 一站多 skill set:set 切换器(侧栏 / Skills 工具栏,复用 search-input 盒模型) */
+.set-select {
+  width: auto;
+  max-width: 100%;
+  margin-bottom: var(--s2);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg-0);
+  cursor: pointer;
+}
+.brw-toolbar .set-select { margin-bottom: 0; flex-shrink: 0; }
+
 /* 状态筛选 chips(§4.1:全部/失败/中止/进行中,多选) */
 .chips {
   display: flex;
@@ -1319,6 +1331,16 @@ textarea.input {
   color: var(--fg-2);
 }
 .cycle-warn { color: var(--warn); flex-shrink: 0; } /* §4.6:循环依赖 --warn 警示 */
+.run-set { flex-shrink: 0; } /* D6:run 列表项的 set chip(多 set 时) */
+
+/* D6:Skills 列表 "全部" 时的 set 组头(组头 = set 名 + 技能数) */
+.brw-group {
+  padding: var(--s2) var(--s2) var(--s1);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--fg-2);
+  border-bottom: var(--stroke) solid var(--line);
+}
 
 /* 详情头部:name + 大 PermBadge + 操作 */
 .brw-detail-head {

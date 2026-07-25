@@ -31,8 +31,8 @@ from agent_os.runtime.builder import KernelBuilder
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.builtins import python_exec_tool
 from agent_os.tools.local_registry import LocalPythonToolRegistry
+from tests.helpers.kernels import PROJECT_ROOT
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RESEARCH_DIR = PROJECT_ROOT / "examples" / "research_pipeline"
 S100_DIR = PROJECT_ROOT / "examples" / "skills_100"
 

@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import time
 from pathlib import Path
@@ -23,44 +22,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_os.api.v1 import (
-    ChatRequest,
-    ChatResponse,
-    ChatUsage,
-    Message,
-    Role,
-    ToolCall,
-)
-from agent_os.host.web.app import create_app
-from tests.test_fib_agent import fib_brain
+from tests.helpers.brains import reset_cut_brain
+from tests.helpers.config import write_config
+from tests.helpers.kernels import FIB_SKILLS_YAML as SKILLS_YAML
+from tests.helpers.web import wait_status as _wait_status
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SKILLS_YAML = PROJECT_ROOT / "skills" / "skills.yaml"
-
-CONFIG_TEMPLATE = """
-[run]
-model = "mock/x"
-max_depth = 8
-max_steps = 200
-max_cost = 100.0
-compression = "off"
-
-[providers.mock]
-brain = "{brain}"
-
-[tools]
-builtins = true
-python_exec = "subprocess"
-
-[skills]
-path = "{skills}"
-
-[telemetry]
-dir = "{telemetry}"
-{extra}
-"""
 
 DANGER_YAML = """
 skills:
@@ -76,78 +43,12 @@ skills:
 """
 
 
-# ---------------------------------------------------------------------------
-# 测试用 brains(必须是模块级 dotted path 可引用的 callable)
-# ---------------------------------------------------------------------------
-
-
-def danger_brain(req: ChatRequest) -> ChatResponse:
-    """先尝试危险命令(被 ToolGuard veto),再给出最终答案。"""
-    if not any(m.role is Role.TOOL for m in req.messages):
-        return ChatResponse(
-            message=Message(
-                role=Role.ASSISTANT,
-                tool_calls=[ToolCall(id="c1", name="shell_exec", args={"command": "rm -rf /"})],
-            ),
-            finish_reason="tool_calls",
-            usage=ChatUsage(prompt=1, completion=1),
-        )
-    return ChatResponse(
-        message=Message(role=Role.ASSISTANT, content=json.dumps({"done": True})),
-        finish_reason="stop",
-        usage=ChatUsage(prompt=1, completion=1),
-    )
-
-
-def web_loop_brain(req: ChatRequest) -> ChatResponse:
-    """无限循环调用(用于 stop 测试)。"""
-    return ChatResponse(
-        message=Message(
-            role=Role.ASSISTANT,
-            tool_calls=[ToolCall(id="c1", name="python_exec", args={"code": "print(1)"})],
-        ),
-        finish_reason="tool_calls",
-        usage=ChatUsage(prompt=1, completion=1),
-    )
-
-
-_cut_state = {"calls": 0}
-
-
-def web_cut_brain(req: ChatRequest) -> ChatResponse:
-    """第 6 次调用"断电"(用于 resume 测试);其后按 fib_brain 正常应答。"""
-    _cut_state["calls"] += 1
-    if _cut_state["calls"] == 6:
-        raise RuntimeError("模拟断电")
-    return fib_brain(req)
-
-
-def _write_config(tmp_path: Path, *, brain: str, skills: Path | None = None, extra: str = "") -> Path:
-    cfg = tmp_path / "agent-os.toml"
-    cfg.write_text(
-        CONFIG_TEMPLATE.format(
-            brain=brain,
-            skills=skills or SKILLS_YAML,
-            telemetry=tmp_path / "traces",
-            extra=extra,
-        ),
-        encoding="utf-8",
-    )
-    return cfg
-
-
 def _client(tmp_path: Path, **kw) -> TestClient:
-    return TestClient(create_app(_write_config(tmp_path, **kw), artifacts_root=tmp_path / "runs"))
+    """本文件的 run 需要 shell_exec 等内置工具与宽松预算(ToolGuard/stop 场景)。"""
+    from agent_os.host.web.app import create_app
 
-
-def _wait_status(client: TestClient, run_id: str, timeout: float = 10.0) -> dict:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        detail = client.get(f"/api/runs/{run_id}").json()
-        if detail["status"] in ("done", "failed", "aborted"):
-            return detail
-        time.sleep(0.05)
-    raise AssertionError(f"run {run_id} 未在 {timeout}s 内结束")
+    cfg = write_config(tmp_path, builtins=True, max_cost=100.0, **kw)
+    return TestClient(create_app(cfg, artifacts_root=tmp_path / "runs"))
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +64,7 @@ def test_rca_locates_veto(tmp_path):
     )
     skills = tmp_path / "danger.yaml"
     skills.write_text(DANGER_YAML, encoding="utf-8")
-    client = _client(tmp_path, brain="tests.test_web_r4:danger_brain", skills=skills, extra=extra)
+    client = _client(tmp_path, brain="tests.helpers.brains:danger_brain", skills=skills, extra=extra)
 
     r = client.post("/api/runs", json={"skill": "danger", "input": {}, "wait": True})
     assert r.status_code == 200
@@ -179,7 +80,7 @@ def test_rca_locates_veto(tmp_path):
 
 def test_rca_aborted_run(tmp_path):
     """fib(10) 深度超限中止 → rca 定位 aborted 与最深帧。"""
-    client = _client(tmp_path, brain="tests.test_fib_agent:fib_brain")
+    client = _client(tmp_path, brain="tests.helpers.brains:fib_brain")
     r = client.post("/api/runs", json={"skill": "fib", "input": {"n": 10}, "wait": True})
     run_id = r.json()["run_id"]
     assert r.json()["status"] in ("failed", "aborted")
@@ -196,7 +97,7 @@ def test_rca_aborted_run(tmp_path):
 
 
 def test_usage_endpoint_per_frame(tmp_path):
-    client = _client(tmp_path, brain="tests.test_fib_agent:fib_brain")
+    client = _client(tmp_path, brain="tests.helpers.brains:fib_brain")
     r = client.post("/api/runs", json={"skill": "fib", "input": {"n": 3}, "wait": True})
     run_id = r.json()["run_id"]
     usage = client.get(f"/api/runs/{run_id}/usage").json()
@@ -213,7 +114,7 @@ def test_usage_endpoint_per_frame(tmp_path):
 
 def test_stop_run(tmp_path):
     """无限循环 run:POST stop → 下一个 safe point 中止(§4.3)。"""
-    client = _client(tmp_path, brain="tests.test_web_r4:web_loop_brain")
+    client = _client(tmp_path, brain="tests.helpers.brains:loop_brain")
     r = client.post("/api/runs", json={"skill": "fib", "input": {"n": 2}})
     run_id = r.json()["run_id"]
     time.sleep(0.3)
@@ -225,8 +126,8 @@ def test_stop_run(tmp_path):
 
 def test_resume_run(tmp_path):
     """断电 run 经 POST resume 恢复完成(§4.3)。"""
-    _cut_state["calls"] = 0
-    client = _client(tmp_path, brain="tests.test_web_r4:web_cut_brain")
+    reset_cut_brain()
+    client = _client(tmp_path, brain="tests.helpers.brains:cut_brain")
     r = client.post("/api/runs", json={"skill": "fib", "input": {"n": 5}, "wait": True})
     run_id = r.json()["run_id"]
     assert r.json()["status"] in ("failed", "aborted")
@@ -239,7 +140,7 @@ def test_resume_run(tmp_path):
 def test_skills_reload(tmp_path):
     skills = tmp_path / "skills.yaml"
     skills.write_text(SKILLS_YAML.read_text(encoding="utf-8"), encoding="utf-8")
-    client = _client(tmp_path, brain="tests.test_fib_agent:fib_brain", skills=skills)
+    client = _client(tmp_path, brain="tests.helpers.brains:fib_brain", skills=skills)
 
     r = client.post("/api/skills/reload")
     assert r.status_code == 200 and r.json()["reloaded"] is False  # mtime 未变

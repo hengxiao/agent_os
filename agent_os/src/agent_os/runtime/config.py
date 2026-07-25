@@ -77,6 +77,23 @@ def load_config(path: str | Path) -> dict[str, Any]:
         raise ConfigError(f"配置文件 TOML 畸形: {target}: {e}") from e
 
 
+def load_skillsets(root: str | Path) -> dict[str, Path]:
+    """一站多 skill set(``--skillsets <root>``/``[skillsets] dir``):扫描 set 目录。
+
+    模型:``<root>/<set>/skills.yaml``(必须)+ 可选 ``agent-os.toml``(set 级装配,
+    继承全局)+ 可选 py 模块(装配时注入 sys.path)。返回 ``{set 名: set 目录}``
+    (按名字排序;root 缺失/非目录抛 :class:`ConfigError`)。
+    """
+    base = Path(root)
+    if not base.is_dir():
+        raise ConfigError(f"skillsets 目录不存在: {base}")
+    return {
+        p.name: p
+        for p in sorted(base.iterdir(), key=lambda p: p.name)
+        if p.is_dir() and (p / "skills.yaml").is_file()
+    }
+
+
 def _run_config(cfg: dict[str, Any]) -> RunConfig:
     unknown = sorted(set(cfg) - set(_RUN_FIELDS))
     if unknown:

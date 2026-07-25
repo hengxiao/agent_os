@@ -21,48 +21,9 @@ import pytest
 
 from agent_os.host.cli.main import main
 from agent_os.runtime.config import build_kernel
-from tests.test_telemetry_m5 import PowerCut, power_cut_brain
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SKILLS_YAML = PROJECT_ROOT / "skills" / "skills.yaml"
-
-CONFIG_TEMPLATE = """
-[run]
-model = "mock/fib"
-max_depth = 8
-max_steps = 200
-max_cost = 2.0
-compression = "off"
-
-[providers.mock]
-brain = "tests.test_fib_agent:fib_brain"
-
-[tools]
-builtins = false
-python_exec = "subprocess"
-
-[skills]
-path = "{skills}"
-
-[telemetry]
-dir = "{telemetry}"
-"""
-
-
-def _write_config(tmp_path: Path) -> Path:
-    cfg = tmp_path / "agent-os.toml"
-    cfg.write_text(
-        CONFIG_TEMPLATE.format(skills=SKILLS_YAML, telemetry=tmp_path / "traces"),
-        encoding="utf-8",
-    )
-    return cfg
-
-
-def _run_cli(capsys, *argv: str) -> tuple[int, dict]:
-    rc = main(list(argv))
-    out = capsys.readouterr().out
-    return rc, json.loads(out[out.index("{"):]) if "{" in out else {}
-
+from tests.helpers.brains import PowerCut, power_cut_brain
+from tests.helpers.config import run_cli as _run_cli
+from tests.helpers.config import write_config as _write_config
 
 # ---------------------------------------------------------------------------
 # 配置加载
@@ -161,29 +122,9 @@ def test_cli_inspect_tree_and_frame_messages(tmp_path, capsys):
 
 def test_cli_resume_from_checkpoint(tmp_path, capsys):
     """断电的 run 用 CLI resume 恢复(内核由 config 装配,fib_brain 确定性应答)。"""
-    from agent_os.api.v1 import Permission, RunConfig, ToolPolicy
-    from agent_os.logic.inprocess import InProcessLogicKernel
-    from agent_os.logic.python_sandbox import PythonSandboxLogicKernel
-    from agent_os.providers.mock import MockProvider
-    from agent_os.runtime.builder import KernelBuilder
-    from agent_os.skills.local_file import LocalFileSkillRegistry
-    from agent_os.tools.builtins import python_exec_tool
-    from agent_os.tools.local_registry import LocalPythonToolRegistry
+    from tests.helpers.kernels import fib_kernel
 
-    tools = LocalPythonToolRegistry()
-    tools.register(python_exec_tool(PythonSandboxLogicKernel()))
-    kernel1 = (
-        KernelBuilder(RunConfig(
-            model="mock/fib",
-            tool_policy=ToolPolicy(max_permission=Permission.EXEC),
-            compression="off",
-        ))
-        .providers(MockProvider(power_cut_brain(cut_at=6)))
-        .tools(tools)
-        .skills(LocalFileSkillRegistry(str(SKILLS_YAML)))
-        .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
-        .build()
-    )
+    kernel1 = fib_kernel(power_cut_brain(cut_at=6))
     seen = []
 
     async def rec(sig):

@@ -29,14 +29,9 @@ from agent_os.api.v1 import (
     ToolPolicy,
 )
 from agent_os.kernel.errors import AgentOSError, OutputValidationError, SkillLoadError
-from agent_os.logic.inprocess import InProcessLogicKernel
-from agent_os.logic.python_sandbox import PythonSandboxLogicKernel
-from agent_os.providers.mock import MockProvider
-from agent_os.runtime.builder import KernelBuilder
 from agent_os.skills.local_file import LocalFileSkillRegistry
-from agent_os.tools.builtins import python_exec_tool
-from agent_os.tools.local_registry import LocalPythonToolRegistry
-from tests.test_fib_agent import fib_brain
+from tests.helpers.brains import fib_brain
+from tests.helpers.kernels import assemble
 
 # fib 技能(与 skills/skills.yaml 中一致;code 技能测试的依赖项)
 FIB_SKILL = """
@@ -66,7 +61,7 @@ CODE_SKILLS = """
   - name: fib_pair
     version: 1.0.0
     kind: code
-    handler: tests.code_skill_helpers:fib_pair
+    handler: tests.helpers.code_skills:fib_pair
     inputs:
       type: object
       properties: { a: { type: integer }, b: { type: integer } }
@@ -79,7 +74,7 @@ CODE_SKILLS = """
   - name: double_it
     version: 1.0.0
     kind: code
-    handler: tests.code_skill_helpers:double_it
+    handler: tests.helpers.code_skills:double_it
     inputs:
       type: object
       properties: { x: { type: integer } }
@@ -92,7 +87,7 @@ CODE_SKILLS = """
   - name: pure_add
     version: 1.0.0
     kind: code
-    handler: tests.code_skill_helpers:pure_add
+    handler: tests.helpers.code_skills:pure_add
     inputs:
       type: object
       properties: { a: { type: integer }, b: { type: integer } }
@@ -105,7 +100,7 @@ CODE_SKILLS = """
   - name: naughty
     version: 1.0.0
     kind: code
-    handler: tests.code_skill_helpers:naughty
+    handler: tests.helpers.code_skills:naughty
     inputs: { type: object, properties: {} }
     outputs:
       type: object
@@ -114,7 +109,7 @@ CODE_SKILLS = """
   - name: bad_output
     version: 1.0.0
     kind: code
-    handler: tests.code_skill_helpers:bad_output
+    handler: tests.helpers.code_skills:bad_output
     inputs: { type: object, properties: {} }
     outputs:
       type: object
@@ -137,16 +132,7 @@ def _build(skills_yaml: str, *, force_sandbox: bool = False):
         compression="off",
     )
     config.logic_policy.force_sandbox = force_sandbox
-    tools = LocalPythonToolRegistry()
-    tools.register(python_exec_tool(PythonSandboxLogicKernel()))
-    return (
-        KernelBuilder(config)
-        .providers(MockProvider(fib_brain))
-        .tools(tools)
-        .skills(LocalFileSkillRegistry(skills_yaml))
-        .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
-        .build()
-    )
+    return assemble(config, fib_brain, skills_yaml)
 
 
 def test_code_skill_orchestrates_prompt_skills(tmp_path):

@@ -15,51 +15,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 
 import pytest
 
 from agent_os.api.v1 import (
     RUN_FINISHED,
     RUN_STARTED,
-    ChatRequest,
-    ChatResponse,
-    Permission,
-    RunConfig,
     Signal,
-    ToolPolicy,
 )
-from agent_os.logic.inprocess import InProcessLogicKernel
-from agent_os.logic.python_sandbox import PythonSandboxLogicKernel
 from agent_os.providers.mock import MockProvider
-from agent_os.runtime.builder import KernelBuilder
-from agent_os.skills.local_file import LocalFileSkillRegistry
-from agent_os.telemetry import JsonlTelemetrySink
-from agent_os.tools.builtins import python_exec_tool
-from agent_os.tools.local_registry import LocalPythonToolRegistry
-from tests.test_fib_agent import fib_brain
-
-SKILLS_YAML = "skills/skills.yaml"
-
-
-def _build(brain, *, telemetry_dir: Path | None = None):
-    config = RunConfig(
-        model="mock/fib",
-        tool_policy=ToolPolicy(max_permission=Permission.EXEC),
-        compression="off",
-    )
-    tools = LocalPythonToolRegistry()
-    tools.register(python_exec_tool(PythonSandboxLogicKernel()))
-    builder = (
-        KernelBuilder(config)
-        .providers(MockProvider(brain))
-        .tools(tools)
-        .skills(LocalFileSkillRegistry(SKILLS_YAML))
-        .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
-    )
-    if telemetry_dir is not None:
-        builder = builder.telemetry(JsonlTelemetrySink(str(telemetry_dir)))
-    return builder.build()
+from tests.helpers.brains import PowerCut, fib_brain, power_cut_brain
+from tests.helpers.kernels import fib_kernel as _build
 
 
 def _run_id_of(kernel) -> str:
@@ -101,22 +67,6 @@ def test_jsonl_trace_has_version_header_and_lifecycle(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-class PowerCut(Exception):
-    """模拟断电:第 cut_at 次 LLM 调用时直接崩掉。"""
-
-
-def power_cut_brain(cut_at: int):
-    state = {"calls": 0}
-
-    def brain(req: ChatRequest) -> ChatResponse:
-        state["calls"] += 1
-        if state["calls"] >= cut_at:
-            raise PowerCut(f"断电于第 {state['calls']} 次调用")
-        return fib_brain(req)
-
-    return brain
-
-
 def test_checkpoint_resume_after_power_cut(tmp_path):
     """fib(5) 在第 6 次调用处断电 → 新内核从 checkpoint 恢复,只补剩余 5 次调用。"""
     kernel1 = _build(power_cut_brain(cut_at=6))
@@ -130,21 +80,7 @@ def test_checkpoint_resume_after_power_cut(tmp_path):
     assert ckpt.exists()
 
     mock2 = MockProvider(fib_brain)
-    config = RunConfig(
-        model="mock/fib",
-        tool_policy=ToolPolicy(max_permission=Permission.EXEC),
-        compression="off",
-    )
-    tools = LocalPythonToolRegistry()
-    tools.register(python_exec_tool(PythonSandboxLogicKernel()))
-    kernel2 = (
-        KernelBuilder(config)
-        .providers(mock2)
-        .tools(tools)
-        .skills(LocalFileSkillRegistry(SKILLS_YAML))
-        .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
-        .build()
-    )
+    kernel2 = _build(mock2)
     result = asyncio.run(kernel2.resume(str(ckpt)))
     assert result == {"seq": [0, 1, 1, 2, 3]}
     # 恢复不是重跑:10 次调用中前 5 次已完成,只需补 5 次

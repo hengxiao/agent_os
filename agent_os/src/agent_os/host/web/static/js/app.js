@@ -1,6 +1,7 @@
 /* Agent OS Web UI 入口(WEB-UI.md §4.1 应用壳 / §5 交互与状态规范 / §6.1 结构)。
-   职责:hash 路由(runs/skills/tools,§4.1 深链接含 ?frame/?signal)、Runs 侧栏(搜索/筛选/折叠)、
-   API 健康轮询(live 指示 + 列表 5s 刷新)、三态、Toast、复制。
+   职责:hash 路由(runs/skills/tools,§4.1 深链接含 ?frame/?signal;D6 增 ?set=)、
+   Runs 侧栏(搜索/筛选/折叠;D6 set 切换器)、API 健康轮询(live 指示 + 列表 5s 刷新)、
+   三态、Toast、复制。
    run 详情(§4.2 Run Workbench 三联动)由 workbench.js 承担;本文件只做路由分发与事件转发。 */
 
 import { store } from "./store.js";
@@ -47,17 +48,22 @@ function parseRoute(hash) {
   const [path, qs] = raw.split("?");
   const seg = path.split("/").filter(Boolean).map(decodeURIComponent);
   const q = new URLSearchParams(qs ?? "");
+  const set = q.get("set"); // D6:?set= 深链接(无参数 → null,保持当前选择)
   if (seg[0] === "runs" && seg[1]) {
-    return { name: "run-detail", runId: seg[1], frame: q.get("frame"), signal: q.get("signal") };
+    return { name: "run-detail", runId: seg[1], frame: q.get("frame"), signal: q.get("signal"), set };
   }
-  if (seg[0] === "skills") return { name: "skills", runId: null, itemName: seg[1] ?? null };
-  if (seg[0] === "tools") return { name: "tools", runId: null, itemName: seg[1] ?? null };
-  return { name: "runs", runId: null };
+  if (seg[0] === "skills") return { name: "skills", runId: null, itemName: seg[1] ?? null, set };
+  if (seg[0] === "tools") return { name: "tools", runId: null, itemName: seg[1] ?? null, set };
+  return { name: "runs", runId: null, set };
 }
 
 function applyRoute() {
   const route = parseRoute(location.hash);
   store.set({ route, selectedRunId: route.runId });
+  if (route.set !== null) {
+    // D6:?set=all/空串 = 全部;否则 set 名(未知名在 skillsets 到达后 sanitize 回落)
+    store.set({ skillSet: route.set === "" || route.set === "all" ? null : route.set });
+  }
 }
 
 /* ── 渲染:TopBar 导航 ─────────────────────────────────────────────── */
@@ -72,6 +78,58 @@ function renderNav() {
   });
 }
 
+/* ── D6 一站多 skill set:侧栏 set 切换器(≥2 sets 可见,否则与单站一致)──
+   选择写 store.skillSet(null = 全部)与 hash ?set=(replaceState,不触发路由);
+   runs 列表前端过滤;列表项 skill 名旁显示 set chip(仅多 set)。 */
+
+const multiSets = () => (store.get("skillsets") ?? []).length >= 2;
+
+async function loadSkillsets() {
+  try {
+    const sets = await getJson("/api/skillsets");
+    store.set({ skillsets: Array.isArray(sets) ? sets : [] });
+  } catch {
+    store.set({ skillsets: [] }); // 取数失败按无 sets 处理(界面与单站一致)
+  }
+}
+
+function sanitizeSkillSet() {
+  const cur = store.get("skillSet");
+  if (cur && !(store.get("skillsets") ?? []).some((s) => s.name === cur)) {
+    store.set({ skillSet: null }); // hash 恢复/残留了未知 set:回落"全部"
+  }
+}
+
+function renderSetSelect() {
+  const sel = $("#setSelect");
+  const sets = store.get("skillsets") ?? [];
+  sel.hidden = sets.length < 2;
+  if (sel.hidden) return;
+  sel.innerHTML = "";
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "全部";
+  sel.appendChild(all);
+  for (const s of sets) {
+    const opt = document.createElement("option");
+    opt.value = s.name;
+    opt.textContent = `${s.name} (${s.skills ?? 0})`; // 各 set 带技能数
+    sel.appendChild(opt);
+  }
+  sel.value = store.get("skillSet") ?? "";
+}
+
+function syncSetHash() {
+  const raw = (location.hash || "#/runs").replace(/^#/, "");
+  const [path, qs] = raw.split("?");
+  const q = new URLSearchParams(qs ?? "");
+  const cur = store.get("skillSet");
+  if (cur) q.set("set", cur);
+  else q.delete("set");
+  const s = q.toString();
+  history.replaceState(null, "", `#${path}${s ? `?${s}` : ""}`);
+}
+
 /* ── 渲染:Runs 侧栏(三态齐全,§5)─────────────────────────────────── */
 
 const skeletonRows = (n) =>
@@ -83,7 +141,9 @@ const skeletonRows = (n) =>
 
 function visibleRuns() {
   const q = ui.search.trim().toLowerCase();
+  const sel = store.get("skillSet"); // D6:set 过滤(null = 全部;旧 run 归 "default")
   return store.get("runs").filter((r) => {
+    if (sel && (r.skill_set ?? "default") !== sel) return false;
     if (ui.statusFilter.size && !ui.statusFilter.has(r.status)) return false;
     if (q && !(r.skill || "").toLowerCase().includes(q)) return false;
     return true;
@@ -92,11 +152,16 @@ function visibleRuns() {
 
 function runItemHtml(r) {
   const sel = r.run_id === store.get("selectedRunId");
+  // D6:多 set 时 skill 名旁显示 set 名
+  const setChip = multiSets()
+    ? `<span class="kind-chip run-set" title="skill set">${esc(r.skill_set ?? "default")}</span>`
+    : "";
   return (
     `<div class="run-item" data-id="${esc(r.run_id)}" role="option" tabindex="0"` +
     ` aria-selected="${sel}" title="${esc(r.skill)} · ${esc(r.run_id)}">` +
     `<div class="run-item-row">` +
     `<span class="run-skill">${esc(r.skill)}</span>` +
+    setChip +
     statusPill(r.status) +
     `</div>` +
     `<div class="run-item-meta">` +
@@ -237,6 +302,16 @@ store.subscribe((state, patch) => {
   }
   if ("runs" in patch || "runsStatus" in patch) renderRunList();
   if ("liveConn" in patch) renderLiveIndicator(); // §5 SSE 连接态 → TopBar live 点
+  if ("skillsets" in patch) {
+    sanitizeSkillSet(); // hash 恢复的 set 名未知 → 回落全部(可能嵌套发 skillSet patch)
+    renderSetSelect();
+    renderRunList(); // set chip 显隐跟随 sets 数
+  }
+  if ("skillSet" in patch) {
+    renderSetSelect(); // 双侧(Skills 页下拉经 store 联动)同步选中
+    renderRunList();
+    syncSetHash();
+  }
 });
 
 /* ── 事件接线(事件委托,§6.1;Workbench 动作经 workbenchClick 转发)── */
@@ -278,6 +353,11 @@ document.addEventListener("keydown", (e) => {
 $("#searchInput").addEventListener("input", (e) => {
   ui.search = e.target.value;
   renderRunList();
+});
+
+// D6:set 切换器 → store(订阅者同步 hash/列表;Skills 页下拉经 store 联动)
+$("#setSelect").addEventListener("change", (e) => {
+  store.set({ skillSet: e.target.value || null });
 });
 
 $("#statusChips").addEventListener("click", (e) => {
@@ -384,5 +464,6 @@ window.addEventListener("hashchange", applyRoute);
 if (!location.hash) history.replaceState(null, "", "#/runs");
 applyRoute();
 renderChips();
+loadSkillsets(); // D6:到达后渲染 set 下拉,并 sanitize hash 恢复的 set 名
 poll();
 setInterval(poll, POLL_INTERVAL);

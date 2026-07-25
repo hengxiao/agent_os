@@ -200,13 +200,21 @@ async function load() {
   try {
     // detail + signals 并行;skills(kind chip)与 usage(tokens/cost)随载入拉取,
     // 失败降级为空(帧块少 chip/metadata,不阻塞页面,§5 降级原则)
-    const [detail, signals, skills, usage] = await Promise.all([
+    const [detail, signals, skillsGlobal, usage] = await Promise.all([
       getJson(`/api/runs/${encodeURIComponent(runId)}`),
       getJson(`/api/runs/${encodeURIComponent(runId)}/signals`),
       getJson("/api/skills").catch(() => []),
       getJson(`/api/runs/${encodeURIComponent(runId)}/usage`).catch(() => null),
     ]);
     if (wb.runId !== runId || !wbRouteMatches(runId)) return; // 加载期间路由已切走
+    let skills = skillsGlobal;
+    // D6:set 跑的 run:全局 registry 大概率没有该技能,按 run 所属 set 重拉(失败沿用全局)
+    if (detail?.skill_set && detail.skill_set !== "default") {
+      const scoped = await getJson(
+        `/api/skills?skill_set=${encodeURIComponent(detail.skill_set)}`).catch(() => null);
+      if (Array.isArray(scoped)) skills = scoped;
+      if (wb.runId !== runId || !wbRouteMatches(runId)) return;
+    }
     wb.detail = detail;
     wb.signals = Array.isArray(signals) ? signals : [];
     wb.skills = Array.isArray(skills) ? skills : [];

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from pathlib import Path
 
 from agent_os.api.v1 import POST_TOOL_CALL, Permission, RunConfig, Signal, ToolPolicy
 from agent_os.logic.inprocess import InProcessLogicKernel
@@ -22,8 +21,8 @@ from agent_os.providers.mock import MockProvider
 from agent_os.runtime.builder import KernelBuilder
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.local_registry import LocalPythonToolRegistry
+from tests.helpers.kernels import PROJECT_ROOT
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DESK_DIR = PROJECT_ROOT / "examples" / "support_desk"
 
 

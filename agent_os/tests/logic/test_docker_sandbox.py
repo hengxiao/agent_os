@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import shutil
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -37,7 +36,7 @@ from agent_os.tools.builtins import python_exec_tool
 from agent_os.tools.local_registry import LocalPythonToolRegistry, ToolDispatchContext
 
 _IMAGE = "python:3.11-slim"
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from tests.helpers.kernels import PROJECT_ROOT as _PROJECT_ROOT
 
 
 def _docker_ready() -> bool:
@@ -108,7 +107,7 @@ def test_runs_code_skill_module_via_driver():
         env={"PYTHONPATH": "/app"},
     )
     req = ExecRequest(
-        source="tests.code_skill_helpers",
+        source="tests.helpers.code_skills",
         entry="pure_add",
         args={"a": 40, "b": 2},
         limits=ResourceLimits(wall_time=30),

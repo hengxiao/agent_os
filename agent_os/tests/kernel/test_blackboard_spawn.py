@@ -33,20 +33,14 @@ from agent_os.api.v1 import (
 )
 from agent_os.blackboard import BlackboardConflict, LocalBlackboard
 from agent_os.kernel.errors import MaxDepthExceeded, SkillLoadError
-from agent_os.logic.inprocess import InProcessLogicKernel
-from agent_os.logic.python_sandbox import PythonSandboxLogicKernel
-from agent_os.providers.mock import MockProvider
-from agent_os.runtime.builder import KernelBuilder
-from agent_os.skills.local_file import LocalFileSkillRegistry
-from agent_os.tools.builtins import python_exec_tool
-from agent_os.tools.local_registry import LocalPythonToolRegistry
-from tests.test_fib_agent import fib_brain
+from tests.helpers.brains import fib_brain
+from tests.helpers.kernels import assemble
 
 SPAWN_YAML = """
   - name: spawn_pair
     version: 1.0.0
     kind: code
-    handler: tests.code_skill_helpers:spawn_pair
+    handler: tests.helpers.code_skills:spawn_pair
     inputs:
       type: object
       properties: { a: { type: integer }, b: { type: integer } }
@@ -59,7 +53,7 @@ SPAWN_YAML = """
   - name: spawn_naughty
     version: 1.0.0
     kind: code
-    handler: tests.code_skill_helpers:spawn_naughty
+    handler: tests.helpers.code_skills:spawn_naughty
     inputs: { type: object, properties: {} }
     outputs:
       type: object
@@ -104,16 +98,8 @@ def _build(tmp_path, *, max_depth: int = 8):
         tool_policy=ToolPolicy(max_permission=Permission.EXEC),
         compression="off",
     )
-    tools = LocalPythonToolRegistry()
-    tools.register(python_exec_tool(PythonSandboxLogicKernel()))
-    return (
-        KernelBuilder(config)
-        .providers(MockProvider(fib_brain))
-        .tools(tools)
-        .skills(LocalFileSkillRegistry(_yaml(tmp_path, FIB_PART + SPAWN_YAML)))
-        .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
-        .blackboard(LocalBlackboard())
-        .build()
+    return assemble(
+        config, fib_brain, _yaml(tmp_path, FIB_PART + SPAWN_YAML), blackboard=LocalBlackboard()
     )
 
 

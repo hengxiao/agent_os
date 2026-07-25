@@ -6,6 +6,11 @@
    深链接 #/skills 与 #/skills/<name>;三态(loading/empty"在 agent-os.toml 配置
    skills.path"/error+面板内重试)齐全。
 
+   D6 一站多 skill set(≥2 sets 时):工具栏 set 下拉(默认跟随侧栏选择,经 store
+   双向联动);"全部"时逐 set 拉取、列表按 set 分组显示组头;详情按 set 消歧
+   (/api/skills/<name>?skill_set=);↻ Reload 在指定 set 下只重载该 set;
+   Run ▶ 把技能所属 set 一并预填给 Launch Modal。单 set/无 sets 时行为不变。
+
    纯函数(不碰 DOM,node 单测可载):
      findCycles(manifests)  permissions.skills 依赖图 → 循环依赖技能名 Set
                             (Tarjan SCC ≥2;**自引用是合法递归,不算循环**)
@@ -14,6 +19,7 @@
    (引用直持,不经 querySelector),内容渲染走 innerHTML,事件全部委托 root。 */
 
 import { getJson, postJson } from "../api.js";
+import { store } from "../store.js";
 import { COPY_SVG, emptyBlock, esc, routeDescHtml, toast } from "../util.js";
 import { banner } from "./banner.js";
 import { openLaunchDialog } from "./launch-dialog.js";
@@ -69,19 +75,23 @@ export function findCycles(manifests) {
 
 /* ── 页面私有状态(离开页面 closeSkillsView 整体复位)────────────── */
 
+const multiSets = () => (store.get("skillsets") ?? []).length >= 2; // D6:≥2 sets 才显示 set UI
+
 const sv = {
   main: null,
   root: null, // .brw 根(事件委托挂点)
-  els: null, // { search, reload, list, detail } 结构引用(createElement 直持)
+  els: null, // { setSel, search, reload, list, detail } 结构引用(createElement 直持)
   mounted: false,
   status: "idle", // idle | loading | ready | error
-  skills: [], // GET /api/skills 摘要列表
+  skills: [], // GET /api/skills 摘要列表(D6 多 set 时各项带 _set 标签)
   error: null,
   cycles: new Set(), // findCycles 结果(列表项 --warn 标注)
   selected: null, // 当前选中技能名(路由 itemName)
-  details: new Map(), // name -> { status, data?, error? }(详情缓存)
+  details: new Map(), // detailKey -> { status, data?, error? }(详情缓存;D6 key 含 set)
   search: "",
   reloadBusy: false,
+  set: null, // D6:当前 set 范围(null = 全部;单 set/无 sets 恒 null)
+  unsub: null, // D6:store 订阅退订(侧栏 set 切换联动)
 };
 
 /* ── 骨架:createElement 搭结构(引用直持),内容区留空 ────────────── */
@@ -99,6 +109,9 @@ function mountShell() {
   const root = el("div", "brw skls");
 
   const toolbar = el("div", "brw-toolbar");
+  const setSel = el("select", "search-input set-select"); // D6:≥2 sets 才显示(renderSetSel 控制)
+  setSel.setAttribute("aria-label", "按 skill set 过滤");
+  setSel.title = "按 skill set 过滤技能列表";
   const search = el("input", "search-input brw-search");
   search.setAttribute("type", "search");
   search.setAttribute("placeholder", "搜索技能…");
@@ -108,6 +121,7 @@ function mountShell() {
   const reload = el("button", "btn", "↻ Reload");
   reload.dataset.skls = "reload";
   reload.title = "热重载 skills 文件(只影响后续新建的 run)";
+  toolbar.appendChild(setSel);
   toolbar.appendChild(search);
   toolbar.appendChild(spacer);
   toolbar.appendChild(reload);
@@ -126,10 +140,11 @@ function mountShell() {
 
   root.addEventListener("click", onClick);
   root.addEventListener("input", onInput);
+  root.addEventListener("change", onChange);
   root.addEventListener("keydown", onKeydown);
 
   sv.root = root;
-  sv.els = { search, reload, list, detail };
+  sv.els = { setSel, search, reload, list, detail };
 }
 
 /* ── 事件(委托 root;不用 data-action——app.js 全局代理只认它自己的动作)── */
@@ -141,7 +156,8 @@ function onClick(e) {
     if (act === "reload") doReload();
     else if (act === "retry-list") loadList();
     else if (act === "retry-detail") sv.selected && ensureDetail(sv.selected, true);
-    else if (act === "run") openLaunchDialog({ presetSkill: sv.selected });
+    // D6:把技能所属 set 一并预填(多 set 下 Launch Modal 提交带 skill_set)
+    else if (act === "run") openLaunchDialog({ presetSkill: sv.selected, presetSet: skillSetOf(sv.selected) });
     return;
   }
   const item = e.target.closest?.(".brw-item");
@@ -158,6 +174,53 @@ function onInput(e) {
   }
 }
 
+/* D6:set 下拉切换 → 写 store(侧栏/hash 联动)+ 按新范围重拉列表 */
+function onChange(e) {
+  if (e.target === sv.els?.setSel) {
+    applySet(e.target.value || null, { fromStore: false });
+  }
+}
+
+/* D6:set 范围切换的统一入口(下拉与 store 联动共用;同名下幂等) */
+function applySet(value, { fromStore }) {
+  const next = multiSets() ? value : null;
+  if (next === sv.set) return;
+  sv.set = next;
+  if (!fromStore) store.set({ skillSet: next });
+  renderSetSel();
+  sv.selected = null;
+  sv.details = new Map(); // 详情按 set 消歧:范围变了缓存整体失效
+  renderDetail();
+  loadList();
+}
+
+/* D6:工具栏 set 下拉渲染(≥2 sets 可见;选项 = 全部 + 各 set 带技能数) */
+function renderSetSel() {
+  const sel = sv.els?.setSel;
+  if (!sel) return;
+  const sets = store.get("skillsets") ?? [];
+  sel.hidden = sets.length < 2;
+  if (sel.hidden) return;
+  sel.innerHTML = "";
+  const doc = sel.ownerDocument ?? document;
+  const mk = (value, text) => {
+    const o = doc.createElement("option");
+    o.value = value;
+    o.textContent = text;
+    return o;
+  };
+  sel.appendChild(mk("", "全部"));
+  for (const s of sets) sel.appendChild(mk(s.name, `${s.name} (${s.skills ?? 0})`));
+  sel.value = sv.set ?? "";
+}
+
+/* D6:store 联动——侧栏 set 切换 / skillsets 到达时同步本页(openSkillsView 订阅) */
+function onStore(state, patch) {
+  if (!sv.mounted) return;
+  if ("skillsets" in patch) renderSetSel();
+  if ("skillSet" in patch) applySet(state.skillSet ?? null, { fromStore: true });
+}
+
 function onKeydown(e) {
   if (e.key !== "Enter") return;
   const item = e.target.closest?.(".brw-item");
@@ -169,15 +232,49 @@ function onKeydown(e) {
 
 /* ── 取数:列表(摘要 + 循环标注)───────────────────────────────── */
 
+/* D6:按当前范围拉技能;多 set "全部" 时逐 set 拉取并打 _set 标签(组序 = /api/skillsets 序) */
+async function fetchScopedSkills() {
+  const sets = store.get("skillsets") ?? [];
+  if (sets.length < 2) {
+    const skills = await getJson("/api/skills"); // 单 set/无 sets:维持现行为
+    return (Array.isArray(skills) ? skills : []).map((s) => ({ ...s, _set: null }));
+  }
+  if (sv.set) {
+    const q = `/api/skills?skill_set=${encodeURIComponent(sv.set)}`;
+    const skills = await getJson(q);
+    return (Array.isArray(skills) ? skills : []).map((s) => ({ ...s, _set: sv.set }));
+  }
+  const perSet = await Promise.all(
+    sets.map(async (s) => {
+      try {
+        const skills = await getJson(`/api/skills?skill_set=${encodeURIComponent(s.name)}`);
+        return (Array.isArray(skills) ? skills : []).map((k) => ({ ...k, _set: s.name }));
+      } catch {
+        return []; // 坏 set 隔离:不拖垮其它 set(与 /api/skillsets 同口径)
+      }
+    }),
+  );
+  return perSet.flat();
+}
+
 async function loadList() {
   sv.status = "loading";
   sv.error = null;
   renderList();
   try {
-    const skills = await getJson("/api/skills");
+    const skills = await fetchScopedSkills();
     if (!sv.mounted) return;
-    sv.skills = Array.isArray(skills) ? skills : [];
-    sv.cycles = findCycles(sv.skills);
+    sv.skills = skills;
+    // D6:依赖图按 set 分组各自判环(跨 set 同名技能不会互相误判),再按名并集
+    const cyclic = new Set();
+    const groups = new Map();
+    for (const s of skills) {
+      const key = multiSets() ? (s._set ?? "") : "";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(s);
+    }
+    for (const list of groups.values()) findCycles(list).forEach((n) => cyclic.add(n));
+    sv.cycles = cyclic;
     sv.status = "ready";
   } catch (err) {
     if (!sv.mounted) return;
@@ -195,16 +292,28 @@ async function loadList() {
 
 /* ── 取数:详情(全量 manifest,含 prompt 与 lint;Map 缓存)────────── */
 
+/* D6:技能所属 set(指定范围恒为该 set;"全部"按列表 _set 标签;单 set/无 sets 归 null) */
+function skillSetOf(name) {
+  if (!multiSets()) return null;
+  if (sv.set) return sv.set;
+  return sv.skills.find((s) => s.name === name)?._set ?? null;
+}
+
+const detailKey = (name) => `${skillSetOf(name) ?? ""}/${name}`; // D6:跨 set 同名不串缓存
+
 async function ensureDetail(name, force = false) {
-  const cached = sv.details.get(name);
+  const key = detailKey(name);
+  const cached = sv.details.get(key);
   if (!force && cached && cached.status !== "error") return;
-  sv.details.set(name, { status: "loading" });
+  sv.details.set(key, { status: "loading" });
   if (sv.selected === name) renderDetail();
   try {
-    const data = await getJson(`/api/skills/${encodeURIComponent(name)}`);
-    sv.details.set(name, { status: "ready", data });
+    const set = skillSetOf(name); // D6:多 set 下用 ?skill_set= 消歧
+    const q = set ? `?skill_set=${encodeURIComponent(set)}` : "";
+    const data = await getJson(`/api/skills/${encodeURIComponent(name)}${q}`);
+    sv.details.set(key, { status: "ready", data });
   } catch (err) {
-    sv.details.set(name, { status: "error", error: err.message ?? "加载失败" });
+    sv.details.set(key, { status: "error", error: err.message ?? "加载失败" });
   }
   if (sv.mounted && sv.selected === name) renderDetail();
 }
@@ -223,7 +332,9 @@ async function doReload() {
   sv.reloadBusy = true;
   renderReload();
   try {
-    const res = await postJson("/api/skills/reload");
+    // D6:指定 set 时只重载该 set;"全部"/无 sets 时缺省重载全部
+    const scoped = multiSets() && sv.set;
+    const res = await postJson("/api/skills/reload", scoped ? { skill_set: sv.set } : undefined);
     const reloaded = Boolean(res?.reloaded);
     toast(
       reloaded ? "skills 已重载(影响后续新建的 run)" : "reloaded:false(mtime 未变,跳过重载)",
@@ -295,6 +406,23 @@ function renderList() {
       sv.skills.length === 0
         ? emptyBlock("还没有技能", "在 agent-os.toml 配置 skills.path", "box")
         : emptyBlock("无匹配的技能", "调整搜索关键词", "search");
+    return;
+  }
+  // D6:多 set "全部" 时按 set 分组(组头 = set 名 + 技能数;组序保持拉取序)
+  if (multiSets() && !sv.set) {
+    const groups = new Map();
+    for (const s of skills) {
+      const key = s._set ?? "default";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(s);
+    }
+    box.innerHTML = [...groups.entries()]
+      .map(
+        ([set, list]) =>
+          `<div class="brw-group" role="presentation">${esc(set)} (${list.length})</div>` +
+          list.map(skillItemHtml).join(""),
+      )
+      .join("");
     return;
   }
   box.innerHTML = skills.map(skillItemHtml).join("");
@@ -402,7 +530,7 @@ function renderDetail() {
     box.innerHTML = emptyBlock("选择一个技能", "从左侧列表选择技能查看详情,或点 Run ▶ 发起运行", "select");
     return;
   }
-  const cached = sv.details.get(name);
+  const cached = sv.details.get(detailKey(name)); // D6:缓存 key 含 set(跨 set 同名不串)
   if (!cached || cached.status === "loading") {
     box.innerHTML = `<div class="skeleton-pad">${skeletonRows(8)}</div>`;
     return;
@@ -434,10 +562,13 @@ export function openSkillsView(main, name = null) {
   sv.main = main;
   if (!sv.mounted) {
     sv.mounted = true;
+    sv.set = multiSets() ? (store.get("skillSet") ?? null) : null; // D6:默认跟随侧栏选择
     mountShell();
+    renderSetSel();
     renderReload();
     renderList();
     renderDetail();
+    sv.unsub = store.subscribe(onStore); // D6:侧栏 set 切换 / skillsets 到达联动
     loadList();
   }
   select(name);
@@ -445,6 +576,8 @@ export function openSkillsView(main, name = null) {
 }
 
 export function closeSkillsView() {
+  sv.unsub?.(); // D6:退订 store(防泄漏与复活写)
+  sv.unsub = null;
   sv.main = null;
   sv.root = null; // 随 #main 内容替换一并丢弃,监听器附着在 root 上随之失效
   sv.els = null;
@@ -457,4 +590,5 @@ export function closeSkillsView() {
   sv.details = new Map();
   sv.search = "";
   sv.reloadBusy = false;
+  sv.set = null;
 }

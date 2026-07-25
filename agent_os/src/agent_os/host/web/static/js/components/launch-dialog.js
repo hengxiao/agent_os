@@ -7,6 +7,11 @@
    失败(4xx/5xx 或 run 未开始的 200+failed)在 Modal 底部错误条显示。
    Esc 与遮罩点击关闭;打开聚焦第一个输入,关闭还原焦点。
 
+   D6 一站多 skill set(≥2 sets 时):技能下拉逐 set 拉取并按 <optgroup> 分组,
+   option value 为 "<set>/<name>"(state.byValue 反查),详情按 ?skill_set= 消歧,
+   提交带 skill_set;openLaunchDialog 可传 presetSet 精确预填。单 set/无 sets 时
+   行为与之前完全一致(value 即技能名,不带 skill_set)。
+
    纯函数(不碰 DOM,node 单测可载):
      validateAgainstSchema(value, schema)  手写小型 JSON Schema 校验器 → errors[]
      skeletonFromSchema(schema)            inputs schema → 示例骨架({"n": 1} 形式)
@@ -14,6 +19,7 @@
      buildOverrides(fields)                高级区表单值 → overrides 对象(只含已填项) */
 
 import { getJson, postJson } from "../api.js";
+import { store } from "../store.js";
 import { esc } from "../util.js";
 
 /* ── 手写小型 JSON Schema 校验器 ──────────────────────────────
@@ -138,7 +144,7 @@ export function buildOverrides({ model = "", maxCost = "", maxSteps = "" } = {})
 
 /* ── Modal(DOM;openLaunchDialog 以外不碰 document)─────────── */
 
-export function openLaunchDialog({ presetSkill = null } = {}) {
+export function openLaunchDialog({ presetSkill = null, presetSet = null } = {}) {
   const doc = document;
   const prevFocus = doc.activeElement;
   const $el = (tag, className, text) => {
@@ -235,7 +241,8 @@ export function openLaunchDialog({ presetSkill = null } = {}) {
     modalError,
     run: runBtn,
   };
-  const state = { details: new Map(), schema: null, busy: false, closed: false };
+  // byValue(D6):option value → { name, set }(多 set 时 value = "<set>/<name>")
+  const state = { details: new Map(), schema: null, busy: false, closed: false, byValue: new Map() };
 
   /* ── 校验:非法 JSON / schema 错误 → 错误条 + 红框 + 禁用 Run ── */
   function validate() {
@@ -264,24 +271,28 @@ export function openLaunchDialog({ presetSkill = null } = {}) {
 
   /* ── 技能选中:拉全量 manifest(inputs schema)→ 摘要 + 骨架 + 校验 ── */
   async function onSkillChange() {
-    const name = els.skill.value;
+    const value = els.skill.value;
+    const entry = state.byValue.get(value) ?? { name: value, set: null }; // D6:value 反查 set
+    const name = entry.name;
     state.schema = null;
     els.skill.title = "";
-    if (!name) {
+    if (!value) {
       els.info.innerHTML = "";
       validate();
       return;
     }
     els.info.innerHTML = `<div class="ld-skill-desc">加载技能详情…</div>`;
     try {
-      if (!state.details.has(name)) {
-        state.details.set(name, await getJson(`/api/skills/${encodeURIComponent(name)}`));
+      if (!state.details.has(value)) {
+        // D6:多 set 下详情按 ?skill_set= 消歧;缓存 key 用 value(含 set,同名不串)
+        const q = entry.set ? `?skill_set=${encodeURIComponent(entry.set)}` : "";
+        state.details.set(value, await getJson(`/api/skills/${encodeURIComponent(name)}${q}`));
       }
     } catch {
-      state.details.set(name, null);
+      state.details.set(value, null);
     }
-    if (state.closed || els.skill.value !== name) return; // 加载期间已切换/关闭
-    const d = state.details.get(name);
+    if (state.closed || els.skill.value !== value) return; // 加载期间已切换/关闭
+    const d = state.details.get(value);
     if (!d) {
       els.info.innerHTML =
         `<div class="ld-skill-desc ld-warn">schema 加载失败,仅做 JSON 合法性校验</div>`;
@@ -314,7 +325,9 @@ export function openLaunchDialog({ presetSkill = null } = {}) {
       maxCost: els.maxCost.value,
       maxSteps: els.maxSteps.value,
     });
-    const body = { skill: els.skill.value, input: value, wait: false };
+    const entry = state.byValue.get(els.skill.value) ?? { name: els.skill.value, set: null };
+    const body = { skill: entry.name, input: value, wait: false };
+    if (entry.set) body.skill_set = entry.set; // D6:多 set 提交带 skill_set
     if (Object.keys(overrides).length) body.overrides = overrides;
     try {
       const res = await postJson("/api/runs", body);
@@ -363,25 +376,58 @@ export function openLaunchDialog({ presetSkill = null } = {}) {
   doc.body.appendChild(overlay);
   els.skill.focus(); // 焦点管理:打开聚焦第一个输入
 
-  /* ── 技能下拉:GET /api/skills 填充(option title = description)── */
+  /* ── 技能下拉:GET /api/skills 填充(option title = description);
+        D6:≥2 sets 时逐 set 拉取并按 <optgroup> 分组 ── */
   (async () => {
     try {
-      const skills = await getJson("/api/skills");
+      const sets = store.get("skillsets") ?? [];
+      const multi = sets.length >= 2;
+      const groups = multi
+        ? await Promise.all(
+            sets.map(async (s) => ({
+              set: s.name,
+              // 坏 set 隔离:该组为空,不拖垮其它 set(与 /api/skillsets 同口径)
+              skills: await getJson(`/api/skills?skill_set=${encodeURIComponent(s.name)}`).catch(
+                () => [],
+              ),
+            })),
+          )
+        : [{ set: null, skills: await getJson("/api/skills") }];
       if (state.closed) return;
-      if (!Array.isArray(skills) || !skills.length) {
+      const entries = []; // { value, name, set }(填充顺序 = 下拉顺序)
+      for (const g of groups) {
+        for (const s of Array.isArray(g.skills) ? g.skills : []) {
+          entries.push({
+            value: multi ? `${g.set}/${s.name}` : s.name,
+            name: s.name,
+            set: g.set,
+          });
+        }
+      }
+      if (!entries.length) {
         showModalError("无可用技能(在 agent-os.toml 配置 skills.path)");
         return;
       }
-      for (const s of skills) {
-        const opt = $el("option", "", s.name);
-        opt.value = s.name;
-        opt.title = s.description ?? ""; // hover 显示 description 悬浮提示
-        skillSel.appendChild(opt);
+      state.byValue = new Map(entries.map((e) => [e.value, e]));
+      for (const g of groups) {
+        const list = (Array.isArray(g.skills) ? g.skills : []).filter((s) => s?.name);
+        if (!list.length) continue;
+        const parent = multi ? $el("optgroup") : skillSel;
+        if (multi) parent.setAttribute("label", `${g.set} (${list.length})`);
+        for (const s of list) {
+          const opt = $el("option", "", s.name);
+          opt.value = multi ? `${g.set}/${s.name}` : s.name;
+          opt.title = s.description ?? ""; // hover 显示 description 悬浮提示
+          parent.appendChild(opt);
+        }
+        if (multi) skillSel.appendChild(parent);
       }
       skillSel.disabled = false;
       const initial =
-        presetSkill && skills.some((s) => s.name === presetSkill) ? presetSkill : skills[0].name;
-      skillSel.value = initial;
+        (presetSkill &&
+          entries.find((e) => e.name === presetSkill && (!presetSet || e.set === presetSet))) ||
+        entries[0];
+      skillSel.value = initial.value;
       await onSkillChange();
     } catch (e) {
       if (!state.closed) showModalError(`技能列表加载失败:${e.message}`);

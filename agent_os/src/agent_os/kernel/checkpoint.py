@@ -7,7 +7,8 @@ WAL 原则:"trajectory 是 Agent 的全部状态"——帧 transcript 完整入�
 检查点 JSON(schema v1)::
 
     {"v": 1,
-     "run": {"run_id", "status", "usage": {...}, "result", "error"},
+     "run": {"run_id", "status", "usage": {...}, "result", "error",
+             "run_state"(§W1-4 run 级工具状态,additive,schema v1 不变)},
      "frames": [{"frame_id", "skill", "parent_id", "input", "depth", "status",
                  "result", "error", "call_id", "usage": {...},
                  "context": {"messages": [...], "working", "pinned", "token_estimate"}}]}
@@ -119,6 +120,8 @@ def dump_checkpoint(kernel: Any, run_id: str, path: str) -> None:
             "usage": _usage_to_dict(run.state.usage),
             "result": run.state.result,
             "error": run.state.error,
+            # §W1-4:run 级工具状态(todo 清单等)随 checkpoint 落盘(additive,schema v1 不变)
+            "run_state": getattr(kernel.tools, "run_states", {}).get(run_id, {}),
         },
         "frames": [
             {
@@ -259,6 +262,11 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
     run.state.usage = _usage_from_dict(doc["run"]["usage"])
     run.state.status = RunStatus.RUNNING
     kernel._runs[run.run_id] = run
+    # §W1-4:恢复 run 级工具状态(todo 清单等),恢复后状态栏与工具读到同一份
+    saved_run_state = doc["run"].get("run_state")
+    run_states = getattr(kernel.tools, "run_states", None)
+    if saved_run_state and run_states is not None:
+        run_states[run.run_id] = saved_run_state
 
     frames.sort(key=lambda f: f.depth)
     for frame in frames:

@@ -7,6 +7,12 @@ sync 函数包 ``asyncio.to_thread``;§8.1 分发流水线全量实现(契约本
 §W0-1:``ToolDispatchContext.workdir``/``read_paths`` 把"每 run 临时目录"升级为可配置
 三分区(read_paths 只读 / workdir 读写 / 缺省临时目录);``resolve_work_path`` 是
 fs_read/fs_write/fs_edit/shell_exec 共用的统一路径解析器(三段判定,逃逸检查保留)。
+
+§W1-3 replayable 回放:``ToolDispatchContext.replay_records`` 有记录时,``spec.replayable``
+工具按调用序弹出记录值返回而不执行(host replay 的接线留后续里程碑);§W1-4:
+``_run_states`` 是 run 级工具状态表(todo 清单等,同 run_id 跨帧共享,checkpoint
+随档持久见 kernel.checkpoint);§W1-5:``bind_skills`` 注入 SkillRegistry 引用,
+作 skill_search 的技能数据源(装配钩子,同 bind_signals 先例)。
 """
 
 from __future__ import annotations
@@ -48,6 +54,8 @@ class ToolDispatchContext:
 
     §W0-1 additive:``workdir``/``read_paths`` 由 runner 从 RunConfig 传入;
     缺省 ``None`` → 保持现状(每 run 临时目录,安全边界不静默放宽)。
+    §W1-3 additive:``replay_records`` 由 host replay 注入(trace 记录值);
+    缺省 ``None`` → 正常执行(锚点直接构造 ctx 验证回放语义)。
     """
 
     frame: SkillFrame
@@ -55,6 +63,7 @@ class ToolDispatchContext:
     tool_policy: ToolPolicy = field(default_factory=ToolPolicy)  # RunConfig 全局上限
     workdir: Path | None = None  # §W0-1 run 工作目录(fs/shell 共用解析点)
     read_paths: list[Path] = field(default_factory=list)  # §W0-1 只读挂载(可在 workdir 之外)
+    replay_records: dict[str, list] | None = None  # §W1-3 replayable 工具按调用序弹出的记录值
 
 
 class _FunctionTool:
@@ -87,6 +96,10 @@ class LocalPythonToolRegistry:
         self._tools: dict[str, Tool] = {}
         self._blob = InMemoryBlobStore()
         self._workdirs: dict[str, str] = {}
+        #: §W1-4 run 级工具状态(todo 清单等;同 run_id 的帧共享,checkpoint 随档持久)
+        self._run_states: dict[str, dict[str, Any]] = {}
+        #: §W1-5 skill_search 的技能数据源(KernelBuilder 装配时经 bind_skills 注入)
+        self._skills: Any = None
 
     def tool(
         self, *, permission: Permission = Permission.READ, timeout: float = 30.0, **spec_kw: Any
@@ -131,12 +144,21 @@ class LocalPythonToolRegistry:
         """生成注入请求的 tool schema 列表(顺序固定保前缀稳定,§7.4 不变量 5)。"""
         return self.schemas_for(allowed if allowed is not None else list(self._tools))
 
+    @property
+    def run_states(self) -> dict[str, dict[str, Any]]:
+        """run 级工具状态表(§W1-4;key = run_id,同 run 的帧共享;checkpoint 随档持久)。"""
+        return self._run_states
+
     def bind_signals(self, bus: Any) -> None:
         """KernelBuilder 装配钩子:给提供 ``bind()`` 的工具(如 python_exec)接信号总线。"""
         for tool in self._tools.values():
             bind = getattr(tool, "bind", None)
             if callable(bind):
                 bind(bus)
+
+    def bind_skills(self, skills: Any) -> None:
+        """KernelBuilder 装配钩子(§W1-5):注入 SkillRegistry 引用,作 skill_search 数据源。"""
+        self._skills = skills
 
     async def dispatch(self, call: ToolCall, frame_ctx: ToolDispatchContext) -> ToolResult:
         """§8.1 分发流水线(本切片实现到超时执行为止;信号由内核 runner 收发):
@@ -190,6 +212,14 @@ class LocalPythonToolRegistry:
                     ),
                 ),
             )
+        # §W1-3 回放:replayable 工具在 replay 模式按调用序弹出记录值返回,不执行
+        # (记录源是 host trace,接线留后续里程碑;无记录或记录耗尽 → 正常执行)。
+        # 位置在 schema 校验与三层权限之后:回放不放宽任何安全闸门,只替换"执行"这一步
+        records = frame_ctx.replay_records
+        if spec.replayable and records is not None:
+            queue = records.get(call.name)
+            if queue:
+                return ToolResult(ok=True, value=queue.pop(0))
         workdir = (
             str(frame_ctx.workdir.expanduser().resolve())
             if frame_ctx.workdir is not None
@@ -242,7 +272,8 @@ class LocalPythonToolRegistry:
     def with_builtins(
         cls, http_transport: httpx.AsyncBaseTransport | None = None
     ) -> LocalPythonToolRegistry:
-        """§14.2 组装示例入口:注册 §8.3 内置工具(fs_read/fs_write/fs_edit/shell_exec/http_fetch)。
+        """§14.2 组装示例入口:注册 §8.3 内置工具(fs_read/fs_write/fs_edit/shell_exec/http_fetch)
+        与 §W1 核心工具(fs_list/fs_search/now/todo_write/todo_update/skill_search)。
 
         何时用:单技能 agent 起步与测试的默认工具面;边界:fs 工具限定 run 工作目录(§2.2;
         §W0-1 起可配 workdir/read_paths 分区),shell_exec 为一次性子进程(持久会话形态
@@ -250,6 +281,9 @@ class LocalPythonToolRegistry:
         ``http_transport`` 供测试注入 httpx MockTransport,不碰真实网络。
         §W0-2:READ 档 fs_read 声明 idempotent/cacheable/concurrent_safe(两个拼写一并置位),
         各工具 cost_hint 写量级(声明不强制)。
+        §W1(STDLIB-CATALOG):now 声明 ``replayable``(replay 语义见 dispatch);todo 双工具
+        持 run 级状态(``run_states``);skill_search 的 skills 数据源由 KernelBuilder
+        经 ``bind_skills`` 注入(未装配时只检索工具面)。
         """
         from agent_os.tools.builtins import (
             fs_edit,
@@ -257,6 +291,14 @@ class LocalPythonToolRegistry:
             fs_write,
             http_fetch_tool,
             shell_exec,
+        )
+        from agent_os.tools.std import (
+            fs_list,
+            fs_search,
+            now,
+            skill_search_tool,
+            todo_update_tool,
+            todo_write_tool,
         )
 
         reg = cls()
@@ -272,6 +314,36 @@ class LocalPythonToolRegistry:
         reg.tool(permission=Permission.WRITE, timeout=10.0, cost_hint="~10ms")(fs_edit)
         reg.tool(permission=Permission.EXEC, cost_hint="~100ms 起,取决于命令")(shell_exec)
         reg.register(http_fetch_tool(transport=http_transport))
+        # —— §W1 核心工具(契约字段同 READ 档统一声明,门槛见 tests/test_std_gate.py)——
+        reg.tool(
+            permission=Permission.READ,
+            idempotent=True,
+            cacheable=True,
+            concurrent_safe=True,
+            concurrency_safe=True,
+            cost_hint="~20ms,取决于目录规模",
+        )(fs_list)
+        reg.tool(
+            permission=Permission.READ,
+            idempotent=True,
+            cacheable=True,
+            concurrent_safe=True,
+            concurrency_safe=True,
+            timeout=60.0,  # 大目录树 + 单文件 2s 正则超时兜底,默认 30s 可能偏紧
+            cost_hint="~50ms 起,取决于树规模与正则",
+        )(fs_search)
+        # now 的 cacheable 是门槛统一声明(READ⇒cacheable);复现机制是 replayable,不是缓存
+        reg.tool(
+            permission=Permission.READ,
+            replayable=True,
+            cacheable=True,
+            concurrent_safe=True,
+            concurrency_safe=True,
+            cost_hint="~1ms",
+        )(now)
+        reg.register(todo_write_tool(reg.run_states))
+        reg.register(todo_update_tool(reg.run_states))
+        reg.register(skill_search_tool(reg))
         return reg
 
 

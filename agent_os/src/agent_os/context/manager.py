@@ -173,7 +173,7 @@ class ContextManager:
         return caps
 
     def _status_message(self, frame: SkillFrame) -> Message:
-        """key-value 状态行(§7.3):裸读数 + 操作策略(hint)。"""
+        """key-value 状态行(§7.3):裸读数 + 操作策略(hint);§W1-4:run 有 TODO 时并入摘要行。"""
         usage = frame.usage
         remaining = self._config.max_cost - usage.cost
         low = remaining < self._config.max_cost * LOW_BUDGET_RATIO
@@ -185,12 +185,33 @@ class ContextManager:
             f"budget_remaining: {remaining:.2f}\n"
             f"hint: {hint}"
         )
+        todo = self._todo_status(frame)
+        if todo is not None:
+            content = f"{content}\n{todo}"
         return Message(
             role=Role.USER,
             source=Source.INJECTED,
             meta={"kind": "status"},
             content=content,
         )
+
+    def _todo_status(self, frame: SkillFrame) -> str | None:
+        """§W1-4 todo 摘要行:``todo: 1/3 done · doing: 写报告``;本 run 无清单 → None(状态行不变)。
+
+        数据只来自内核记账(registry 的 run 级状态),不来自工具内容(模型无条件信任状态栏,§7.3)。
+        """
+        run_states = getattr(self._tools, "run_states", None)  # 同下方 _blob 的 getattr 先例
+        if not run_states:
+            return None
+        todos = run_states.get(frame.run_id, {}).get("todos")
+        if not todos:
+            return None
+        done = sum(1 for t in todos if t.get("status") == "done")
+        line = f"todo: {done}/{len(todos)} done"
+        doing = next((t for t in todos if t.get("status") == "doing"), None)
+        if doing is not None:
+            line = f"{line} · doing: {doing.get('text', '')}"
+        return line
 
     async def maintain(self, frame: SkillFrame) -> None:
         manifest = self._skills.get(frame.skill).manifest

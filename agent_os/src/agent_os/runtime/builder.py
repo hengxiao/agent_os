@@ -143,6 +143,8 @@ class KernelBuilder:
         )
         if hasattr(tools, "bind_signals"):
             tools.bind_signals(bus)
+        if skills is not None and hasattr(tools, "bind_skills"):
+            tools.bind_skills(skills)  # §W1-5:skill_search 的技能数据源(bind 模式,同 python_exec)
         if self._telemetry is not None:
             # §5.1:Telemetry 是总线的特权订阅者(全量订阅),不算 sidecar
             bus.subscribe("*", self._telemetry.record)

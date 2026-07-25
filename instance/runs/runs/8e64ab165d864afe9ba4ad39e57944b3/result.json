@@ -1,0 +1,22 @@
+{
+  "status": "done",
+  "result": {
+    "status": "resolved_rejected",
+    "ticket_id": "T-1002",
+    "refund_cents": 0,
+    "response": "李雷 您好,关于订单 o2 的退款申请,经审核:签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。 很抱歉本次无法为您办理退款;如有新的凭证,欢迎回复本工单补充说明。"
+  },
+  "error": null,
+  "usage": {
+    "thinking_tokens": 0,
+    "cache_write_tokens": 0,
+    "steps": 16,
+    "completion_tokens": 16,
+    "cost": 0.0,
+    "total_ms": 0,
+    "cache_read_tokens": 0,
+    "ttft_ms": 0,
+    "prompt_tokens": 16
+  },
+  "skill_set": "support_desk"
+}

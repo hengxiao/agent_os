@@ -291,6 +291,8 @@ class RunManager:
         未声明恒指向 ``<set>/skills.yaml``(模型钉死:每 set 必有自己的 skills.yaml)。
         """
         if skill_set is None:
+            global_dir = Path(self._config_path).resolve().parent
+            _prepare_set_imports(global_dir, global_dir)  # 全局配置的 dotted path 同样免 PYTHONPATH
             return self._config_path
         set_dir = self._set_dir(skill_set)
         _prepare_set_imports(set_dir, Path(self._config_path).resolve().parent)

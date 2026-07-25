@@ -1,0 +1,10 @@
+{
+  "run_id": "8e64ab165d864afe9ba4ad39e57944b3",
+  "skill": "handle_ticket",
+  "input": {
+    "ticket_id": "T-1002"
+  },
+  "host": "web",
+  "started_at": "2026-07-25T18:17:46.273093+00:00",
+  "skill_set": "support_desk"
+}

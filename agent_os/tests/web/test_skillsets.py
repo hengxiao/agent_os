@@ -184,3 +184,84 @@ def test_unknown_skill_set_rejected(tmp_path):
         json={"skill": "beta_add", "input": {"a": 1, "b": 2}, "skill_set": "nope", "wait": True},
     )
     assert r.status_code in (400, 404, 422)
+
+
+# ---------------------------------------------------------------------------
+# 回归:全局配置带 brain 时,无 skill_set 的装配也必须免 PYTHONPATH
+# (8000 实例实测抓获:_base_config(None) 未钉全局配置目录 → /api/skills 500)
+# ---------------------------------------------------------------------------
+
+GLOBAL_WITH_BRAIN = """
+[run]
+model = "mock/g"
+
+[providers.mock]
+brain = "gbrains:g_brain"
+
+[tools]
+builtins = false
+python_exec = "off"
+
+[skills]
+path = "{skills}"
+
+[telemetry]
+dir = "{telemetry}"
+"""
+
+GLOBAL_SKILLS = """
+skills:
+  - name: global_echo
+    version: 1.0.0
+    kind: prompt
+    description: 全局技能。Use when 测试全局装配。
+    inputs:
+      type: object
+      properties: { text: { type: string } }
+      required: [text]
+    outputs:
+      type: object
+      properties: { echo: { type: string } }
+      required: [echo]
+    permissions: { tools: [], skills: [] }
+    model: { prefer: ["mock/g"] }
+    prompt: 原样返回输入。
+"""
+
+
+def test_global_brain_config_works_without_pythonpath(tmp_path):
+    """全局 agent-os.toml 带 [providers.mock].brain(dotted path 模块在配置目录内)时,
+    无 skill_set 参数的装配与全局 run 都不得依赖环境 PYTHONPATH。"""
+    cfg_dir = tmp_path / "globalcfg"
+    cfg_dir.mkdir()
+    (cfg_dir / "gbrains.py").write_text(
+        textwrap.dedent(
+            '''
+            import json
+            from agent_os.api.v1 import ChatResponse, ChatUsage, Message, Role
+
+            def g_brain(req):
+                text = next(json.loads(m.content)["text"] for m in req.messages if m.role is Role.USER)
+                return ChatResponse(
+                    message=Message(role=Role.ASSISTANT, content=json.dumps({"echo": text})),
+                    finish_reason="stop",
+                    usage=ChatUsage(prompt=1, completion=1),
+                )
+            '''
+        ),
+        encoding="utf-8",
+    )
+    (cfg_dir / "skills.yaml").write_text(GLOBAL_SKILLS, encoding="utf-8")
+    cfg = cfg_dir / "agent-os.toml"
+    cfg.write_text(
+        GLOBAL_WITH_BRAIN.format(skills=cfg_dir / "skills.yaml", telemetry=cfg_dir / "traces"),
+        encoding="utf-8",
+    )
+    client = TestClient(
+        create_app(cfg, artifacts_root=tmp_path / "runs", skillsets_dir=_make_root(tmp_path))
+    )
+
+    assert any(s["name"] == "global_echo" for s in client.get("/api/skills").json())
+    r = client.post("/api/runs", json={"skill": "global_echo", "input": {"text": "ok"}, "wait": True})
+    assert r.json()["status"] == "done"
+    assert r.json()["result"] == {"echo": "ok"}

@@ -165,6 +165,15 @@ const FIB_SCHEMA = {
   assert.deepEqual(buildOverrides({ maxCost: "abc", maxSteps: "1.9" }), { max_steps: 1 },
     "非数字丢弃;max_steps 取整");
   assert.deepEqual(buildOverrides(), {});
+  /* inline(SKILL-INLINING.md §9 消融开关):on/off 带出,""(继承配置)与其他值丢弃 */
+  assert.deepEqual(buildOverrides({ inline: "off" }), { inline: "off" });
+  assert.deepEqual(buildOverrides({ inline: "on" }), { inline: "on" });
+  assert.deepEqual(buildOverrides({ inline: "" }), {}, "继承配置不带出");
+  assert.deepEqual(buildOverrides({ inline: "auto" }), {}, "值域外丢弃(后端 422 兜底)");
+  assert.deepEqual(
+    buildOverrides({ model: "mock/k", inline: "off" }),
+    { model: "mock/k", inline: "off" },
+    "与其他覆盖项并存");
 }
 
 console.log("launch-dialog.test.mjs: all assertions passed");

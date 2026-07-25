@@ -1,0 +1,18 @@
+{
+  "status": "done",
+  "result": {
+    "report": "ok"
+  },
+  "error": null,
+  "usage": {
+    "ttft_ms": 0,
+    "cost": 0.0,
+    "cache_read_tokens": 0,
+    "completion_tokens": 1,
+    "total_ms": 0,
+    "thinking_tokens": 0,
+    "prompt_tokens": 1,
+    "cache_write_tokens": 0,
+    "steps": 1
+  }
+}

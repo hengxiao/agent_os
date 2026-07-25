@@ -1,0 +1,8 @@
+skills:
+  - name: bad_inline
+    version: 1.0.0
+    kind: prompt
+    inline: true
+    description: 违规示例。
+    permissions: { tools: [fs_read], skills: [] }
+    prompt: 带工具的 inline,应该报闸门错误。

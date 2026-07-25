@@ -1,0 +1,19 @@
+{
+  "status": "done",
+  "result": {
+    "report": "截至 2026-07-24,一切正常。"
+  },
+  "error": null,
+  "usage": {
+    "cache_read_tokens": 0,
+    "steps": 1,
+    "cost": 0.0,
+    "ttft_ms": 0,
+    "total_ms": 0,
+    "cache_write_tokens": 0,
+    "thinking_tokens": 0,
+    "completion_tokens": 1,
+    "prompt_tokens": 1
+  },
+  "skill_set": "default"
+}

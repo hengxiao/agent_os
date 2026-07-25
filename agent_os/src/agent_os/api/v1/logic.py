@@ -14,6 +14,10 @@ from typing import Any, Protocol, runtime_checkable
 from .tools import BlobStore
 
 __all__ = [
+    "ORCHESTRATE_SCHEMA",
+    "ORCHESTRATE_TOOL",
+    "SYSCALL_FD",
+    "SYSCALL_PROTOCOL_VERSION",
     "ExecError",
     "ExecRequest",
     "ExecResult",
@@ -77,9 +81,48 @@ class ExecUsage:
     wall_ms: int = 0
 
 
+#: 编排伪工具名(CODE-ORCHESTRATION.md §2.1):分发阶段被内核拦截,不进 Tool Registry
+#: ——syscall 仲裁需绑定调用帧与调用方 manifest,权限敏感的分发留在内核(同 ``skill__*``)
+ORCHESTRATE_TOOL = "python_orchestrate"
+
+#: 编排伪工具对 LLM 的呈现(ContextManager 在 manifest 声明且消融开关为 on 时追加)
+ORCHESTRATE_SCHEMA: dict[str, Any] = {
+    "name": ORCHESTRATE_TOOL,
+    "description": (
+        "在沙箱中执行编排脚本,脚本内可经 ctx 调用本技能白名单内的工具与子技能。"
+        "Use when 需要循环/分支/批量调用工具(中间结果不占上下文,显著省 token);"
+        "Do not use when 只需一两次调用(直接调工具更简单)或纯计算(用 python_exec)。"
+        "脚本约定:同步直线代码;"
+        "``ctx.call_tool(name, args) -> {'ok','value','error'}``、"
+        "``ctx.invoke(skill, input) -> 结果``(失败抛异常);"
+        "把最终结果赋给变量 ``result``(须可 JSON 序列化)。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "code": {"type": "string", "description": "编排脚本源码(Python)"},
+            "timeout": {"type": "number", "description": "墙钟上限秒数(默认 60)"},
+        },
+        "required": ["code"],
+    },
+}
+
+#: 沙箱 syscall 协议版本(CODE-ORCHESTRATION.md §2.2;首行版本头,同 telemetry 惯例)
+SYSCALL_PROTOCOL_VERSION = 1
+
+#: 沙箱内 syscall 通道的文件描述符(与业务 stdout 分流,避免混流)
+SYSCALL_FD = 3
+
+
 @dataclass
 class ExecRequest:
-    """§9.1(逐字):``{ source, language, entry, args, ctx, limits, network }``。"""
+    """§9.1(逐字):``{ source, language, entry, args, ctx, limits, network }``。
+
+    ``dispatch_fn``(CODE-ORCHESTRATION.md):SANDBOX 档的**工具系统调用**回调——
+    非 None 时沙箱进入服务循环,脚本内 ``ctx.call_tool``/``ctx.invoke`` 经管道
+    陷入内核,由本回调代为分发(白名单/veto/信号/记账全部沿用 ``_dispatch_call``)。
+    None 则为纯计算档(``python_exec`` 与 v1 code 技能行为不变)。
+    """
 
     source: str = ""  # 源码文本,或已加载 code 技能的入口引用
     language: str = "python"  # 预留多语言路由(§9.6)
@@ -88,6 +131,8 @@ class ExecRequest:
     ctx: LogicContext | None = None  # 仅 TRUSTED 模式注入(§9.3)
     limits: ResourceLimits = field(default_factory=ResourceLimits)
     network: bool | NetworkPolicy = False
+    #: SANDBOX 档 syscall 分发回调:``async (kind, name, args) -> {"ok","value","error"}``
+    dispatch_fn: Any = None
 
 
 @dataclass

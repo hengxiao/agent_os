@@ -25,6 +25,8 @@
      exec   pre/post:logic.exec 合并  → "exec python_exec · trusted ✓";被 tool.call 全包时
                                         折进 tool 行(trust 标注带上),不重复出行
      obs    budget.* / compress / sidecar / 未知信号一行(黄)
+     inline post:context.inline       → "⇥ inline date_style@1.0.0(+1) · 42 chars"
+                                        (merge 内联能力快照,一次性;弱化色,不占语义色)
      run    run.started/finished/aborted(粗体行)
      depth  信号时刻的帧栈深(call 行 = 父 depth,子行 depth+1,ret 行回到父 depth)
      step   pre:step 只更新帧内当前 step(供检视器消息定位),自身不占行;
@@ -236,6 +238,24 @@ export function buildTraceRows(signals, frames = []) {
         });
       }
       pendingInvoke = null;
+      return;
+    }
+
+    /* post:context.inline(SKILL-INLINING.md §7):帧首次 build 的一次性内联能力行。
+       payload {frame_id, skills:[{name, version, chars}]};弱化样式(不占 call/ret
+       语义色),payload 面板照常可展开。 */
+    if (name === "post:context.inline") {
+      const caps = Array.isArray(p.skills) ? p.skills : [];
+      const total = caps.reduce((acc, c) => acc + (Number(c?.chars) || 0), 0);
+      const firstCap = caps[0];
+      const extra = caps.length > 1 ? `(+${caps.length - 1})` : "";
+      mkRow({
+        kind: "inline", depth, status: "obs",
+        label: firstCap ? `${shortSkill(firstCap.name)}@${firstCap.version ?? "—"}${extra}` : "—",
+        detail: caps.length ? `${total} chars` : "",
+        durMs: null, frameId: fid, sigIndex: i, sigEnd: i, step,
+        payload: stripCommon(p), ts: sig.ts, names: name,
+      });
       return;
     }
 
@@ -570,6 +590,11 @@ function bodyHtml(r) {
       return (
         `<span class="tr-kw" data-k="exec">exec</span><span class="tr-name">${esc(r.label)}</span>` +
         `${detail}${OK_MARK[r.status] ?? ""}`
+      );
+    case "inline": // ⇥ inline:merge 内联能力快照(弱化色,不占 call/ret 语义色)
+      return (
+        `<span class="tr-kw" data-k="inline">⇥ inline</span>` +
+        `<span class="tr-args">${esc(r.label)}${r.detail ? ` · ${esc(r.detail)}` : ""}</span>`
       );
     default: // obs
       return `<span class="tr-kw" data-k="obs">obs</span><span class="tr-args">${esc(r.label)}${r.detail ? ` ${esc(r.detail)}` : ""}</span>`;

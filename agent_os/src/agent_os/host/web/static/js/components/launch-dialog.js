@@ -2,7 +2,8 @@
    Skill 下拉(GET /api/skills,hover 显示 description,选中后显示 description 与
    inputs 摘要)→ Input JSON 编辑器(mono,按该技能 inputs schema 生成示例骨架,
    实时校验:非法 JSON / schema 错误进编辑器下方错误条 + 红框,有错禁用 Run)→
-   高级区(model/max_cost/max_steps → POST body overrides)→ Run:POST /api/runs
+   高级区(model/max_cost/max_steps/inline → POST body overrides;inline 是 §9 merge
+   消融开关:继承配置/on/off)→ Run:POST /api/runs
    {skill, input, overrides, wait:false} → 关 Modal 跳 #/runs/<run_id> 进 live;
    失败(4xx/5xx 或 run 未开始的 200+failed)在 Modal 底部错误条显示。
    Esc 与遮罩点击关闭;打开聚焦第一个输入,关闭还原焦点。
@@ -131,7 +132,7 @@ export function summarizeInputs(schema) {
 }
 
 /* ── 高级区表单值 → overrides(只含已填项;全空返回 {})────── */
-export function buildOverrides({ model = "", maxCost = "", maxSteps = "" } = {}) {
+export function buildOverrides({ model = "", maxCost = "", maxSteps = "", inline = "" } = {}) {
   const overrides = {};
   const m = String(model).trim();
   if (m) overrides.model = m;
@@ -139,6 +140,9 @@ export function buildOverrides({ model = "", maxCost = "", maxSteps = "" } = {})
   if (c !== "" && Number.isFinite(Number(c))) overrides.max_cost = Number(c);
   const s = String(maxSteps).trim();
   if (s !== "" && Number.isFinite(Number(s))) overrides.max_steps = Math.trunc(Number(s));
+  // SKILL-INLINING.md §9 消融开关:仅 "on"/"off" 生效,""(继承配置)不带出
+  const i = String(inline).trim();
+  if (i === "on" || i === "off") overrides.inline = i;
   return overrides;
 }
 
@@ -199,12 +203,32 @@ export function openLaunchDialog({ presetSkill = null, presetSet = null } = {}) 
   stepsIn.placeholder = "继承配置";
   stepsIn.setAttribute("inputmode", "numeric");
   stepsIn.setAttribute("aria-label", "max_steps 覆盖");
-  for (const [label, el] of [["model", modelIn], ["max_cost", costIn], ["max_steps", stepsIn]]) {
+  // SKILL-INLINING.md §9 消融开关:继承配置(不带出)/ on / off → overrides.inline
+  const inlineSel = $el("select", "input mono");
+  inlineSel.setAttribute("aria-label", "inline 覆盖");
+  inlineSel.title = "merge 消融开关(§9):off 时 inline 技能退化为压帧调用";
+  for (const [value, text] of [["", "继承配置"], ["on", "on"], ["off", "off"]]) {
+    const opt = $el("option", "", text);
+    opt.value = value;
+    inlineSel.appendChild(opt);
+  }
+  for (const [label, el] of [
+    ["model", modelIn],
+    ["max_cost", costIn],
+    ["max_steps", stepsIn],
+    ["inline", inlineSel],
+  ]) {
     const f = $el("label", "field field-inline");
     f.appendChild($el("span", "field-label", label));
     f.appendChild(el);
     advGrid.appendChild(f);
   }
+  const inlineHint = $el(
+    "div",
+    "ld-inline-hint",
+    "merge 消融开关(§9):off 时 inline 技能退化为压帧调用",
+  );
+  advGrid.appendChild(inlineHint);
   adv.appendChild(advGrid);
 
   const modalError = $el("div", "ld-modal-error");
@@ -238,6 +262,7 @@ export function openLaunchDialog({ presetSkill = null, presetSet = null } = {}) 
     model: modelIn,
     maxCost: costIn,
     maxSteps: stepsIn,
+    inline: inlineSel,
     modalError,
     run: runBtn,
   };
@@ -324,6 +349,7 @@ export function openLaunchDialog({ presetSkill = null, presetSet = null } = {}) 
       model: els.model.value,
       maxCost: els.maxCost.value,
       maxSteps: els.maxSteps.value,
+      inline: els.inline.value,
     });
     const entry = state.byValue.get(els.skill.value) ?? { name: els.skill.value, set: null };
     const body = { skill: entry.name, input: value, wait: false };

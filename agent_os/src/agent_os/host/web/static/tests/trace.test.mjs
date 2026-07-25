@@ -1,7 +1,7 @@
 /* trace.js 纯逻辑单测(WEB-UI.md §4.2 中栏,debug trace 视图):
    mergePairs(llm/tool/exec 配对、veto 未配对、帧隔离)、
    buildTraceRows(call/ret 配对与行号/depth 缩进/step 跟踪/skill__ 调用名/
-   帧 input 参数/未配对容错:未返回 call 与孤儿 ret)、
+   帧 input 参数/未配对容错:未返回 call 与孤儿 ret/post:context.inline 内联能力行)、
    collapseTrace(子树折叠/边界)、deriveTraceView(过滤/聚焦/深度默认折叠)。
    运行:node static/tests/trace.test.mjs(无需 DOM、无第三方依赖)。 */
 
@@ -15,6 +15,7 @@ import {
   fmtDur,
   isCallCollapsed,
   mergePairs,
+  renderTrace,
   rowForSignal,
   stepOfSignal,
 } from "../js/components/trace.js";
@@ -333,6 +334,68 @@ const signals = makeSignals();
   assert.equal(rowForSignal(rows, 18)?.sigIndex, 16, "pre:skill.invoke 落最近前行");
   assert.equal(rowForSignal(rows, 3)?.sigIndex, 1, "pre:step 落最近前行(call)");
   assert.equal(rowForSignal([], 3), null);
+}
+
+/* ── buildTraceRows:post:context.inline 内联能力行(SKILL-INLINING.md §7)── */
+{
+  /* 帧首次 build 的一次性信号:专门行 kind=inline,弱化色(不占 call/ret 语义) */
+  const sigs = [
+    { name: "run.started", frame_id: null, ts: 0, payload: { skill: "report_writer" } },
+    { name: "pre:frame.push", frame_id: "f1", ts: 1, payload: { skill: "local:report_writer@1.0.0" } },
+    { name: "post:frame.push", frame_id: "f1", ts: 1.1, payload: {} },
+    {
+      name: "post:context.inline", frame_id: "f1", ts: 1.2,
+      payload: {
+        frame_id: "f1",
+        skills: [
+          { name: "date_style", version: "1.0.0", chars: 42 },
+          { name: "tone_guide", version: "2.1.0", chars: 58 },
+        ],
+      },
+    },
+    { name: "pre:llm.request", frame_id: "f1", ts: 2, payload: { model: "mock/x" } },
+    { name: "post:llm.response", frame_id: "f1", ts: 2.4, payload: { usage: { prompt: 1, completion: 1 } } },
+    { name: "pre:frame.pop", frame_id: "f1", ts: 3, payload: { result: { report: "ok" } } },
+    { name: "run.finished", frame_id: null, ts: 4, payload: {} },
+  ];
+  const rows = buildTraceRows(sigs);
+  assert.deepEqual(rows.map((r) => r.kind), ["run", "call", "inline", "llm", "ret", "run"],
+    "inline 信号生成专门行");
+  const inline = rows[2];
+  assert.equal(inline.kind, "inline");
+  assert.equal(inline.label, "date_style@1.0.0(+1)", "首个技能 + 其余条数");
+  assert.equal(inline.detail, "100 chars", "chars 合计");
+  assert.equal(inline.status, "obs", "弱化样式(非 call/ret 语义色、非异常红)");
+  assert.equal(inline.depth, 1, "帧内深度(信号在 push 之后)");
+  assert.equal(inline.frameId, "f1");
+  assert.deepEqual(inline.payload, {
+    skills: [
+      { name: "date_style", version: "1.0.0", chars: 42 },
+      { name: "tone_guide", version: "2.1.0", chars: 58 },
+    ],
+  }, "payload 面板数据(frame_id 作为公共字段剥掉)");
+  assert.equal(inline.names, "post:context.inline");
+  /* 单技能:无 (+N) 标注 */
+  const single = buildTraceRows([
+    {
+      name: "post:context.inline", frame_id: "f1", ts: 0,
+      payload: { frame_id: "f1", skills: [{ name: "date_style", version: "1.0.0", chars: 42 }] },
+    },
+  ]);
+  assert.equal(single[0].label, "date_style@1.0.0");
+  assert.equal(single[0].detail, "42 chars");
+  /* 渲染:⇥ inline 前缀 + 弱化 kw 色 */
+  const html = renderTrace(deriveTraceView(sigs, null));
+  assert.match(html, /data-kind="inline"/, "行 data-kind");
+  assert.match(html, /<span class="tr-kw" data-k="inline">⇥ inline<\/span>/, "⇥ inline 前缀");
+  assert.match(html, /date_style@1\.0\.0\(\+1\) · 100 chars/, "行文本");
+  /* 畸形 payload(无 skills)容错:行仍在,label 占位 */
+  const broken = buildTraceRows([
+    { name: "post:context.inline", frame_id: "f1", ts: 0, payload: {} },
+  ]);
+  assert.equal(broken[0].kind, "inline");
+  assert.equal(broken[0].label, "—");
+  assert.equal(broken[0].detail, "");
 }
 
 console.log("trace.test.mjs: all assertions passed");

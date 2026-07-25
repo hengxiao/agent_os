@@ -923,6 +923,8 @@ body[data-route="tools"] .sidebar { display: none; }
 .tr-kw[data-k="tool"] { color: var(--sig-tool); }
 .tr-kw[data-k="exec"] { color: var(--sig-compress); }
 .tr-kw[data-k="obs"] { color: var(--sig-sidecar); }
+/* ⇥ inline 行(SKILL-INLINING.md §7):弱化色,不占 call/ret 语义色 */
+.tr-kw[data-k="inline"] { color: var(--fg-2); font-style: italic; }
 .tr-name { font-weight: 600; color: var(--fg-0); }
 .tr-params {
   margin-left: calc(-1 * var(--s1)); /* 参数括号贴住调用名:skill__fib({...}) */
@@ -1029,6 +1031,17 @@ body[data-route="tools"] .sidebar { display: none; }
 }
 .insp-title { font-size: var(--text-sm); font-weight: 600; font-family: var(--font-mono); }
 .btn-mini { padding: 0 var(--s2); font-size: var(--text-xs); margin-left: auto; }
+
+/* 检视器"内联能力"小节(SKILL-INLINING.md §4.2:working._inline_caps 快照) */
+.insp-caps {
+  padding: var(--s2) var(--s3);
+  margin-bottom: var(--s2);
+  background: var(--bg-2);
+  border: var(--stroke) dashed var(--line);
+  border-radius: var(--r-md);
+}
+.insp-caps-title { font-size: var(--text-xs); color: var(--fg-2); margin-bottom: var(--s1); }
+.insp-caps-row { font-size: var(--text-xs); color: var(--fg-1); }
 
 .msg-list { display: flex; flex-direction: column; gap: var(--s2); }
 .msg {
@@ -1221,6 +1234,7 @@ textarea.input {
   gap: var(--s2);
   padding-top: var(--s2);
 }
+.ld-inline-hint { font-size: var(--text-xs); color: var(--fg-2); }
 
 /* ── Live 进度区(§4.3):脉冲点 / 已用时长 / 双 ProgressBar / Stop ── */
 .wb-live:empty { display: none; }
@@ -1399,6 +1413,15 @@ textarea.input {
   color: var(--fg-2);
 }
 .cycle-warn { color: var(--warn); flex-shrink: 0; } /* §4.6:循环依赖 --warn 警示 */
+/* inline 徽标(SKILL-INLINING.md §3.1):merge 技能弱色 chip(列表项 + 详情 Meta) */
+.inline-chip {
+  flex-shrink: 0;
+  padding: 0 var(--s1);
+  border: var(--stroke) dashed var(--line);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
 .run-set { flex-shrink: 0; } /* D6:run 列表项的 set chip(多 set 时) */
 
 /* D6:Skills 列表 "全部" 时的 set 组头(组头 = set 名 + 技能数) */

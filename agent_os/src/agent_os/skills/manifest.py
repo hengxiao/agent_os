@@ -59,6 +59,7 @@ def parse_manifest(data: dict[str, Any]) -> SkillManifest:
             max_steps=lim_raw.get("max_steps"),
             timeout=lim_raw.get("timeout"),
             retry=lim_raw.get("retry", 0),
+            max_tool_calls=lim_raw.get("max_tool_calls"),
         )
         if lim_raw
         else None

@@ -23,6 +23,7 @@ from typing import Any
 import jsonschema
 
 from agent_os.api.v1 import (
+    ORCHESTRATE_TOOL,
     POST_FRAME_POP,
     POST_FRAME_PUSH,
     POST_LLM_RESPONSE,
@@ -46,6 +47,7 @@ from agent_os.api.v1 import (
     ForceCompress,
     FrameContext,
     InjectMessage,
+    LogicError,
     Message,
     Modify,
     Pause,
@@ -88,6 +90,10 @@ _log = logging.getLogger("agent_os.kernel")
 #: 最终答案 outputs 校验连败上限(§3.2 恢复环路语义:输出修复循环独立熔断)
 _OUTPUT_VALIDATION_MAX_FAILURES = 2
 
+#: 单次沙箱执行的 syscall 默认上限(CODE-ORCHESTRATION.md §4;manifest
+#: ``limits.max_tool_calls`` 可覆盖)。限额是内核策略,故在此计数与拒绝——
+#: 传输层只管传输,跑飞脚本由 wall_time 兜底
+DEFAULT_MAX_TOOL_CALLS = 50
 
 def _check_output(manifest: SkillManifest, content: str) -> tuple[Any, str | None]:
     """最终答案终止判断(§3.1 步骤 5):``(result, None)`` 或 ``(None, 错误说明)``。"""
@@ -103,8 +109,8 @@ def _check_output(manifest: SkillManifest, content: str) -> tuple[Any, str | Non
     return result, None
 
 
-def _error_payload(kind: ToolErrorKind, message: str) -> dict[str, Any]:
-    return {"kind": kind.value, "message": message, "retryable": False, "hint": ""}
+def _error_payload(kind: ToolErrorKind, message: str, hint: str | None = None) -> dict[str, Any]:
+    return {"kind": kind.value, "message": message, "retryable": False, "hint": hint or ""}
 
 
 def _result_payload(result: ToolResult) -> dict[str, Any]:
@@ -432,15 +438,15 @@ class Kernel:
         kernel = self.logic.route(manifest, self.config)
         trust = kernel.trust.value
         timeout = manifest.limits.timeout if manifest.limits and manifest.limits.timeout else 60
+        trusted = kernel.trust is TrustLevel.TRUSTED
         req = ExecRequest(
             source=module,
             entry=entry,
             args=frame.input,
-            ctx=(
-                KernelLogicContext(self, frame, manifest)
-                if kernel.trust is TrustLevel.TRUSTED
-                else None
-            ),
+            ctx=KernelLogicContext(self, frame, manifest) if trusted else None,
+            # SANDBOX 档:ctx 经 syscall 通道跨进程构造(CODE-ORCHESTRATION.md §2.2),
+            # 与 TRUSTED 档契约逐字一致——同一 handler 两档运行行为等价
+            dispatch_fn=None if trusted else self._syscall_dispatcher(frame, manifest),
             limits=ResourceLimits(
                 wall_time=timeout, cpu_time=timeout, memory_mb=256, stdout_bytes=100_000
             ),
@@ -473,6 +479,8 @@ class Kernel:
     ) -> dict[str, Any]:
         if call.name.startswith("skill__"):
             return await self._invoke_skill(call, frame, manifest)
+        if call.name == ORCHESTRATE_TOOL:
+            return await self._run_orchestration(call, frame, manifest)
         if call.name not in manifest.permissions.tools:
             return {
                 "ok": False,
@@ -511,6 +519,170 @@ class Kernel:
             self._sig(POST_TOOL_CALL, frame, {"tool": call.name, "ok": result.ok})
         )
         return _result_payload(result)
+
+    def _syscall_dispatcher(
+        self, frame: SkillFrame, manifest: SkillManifest, stats: dict[str, Any] | None = None
+    ) -> Any:
+        """构造 syscall 分发回调:沙箱内 ctx 的每次调用回到同一条 ``_dispatch_call`` 闸门。
+
+        脚本以**调用帧的身份**执行——可调集合 = 该帧 manifest 白名单 ∩ RunConfig
+        上限,ToolGuard/信号/记账全部沿用,**无权限提升**(CODE-ORCHESTRATION.md §2.3)。
+        """
+        counter = stats if stats is not None else {"calls": 0, "failed": []}
+        limit = (
+            manifest.limits.max_tool_calls
+            if manifest.limits and manifest.limits.max_tool_calls
+            else DEFAULT_MAX_TOOL_CALLS
+        )
+
+        async def dispatch(kind: str, name: str, args: dict[str, Any]) -> dict[str, Any]:
+            if counter["calls"] >= limit:
+                # 限额是内核策略:以结构化错误回脚本(而非断管),脚本可自行收敛(§4.2)
+                counter["limit_hit"] = True
+                return {
+                    "ok": False,
+                    "value": None,
+                    "error": _error_payload(
+                        ToolErrorKind.INVALID_ARGS,
+                        f"单次编排的调用上限 {limit} 已用尽(limits.max_tool_calls)",
+                        hint="收敛脚本:减少循环次数或先聚合再调用",
+                    ),
+                }
+            counter["calls"] += 1
+            target = f"skill__{name}" if kind == "skill" else name
+            payload = await self._dispatch_call(
+                ToolCall(id=f"{frame.frame_id[:8]}#{counter['calls']}", name=target, args=dict(args)),
+                frame,
+                manifest,
+            )
+            if not payload.get("ok"):
+                counter["failed"].append(
+                    {"name": name, "error": (payload.get("error") or {}).get("kind")}
+                )
+            return payload
+
+        return dispatch
+
+    async def _run_orchestration(
+        self, call: ToolCall, frame: SkillFrame, manifest: SkillManifest
+    ) -> dict[str, Any]:
+        """``python_orchestrate``(CODE-ORCHESTRATION.md):沙箱脚本 + 工具系统调用。
+
+        脚本以**调用帧的身份**在 SANDBOX 执行;脚本内 ``ctx.call_tool``/``ctx.invoke``
+        经 syscall 通道陷入内核,由 ``_dispatch_call`` 代为分发——白名单、ToolGuard
+        veto、信号、记账全部沿用,**无权限提升**(可调集合 = 本帧 manifest 白名单)。
+        中间变量留在沙箱,只有脚本的 ``result`` 回到帧上下文(§1.1 token 经济)。
+        """
+        if not self.config.orchestrate:
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(
+                    ToolErrorKind.PERMISSION_DENIED,
+                    f"{ORCHESTRATE_TOOL} 未启用(Fail-Safe Default:需配置 [tools] "
+                    f"python_orchestrate = true)",
+                ),
+            }
+        if ORCHESTRATE_TOOL not in manifest.permissions.tools:
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(
+                    ToolErrorKind.PERMISSION_DENIED,
+                    f"{ORCHESTRATE_TOOL} 不在技能 {manifest.name} 的 tools 白名单",
+                ),
+            }
+        source = str(call.args.get("code") or "")
+        if not source.strip():
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(ToolErrorKind.INVALID_ARGS, "code 参数为空"),
+            }
+        if self.logic is None:
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(ToolErrorKind.INTERNAL, "未装配 Logic Kernel(§9)"),
+            }
+        kernel = self.logic.route_sandbox() if hasattr(self.logic, "route_sandbox") else None
+        if kernel is None:
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(
+                    ToolErrorKind.INTERNAL, "未装配 SANDBOX Logic Kernel(编排脚本强制沙箱,§9.2)"
+                ),
+            }
+
+        stats: dict[str, Any] = {"calls": 0, "failed": []}
+        dispatch = self._syscall_dispatcher(frame, manifest, stats)
+
+        timeout = call.args.get("timeout")
+        wall = float(timeout) if timeout else 60.0
+        req = ExecRequest(
+            source=source,
+            args={},
+            ctx=None,  # 沙箱侧 ctx 由驱动脚本经 syscall 通道构造(§2.2)
+            dispatch_fn=dispatch,
+            limits=ResourceLimits(
+                wall_time=wall, cpu_time=wall, memory_mb=256, stdout_bytes=100_000
+            ),
+        )
+        verdicts = await self.signals.emit(
+            self._sig(
+                PRE_LOGIC_EXEC,
+                frame,
+                {"trust": kernel.trust.value, "source": source, "language": "python",
+                 "via": "orchestrate"},
+            )
+        )
+        verdict = self._arbitrate_pre(verdicts)
+        if isinstance(verdict, Veto):  # CodeScanner 等的否决点(§9.5)
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(ToolErrorKind.VETOED, verdict.reason),
+            }
+        if isinstance(verdict, Stop):
+            raise RunAborted(verdict.reason)
+        result = await kernel.execute(req)
+        await self.signals.emit(
+            self._sig(
+                POST_LOGIC_EXEC,
+                frame,
+                {"trust": kernel.trust.value, "ok": result.error is None,
+                 "via": "orchestrate", "calls": stats["calls"]},
+            )
+        )
+        if result.error is not None:
+            kind = (
+                ToolErrorKind.TIMEOUT
+                if result.error.kind is LogicError.LIMIT_EXCEEDED
+                else ToolErrorKind.INTERNAL
+            )
+            # 崩溃/超限:已执行的 syscall 副作用已发生,回报清单供模型决定补偿(§4.3)
+            return {
+                "ok": False,
+                "value": {"calls": stats["calls"], "failed": stats["failed"],
+                          "limit_hit": bool(stats.get("limit_hit"))},
+                "error": _error_payload(
+                    kind,
+                    f"编排脚本执行失败({result.error.kind.value}): {result.error.message}",
+                    hint=(result.stderr or "")[-500:] or None,
+                ),
+            }
+        return {
+            "ok": True,
+            "value": {
+                "result": result.value,
+                "calls": stats["calls"],
+                "failed": stats["failed"],
+                "limit_hit": bool(stats.get("limit_hit")),
+                "stdout": result.stdout[-2000:] if result.stdout else "",
+            },
+            "error": None,
+        }
 
     async def _invoke_skill(
         self, call: ToolCall, frame: SkillFrame, manifest: SkillManifest

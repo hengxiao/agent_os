@@ -1,0 +1,158 @@
+{
+  "v": 1,
+  "run": {
+    "run_id": "52d220ac59244af784148b6f7b6fbc0e",
+    "status": "done",
+    "usage": {
+      "cost": 0.0,
+      "thinking_tokens": 0,
+      "cache_write_tokens": 0,
+      "total_ms": 0,
+      "steps": 3,
+      "ttft_ms": 0,
+      "prompt_tokens": 3,
+      "completion_tokens": 3,
+      "cache_read_tokens": 0
+    },
+    "result": {
+      "report": "ok"
+    },
+    "error": null
+  },
+  "frames": [
+    {
+      "frame_id": "ea38cdd91b724cb4afa0a24842e429da",
+      "skill": "local:report_writer@1.0.0",
+      "parent_id": null,
+      "input": {
+        "topic": "t"
+      },
+      "depth": 1,
+      "status": "done",
+      "result": {
+        "report": "ok"
+      },
+      "error": null,
+      "call_id": null,
+      "usage": {
+        "cost": 0.0,
+        "thinking_tokens": 0,
+        "cache_write_tokens": 0,
+        "total_ms": 0,
+        "steps": 2,
+        "ttft_ms": 0,
+        "prompt_tokens": 2,
+        "completion_tokens": 2,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"topic\": \"t\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "c1",
+                "name": "skill__date_style",
+                "args": {
+                  "text": "x"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"styled\": \"2026-07-24\"}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "c1",
+            "name": "skill__date_style",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"report\": \"ok\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 34
+      }
+    },
+    {
+      "frame_id": "9139fa56b3684df1b429a402351a4426",
+      "skill": "local:date_style@1.0.0",
+      "parent_id": "ea38cdd91b724cb4afa0a24842e429da",
+      "input": {
+        "text": "x"
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "styled": "2026-07-24"
+      },
+      "error": null,
+      "call_id": "c1",
+      "usage": {
+        "cost": 0.0,
+        "thinking_tokens": 0,
+        "cache_write_tokens": 0,
+        "total_ms": 0,
+        "steps": 1,
+        "ttft_ms": 0,
+        "prompt_tokens": 1,
+        "completion_tokens": 1,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"text\": \"x\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"styled\": \"2026-07-24\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 7
+      }
+    }
+  ]
+}

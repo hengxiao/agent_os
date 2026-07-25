@@ -1,0 +1,52 @@
+skills:
+  - name: date_style
+    version: 1.0.0
+    kind: prompt
+    inline: true
+    description: 日期规范能力。Use when 输出含日期。
+    inputs:
+      type: object
+      properties: { text: { type: string } }
+      required: [text]
+    outputs:
+      type: object
+      properties: { styled: { type: string } }
+      required: [styled]
+    permissions: { tools: [], skills: [] }
+    prompt: |
+      输出中出现日期时,一律规范为 ISO 8601(YYYY-MM-DD)。
+  - name: report_writer
+    version: 1.0.0
+    kind: prompt
+    description: 写简报。Use when 需要产出带日期的简报。
+    inputs:
+      type: object
+      properties: { topic: { type: string } }
+      required: [topic]
+    outputs:
+      type: object
+      properties: { report: { type: string } }
+      required: [report]
+    permissions: { tools: [], skills: [date_style] }
+    limits: { max_steps: 6 }
+    prompt: |
+      你是简报撰写器,就输入主题写一句简报。
+  - name: fib
+    version: 1.0.0
+    kind: prompt
+    description: 生成前 n 个菲波拉契数。Use when 需要菲波拉契数列。
+    inputs:
+      type: object
+      properties: { n: { type: integer, minimum: 1 } }
+      required: [n]
+    outputs:
+      type: object
+      properties:
+        seq: { type: array, items: { type: integer } }
+      required: [seq]
+    permissions:
+      tools: [python_exec]
+      skills: [fib]
+    limits: { max_steps: 8 }
+    prompt: |
+      你是菲波拉契数列生成器。输入是 JSON,字段 n 为整数。

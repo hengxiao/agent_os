@@ -21,6 +21,7 @@ brain = "{brain}"
 [tools]
 builtins = {builtins}
 python_exec = "subprocess"
+python_orchestrate = {orchestrate}
 
 [skills]
 path = "{skills}"
@@ -37,6 +38,7 @@ def write_config(
     brain: str = "tests.helpers.brains:fib_brain",
     skills: str | Path | None = None,
     builtins: bool = False,
+    orchestrate: bool = False,
     max_cost: float = 2.0,
     extra: str = "",
 ) -> Path:
@@ -46,6 +48,7 @@ def write_config(
             brain=brain,
             skills=skills or FIB_SKILLS_YAML,
             builtins=str(builtins).lower(),
+            orchestrate=str(orchestrate).lower(),
             max_cost=max_cost,
             telemetry=tmp_path / "traces",
             extra=extra,

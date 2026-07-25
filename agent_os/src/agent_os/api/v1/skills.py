@@ -70,6 +70,8 @@ class SkillLimits:
     max_steps: int | None = None
     timeout: float | None = None
     retry: int = 0
+    #: 单次编排/沙箱执行的 syscall 上限(CODE-ORCHESTRATION.md §4;None 用内核默认)
+    max_tool_calls: int | None = None
 
 
 @dataclass

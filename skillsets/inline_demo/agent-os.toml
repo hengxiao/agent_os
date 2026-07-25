@@ -1,0 +1,16 @@
+[run]
+model = "mock/demo"
+compression = "off"
+
+[providers.mock]
+brain = "brains:demo_brain"
+
+[tools]
+builtins = false
+python_exec = "subprocess"
+
+[skills]
+path = "/tmp/inline-demo/skills.yaml"
+
+[telemetry]
+dir = "/tmp/inline-demo/traces"

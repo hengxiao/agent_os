@@ -31,7 +31,7 @@ from agent_os.host.shared.artifacts import (
 from agent_os.host.shared.replay import build_mock_script, diff_runs, replace_providers
 from agent_os.host.shared.runrecord import STATUS_DONE, dumps
 from agent_os.kernel.errors import SkillLoadError
-from agent_os.runtime.config import build_kernel
+from agent_os.runtime.config import build_kernel, load_config
 from agent_os.skills.local_file import LocalFileSkillRegistry
 
 
@@ -46,10 +46,20 @@ def _parse_input(raw: str) -> Any:
     return json.loads(raw)
 
 
-def _build_kernel(config: str) -> Any:
-    """build_kernel 的退出码归类包装:SkillLoadError → 2,其余装配失败 → 4。"""
+def _build_kernel(config: str, inline: str | None = None) -> Any:
+    """build_kernel 的退出码归类包装:SkillLoadError → 2,其余装配失败 → 4。
+
+    ``inline``(``--inline on|off``,SKILL-INLINING.md §9 消融开关):覆盖本次 run 的
+    ``[run].inline``;缺省用配置文件值。改动只落在本次装配私有的 dict 副本上。
+    """
     try:
-        return build_kernel(config)
+        if inline is None:
+            return build_kernel(config)
+        cfg = load_config(config)
+        run_section = dict(cfg.get("run") or {})
+        run_section["inline"] = inline
+        cfg["run"] = run_section
+        return build_kernel(cfg)
     except SkillLoadError:
         raise
     except Exception as e:  # 装配失败统一归基础设施错(§3.3 退出码 4)
@@ -79,7 +89,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"输入错误: {e}", file=sys.stderr)
         return 2
     try:
-        kernel = _build_kernel(args.config)
+        kernel = _build_kernel(args.config, inline=getattr(args, "inline", None))
     except SkillLoadError as e:
         print(f"技能校验错误: {e}", file=sys.stderr)
         return 2
@@ -303,6 +313,12 @@ def _parser() -> argparse.ArgumentParser:
     p_run.add_argument("--input", required=True, help="'<json>' 或 @file")
     p_run.add_argument("--config", default="agent-os.toml")
     p_run.add_argument("--artifacts", default=".agent-os")
+    p_run.add_argument(
+        "--inline",
+        choices=["on", "off"],
+        default=None,
+        help="merge 消融开关(SKILL-INLINING.md §9):off 时 inline 技能退化为压帧调用;缺省用配置值",
+    )
     p_run.add_argument("--json", action="store_true", help="stdout 仅 RunRecord JSON")
     p_run.set_defaults(func=_cmd_run)
 

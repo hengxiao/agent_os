@@ -1,15 +1,18 @@
-# Agent OS 标准库规划(std tools & skills)v2
+# Agent OS 标准库规划(std tools & skills)v2.1
 
-> 状态:**规划稿 v2**。v1 经《AI Agent Book》全书(10 章)逐章对比修订,
-> 分析报告见 [reports/stdlib-vs-agent-book.md](reports/stdlib-vs-agent-book.md)。
-> 权威架构见 [DESIGN.md](DESIGN.md);inline 技能语义见 [SKILL-INLINING.md](SKILL-INLINING.md)。
+> 状态:**规划稿 v2.1**。v1 经《AI Agent Book》全书(10 章)逐章对比修订
+> (报告见 [reports/stdlib-vs-agent-book.md](reports/stdlib-vs-agent-book.md));
+> v2.1 按**代码编排(工具系统调用)已落地**的新架构修订(§1 判定规则 6、
+> §2、§4.5、§9),并补入 CLI 实机调试发现的缺口(§3.3 workdir)。
+> 权威架构见 [DESIGN.md](DESIGN.md);inline 技能语义见 [SKILL-INLINING.md](SKILL-INLINING.md);
+> 编排语义见 [CODE-ORCHESTRATION.md](CODE-ORCHESTRATION.md)。
 > 目标:像 Python 标准库一样,提供开箱即用的基础 tool 与 skill,覆盖大部分基础 agent 功能。
 
 ---
 
 ## 1. 选型准则:一件事该做成什么形态
 
-五条判定规则,按序检查(本文所有清单的排序依据):
+六条判定规则,按序检查(本文所有清单的排序依据):
 
 | # | 判定 | 形态 | 理由 |
 |---|---|---|---|
@@ -17,15 +20,24 @@
 | 2 | 确定性纯转换,无需语言理解 | **code skill(sandbox 可执行)** | 零 token、可复现、可测;"能不用 LLM 就不用" |
 | 3 | 需要语言理解/判断的原子任务 | **prompt skill** | 独立帧、独立模型偏好、outputs 校验 |
 | 4 | 横切规范/风格(高频、短小、说明书形态,**且不可代码强制**) | **inline(merge)skill** | 零调用开销;可代码强制的规则一律下沉为校验器(§4.2),inline 只承载"确实只能靠说的"那部分 |
-| 5 | 控制流组合(map/retry/vote) | **code skill(TRUSTED 编排子)** | ctx.invoke/spawn 回内核分发路径,白名单/记账不旁路 |
+| 5 | 控制流组合,**可复用、有名字、值得测试** | **code skill(TRUSTED 编排子)** | ctx.invoke/spawn 回内核分发路径;是库,不是脚本 |
+| 6 | 控制流组合,**一次性、任务特定**(批量扫描/条件分支/结果聚合) | **编排脚本(`python_orchestrate`)** | LLM 现场写;syscall 中介保权限与观测,中间结果不过上下文(省约两个数量级 token) |
 
-三条纪律:
+规则 5 与 6 的分界线 = **会不会写第二遍**。`std/combinators` 收录的是
+map/retry/vote 这类被反复使用、需要锚点测试的模式;而"读这 200 个文件、
+按大小排序、取前三个交给 summarize"是一次性胶水,写成脚本比写成技能便宜——
+正如 Python 里 `itertools` 与现场 for 循环并存。
+
+四条纪律:
 
 - **工具面最小化**:python_exec 沙箱一行能解决的不设专用工具;
 - **复现性优先**:任何引入非确定性的原语(时钟/随机)必须过内核管控(replay/seed);
-- **约束优于指导**(v2 新增,源自书 Ch5):能用代码强制的规则用代码强制
+- **约束优于指导**(v2,源自书 Ch5):能用代码强制的规则用代码强制
   (schema 校验/校验器/工具契约),prompt 层的"建议"只作为帮助模型一次做对的
-  引导,不作为唯一保障。
+  引导,不作为唯一保障;
+- **批量走编排**(v2.1):任何"对 N 个对象做同一件事"的形态,默认用
+  编排脚本而不是 N 轮工具往返——后者每轮把全部累积上下文重新计费,
+  且把中间产物永久钉进上下文。
 
 第二排序轴(v2 新增):Harness 五分法 **Context / Tools / Constrain /
 Verify / Correct**。规则回答"做成什么形态",五分法回答"补哪一层的洞"。
@@ -52,10 +64,21 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
 | outputs 机器校验(连败判帧失败) | 内核 `_check_output` | 结构化验证(Ch1/6) |
 | inline 消融开关 + 帧内冻结快照 | SKILL-INLINING v1 | 消融/确定性渲染(Ch6) |
 | 黑板命名空间白名单 | _BoardProxy | "sharing declared explicitly"(Ch10) |
+| **工具系统调用(沙箱脚本 → 工具/子技能)** | `python_orchestrate` 伪工具 + syscall 桥(CODE-ORCHESTRATION.md) | 代码编排省 token(Ch4);沙箱内调用仍过同一闸门 |
+| **调用上限**(单次编排的 syscall 计数,结构化错误回脚本) | `_syscall_dispatcher` + `limits.max_tool_calls` | 熔断天花板(Ch5) |
 
-已知引擎缺口(std 依赖,需内核立项):**子树级联取消**(现只有 run 级
-stop)、**取消后工具副作用语义**、组合子级预算(§4.6 的 budget 参数需要
-内核记账支持按子树切分)。
+编排桥补上的能力(v2.1):**批量/条件/聚合逻辑现在有零 token 的落点**,
+且 SANDBOX code 技能不再退化为纯计算(`force_sandbox` 多租户档不再阉割
+编排能力)。std 的编排相关条目因此从"要不要做"变成"怎么用好"。
+
+已知引擎缺口(std 依赖,需内核立项):
+
+1. **子树级联取消**(现只有 run 级 stop)——`race_first` 依赖;
+2. **取消后工具副作用语义**;
+3. **组合子级预算**(§4.5 的 budget 参数需内核按子树切分记账);
+4. **工作目录不可配置**(v2.1 实机发现,见 §3.3 `workdir`)——
+   fs 工具锁在 per-run 临时目录,agent 无法读写真实项目;
+5. **`ctx.spawn`/`board` 未过 syscall 桥**(编排脚本内只有 call_tool/invoke)。
 
 ---
 
@@ -95,7 +118,8 @@ stop)、**取消后工具副作用语义**、组合子级预算(§4.6 的 budget
 
 | 优先 | 工具 | 权限 | 说明 |
 |---|---|---|---|
-| **P0** | `fs_list` | READ | 目录列举 + glob(cursor + total + mtime;mtime 与 `now` 组合可白拿卡死检测) |
+| **P0** | **工作目录可配置**(不是新工具,是 fs/shell 工具的 `workdir` 来源) | — | v2.1 实机发现:`_workdir` 给每个 run 分配临时目录,fs/shell 工具锁死在其中,**agent 无法读写真实项目**。需要 `[run] workdir = "..."`(或 per-skill 声明)+ 只读/可写分区(书 Ch10 四区)。没有它,coding-agent、文件问答、代码审计三类主力场景全部落空——优先级高于任何新工具 |
+| **P0** | `fs_list` | READ | 目录列举 + glob(cursor + total + mtime;mtime 与 `now` 组合可白拿卡死检测)。实机确认缺失:编排脚本只能退而用 `shell_exec "ls"` 解析字符串 |
 | **P0** | `fs_search` | READ | 内容检索(正则 + 行号 + 上下文行 + 分页;大结果 spill)。书:"grep 跨平台语法不同,专用工具优于即兴"(Ch4) |
 | **P0** | `now` | READ | 服务端时钟,replay 从 trace 回放。不只是复现性——时间自报可绕过守门校验,是安全边界(Ch5) |
 | **P0** | `todo_write` / `todo_update` | WRITE(run 级状态) | 任务规划双工具;书实测带 TODO 15 轮 vs 不带 21 轮,显著减少漏做(Ch2) |
@@ -107,6 +131,7 @@ stop)、**取消后工具副作用语义**、组合子级预算(§4.6 的 budget
 | **P1** | `subagent_cancel` / `subagent_status` | 特殊档 | 引擎有 spawn/wait 无 cancel 工具面;"任务失去意义即止损"(Ch4),`race_first` 依赖它 |
 | **P1** | `shell_exec` 会话化 | EXEC | `session_id` 持久会话(保 cd/venv/环境变量)+ 后台执行/`shell_monitor` 形态(Ch5) |
 | **P1** | `skill_search` | READ | 按 description 检索已注册技能/工具;纯读零依赖;技能过百后"选择"变"发现"(Ch4/8) |
+| **✅ 已落地** | `python_orchestrate` | EXEC(内核拦截式伪工具) | LLM 编排脚本在沙箱执行,脚本内经 syscall 中介调用白名单工具/子技能,中间变量不过上下文;实机验证:13 次工具调用 = 2 个 LLM 步、父帧只多 1 条 229 字节 tool result。见 [CODE-ORCHESTRATION.md](CODE-ORCHESTRATION.md);`python_exec` 保持纯计算不变 |
 | **P2** | `set_timer` | 特殊档 | one-shot + recurring;与 `ask_human` 同通道 |
 | **P2** | `memory_search` / `memory_write` | READ / WRITE | 服务版(M6);文件版记忆不等它,见 §4.7;**memory_write 须过与外部输入同等的信任审查**(Ch8 记忆投毒) |
 | **P2** | `read_document` | READ | PDF/Word 纯文本抽取(统一 file_type 参数);若因二进制依赖不收,在 §7 显式写明 |
@@ -182,23 +207,38 @@ v1 七件保留:`summarize` `classify` `extract` `translate` `rewrite`
 模型约束:judge **不得与被评技能同族**(Goodhart + 静默失效:agent 会
 学会避开 judge 盲区)——依赖能力别名的 `family` 轴(§10 开放问题 4)。
 
-### 4.5 `std/combinators` —— 编排组合子(code TRUSTED,v2 语义修订)
+### 4.5 `std/combinators` —— 编排组合子(code TRUSTED,v2.1 重新定位)
 
-| 技能 | v2 修订 |
+**编排桥落地后,本包的边界收窄了。** 一次性的批量/分支/聚合逻辑归编排脚本
+(§1 规则 6),组合子只保留"值得写第二遍"的东西——需要锚点测试、需要
+被多个技能复用、或**语义微妙到不该让模型每次现推**的模式:
+
+- `retry_until` 的可重试性分类与熔断天花板;
+- `fanout_vote` 的异族约束(同族采样会同向放大偏见);
+- `cross_check` 的"显式不看中间推理";
+- `race_first` 的取消/ack/幂等结算竞态。
+
+这些放进脚本模板会被模型改坏,放进技能才有确定的语义与测试。
+反之 `map_over`/`pipeline` 这类**只是循环与串接**的组合子,v2.1 起
+**降级为文档示例**(编排脚本 3 行就是它们),不再作为 std 收录目标。
+
+| 技能 | v2.1 状态与修订 |
 |---|---|
 | `retry_until` | **验证槽默认接外部确定性反馈**(run_tests / 退出码 / schema 校验),LLM judge 仅作补充——无外部反馈的自审被反复证伪(Ch6/10 最重一条);增加 retryable/non-retryable 错误分类(对不可重试错误立即停) |
-| `map_over` | 保留失败清单;补**故障边界**(同批故障不上传父操作) |
+| `map_over` | **降级为编排脚本示例**——`for x in items: ctx.invoke(...)` 加一个 try 就是全部语义,不值得占一个技能名 |
 | `fanout_vote` | 增加 `models: [alias...]`;**文档明确:消偏须异族 judge,同族 N 次采样只能测方差且会同向放大偏见** |
 | `race_first` | **新增**:首个成功广播取消其余(依赖 `subagent_cancel`)、等 ack、幂等结算 |
 | `cross_check` | **新增**:只核对原始证据与最终结论、**显式不看中间推理**——破解错误级联;与 fanout_vote(采样)、judge(看推理)是三种机制 |
 | `reject_sample` | **新增**:采 k → 验证器过滤 → 去重 → 配额;`fanout_vote` 选一个,它产出一批合格样本(也是未来 SFT 数据管道)(Ch7) |
-| `pipeline` | 保留 |
+| `pipeline` | **降级为编排脚本示例**(同上;串接就是顺序赋值) |
 | **全体** | 统一 `budget: {max_steps, max_tokens, max_depth}` 参数,超限停并返回部分结果——多 agent 15x token 成本 + 防环 + "步数多不等于结果好"三个问题一个参数(Ch10) |
 
-白名单结论方向(v1 开放问题 2 落定):**manifest 层参数化白名单**
-(声明技能集合/前缀,加载期解析为具体依赖),拒绝运行期通配。
-"进 std 的是模式与骨架,调用方复制专化"保留,并获 Ch5"范例式生成
-优于规则穷举"的理论背书。
+**白名单困境已被编排桥消解**(v1 开放问题 2 结案):当初的难题是
+"组合子要 invoke 参数指定的技能,但 permissions.skills 必须静态声明"。
+编排脚本天然没有这个问题——脚本是**调用帧自己的代码**,可调集合就是
+该帧的白名单,不需要为组合子引入通配或参数化。`std/combinators` 里
+仍需静态声明的少数条目,继续走"调用方复制专化"(获 Ch5"范例式生成
+优于规则穷举"的背书);运行期通配仍然拒绝。
 
 ### 4.6 `std/web`
 
@@ -261,13 +301,14 @@ Ch8/9/10 三章独立要求同一原语,配 `fs_list` mtime + `now` 白拿卡死
 
 ---
 
-## 6. 路线(v2 重排)
+## 6. 路线(v2.1 重排)
 
-**P0(没有就干不了大多数事 + 报告 P0 修正)**:
-`fs_list` `fs_search` `now` `todo_write/update` → 工具契约面四字段 +
-错误 hint 层 → `retry_until` 验证器分层 + `judge` schema 升级 →
-style 重构(删/降/下沉)→ `std/transform` 基础件 → `std/nlp`
-summarize/extract/classify → `map_over`。
+**P0(没有就干不了大多数事)**:
+**工作目录可配置**(§3.3,实机确认的头号阻塞)→ `fs_list` `fs_search`
+`now` `todo_write/update` → 工具契约面四字段 + 错误 hint 层 →
+`retry_until` 验证器分层 + `judge` schema 升级 → style 重构(删/降/下沉)
+→ `std/transform` 基础件 → `std/nlp` summarize/extract/classify。
+(`map_over` 移出 P0——编排脚本已覆盖,§4.5。)
 
 **P1**:`if_match` 乐观锁、`http_post`、`json_query`、`web_search`、
 `ask_human`、`subagent_cancel/status`、shell 会话化、`skill_search`、
@@ -283,7 +324,7 @@ ToolGuard 路径模板、MCP 立场。
 
 ---
 
-## 7. 不做清单(anti-stdlib,v2 修订)
+## 7. 不做清单(anti-stdlib,v2.1 修订)
 
 - **划线修正**(消解 v1 内部矛盾):~~向量检索~~ → **dense embedding /
   向量数据库不做**(模型/服务依赖;另两条更硬的理由:索引随代码演进
@@ -304,7 +345,7 @@ std 边界 = 无外部服务依赖(除 http 通用协议)+ 无重型二进制依
 
 ---
 
-## 8. 质量门槛(std 收录标准,v2 重写)
+## 8. 质量门槛(std 收录标准,v2.1)
 
 1. description 过 lint(Use when / Do not use when + 负例);**参数带
    具体取值示例、返回值逐字段说明、≥1 条完整调用示例、耗时工具标注
@@ -320,13 +361,20 @@ std 边界 = 无外部服务依赖(除 http 通用协议)+ 无重型二进制依
 6. 大输出必须走 spill(blob ref)**且返回值内显式截断提示**;
 7. **参数保真度**:不得静默改写输入/输出(§3.2 契约三);
 8. **副作用契约**:WRITE/EXEC/NET 档必须声明幂等性;非幂等必须有
-   pre-check 形态或幂等键;
+   pre-check 形态或幂等键。**v2.1 升格**:编排脚本会把同一工具在一次
+   执行里调用几十次,并在 replay/崩溃恢复时整体重跑——幂等声明从
+   "最好有"变成**编排可调工具的硬要求**;
 9. **回滚可用性**:WRITE/EXEC 档工具必须存在可回滚路径(workspace
    快照或 git);
 10. **成本标注**:典型输入下 token 与延迟量级(含 thinking);
 11. 技能表现下降时**先验证评测系统本身**(环境/评分器/用例漂移);
 12. trace 事件标注 `origin: model | env`(一次满足 replay 与未来
-    训练 loss masking 两需求)。
+    训练 loss masking 两需求);
+13. **编排友好性**(v2.1):供编排调用的工具,其返回值必须是**脚本可直接
+    消费的结构**(不要为"给模型看"而做散文化包装);错误必须是可编程
+    分支的 `{kind, retryable, hint}`,而不是只有一句人话。实机教训:
+    `shell_exec` 返回拼接字符串,脚本只能 `split()` 解析——这类工具在
+    编排场景下应提供结构化字段。
 
 judge 类技能附加门槛:金标准集(100-200 条)+ Cohen's kappa ≥ 0.7,
 变更后重校准(§4.4)。
@@ -337,7 +385,7 @@ judge 类技能附加门槛:金标准集(100-200 条)+ Cohen's kappa ≥ 0.7,
 
 | 路线 | 结论 | 成立条件(何时重议) |
 |---|---|---|
-| 现场代码编排(模型写编排脚本,省约两个数量级 token) | 拒绝,走预制组合子 + manifest 参数化白名单 | 当组合子 token 成本被实测证明主导总成本,且沙箱内依赖图审计工具成熟 |
+| 现场代码编排(模型写编排脚本,省约两个数量级 token) | **已翻案**:经工具系统调用(syscall 中介)设计消解审计前提,见 [CODE-ORCHESTRATION.md](CODE-ORCHESTRATION.md)——每次调用仍过 `_dispatch_call` 闸门,可调集合仍由 manifest 静态圈定;组合子(可复用模式)与编排脚本(一次性胶水)并存分工 | 拒绝的只剩"运行期通配白名单",维持 |
 | 辩论式多 agent(自审/互评不带新信息) | 拒绝(数据处理不等式);保留独立采样聚合(fanout_vote) | 出现带外部证据源的辩论形态 |
 | dense 向量检索进 std | 拒绝(依赖 + 陈旧 + 外泄);sparse+RRF 进 | 出现零依赖的本地嵌入方案且代码检索召回瓶颈被实测 |
 | 加载期宏展开(style 固化进调用方文件) | 拒绝(破坏热重载与钉版本);走 SKILL-INLINING 帧内冻结快照 | — |
@@ -345,11 +393,12 @@ judge 类技能附加门槛:金标准集(100-200 条)+ Cohen's kappa ≥ 0.7,
 
 ---
 
-## 10. 开放问题(v2 修订)
+## 10. 开放问题(v2.1 修订)
 
 1. std 版本策略:随内核 vs 独立 semver(倾向随内核);
-2. ~~组合子白名单参数化~~ → **已落方向**:manifest 层参数化(§4.5);
-   剩余问题是语法设计(集合枚举 vs 前缀通配的粒度);
+2. ~~组合子白名单参数化~~ → **已结案**(v2.1):编排桥消解了该问题
+   (脚本是调用帧自己的代码,可调集合即本帧白名单),不需要为组合子
+   引入通配或参数化白名单(§4.5);
 3. `now` 的 replay 回放 → 泛化为"可回放工具"通用标记(值得做成机制);
 4. 能力别名:fast/cheap/strong 之外增加 **`family` 轴**(judge 异族
    约束的前提)与 **`vision` 轴**(image_ref 路由的前提);
@@ -360,4 +409,13 @@ judge 类技能附加门槛:金标准集(100-200 条)+ Cohen's kappa ≥ 0.7,
    或显式声明 std 永为只读能力库;
 7. inline 组合的 cache key 收敛:use-site 的 style 组合应收敛到少数
    固定集合(防 2^N cache 变体),需要 lint 还是文档约定;
-8. 组合子级 budget 需要内核按子树切分记账的支持,与引擎立项联动。
+8. 组合子级 budget 需要内核按子树切分记账的支持,与引擎立项联动;
+9. **编排脚本的沉淀路径**(v2.1):跑通的一次性脚本要不要经
+   `verify_before_store` 固化成 `learned/` code skill——这是自进化闭环
+   (§4.8)的最短路径,也直接关联开放问题 6 的写侧治理;
+10. **编排脚本的可见性**(v2.1):脚本源码进 trace(CodeScanner 需要它),
+    但 Web 时间线目前只显示一条 tool call。是否需要"编排块"展示脚本
+    与其 syscall 序列的父子关系;
+11. **`ctx.spawn` 是否过桥**:过了则编排脚本可发起并发子帧(与 §4.5
+    `race_first` 重叠),不过则并发只能走组合子——需先定 §2 缺口 1
+    (子树级联取消)。

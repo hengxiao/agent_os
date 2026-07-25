@@ -1,0 +1,51 @@
+INFO:     Started server process [499401]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8123 (Press CTRL+C to quit)
+技能 date_style: inline 技能的 inputs/outputs 无运行期效力(merge 档仅作文档)
+INFO:     127.0.0.1:59680 - "GET /api/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59694 - "GET /api/skills HTTP/1.1" 200 OK
+技能 date_style: inline 技能的 inputs/outputs 无运行期效力(merge 档仅作文档)
+INFO:     127.0.0.1:37352 - "POST /api/runs HTTP/1.1" 200 OK
+技能 date_style: inline 技能的 inputs/outputs 无运行期效力(merge 档仅作文档)
+INFO:     127.0.0.1:37358 - "POST /api/runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37364 - "POST /api/runs HTTP/1.1" 422 Unprocessable Entity
+INFO:     127.0.0.1:36524 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36524 - "GET /static/css/tokens.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36538 - "GET /static/css/app.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36542 - "GET /static/js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36542 - "GET /static/js/store.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36538 - "GET /static/js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36524 - "GET /static/js/components/status-pill.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36562 - "GET /static/js/components/launch-dialog.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36552 - "GET /static/js/util.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36570 - "GET /static/js/components/skills-view.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36542 - "GET /static/js/components/tools-view.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36538 - "GET /static/js/workbench.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36524 - "GET /static/js/shortcuts.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36542 - "GET /static/js/components/shortcuts-panel.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36538 - "GET /static/js/components/perm-badge.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36570 - "GET /static/js/components/schema-view.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36562 - "GET /static/js/components/banner.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36552 - "GET /static/js/components/command-palette.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36524 - "GET /static/js/components/frame-tree.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36552 - "GET /static/js/components/usage-panel.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36538 - "GET /static/js/components/message-card.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36542 - "GET /static/js/components/trace.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36562 - "GET /static/js/components/progress-bar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36570 - "GET /static/js/components/rca-panel.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36562 - "GET /api/skills/date_style HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36570 - "GET /api/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36542 - "GET /api/skillsets HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36538 - "GET /api/runs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36562 - "GET /api/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36538 - "GET /api/runs/fdfbfcff21de4b5f96d7528f0cfe31f9 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36542 - "GET /api/runs/fdfbfcff21de4b5f96d7528f0cfe31f9/signals HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36570 - "GET /api/runs/fdfbfcff21de4b5f96d7528f0cfe31f9/usage HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36570 - "GET /api/runs/fdfbfcff21de4b5f96d7528f0cfe31f9/frames/0801d0754fa54649bef6d1c1552a8018 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36542 - "GET /api/skills/report_writer HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36570 - "GET /api/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36570 - "GET /api/skills HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36570 - "GET /api/skills/date_style HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58884 - "GET /api/runs/fdfbfcff21de4b5f96d7528f0cfe31f9 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58888 - "GET /api/runs/fdfbfcff21de4b5f96d7528f0cfe31f9/frames/0801d0754fa54649bef6d1c1552a8018 HTTP/1.1" 200 OK

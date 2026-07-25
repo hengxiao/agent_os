@@ -5,7 +5,8 @@
     [run]        → RunConfig 各字段(model/max_depth/max_steps/max_cost/
                    max_wall_time/compression/seed/temperature,§2.4)
     [providers.*]→ kimi/anthropic/openai(兼容端点)/mock(dotted path 应答函数)
-    [tools]      → builtins 内置工具;python_exec = docker|subprocess|off
+    [tools]      → builtins 内置工具;python_exec = docker|subprocess|off;
+                   python_orchestrate = true|false(编排伪工具,缺省 false)
     [tools.custom] → module = "pkg.mod:func":宿主自定义工具注册钩子,
                    importlib 加载后调用 ``func(registry)``(加载/注册失败抛 ConfigError);
                    声明即授权,RunConfig 权限上限同步提到 EXEC(同 python_exec)
@@ -209,6 +210,11 @@ def build_kernel(config: str | Path | dict[str, Any], *, extra_sidecars: Iterabl
         if tools_cfg.get("builtins", False)
         else LocalPythonToolRegistry()
     )
+    if tools_cfg.get("python_orchestrate", False):
+        # 编排伪工具(CODE-ORCHESTRATION.md):显式开启;声明即授权,权限上限提到 EXEC
+        run_cfg.orchestrate = True
+        if run_cfg.tool_policy.max_permission < Permission.EXEC:
+            run_cfg.tool_policy = ToolPolicy(max_permission=Permission.EXEC)
     sandbox = _sandbox_kernel(tools_cfg.get("python_exec", "off"))
     logic: list[Any] = [InProcessLogicKernel()]
     if sandbox is not None:

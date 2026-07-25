@@ -31,3 +31,7 @@ class LogicKernelRouter:
         if kernel is None:
             raise ToolDispatchError(f"未装配 trust={trust.value} 的 Logic Kernel 后端(§9.2)")
         return kernel
+
+    def route_sandbox(self) -> Any | None:
+        """直取 SANDBOX 后端(编排脚本与动态代码强制沙箱,§9.2);未装配返回 None。"""
+        return self._by_trust.get(TrustLevel.SANDBOX)

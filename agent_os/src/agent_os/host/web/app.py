@@ -14,7 +14,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -54,11 +54,15 @@ _KIND_HINTS = {
 
 
 class RunOverrides(BaseModel):
-    """``POST /api/runs`` 的 ``overrides``(WEB-UI.md §4.3 高级区):合并进本次 run 的 RunConfig。"""
+    """``POST /api/runs`` 的 ``overrides``(WEB-UI.md §4.3 高级区):合并进本次 run 的 RunConfig。
+
+    ``inline``(SKILL-INLINING.md §9 消融开关):``"on" | "off"``,其余值 422。
+    """
 
     model: str | None = None
     max_cost: float | None = None
     max_steps: int | None = None
+    inline: Literal["on", "off"] | None = None
 
 
 class RunBody(BaseModel):
@@ -179,7 +183,10 @@ def _filter_kind(rows: list[dict[str, Any]], kind: str | None) -> list[dict[str,
 
 
 def _skill_summary(manifest: Any) -> dict[str, Any]:
-    """manifest 摘要(WEB-UI.md §6.2):name/version/kind/description/permissions。"""
+    """manifest 摘要(WEB-UI.md §6.2):name/version/kind/description/permissions/inline。
+
+    ``inline``(SKILL-INLINING.md §3.1):merge 技能标记,Skills 浏览器打标数据源。
+    """
     perms = manifest.permissions
     return {
         "name": manifest.name,
@@ -191,6 +198,7 @@ def _skill_summary(manifest: Any) -> dict[str, Any]:
             "skills": list(perms.skills),
             "blackboard": list(perms.blackboard),
         },
+        "inline": bool(getattr(manifest, "inline", False)),
     }
 
 
@@ -347,6 +355,9 @@ def create_app(
             "error": frame.get("error"),
             # 帧上下文逐条:"模型那一步看到了什么"(§2.3 RCA 核心)
             "messages": (frame.get("context") or {}).get("messages", []),
+            # 帧工作内存(checkpoint 已带,read 层透传):检视器内联能力小节
+            # 取 working._inline_caps(SKILL-INLINING.md §4.2 帧内冻结快照)
+            "working": (frame.get("context") or {}).get("working", {}),
         }
 
     @app.get("/api/runs/{run_id}/rca")

@@ -23,7 +23,7 @@ R4 增量(§4.3/§4.4):
 
 D3 增量(WEB-UI.md §4.3/§6.2):
 
-- ``start_run(..., overrides=...)``:``{model?, max_cost?, max_steps?}`` 合并进
+- ``start_run(..., overrides=...)``:``{model?, max_cost?, max_steps?, inline?}`` 合并进
   本次 run 的 RunConfig——每次重新 ``load_config`` 读文件,改动只落在该 run
   私有的 config dict 副本上,不污染共享配置(后续 run 与 reload 路径不受影响);
 - ``skills_manifests`` / ``skill_manifest``:共享 registry 的只读查询
@@ -72,8 +72,9 @@ HUB_CLOSED: Any = object()
 #: 环形缓冲容量(§4.2 默认 2000 条)
 BUFFER_MAXLEN = 2000
 
-#: ``POST /api/runs`` 的 ``overrides`` 允许覆盖的 RunConfig 字段(WEB-UI.md §4.3 高级区)
-OVERRIDE_FIELDS = ("model", "max_cost", "max_steps")
+#: ``POST /api/runs`` 的 ``overrides`` 允许覆盖的 RunConfig 字段(WEB-UI.md §4.3 高级区;
+#: ``inline`` = SKILL-INLINING.md §9 消融开关,写入 ``cfg["run"]["inline"]``)
+OVERRIDE_FIELDS = ("model", "max_cost", "max_steps", "inline")
 
 
 class _StopBridge:
@@ -312,8 +313,8 @@ class RunManager:
     ) -> Any:
         """按 config 装配一个 run 的内核;恒附带 _StopBridge 保证 ctl 存在(stop 通道)。
 
-        ``overrides``(D3,WEB-UI.md §4.3):``{model?, max_cost?, max_steps?}`` 合并进
-        本次 run 的 ``[run]`` 配置。配置文件每次重新读取,改动只落在本 run 私有的
+        ``overrides``(D3,WEB-UI.md §4.3):``{model?, max_cost?, max_steps?, inline?}``
+        合并进本次 run 的 ``[run]`` 配置。配置文件每次重新读取,改动只落在本 run 私有的
         dict 副本上——只影响本次 run,不泄漏到后续 run 或共享 registry(D3 锚点)。
 
         ``skill_set``(D6):用该 set 的装配(``_base_config``);全程持

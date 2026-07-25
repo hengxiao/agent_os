@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_os.api.v1 import RunConfig
+from agent_os.api.v1 import ORCHESTRATE_TOOL, RunConfig
 from agent_os.context.manager import ContextManager
 from agent_os.context.rolling_window import RollingWindowCompressor
 from agent_os.kernel import Kernel
@@ -125,7 +125,12 @@ class KernelBuilder:
         if skills is not None:
             skills.load()
             missing = sorted(
-                {t for m in skills.manifests() for t in m.permissions.tools if not tools.has(t)}
+                {
+                    t
+                    for m in skills.manifests()
+                    for t in m.permissions.tools
+                    if not tools.has(t) and t != ORCHESTRATE_TOOL  # 伪工具由内核拦截,不进 registry
+                }
             )
             if missing:
                 raise SkillLoadError(f"manifest 声明的工具未注册(§6.1 权限闸门): {missing}")

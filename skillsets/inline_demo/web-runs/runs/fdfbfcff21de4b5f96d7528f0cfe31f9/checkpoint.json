@@ -1,0 +1,91 @@
+{
+  "v": 1,
+  "run": {
+    "run_id": "fdfbfcff21de4b5f96d7528f0cfe31f9",
+    "status": "done",
+    "usage": {
+      "completion_tokens": 1,
+      "steps": 1,
+      "thinking_tokens": 0,
+      "cost": 0.0,
+      "ttft_ms": 0,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0,
+      "total_ms": 0,
+      "prompt_tokens": 1
+    },
+    "result": {
+      "report": "ok"
+    },
+    "error": null
+  },
+  "frames": [
+    {
+      "frame_id": "0801d0754fa54649bef6d1c1552a8018",
+      "skill": "local:report_writer@1.0.0",
+      "parent_id": null,
+      "input": {
+        "topic": "t"
+      },
+      "depth": 1,
+      "status": "done",
+      "result": {
+        "report": "ok"
+      },
+      "error": null,
+      "call_id": null,
+      "usage": {
+        "completion_tokens": 1,
+        "steps": 1,
+        "thinking_tokens": 0,
+        "cost": 0.0,
+        "ttft_ms": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "total_ms": 0,
+        "prompt_tokens": 1
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"topic\": \"t\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"report\": \"ok\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {
+          "_inline_caps": {
+            "text": "## 内联能力(直接运用,无需调用)\n\n### date_style@1.0.0\n输出中出现日期时,一律规范为 ISO 8601(YYYY-MM-DD)。\n",
+            "hidden": [
+              "skill__date_style"
+            ],
+            "skills": [
+              {
+                "name": "date_style",
+                "version": "1.0.0",
+                "chars": 37
+              }
+            ]
+          }
+        },
+        "pinned": [],
+        "token_estimate": 7
+      }
+    }
+  ]
+}

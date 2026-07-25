@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from agent_os.api.v1 import (
+    ORCHESTRATE_SCHEMA,
+    ORCHESTRATE_TOOL,
     POST_COMPRESS,
     POST_CONTEXT_INLINE,
     PRE_COMPRESS,
@@ -90,6 +92,10 @@ class ContextManager:
             source=Source.SYSTEM,
         )
         tools = self._tools.schemas_for(manifest.permissions.tools)
+        if ORCHESTRATE_TOOL in manifest.permissions.tools and self._config.orchestrate:
+            # 编排伪工具不在 registry(内核拦截,CODE-ORCHESTRATION.md §2.1),
+            # 由此处按声明 + 消融开关补进可见工具面
+            tools.append(dict(ORCHESTRATE_SCHEMA))
         hidden = set(caps["hidden"]) if caps is not None else set()
         tools.extend(
             {"name": s.name, "description": s.description, "parameters": s.parameters}

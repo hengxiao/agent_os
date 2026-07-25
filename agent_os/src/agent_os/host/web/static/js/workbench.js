@@ -996,6 +996,22 @@ function renderInspectorPanel() {
   const msgs = Array.isArray(f.messages) ? f.messages : [];
   const steps = f.usage?.steps;
   const cost = f.usage?.cost;
+  // SKILL-INLINING.md §4.2:帧内冻结的内联能力快照(帧 detail 的 working._inline_caps;
+  // 无该字段(普通帧/off 档)不显示)
+  const inlineCaps = f.working?._inline_caps?.skills;
+  const inlineCapsHtml =
+    Array.isArray(inlineCaps) && inlineCaps.length
+      ? `<div class="insp-caps">` +
+        `<div class="insp-caps-title" title="merge:指令已并入本帧 SYSTEM,不产生调用帧">⇥ 内联能力</div>` +
+        inlineCaps
+          .map(
+            (c) =>
+              `<div class="insp-caps-row mono">${esc(c?.name ?? "—")}@${esc(c?.version ?? "—")}` +
+              ` · ${esc(String(c?.chars ?? 0))} 字符</div>`,
+          )
+          .join("") +
+        `</div>`
+      : "";
   // §4.4 RCA 来源:出错卡片定位(成对渲染的 tc-result;孤儿 tool 消息回退 focusMessageIndex)
   const isRca = sel?.source === "rca";
   const fe = isRca ? wb.rca?.first_error : null;
@@ -1029,6 +1045,7 @@ function renderInspectorPanel() {
     (cost != null ? `<span class="meta-chip mono">${esc(fmtCost(cost))}</span>` : "") +
     `<button class="btn btn-mini" data-action="wb-copy-frame" data-tip="复制该帧全部消息 JSON">复制全部 JSON</button>` +
     `</div>` +
+    inlineCapsHtml +
     // §4.4 veto 归因卡(出错卡片上方):裁决来源 kind / 理由全文 / 被否决参数 JSON
     (fe?.kind === "vetoed" ? vetoCardHtml(fe) : "") +
     (f.error

@@ -373,6 +373,9 @@ function skillItemHtml(s) {
     ` aria-selected="${sel}" title="${esc(s.name)}">` +
     `<div class="brw-item-row">` +
     `<span class="brw-item-name">${esc(s.name)}</span>` +
+    (s.inline
+      ? `<span class="inline-chip" title="merge:指令并入调用方 SYSTEM,不产生调用帧">⇥ inline</span>`
+      : "") +
     (cyclic
       ? `<span class="cycle-warn" title="循环依赖:permissions.skills 形成环" aria-label="循环依赖">⚠</span>`
       : "") +
@@ -483,6 +486,10 @@ function detailHtml(d) {
     kv("kind", esc(d.kind ?? "—")) +
       kv("version", esc(d.version || "—")) +
       kv("namespace", "local(LocalFile registry)") +
+      // SKILL-INLINING.md §3.1:merge 技能标记(无则不显示;语义见 lint 横幅)
+      (d.inline
+        ? kv("inline", `<span class="inline-chip" title="merge:指令并入调用方 SYSTEM,不产生调用帧">⇥ true</span>`)
+        : "") +
       (d.entry ? kv("entry", `<span class="mono">${esc(d.entry)}</span>`) : "") +
       (d.handler ? kv("handler", `<span class="mono">${esc(d.handler)}</span>`) : ""),
   );

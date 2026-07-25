@@ -15,7 +15,7 @@
 | 信息层级 | 三区平铺,无主次 | RCA 动线(定位→检查→归因)没有视觉引导;一切信息同等重要 = 一切都不重要 |
 | 视觉系统 | 无设计 token,颜色随手写 | 状态色与信号色不成体系,色板不可复用、不可扩展 |
 | 帧树 | 纯文本缩进 | 无树形引导线、无状态图标、无展开折叠;深度 >3 即不可读 |
-| 时间线 | 无差别列表 | 信号无分组(应按 step 分组)、无图标语义、无与帧树的选中联动 |
+| 时间线 | 无差别列表 | 信号应按执行轨迹重组(call/ret 头等、pre/post 合并、栈深缩进)、无与帧树的选中联动 |
 | 上下文检视 | JSON dumped | 消息不按角色渲染;tool_call/tool_result 不成对;reasoning 占满屏幕;无法复制 |
 | 反馈状态 | 无 | 无 loading/empty/error 三态;SSE 连接状态不可见;操作无确认与结果反馈 |
 | 能力覆盖 | 只读历史 | **不能发起 run、没有实时进度视图;Skills/Tools 只存在于配置文件,UI 不可见** |
@@ -126,14 +126,14 @@
 ├─ 进度条(仅进行中 run)──────────────────────────────────────────┤
 │ ● live  已用 12.4s │ steps 8/200 ▓▓░░ │ cost $0.31/$2.00 ▓░░     │
 ├──────────────┬───────────────────────┬──────────────────────────┤
-│ 帧树          │ 信号时间线             │ 上下文检视器              │
+│ 帧树          │ 执行轨迹(debug trace)  │ 上下文检视器              │
 │ (320px)      │ (flex)                │ (420px,可拖宽)            │
-│ ┌─●fib─────┐ │ ▶ step 3 ────────     │ ┌ system ──────────┐     │
-│ │▾ 6 steps·│ │  L llm.response       │ │ 你是菲波拉契…     │     │
-│ │ ┌●fib───┐│ │  T python_exec ✓      │ └──────────────────┘     │
-│ │ │运行中·││ │  S ToolGuard ✖ veto   │ ┌ assistant ────────┐    │
-│ └──────────┘ │    "rm -rf 被禁止"     │ │ tool_call #1      │    │
-│              │  …                    │ │ python_exec(…) ⎘  │    │
+│ ┌─●fib─────┐ │ 0001 ● run started    │ ┌ system ──────────┐     │
+│ │▾ 6 steps·│ │ 0002 ▶→ call fib({n}) │ │ 你是菲波拉契…     │     │
+│ │ ┌●fib───┐│ │ 0003   llm mock/fib   │ └──────────────────┘     │
+│ │ │运行中·││ │ 0004   tool python…✓  │ ┌ assistant ────────┐    │
+│ └──────────┘ │ 0005   ← ret {seq:…}  │ │ tool_call #1      │    │
+│              │  …(行号 gutter/彩虹轨) │ │ python_exec(…) ⎘  │    │
 │              │                       │ ├ tool_result ✖ ────┤    │
 │              │                       │ │ vetoed: 禁止危险…  │    │
 │              │                       │ └──────────────────┘     │
@@ -147,10 +147,21 @@
 无值字段省略,窄块按 cost→duration→tok→chip→steps 逐级丢弃,完整串在 title);兄弟块间 1px 连接线
 (末子块只到自身);选中块 --bg-2 + accent 加粗 4px + --live 边框;depth>3 默认折叠,折叠块显示 +N 子帧计数。
 
+中栏为 **debug trace(调试跟踪视图)**:信号流重排为带行号的执行轨迹——`→ call skill__fib({"n":4})` /
+`← ret {"seq":…}`(frame.push/pop 合并,call/ret 是头等指令;pre:skill.invoke 为紧随的 push 起 `skill__`
+调用名);llm/tool/exec 的 pre/post 各合并为一行(工具 ok:false/vetoed 红;被 tool.call 全包的 logic.exec
+折进 tool 行带 trust 标注,独立 logic.exec 即 code skill 主体单独出行);run.started/finished/aborted 为
+粗体边界行;budget.*/compress/sidecar 等为 obs 黄行;pre:step/post:step 不占行(只推进帧内 step 计数)。
+行号 gutter(0001 起)+ 深度彩虹轨(2px 竖条,6 色循环)+ 当前位置 ▶(调试器黄,完成 run 在末行,
+live 跟随最新信号);call 行可折叠子树(+N 子指令计数,depth>4 默认折叠;未配对 call 折叠不吞尾部 run 行);
+行 hover 浮现 {} 钮展开完整 payload(固定高面板);call 参数取帧 input(载入时按帧批量预取 frames/{fid})。
+未配对容错:无 ret 的 call 标 …(未返回),孤儿 ret 按当前 depth 渲染;pre:skill.invoke ok:false 且无
+配对 push 时补一行失败调用。
+
 三个联动规则(整页灵魂):
 
-1. **选中联动**:帧树选中帧 → 时间线过滤到该帧、检视器显示该帧上下文;时间线选中信号 → 帧树定位所属帧、检视器滚动到对应消息;三者共享一个 selection store。
-2. **时间线按 step 分组**:每组 = 一次 loop 迭代,组可折叠;异常信号自动展开 + 左侧红条;**进行中 run 的信号流自动跟随滚动**(用户上翻则暂停,出现"回到底部"悬浮钮)。
+1. **选中联动**:帧树选中帧 → 轨迹过滤到该帧(直接子帧的 call/ret 保留为边界行,提示条可清除)、检视器显示该帧上下文;轨迹选中行 → 帧树定位所属帧、检视器滚动到对应消息;三者共享一个 selection store。
+2. **轨迹即程序清单**:每行 = 一条执行指令(合并规则见上);**进行中 run 的轨迹自动跟随滚动**(用户上翻则暂停,出现"回到底部"悬浮钮);j/k/gg/G 按行导航。
 3. **消息成对渲染**:assistant 的 tool_call 与其 tool_result 渲染为同一张卡片的两半;reasoning 默认折叠一行;veto/纠偏以 Banner 嵌入消息流。
 
 ### 4.3 运行发起与实时进度(Launch & Live)
@@ -179,7 +190,7 @@
 
 ### 4.4 RCA 模式
 
-异常 run 打开即进入:顶部 Banner(status + error 摘要 + "定位首个错误"/"Resume");一键定位 = 调 `/rca` → 帧树选中 → 时间线滚动 → 检视器展开出错卡片(红色高亮 + 脉冲一次);veto 卡片显示裁决 sidecar、理由全文、被否决参数 JSON(可折叠)。
+异常 run 打开即进入:顶部 Banner(status + error 摘要 + "定位首个错误"/"Resume");一键定位 = 调 `/rca` → 帧树选中 → 轨迹展开所在调用子树并滚动 → 检视器展开出错卡片(红色高亮 + 脉冲一次);veto 卡片显示裁决 sidecar、理由全文、被否决参数 JSON(可折叠)。
 
 ### 4.5 Usage 视图
 
@@ -286,7 +297,7 @@ static/
 
 ### 6.3 性能与边界
 
-- 时间线 >500 条窗口化渲染;SSE 增量 append;帧树 >100 默认折叠 depth>3;
+- 轨迹 >500 渲染行窗口化(视窗 ±50 行,上下占位行);SSE 增量重算 append;帧树 >100 默认折叠 depth>3;
 - 大消息 >20k 字符折叠 head+tail;Skills/Tools 列表 >200 同样窗口化;
 - 打印样式(RCA 页可打印贴 issue)。
 
@@ -299,7 +310,7 @@ static/
 | 里程碑 | 内容 | 验收 |
 |---|---|---|
 | **D1 设计系统 + 应用壳** | tokens.css、TopBar(三导航 + New Run 主按钮)、Runs 侧栏(搜索/筛选/StatusPill)、深链接路由 | 换肤只改 token;三态齐全;URL 可分享 |
-| **D2 Workbench 三联动** | 帧树、step 分组时间线、消息卡片(成对/折叠/复制)、selection store | 三点联动;fib(5) 历史 run 可读性评审通过 |
+| **D2 Workbench 三联动** | 帧树、debug trace 执行轨迹、消息卡片(成对/折叠/复制)、selection store | 三点联动;fib(5) 历史 run 可读性评审通过 |
 | **D3 Launch & Live** | New Run Modal(schema 实时校验/高级覆盖)、Live 进度条(steps/cost 双轨)、帧树实时生长、Stop 流、结束态切换 | 从发起到盯完一次 fib(4) 全程不离开页面;Stop 一次循环 run 可中止 |
 | **D4 Skills & Tools 浏览器** | 三个后端端点 + 两个浏览页(SchemaView/PermBadge/依赖链接/lint 横幅/Reload/Run ▶ 预填) | 技能 lint 警告可见;EXEC 级权限标识清晰;从技能详情一键发起 run |
 | **D5 RCA + Usage + 打磨** | 异常 Banner、一键定位、veto 归因卡片、Usage 折叠栏、快捷键全套、长列表窗口化、打印 | 三类失败(veto/循环/断电)一键定位 ≤1 秒;键盘完成全部动线 |

@@ -268,6 +268,8 @@ async def pop(frame, result):
 
 好处:对模型是带类型的函数签名;对内核是统一的拦截点;对清单是静态可分析的依赖图。
 
+例外:manifest 声明 `inline: true` 的技能(预展开 merge,详见 [SKILL-INLINING.md](SKILL-INLINING.md))**不生成伪工具**——其 prompt 在上下文组装期并入调用方 SYSTEM("内联能力段"),调用消失,父模型直接运用。依赖图不变(`permissions.skills` 声明保留);程序化路径(`ctx.invoke`/spawn/幻觉调用)照常压栈,merge 只改变 LLM 的呈现面。消融:`RunConfig.inline = "off"`。
+
 ### 3.4 并发(显式 fork/join/spawn)
 
 三种原语,帧树是唯一数据结构:
@@ -498,7 +500,7 @@ skills:
 
 | 策略 | 机制 | 代价 |
 |---|---|---|
-| `collapse_child` | 子帧弹栈时 transcript 不进入父帧,只留返回值(默认,结构性获得) | 无 |
+| `collapse_child` | 子帧弹栈时 transcript 不进入父帧,只留返回值(默认,结构性获得);对 `inline: true`(merge)技能无对象——调用不存在,其指令常驻调用方 SYSTEM,成本"按步付"(SKILL-INLINING.md §2) | 无 |
 | `spill` | 大工具输出移入 blob store,上下文只留 `{ref, preview}`;preview = 头部+尾部+省略通知(字节数、ref、取回方式),可选 LLM 生成"contextualized preview"(主体+时间+意图前缀);**替换串一经生成永久冻结** | 低,首选 |
 | `truncate` | 原子组粒度丢弃最旧的非 pinned 消息;驱逐顺序可插拔(默认 FIFO,可按价值评分) | 低,会丢信息 |
 | `narrate` | 多模态消息逐出前经 ProviderManager 生成一句文本旁白留置 | 一次廉价调用 |
@@ -540,6 +542,8 @@ CompressionReport = { evicted, before_tokens, after_tokens, cache_invalidation_e
 ```
 
 `KernelServices` 提供:token 估算器、ProviderManager(摘要用)、blob store。新策略经 entry point `agent_os.compressors` 注册。
+
+`build` 的组装顺序补注:SYSTEM = 渲染后的技能指令 + 内联能力段(merge 技能,帧首次 build 冻结快照进 `working["_inline_caps"]`,一次性发 `post:context.inline`;SKILL-INLINING.md §4)→ 帧上下文 → 状态栏(ephemeral)。
 
 ### 7.6 基础实现:`RollingWindowCompressor` + 估算器(M3)
 

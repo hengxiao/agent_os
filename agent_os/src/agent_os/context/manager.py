@@ -11,6 +11,7 @@ from typing import Any
 
 from agent_os.api.v1 import (
     POST_COMPRESS,
+    POST_CONTEXT_INLINE,
     PRE_COMPRESS,
     ChatRequest,
     Compressor,
@@ -19,13 +20,22 @@ from agent_os.api.v1 import (
     RunConfig,
     Signal,
     SkillFrame,
+    SkillRef,
     Source,
 )
 from agent_os.context.estimator import TokenEstimator
+from agent_os.kernel.errors import SkillLoadError
 from agent_os.skills.loader import render_prompt
 
 #: 预算剩余低于该比例时,hint 切换为收敛策略(§7.3:读数 + 操作策略)
 LOW_BUDGET_RATIO = 0.2
+
+#: 内联能力段快照在帧工作内存的键(SKILL-INLINING.md §4.2:帧首次 build 冻结,
+#: 随帧入 checkpoint——前缀稳定 + 热重载钉版本 + resume 确定性一举解决)
+INLINE_CAPS_KEY = "_inline_caps"
+
+#: 内联能力段的固定标头(跨帧跨步字节稳定)
+INLINE_SECTION_HEADER = "## 内联能力(直接运用,无需调用)"
 
 
 class ContextManager:
@@ -70,15 +80,21 @@ class ContextManager:
     async def build(self, frame: SkillFrame) -> ChatRequest:
         skill = self._skills.get(frame.skill)
         manifest = skill.manifest
+        caps = await self._inline_caps(frame, manifest)
+        system_content = render_prompt(skill.prompt or "", frame.input)
+        if caps is not None and caps["text"]:
+            system_content = f"{system_content}\n\n{caps['text']}"
         system = Message(
             role=Role.SYSTEM,
-            content=render_prompt(skill.prompt or "", frame.input),
+            content=system_content,
             source=Source.SYSTEM,
         )
         tools = self._tools.schemas_for(manifest.permissions.tools)
+        hidden = set(caps["hidden"]) if caps is not None else set()
         tools.extend(
             {"name": s.name, "description": s.description, "parameters": s.parameters}
             for s in self._skills.visible_to(frame)
+            if s.name not in hidden
         )
         model = ""
         if manifest.model is not None:
@@ -100,6 +116,55 @@ class ContextManager:
             tools=tools,
             temperature=temperature,
         )
+
+    async def _inline_caps(self, frame: SkillFrame, manifest: Any) -> dict[str, Any] | None:
+        """内联能力段快照(SKILL-INLINING.md §4)。
+
+        - 消融档(``RunConfig.inline == "off"``)→ None:不并入、不过滤伪工具,
+          merge 技能退化为普通压帧调用;
+        - 帧首次 build 时按 registry 现值组装并**冻结**进 ``working``(§4.2:
+          前缀稳定 / 热重载"在跑帧钉旧版" / resume 确定性),同时一次性发
+          ``post:context.inline``;后续 build 直接复用快照。
+        """
+        if self._config.inline == "off":
+            return None
+        caps = frame.context.working.get(INLINE_CAPS_KEY)
+        if caps is not None:
+            return caps
+        entries: list[dict[str, Any]] = []
+        for name in manifest.permissions.skills:
+            try:
+                target = self._skills.get(SkillRef(name=name))
+            except SkillLoadError:
+                continue  # 引用存在性由加载期闸门保证;此处防御性跳过(与 visible_to 同姿势)
+            tm = target.manifest
+            if not tm.inline:
+                continue
+            entries.append(
+                {"name": tm.name, "version": tm.version, "prompt": tm.prompt or ""}
+            )
+        if entries:
+            blocks = [INLINE_SECTION_HEADER]
+            blocks.extend(f"### {e['name']}@{e['version']}\n{e['prompt']}" for e in entries)
+            text = "\n\n".join(blocks)
+        else:
+            text = ""
+        caps = {
+            "text": text,
+            "hidden": [f"skill__{e['name']}" for e in entries],
+            "skills": [
+                {"name": e["name"], "version": e["version"], "chars": len(e["prompt"])}
+                for e in entries
+            ],
+        }
+        frame.context.working[INLINE_CAPS_KEY] = caps
+        if entries:
+            await self._emit(
+                POST_CONTEXT_INLINE,
+                frame,
+                {"frame_id": frame.frame_id, "skills": caps["skills"]},
+            )
+        return caps
 
     def _status_message(self, frame: SkillFrame) -> Message:
         """key-value 状态行(§7.3):裸读数 + 操作策略(hint)。"""

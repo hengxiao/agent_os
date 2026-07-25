@@ -54,6 +54,18 @@ async def spawn_naughty(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     return {"never": True}
 
 
+async def invoke_one(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """程序化调用任意白名单子技能(inline 降级等测试用)。"""
+    value = await ctx.invoke(input["skill"], dict(input.get("args") or {}))
+    return {"value": value}
+
+
+async def spawn_one(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """spawn 任意白名单子技能并等终态(inline 与 spawn 正交性测试用)。"""
+    fid = await ctx.spawn(input["skill"], dict(input.get("args") or {}))
+    return {"frame_id": fid, "value": await ctx.wait(fid)}
+
+
 async def board_put_get(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """经 ctx.board 代理在白名单命名空间读写 KV(§12 内核中介仲裁)。"""
     version = await ctx.board.put("shared", "answer", input["v"])

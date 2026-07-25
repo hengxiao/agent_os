@@ -16,7 +16,7 @@
    focusMessageIndex + 出错卡片(data-ok="false")定位补算;此处只保留字段形状。 */
 
 import { COPY_SVG, esc } from "../util.js";
-import { findVetoedCalls, groupSignals } from "./timeline.js";
+import { findVetoedCalls, stepOfSignal } from "./trace.js";
 
 /* ── planRcaJump ──────────────────────────────────────────────
    rca     = GET /api/runs/{id}/rca → { status, first_error | null }
@@ -63,12 +63,8 @@ export function planRcaJump(rca, frames, signals) {
     }
   }
 
-  /* 信号所在组的 step(检视器 focusMessageIndex 映射用);组折叠态与本规划无关 */
-  let step = null;
-  if (signalIndex != null) {
-    const g = groupSignals(rows).find((gr) => gr.items.some((it) => it.index === signalIndex));
-    step = g?.step ?? null;
-  }
+  /* 信号所在帧的当前 step(检视器 focusMessageIndex 映射用) */
+  const step = signalIndex != null ? stepOfSignal(rows, signalIndex) : null;
   return { frameId, signalIndex, messageIndex: null, step, reason: null };
 }
 

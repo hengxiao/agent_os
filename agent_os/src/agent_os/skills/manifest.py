@@ -79,7 +79,15 @@ def parse_manifest(data: dict[str, Any]) -> SkillManifest:
         prompt=data.get("prompt"),
         handler=data.get("handler"),
         logic=data.get("logic"),
+        inline=bool(data.get("inline", False)),
     )
+
+
+#: 内联(merge)技能 prompt 的膨胀上限(SKILL-INLINING.md §3.3;C++ "拒绝内联大函数"对应物)
+INLINE_PROMPT_MAX_CHARS = 500
+
+#: 单个调用方的 merge 依赖条数上限(超过告警;调用方侧检查在 Registry 层)
+INLINE_DEPS_MAX = 3
 
 
 def validate_manifest(manifest: SkillManifest) -> list[str]:
@@ -88,6 +96,7 @@ def validate_manifest(manifest: SkillManifest) -> list[str]:
     且权限等级不超过 RunConfig 上限,否则拒绝加载并报出具体缺失项(§6.1)。
 
     本函数只做 manifest 自洽性 lint;跨技能引用与工具存在性由 Registry/Builder 检查。
+    内联(merge)技能另有硬闸门与 lint(SKILL-INLINING.md §3.2/§3.3)。
     """
     warnings: list[str] = []
     desc = manifest.description
@@ -96,5 +105,66 @@ def validate_manifest(manifest: SkillManifest) -> list[str]:
     if len(desc) < 10 or "Use when" not in desc:
         warnings.append(
             f"技能 {manifest.name}: description 应含 'Use when / Do not use when' 触发条件(§6.1 lint)"
+        )
+    if manifest.inline:
+        warnings.extend(_validate_inline(manifest))
+    return warnings
+
+
+def _validate_inline(manifest: SkillManifest) -> list[str]:
+    """merge 技能的硬闸门(抛 SkillLoadError)与 lint(返回告警)。
+
+    硬闸门(SKILL-INLINING.md §3.2):仅 prompt 技能;纯度(tools/skills/blackboard
+    全空——指令并入后这些权限无法执行,声明即矛盾);prompt 非空。
+    """
+    name = manifest.name
+    if manifest.kind is not SkillKind.PROMPT:
+        raise SkillLoadError(f"技能 {name}: inline 仅适用于 prompt 技能(merge 无 code 形态)")
+    perms = manifest.permissions
+    impure = [
+        label
+        for label, values in (
+            ("tools", perms.tools),
+            ("skills", perms.skills),
+            ("blackboard", perms.blackboard),
+        )
+        if values
+    ]
+    if impure:
+        raise SkillLoadError(
+            f"技能 {name}: inline 要求纯度——permissions.{'/'.join(impure)} 必须为空"
+            "(指令并入调用方后无法执行这些权限)"
+        )
+    if not manifest.prompt:
+        raise SkillLoadError(f"技能 {name}: inline 技能必须有非空 prompt(单文件形态)")
+
+    warnings: list[str] = []
+    if "{" in manifest.prompt:
+        warnings.append(
+            f"技能 {name}: inline prompt 含 '{{' ——merge 无离散 input 可渲染,"
+            "应写成说明书形态(占位符会原样暴露给模型)"
+        )
+    if len(manifest.prompt) > INLINE_PROMPT_MAX_CHARS:
+        warnings.append(
+            f"技能 {name}: inline prompt 过长({len(manifest.prompt)} > "
+            f"{INLINE_PROMPT_MAX_CHARS} 字符)——指令常驻调用方 SYSTEM,每步都付其 token"
+        )
+    dead = [
+        label
+        for label, value in (
+            ("inputs", manifest.inputs),
+            ("outputs", manifest.outputs),
+            ("model", manifest.model),
+            ("context_policy", manifest.context_policy),
+        )
+        if value
+    ]
+    if dead:
+        warnings.append(
+            f"技能 {name}: inline 技能的 {'/'.join(dead)} 无运行期效力(merge 档仅作文档)"
+        )
+    if manifest.verifier:
+        warnings.append(
+            f"技能 {name}: inline 技能的 verifier 无运行期效力(其语义绑定帧弹栈仲裁,merge 无帧)"
         )
     return warnings

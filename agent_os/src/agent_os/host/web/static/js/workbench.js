@@ -1,10 +1,10 @@
 /* Run Workbench 页面(WEB-UI.md §4.2):run 头 + 异常 Banner + 三栏
-   (帧树 320px / 信号时间线 flex / 上下文检视器 420px)+ Usage 折叠栏(§4.5)。
+   (帧树 320px / 执行轨迹 flex / 上下文检视器 420px)+ Usage 折叠栏(§4.5)。
 
    三联动(§4.2 规则 1,共享 selection store,订阅按键拆分、只重绘受影响栏):
-     帧树选帧 → selection.source="tree":时间线过滤到该帧(提示条可清除),检视器懒加载该帧;
-     时间线选信号 → source="timeline":帧树展开祖先+滚动选中所属帧,检视器滚动到对应消息卡片;
-     RCA 定位 → source="rca"(§4.4):帧树选中展开祖先,时间线滚动到出错信号,
+     帧树选帧 → selection.source="tree":轨迹过滤到该帧(提示条可清除),检视器懒加载该帧;
+     轨迹选行 → source="timeline":帧树展开祖先+滚动选中所属帧,检视器滚动到对应消息卡片;
+     RCA 定位 → source="rca"(§4.4):帧树选中展开祖先,轨迹展开所在调用子树滚动到出错行,
      检视器 veto 归因卡 + 出错卡片红色高亮(一次性脉冲);
      深链接 #/runs/<id>?frame=<fid>&signal=<i>(§4.1)载入后恢复 selection。
 
@@ -12,7 +12,8 @@
      顶部进度条区(live 脉冲 / 已用时长秒级走动 / steps+cost 双 ProgressBar /
      右侧常驻 Stop);数据优先 SSE(/api/runs/{id}/stream,回放与 REST 快照重复,
      open 时清空重折叠保幂等),SSE 不可用回退 2s 轮询 detail+signals;帧树随
-     frame.push/pop 实时生长(新帧滑入,running 帧旋转指示);时间线自动跟随
+     frame.push/pop 实时生长(新帧滑入,running 帧旋转指示);轨迹随信号增量重算
+     (buildTraceRows 全量纯函数,O(n) 足够轻)并自动跟随
      (视窗在底则跟随,上翻暂停并浮现"回到底部");Stop → 不可逆确认条 → POST
      /stop → loading → Toast;结束(SSE event:end 或轮询发现终态)→ 进度条区
      替换为结果 Banner(done 绿 / failed 红 / aborted 紫),live 熄灭,停止追加。
@@ -21,13 +22,14 @@
 
    RCA 模式(§4.4,异常 run):顶部 rcaBanner(定位首个错误 ⌘J / Resume ▶);
      wbJumpFirstError:GET /rca(载入时已随 detail 拉取)→ planRcaJump 纯函数规划 →
-     帧树展开祖先选中 first_error.frame_id → 时间线展开所在组并滚动到出错信号
-     (无对应信号回退该帧最后信号)→ 检视器 veto 归因卡 + 出错卡片高亮脉冲。
+     帧树展开祖先选中 first_error.frame_id → 轨迹展开包含出错信号的调用子树并滚动定位
+     (无对应行回退该帧最后信号)→ 检视器 veto 归因卡 + 出错卡片高亮脉冲。
      Resume → POST /resume(后端阻塞到恢复结束,产物写回原 run)→ Toast → 重新 load。
 
-   性能(§6.3):信号渲染行 >500 启用窗口化(windowRange 视窗 ±50 行,上下占位行
-   显示"还有 N 条"),滚动时节流增量替换;j/k/gg/G 键盘导航与 RCA 滚动定位经
-   findRowPosition 先落窗再 scrollIntoView。
+   性能(§6.3):轨迹渲染行 >500 启用窗口化(windowRange 视窗 ±50 行,上下占位行
+   显示"还有 N 行"),滚动时节流增量替换;j/k/gg/G 键盘导航与 RCA 滚动定位经
+   findRowPosition 先落窗再 scrollIntoView。call 行参数(帧 input)随载入按帧
+   批量预取(frames/{fid},上限 PREFETCH_FRAMES),到位后重绘一次轨迹。
 
    本模块持有页面私有状态(wb):折叠集、帧上下文缓存(Map,懒加载 + 三态)、live 会话、
    RCA 缓存、Usage 面板句柄、窗口化行集。组件纯函数在 components/*;本文件只做取数、
@@ -60,12 +62,14 @@ import {
   ROW_H,
   WINDOW_BUFFER,
   WINDOW_THRESHOLD,
-  deriveTimelineView,
-  flattenTimelineRows,
+  deriveTraceView,
   findRowPosition,
-  renderTimeline,
+  flattenTraceRows,
+  isCallCollapsed,
+  renderTrace,
+  rowForSignal,
   windowRange,
-} from "./components/timeline.js";
+} from "./components/trace.js";
 import { focusMessageIndex, renderMessages } from "./components/message-card.js";
 import {
   createLiveState,
@@ -83,6 +87,8 @@ const LIVE_POLL_MS = 2000;
 const LIVE_TICK_MS = 200;
 /* 窗口化滚动重渲染节流(ms,§6.3) */
 const SCROLL_RENDER_MS = 80;
+/* call 行参数(帧 input)批量预取上限(§4.2;超出帧数选中时再懒加载) */
+const PREFETCH_FRAMES = 80;
 
 /* ── 页面私有状态(每次切换 run 整体重置)────────────────────────── */
 
@@ -94,13 +100,14 @@ const wb = {
   signals: [], // GET /api/runs/{id}/signals
   error: null,
   roots: [], // 帧树(buildFrameTree)
-  failedFrameIds: [], // 失败帧(时间线异常组判定)
   collapsedFrames: new Set(), // 帧树折叠(defaultCollapsedIds 初始化)
-  collapsedGroups: new Set(), // 时间线用户折叠的组 key
+  traceCollapsed: new Set(), // 轨迹用户显式折叠的 call(按 sigIndex)
+  traceExpanded: new Set(), // 轨迹用户显式展开的 call(覆盖深度默认折叠)
+  tracePayload: new Set(), // 轨迹 payload 展开的行(按 sigIndex)
   frames: new Map(), // 帧上下文缓存:fid -> { status, data?, error? }
   pendingQuery: null, // 深链接 ?frame&signal,ready 后恢复
-  lastView: null, // 最近一次 deriveTimelineView 结果(检视器聚焦查组用)
-  lastRows: [], // 最近一次 flattenTimelineRows 结果(窗口化/键盘导航用)
+  lastTraceView: null, // 最近一次 deriveTraceView 结果(检视器聚焦/RCA 展开用)
+  lastRows: [], // 最近一次 flattenTraceRows 结果(窗口化/键盘导航用)
   lastScrollRender: 0, // 窗口化滚动重渲染节流时间戳
   scrollTimer: null, // 窗口化滚动节流 trailing 定时器
   rca: null, // GET /rca 缓存(异常 run 载入时拉取;{ status, first_error })
@@ -143,12 +150,13 @@ export function openWorkbench(main, runId, query = null) {
     wb.signals = [];
     wb.error = null;
     wb.roots = [];
-    wb.failedFrameIds = [];
     wb.collapsedFrames = new Set();
-    wb.collapsedGroups = new Set();
+    wb.traceCollapsed = new Set();
+    wb.traceExpanded = new Set();
+    wb.tracePayload = new Set();
     wb.frames = new Map();
     wb.pendingQuery = query;
-    wb.lastView = null;
+    wb.lastTraceView = null;
     wb.lastRows = [];
     wb.lastScrollRender = 0;
     wb.scrollTimer = null;
@@ -225,9 +233,6 @@ async function load() {
     wb.durations = frameDurations(wb.signals);
     wb.roots = buildFrameTree(detail?.frames, pushOrder(wb.signals));
     wb.collapsedFrames = defaultCollapsedIds(wb.roots);
-    wb.failedFrameIds = (detail?.frames ?? [])
-      .filter((f) => f?.status === "failed")
-      .map((f) => f.frame_id);
     // §4.4:异常 run 随载入拉取 RCA 缓存(定位动线 / veto 归因卡数据源);失败降级 null
     wb.rca = null;
     if (detail?.status === "failed" || detail?.status === "aborted") {
@@ -251,6 +256,7 @@ async function load() {
       });
     }
     if (detail?.status === "running") startLive(); // §4.3:进行中 run 进 live 变体
+    else prefetchFrameInputs(); // call 行参数(帧 input)批量预取,到位重绘轨迹
   } catch (e) {
     if (wb.runId !== runId) return;
     wb.status = "error";
@@ -271,6 +277,27 @@ async function loadFrame(fid) {
     wb.frames.set(fid, { status: "error", error: e });
   }
   if (store.get("selection")?.frameId === fid && wbActive()) renderInspectorPanel();
+}
+
+/* call 行参数预取(§4.2):帧 input 只在 frames/{fid} 上下文中;按帧摘要批量拉取
+   (上限 PREFETCH_FRAMES,同时温Inspect缓存),全部到位后重绘一次轨迹补 call 行 args。
+   已缓存(ready/loading)的帧跳过;进行中 run 上下文未落盘,不预取(由 live 结束后补)。 */
+async function prefetchFrameInputs() {
+  const runId = wb.runId;
+  const fids = (wb.detail?.frames ?? [])
+    .map((f) => f?.frame_id)
+    .filter((fid) => fid && wb.frames.get(fid)?.status == null)
+    .slice(0, PREFETCH_FRAMES);
+  if (!fids.length) return;
+  await Promise.allSettled(
+    fids.map((fid) =>
+      getJson(`/api/runs/${encodeURIComponent(runId)}/frames/${encodeURIComponent(fid)}`).then(
+        (data) => {
+          if (wb.frames.get(fid)?.status == null) wb.frames.set(fid, { status: "ready", data });
+        })));
+  if (wb.runId !== runId || !wbRouteMatches(runId) || wb.status !== "ready") return;
+  renderTimelinePanel(); // 参数到位:call 行补 ({...}) 与 payload
+  if (store.get("selection")?.frameId) renderInspectorPanel(); // 检视器缓存已温,直接可用
 }
 
 /* ── 渲染:页面骨架(loading / error / ready 三态,§5)────────────── */
@@ -351,18 +378,12 @@ function renderShell() {
   renderInspectorPanel();
 }
 
-/* ── 时间线窗口化(§6.3:>500 渲染行只渲染视窗 ±WINDOW_BUFFER)────── */
+/* ── 渲染:执行轨迹(中栏,§6.3 窗口化)────────────────────────── */
 
 const sumHeight = (rows, from, to) => {
   let h = 0;
   for (let i = from; i < to && i < rows.length; i += 1) h += rows[i]?.h ?? ROW_H;
   return h;
-};
-
-const countSignalRows = (rows, from, to) => {
-  let n = 0;
-  for (let i = from; i < to && i < rows.length; i += 1) if (rows[i]?.type === "row") n += 1;
-  return n;
 };
 
 const windowed = () => (wb.lastRows?.length ?? 0) > WINDOW_THRESHOLD;
@@ -386,8 +407,9 @@ function onTimelineScrollWindow() {
   }
 }
 
-/* 选中信号滚动定位(时间线/RCA 来源):窗口化时先按行位置落窗(scrollTop 置中)
-   再重渲染切片,最后 scrollIntoView 微调;非窗口化直接 scrollIntoView。 */
+/* 选中信号滚动定位(轨迹/RCA 来源):窗口化时先按行位置落窗(scrollTop 置中)
+   再重渲染切片,最后 scrollIntoView 微调;非窗口化直接 scrollIntoView。
+   合并行经 findRowPosition 按 [sigIndex, sigEnd] 区间命中。 */
 function scrollSignalIntoView(signalIndex) {
   const el = wb.els?.timeline;
   if (!el) return;
@@ -402,6 +424,59 @@ function scrollSignalIntoView(signalIndex) {
     }
   }
   el.querySelector(`[data-signal-index="${signalIndex}"]`)?.scrollIntoView({ block: "nearest" });
+}
+
+/* 帧 input 合并进帧摘要(call 行 args 数据源):已加载的帧上下文取 input 字段 */
+function framesWithInputs() {
+  const frames = wb.live ? wb.live.state.frames : (wb.detail?.frames ?? []);
+  return frames.map((f) => {
+    const cached = wb.frames.get(f?.frame_id);
+    return cached?.status === "ready" && cached.data?.input !== undefined
+      ? { ...f, input: cached.data.input }
+      : f;
+  });
+}
+
+function renderTimelinePanel({ skipScroll = false } = {}) {
+  const el = wb.els?.timeline;
+  if (!el) return;
+  const sel = store.get("selection");
+  const view = deriveTraceView(wb.signals, sel, {
+    frames: framesWithInputs(),
+    collapsed: wb.traceCollapsed,
+    expanded: wb.traceExpanded,
+    payloadOpen: wb.tracePayload,
+  });
+  wb.lastTraceView = view;
+  const rows = flattenTraceRows(view.rows);
+  wb.lastRows = rows;
+  let win = null;
+  if (rows.length > WINDOW_THRESHOLD) {
+    // live 跟随时窗口直接按底部计算(渲染后 applyFollow 才落 scrollTop)
+    const follow = Boolean(wb.live) && !wb.live.ending && wb.live.follow;
+    const st = follow ? Math.max(0, sumHeight(rows, 0, rows.length) - (el.clientHeight || 0)) : el.scrollTop;
+    const { start, end } = windowRange(rows.length, st, ROW_H, el.clientHeight || 0, WINDOW_BUFFER);
+    win = {
+      start,
+      end,
+      topPad: sumHeight(rows, 0, start),
+      bottomPad: sumHeight(rows, end, rows.length),
+      topCount: start,
+      bottomCount: rows.length - end,
+    };
+  }
+  el.innerHTML = wb.signals.length
+    ? renderTrace(view, {
+        selection: sel,
+        frameSkill: view.filterFrameId ? shortSkill(findFrame(view.filterFrameId)?.skill) : null,
+        window: win,
+      })
+    : emptyBlock("无信号数据", "trace.jsonl 缺失或该 run 尚未产生信号", "activity");
+  const guided = sel?.source === "timeline" || sel?.source === "rca"; // §4.2/§4.4 聚焦滚动
+  if (!skipScroll && guided && sel.signalIndex != null && view.focused?.visible) {
+    scrollSignalIntoView(sel.signalIndex);
+  }
+  applyFollow(); // live:新信号到达时视窗在底则自动跟随(§4.2 规则 2 live 半)
 }
 
 /* ── 渲染:run 头(§4.2:skill/StatusPill/run_id/started_at/result 摘要)
@@ -495,48 +570,6 @@ function updateTreeSelection(sel) {
   if (sel?.frameId && guided) {
     el.querySelector(`.ft-row[data-frame-id="${sel.frameId}"]`)?.scrollIntoView({ block: "nearest" });
   }
-}
-
-/* ── 渲染:信号时间线(中栏,§6.3 窗口化)──────────────────────── */
-
-function renderTimelinePanel({ skipScroll = false } = {}) {
-  const el = wb.els?.timeline;
-  if (!el) return;
-  const sel = store.get("selection");
-  const view = deriveTimelineView(wb.signals, sel, {
-    collapsed: wb.collapsedGroups,
-    failedFrameIds: wb.failedFrameIds,
-  });
-  wb.lastView = view;
-  const rows = flattenTimelineRows(view.groups);
-  wb.lastRows = rows;
-  let win = null;
-  if (rows.length > WINDOW_THRESHOLD) {
-    // live 跟随时窗口直接按底部计算(渲染后 applyFollow 才落 scrollTop)
-    const follow = Boolean(wb.live) && !wb.live.ending && wb.live.follow;
-    const st = follow ? Math.max(0, sumHeight(rows, 0, rows.length) - (el.clientHeight || 0)) : el.scrollTop;
-    const { start, end } = windowRange(rows.length, st, ROW_H, el.clientHeight || 0, WINDOW_BUFFER);
-    win = {
-      start,
-      end,
-      topPad: sumHeight(rows, 0, start),
-      bottomPad: sumHeight(rows, end, rows.length),
-      topCount: countSignalRows(rows, 0, start),
-      bottomCount: countSignalRows(rows, end, rows.length),
-    };
-  }
-  el.innerHTML = wb.signals.length
-    ? renderTimeline(wb.signals, view, {
-        selection: sel,
-        frameSkill: view.filterFrameId ? shortSkill(findFrame(view.filterFrameId)?.skill) : null,
-        window: win,
-      })
-    : emptyBlock("无信号数据", "trace.jsonl 缺失或该 run 尚未产生信号", "activity");
-  const guided = sel?.source === "timeline" || sel?.source === "rca"; // §4.2/§4.4 聚焦滚动
-  if (!skipScroll && guided && sel.signalIndex != null && view.focused?.visible) {
-    scrollSignalIntoView(sel.signalIndex);
-  }
-  applyFollow(); // live:新信号到达时视窗在底则自动跟随(§4.2 规则 2 live 半)
 }
 
 /* ── Live(§4.3):进度条区 / SSE 驱动 / 轮询回退 / Stop / 结束态 ──── */
@@ -737,7 +770,6 @@ async function finishLive() {
       frames = live.state.frames.map((f) => (f.status === "running" ? { ...f, status: st } : f));
     }
     wb.roots = buildFrameTree(frames, pushOrder(wb.signals));
-    wb.failedFrameIds = frames.filter((f) => f?.status === "failed").map((f) => f.frame_id);
     // §4.4:终态为异常时刷新 RCA 缓存(刚失败的 run 立即可一键定位)
     if (wb.detail?.status === "failed" || wb.detail?.status === "aborted") {
       try {
@@ -752,10 +784,11 @@ async function finishLive() {
   if (wb.runId !== runId) return;
   live.bar?.end(wb.detail?.status ?? "done", wb.detail?.error);
   live.bar?.destroy();
-  wb.live = null; // 时间线停止追加(onLiveSignal/pollTick 均守卫 wb.live)
+  wb.live = null; // 轨迹停止追加(onLiveSignal/pollTick 均守卫 wb.live)
   renderHeader();
   renderTreePanel();
   renderTimelinePanel();
+  prefetchFrameInputs(); // 终态上下文已落盘:补 call 行参数(§4.2)
 }
 
 function teardownLive() {
@@ -820,16 +853,28 @@ export async function wbJumpFirstError() {
     return false;
   }
   // 帧树:展开祖先(updateTreeSelection 对 source "rca" 同样处理,此处提前展开
-  // 保证整树一次重绘);时间线:展开出错信号所在组(异常组本自动展开,aborted 回退信号可能折叠)
-  if (plan.signalIndex != null) {
-    const g = (wb.lastView?.all ?? []).find((gr) =>
-      gr.items.some((it) => it.index === plan.signalIndex));
-    if (g) wb.collapsedGroups.delete(g.key);
-  }
+  // 保证整树一次重绘);轨迹:展开包含出错信号的全部调用子树(含深度默认折叠层)
+  if (plan.signalIndex != null) revealSignalInTrace(plan.signalIndex);
   store.set({
     selection: { frameId: plan.frameId, signalIndex: plan.signalIndex, source: "rca" },
   });
   return true;
+}
+
+/* 轨迹定位前置:把包含目标信号的所有 call 子树展开(RCA/深链接滚动定位用);
+   非行信号(pre:step / skill.invoke)经 rowForSignal 落最近前行再展开。 */
+function revealSignalInTrace(sigIndex) {
+  const rows = wb.lastTraceView?.all ?? [];
+  const target = rowForSignal(rows, sigIndex);
+  if (!target) return;
+  for (const c of rows) {
+    if (c.kind !== "call") continue;
+    const end = c.retLine ?? c.line + (c.kids ?? 0) + 1; // 与 collapseTrace 同语义
+    if (c.line < target.line && target.line <= end) {
+      wb.traceCollapsed.delete(c.sigIndex);
+      wb.traceExpanded.add(c.sigIndex);
+    }
+  }
 }
 
 /* Resume(§4.4 Banner / ⌘K 命令):POST /resume 后端阻塞到恢复结束,
@@ -873,12 +918,10 @@ export function wbDoResume() {
 }
 
 /* ── 键盘信号导航(§5:j/k 下/上一条,gg/G 首/尾)────────────────
-   在当前可见行集(deriveTimelineView 可见组 × 展开态,尊重帧过滤与折叠)中移动;
+   在当前可见行集(deriveTraceView 视图行去掉折叠隐藏,尊重帧过滤)中移动;
    选中经 selection store(source "timeline")走既有三联动。 */
 function visibleSignalIndexes() {
-  return (wb.lastView?.groups ?? [])
-    .filter((g) => g.expanded)
-    .flatMap((g) => g.items.map((it) => it.index));
+  return (wb.lastTraceView?.rows ?? []).filter((r) => !r.hidden).map((r) => r.sigIndex);
 }
 
 export function wbNavSignal(delta) {
@@ -957,10 +1000,8 @@ function renderInspectorPanel() {
   const isRca = sel?.source === "rca";
   const fe = isRca ? wb.rca?.first_error : null;
   const signal = sel?.signalIndex != null ? wb.signals[sel.signalIndex] : null;
-  const group = signal
-    ? (wb.lastView?.all ?? []).find((g) => g.items.some((it) => it.index === sel.signalIndex))
-    : null;
-  const focusIdx = signal ? focusMessageIndex(signal, group?.step ?? null, msgs) : null;
+  const traceRow = signal ? rowForSignal(wb.lastTraceView?.all ?? [], sel.signalIndex) : null;
+  const focusIdx = signal ? focusMessageIndex(signal, traceRow?.step ?? null, msgs) : null;
   let msgsHtml = msgs.length
     ? renderMessages(msgs)
     : emptyBlock("该帧无上下文消息", "frame.context.messages 为空", "inbox");
@@ -1093,11 +1134,26 @@ export function workbenchClick(e, action) {
       else wb.collapsedFrames.add(fid);
       return renderTreePanel(), true;
     }
-    if (act === "tl-toggle") {
-      const key = action.dataset.group;
-      if (wb.collapsedGroups.has(key)) wb.collapsedGroups.delete(key);
-      else wb.collapsedGroups.add(key);
-      return renderTimelinePanel(), true;
+    if (act === "tr-toggle") {
+      // call 行折叠/展开(§4.2):按当前有效态取反,显式集覆盖深度默认折叠
+      const sig = Number(action.dataset.sig);
+      const row = (wb.lastTraceView?.rows ?? []).find((r) => r.sigIndex === sig);
+      if (!row || row.kind !== "call") return true;
+      if (isCallCollapsed(row, wb.traceCollapsed, wb.traceExpanded)) {
+        wb.traceCollapsed.delete(sig);
+        wb.traceExpanded.add(sig);
+      } else {
+        wb.traceExpanded.delete(sig);
+        wb.traceCollapsed.add(sig);
+      }
+      return renderTimelinePanel({ skipScroll: true }), true;
+    }
+    if (act === "tr-payload") {
+      // 行 payload 展开/收起(§4.2:hover 出现的 {} 按钮)
+      const sig = Number(action.dataset.sig);
+      if (wb.tracePayload.has(sig)) wb.tracePayload.delete(sig);
+      else wb.tracePayload.add(sig);
+      return renderTimelinePanel({ skipScroll: true }), true;
     }
     if (act === "tl-clear") return store.set({ selection: null }), true;
     if (act === "wb-follow") {
@@ -1123,15 +1179,10 @@ export function workbenchKeydown(e) {
   const t = e.target;
   const ft = t.closest?.(".ft-row");
   if (ft) return selectFrame(ft.dataset.frameId), true;
+  const chev = t.closest?.(".tr-chev");
+  if (chev) return workbenchClick(e, chev); // chevron 聚焦时 Enter = 折叠/展开
   const tl = t.closest?.(".tl-row");
   if (tl) return selectSignal(tl.dataset), true;
-  const head = t.closest?.(".tl-group-head");
-  if (head) {
-    const key = head.dataset.group;
-    if (wb.collapsedGroups.has(key)) wb.collapsedGroups.delete(key);
-    else wb.collapsedGroups.add(key);
-    return renderTimelinePanel(), true;
-  }
   const filter = t.closest?.(".tl-filter");
   if (filter) return store.set({ selection: null }), true;
   return false;

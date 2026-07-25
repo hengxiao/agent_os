@@ -61,7 +61,7 @@ def main() -> None:
 
     # 每页可选的点击动作(截图前执行,覆盖选中态)
     clicks = {
-        "run-detail": [".ft-row", ".tl-group .tl-row"],
+        "run-detail": [".ft-row", ".tl-row"],
         "skills": [".sk-item"],
         "tools": [".tl-item, .tool-item, .tools-list li, .list-row"],
         "skill-detail": [],

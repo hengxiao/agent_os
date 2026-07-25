@@ -80,6 +80,11 @@ def bad_brain(req: ChatRequest) -> ChatResponse:
     return _final({"wrong": 1})
 
 
+def done_brain(req: ChatRequest) -> ChatResponse:
+    """一步到位的最终答案 {"done": true}(inline replay 等最小 run 测试用)。"""
+    return _final({"done": True})
+
+
 class PowerCut(Exception):
     """模拟断电:第 cut_at 次 LLM 调用时直接崩掉。"""
 

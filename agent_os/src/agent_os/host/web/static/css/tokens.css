@@ -29,6 +29,16 @@
   --sig-budget:   #e5534b;
   --sig-frame:    #5d6b82;
 
+  /* debug trace(§4.2 中栏):深度彩虹轨 6 色循环(VSCode indent guide 风)+
+     当前位置 ▶ 调试器黄 */
+  --trace-d0: #4b9fff;
+  --trace-d1: #3fb68b;
+  --trace-d2: #d9a03f;
+  --trace-d3: #9e6bde;
+  --trace-d4: #3fb6c9;
+  --trace-d5: #e5678b;
+  --trace-arrow: #e6c07b;
+
   /* 语义:工具权限等级 */
   --perm-read:  #5d6b82;
   --perm-write: #d9a03f;

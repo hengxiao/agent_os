@@ -94,6 +94,7 @@ class SkillManifest:
     prompt: str | None = None  # 单文件形态(§6.3 skills.yaml)内联提示词模板
     handler: str | None = None  # 单文件形态 code 技能入口(dotted path,如 "my_skills.handlers:run")
     logic: dict[str, Any] | None = None  # {"mode": "trusted" | "sandbox"}(§9.2)
+    inline: bool = False  # 预展开(merge):prompt 并入调用方 SYSTEM,不生成伪工具(SKILL-INLINING.md)
 
 
 #: code 技能入口签名(§6.3):``async def run(input, ctx)``

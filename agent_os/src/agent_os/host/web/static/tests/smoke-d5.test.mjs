@@ -65,7 +65,7 @@ const USAGE = {
       cache_write_tokens: 8, thinking_tokens: 3, cost: 0.5 },
   ],
 };
-const LONG_SIGNALS = Array.from({ length: 700 }, (_, i) => ({
+const LONG_SIGNALS = Array.from({ length: 1400 }, (_, i) => ({
   v: 1,
   type: "signal",
   name: i % 2 ? "post:tool.call" : "pre:tool.call",
@@ -354,7 +354,7 @@ const clickAction = (dataset) => {
   uninstall();
 }
 
-/* ══ 5. 时间线窗口化(>500 信号行)══════════════════════════ */
+/* ══ 5. 轨迹窗口化(>500 渲染行;1400 信号 → 700 合并行)═══════════ */
 {
   store.set({ route: { name: "run-detail", runId: "r-long" }, selectedRunId: "r-long" });
   const main = new StubEl("main");
@@ -366,16 +366,16 @@ const clickAction = (dataset) => {
   const first = timeline.innerHTML;
   const rendered = (first.match(/class="tl-row"/g) ?? []).length;
   assert.ok(rendered > 0 && rendered <= 80, `窗口化只渲染子集(渲染 ${rendered} 行 ≪ 700)`);
-  assert.match(first, /还有 \d+ 条信号/, "底部占位行显示剩余条数");
+  assert.match(first, /还有 \d+ 行/, "底部占位行显示剩余行数");
   assert.match(first, /data-side="bottom"/);
   assert.doesNotMatch(first, /data-side="top"/, "顶部无裁切无占位");
 
   /* 滚动 → 窗口增量替换 */
-  timeline.scrollTop = 28 * 300;
+  timeline.scrollTop = 24 * 300;
   timeline.trigger("scroll");
   const scrolled = timeline.innerHTML;
   assert.match(scrolled, /data-side="top"/, "滚动后顶部占位出现");
-  assert.match(scrolled, /data-signal-index="2\d\d"/, "新窗口渲染目标区信号");
+  assert.match(scrolled, /data-signal-index="[4-6]\d\d"/, "新窗口渲染目标区信号");
   const rendered2 = (scrolled.match(/class="tl-row"/g) ?? []).length;
   assert.ok(rendered2 <= 130, `滚动后仍为子集(渲染 ${rendered2} 行)`);
 

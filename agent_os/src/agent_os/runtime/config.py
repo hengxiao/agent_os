@@ -56,6 +56,7 @@ _RUN_FIELDS = (
     "max_cost",
     "max_wall_time",
     "compression",
+    "inline",
     "seed",
     "temperature",
 )

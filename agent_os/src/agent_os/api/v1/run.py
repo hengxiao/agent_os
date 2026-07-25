@@ -39,6 +39,7 @@ class RunConfig:
     max_cost: float = 2.0  # 美元
     max_wall_time: float = 1800.0
     compression: str = "hierarchical"  # "off" = 消融档(裸模型基线)
+    inline: str = "on"  # "off" = 内联消融档:merge 技能退化为普通压帧调用(SKILL-INLINING.md §9)
     tool_policy: ToolPolicy = field(default_factory=ToolPolicy)
     logic_policy: LogicPolicy = field(default_factory=LogicPolicy)
     seed: int | None = None

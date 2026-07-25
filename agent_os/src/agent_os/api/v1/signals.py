@@ -16,6 +16,7 @@ __all__ = [
     "BUDGET_EXCEEDED",
     "BUDGET_WARNING",
     "POST_COMPRESS",
+    "POST_CONTEXT_INLINE",
     "POST_FRAME_POP",
     "POST_FRAME_PUSH",
     "POST_LLM_CHUNK",
@@ -68,6 +69,9 @@ POST_LOGIC_EXEC = "post:logic.exec"
 PRE_COMPRESS = "pre:compress"
 POST_COMPRESS = "post:compress"
 
+#: 内联能力段组装(帧首次 build 快照时一次性发射;SKILL-INLINING.md §7)
+POST_CONTEXT_INLINE = "post:context.inline"
+
 BLACKBOARD_PUBLISH = "blackboard.publish"  # 黑板读写可审计(§12)
 BLACKBOARD_WRITE = "blackboard.write"
 
@@ -96,6 +100,7 @@ SIGNAL_NAMES: tuple[str, ...] = (
     POST_LOGIC_EXEC,
     PRE_COMPRESS,
     POST_COMPRESS,
+    POST_CONTEXT_INLINE,
     BLACKBOARD_PUBLISH,
     BLACKBOARD_WRITE,
     BUDGET_WARNING,

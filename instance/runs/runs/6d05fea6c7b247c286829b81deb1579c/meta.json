@@ -1,0 +1,10 @@
+{
+  "run_id": "6d05fea6c7b247c286829b81deb1579c",
+  "skill": "fib",
+  "input": {
+    "n": 6
+  },
+  "host": "web",
+  "started_at": "2026-07-25T19:10:10.787517+00:00",
+  "skill_set": "fib"
+}

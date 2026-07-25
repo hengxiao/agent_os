@@ -1,0 +1,26 @@
+{
+  "status": "done",
+  "result": {
+    "seq": [
+      0,
+      1,
+      1,
+      2,
+      3,
+      5
+    ]
+  },
+  "error": null,
+  "usage": {
+    "cost": 0.0,
+    "completion_tokens": 13,
+    "cache_write_tokens": 0,
+    "thinking_tokens": 0,
+    "steps": 13,
+    "ttft_ms": 0,
+    "cache_read_tokens": 0,
+    "prompt_tokens": 13,
+    "total_ms": 0
+  },
+  "skill_set": "fib"
+}

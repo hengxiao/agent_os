@@ -31,7 +31,7 @@ from agent_os.api.v1 import (
 )
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.skills.loader import materialize
-from agent_os.skills.manifest import parse_manifest, validate_manifest
+from agent_os.skills.manifest import INLINE_DEPS_MAX, parse_manifest, validate_manifest
 
 _log = logging.getLogger("agent_os.skills")
 
@@ -94,6 +94,14 @@ class LocalFileSkillRegistry:
                     raise SkillLoadError(f"技能 {m.name} 引用了不存在的子技能: {dep}")
             for warning in validate_manifest(m):
                 _log.warning("%s", warning)
+            # 调用方侧膨胀 lint(SKILL-INLINING.md §3.3):merge 依赖条数上限
+            merged = [d for d in m.permissions.skills if by_name[d].inline]
+            if len(merged) > INLINE_DEPS_MAX:
+                _log.warning(
+                    "技能 %s: 内联(merge)依赖 %d 条超过 %d 上限(指令常驻 SYSTEM,"
+                    "每步都付其 token): %s",
+                    m.name, len(merged), INLINE_DEPS_MAX, merged,
+                )
         return {name: materialize(by_name[name]) for name in _topo_sort(manifests)}
 
     def _ensure_loaded(self) -> None:

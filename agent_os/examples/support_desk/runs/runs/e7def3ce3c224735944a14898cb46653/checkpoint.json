@@ -1,0 +1,1146 @@
+{
+  "v": 1,
+  "run": {
+    "run_id": "e7def3ce3c224735944a14898cb46653",
+    "status": "done",
+    "usage": {
+      "completion_tokens": 16,
+      "thinking_tokens": 0,
+      "steps": 16,
+      "ttft_ms": 0,
+      "cost": 0.0,
+      "cache_write_tokens": 0,
+      "prompt_tokens": 16,
+      "total_ms": 0,
+      "cache_read_tokens": 0
+    },
+    "result": {
+      "status": "resolved_rejected",
+      "ticket_id": "T-1002",
+      "refund_cents": 0,
+      "response": "李雷 您好,关于订单 o2 的退款申请,经审核:签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。 很抱歉本次无法为您办理退款;如有新的凭证,欢迎回复本工单补充说明。"
+    },
+    "error": null
+  },
+  "frames": [
+    {
+      "frame_id": "4894e68309904c6aa43d4b3bb635c1d8",
+      "skill": "local:handle_ticket@1.0.0",
+      "parent_id": null,
+      "input": {
+        "ticket_id": "T-1002"
+      },
+      "depth": 1,
+      "status": "done",
+      "result": {
+        "status": "resolved_rejected",
+        "ticket_id": "T-1002",
+        "refund_cents": 0,
+        "response": "李雷 您好,关于订单 o2 的退款申请,经审核:签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。 很抱歉本次无法为您办理退款;如有新的凭证,欢迎回复本工单补充说明。"
+      },
+      "error": null,
+      "call_id": null,
+      "usage": {
+        "completion_tokens": 8,
+        "thinking_tokens": 0,
+        "steps": 8,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 8,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1002\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-0",
+                "name": "skill__classify_ticket",
+                "args": {
+                  "ticket_id": "T-1002"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"category\": \"refund_request\", \"confidence\": 0.9}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-0",
+            "name": "skill__classify_ticket",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-1",
+                "name": "skill__gather_context",
+                "args": {
+                  "ticket_id": "T-1002"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"ticket\": {\"ticket_id\": \"T-1002\", \"user_id\": \"u2\", \"order_id\": \"o2\", \"subject\": \"\\u9000\\u6b3e,\\u4e0d\\u60f3\\u8981\\u4e86\", \"body\": \"\\u4e1c\\u897f\\u6536\\u5230\\u6709\\u4e00\\u9635\\u5b50\\u4e86,\\u73b0\\u5728\\u4e0d\\u60f3\\u8981\\u4e86,\\u5e2e\\u6211\\u529e\\u7406\\u9000\\u6b3e\\u3002\", \"channel\": \"web\", \"status\": \"open\", \"created_at\": \"2026-07-20T12:00:00+00:00\"}, \"order\": {\"order_id\": \"o2\", \"user_id\": \"u2\", \"total_cents\": 25900, \"currency\": \"CNY\", \"status\": \"delivered\", \"created_at\": \"2026-05-25T12:00:00+00:00\", \"delivered_at\": \"2026-05-31T12:00:00+00:00\", \"items\": [{\"sku\": \"HOODIE-L-02\", \"title\": \"\\u8fde\\u5e3d\\u536b\\u8863 L \\u7801\", \"qty\": 1}]}, \"user\": {\"user_id\": \"u2\", \"name\": \"\\u674e\\u96f7\", \"email\": \"lilei@example.com\", \"tier\": \"normal\"}, \"facts\": {\"order_total_cents\": 25900, \"currency\": \"CNY\", \"order_delivered\": true, \"hours_since_created\": 1344, \"days_since_created\": 56, \"hours_since_delivered\": 1200, \"days_since_delivered\": 50, \"user_tier\": \"normal\"}}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-1",
+            "name": "skill__gather_context",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-2",
+                "name": "skill__estimate_priority",
+                "args": {
+                  "category": "refund_request",
+                  "facts": {
+                    "order_total_cents": 25900,
+                    "currency": "CNY",
+                    "order_delivered": true,
+                    "hours_since_created": 1344,
+                    "days_since_created": 56,
+                    "hours_since_delivered": 1200,
+                    "days_since_delivered": 50,
+                    "user_tier": "normal"
+                  }
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"priority\": \"medium\", \"score\": 50}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-2",
+            "name": "skill__estimate_priority",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-3",
+                "name": "skill__assess_refund",
+                "args": {
+                  "category": "refund_request",
+                  "facts": {
+                    "order_total_cents": 25900,
+                    "currency": "CNY",
+                    "order_delivered": true,
+                    "hours_since_created": 1344,
+                    "days_since_created": 56,
+                    "hours_since_delivered": 1200,
+                    "days_since_delivered": 50,
+                    "user_tier": "normal"
+                  },
+                  "order": {
+                    "order_id": "o2",
+                    "user_id": "u2",
+                    "total_cents": 25900,
+                    "currency": "CNY",
+                    "status": "delivered",
+                    "created_at": "2026-05-25T12:00:00+00:00",
+                    "delivered_at": "2026-05-31T12:00:00+00:00",
+                    "items": [
+                      {
+                        "sku": "HOODIE-L-02",
+                        "title": "连帽卫衣 L 码",
+                        "qty": 1
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"decision\": \"reject\", \"reasoning\": \"\\u7b7e\\u6536\\u540e\\u65e0\\u7406\\u7531\\u9000\\u6b3e\\u7a97\\u53e3 7 \\u5929,\\u8ba2\\u5355\\u7b7e\\u6536\\u4e8e 50 \\u5929\\u524d,\\u8d85\\u51fa\\u7a97\\u53e3\\u3002\\u4e0d\\u7b26\\u5408\\u9000\\u6b3e\\u653f\\u7b56,\\u62d2\\u7edd\\u9000\\u6b3e\\u3002\"}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-3",
+            "name": "skill__assess_refund",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-4",
+                "name": "skill__draft_response",
+                "args": {
+                  "category": "refund_request",
+                  "decision": "reject",
+                  "user": {
+                    "user_id": "u2",
+                    "name": "李雷",
+                    "email": "lilei@example.com",
+                    "tier": "normal"
+                  },
+                  "order": {
+                    "order_id": "o2",
+                    "user_id": "u2",
+                    "total_cents": 25900,
+                    "currency": "CNY",
+                    "status": "delivered",
+                    "created_at": "2026-05-25T12:00:00+00:00",
+                    "delivered_at": "2026-05-31T12:00:00+00:00",
+                    "items": [
+                      {
+                        "sku": "HOODIE-L-02",
+                        "title": "连帽卫衣 L 码",
+                        "qty": 1
+                      }
+                    ]
+                  },
+                  "reasoning": "签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。",
+                  "amount_cents": 0
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"response\": \"\\u674e\\u96f7 \\u60a8\\u597d,\\u5173\\u4e8e\\u8ba2\\u5355 o2 \\u7684\\u9000\\u6b3e\\u7533\\u8bf7,\\u7ecf\\u5ba1\\u6838:\\u7b7e\\u6536\\u540e\\u65e0\\u7406\\u7531\\u9000\\u6b3e\\u7a97\\u53e3 7 \\u5929,\\u8ba2\\u5355\\u7b7e\\u6536\\u4e8e 50 \\u5929\\u524d,\\u8d85\\u51fa\\u7a97\\u53e3\\u3002\\u4e0d\\u7b26\\u5408\\u9000\\u6b3e\\u653f\\u7b56,\\u62d2\\u7edd\\u9000\\u6b3e\\u3002 \\u5f88\\u62b1\\u6b49\\u672c\\u6b21\\u65e0\\u6cd5\\u4e3a\\u60a8\\u529e\\u7406\\u9000\\u6b3e;\\u5982\\u6709\\u65b0\\u7684\\u51ed\\u8bc1,\\u6b22\\u8fce\\u56de\\u590d\\u672c\\u5de5\\u5355\\u8865\\u5145\\u8bf4\\u660e\\u3002\"}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-4",
+            "name": "skill__draft_response",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-5",
+                "name": "skill__notify_customer",
+                "args": {
+                  "ticket_id": "T-1002",
+                  "user_id": "u2",
+                  "message": "李雷 您好,关于订单 o2 的退款申请,经审核:签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。 很抱歉本次无法为您办理退款;如有新的凭证,欢迎回复本工单补充说明。"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"sent\": true, \"notification_id\": \"N-u2-483b1900\"}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-5",
+            "name": "skill__notify_customer",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-handle_ticket-6",
+                "name": "skill__write_case_summary",
+                "args": {
+                  "ticket_id": "T-1002",
+                  "category": "refund_request",
+                  "decision": "reject",
+                  "refund_cents": 0,
+                  "priority": "medium",
+                  "user": {
+                    "user_id": "u2",
+                    "name": "李雷",
+                    "email": "lilei@example.com",
+                    "tier": "normal"
+                  }
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"summary\": \"\\u5de5\\u5355 T-1002(refund_request)\\u5904\\u7406\\u5b8c\\u6210:\\u51b3\\u7b56 reject,\\u9000\\u6b3e 0 \\u5206,\\u4f18\\u5148\\u7ea7 medium\\u3002\\u5ba2\\u6237:\\u674e\\u96f7 <***@***>\\nEN: [EN] \\u5de5\\u5355 T-1002(refund_request)\\u5904\\u7406\\u5b8c\\u6210:\\u51b3\\u7b56 reject,\\u9000\\u6b3e 0 \\u5206,\\u4f18\\u5148\\u7ea7 medium\\u3002\\u5ba2\\u6237:\\u674e\\u96f7 <***@***>\\n\\u5ba1\\u8ba1\\u7f16\\u53f7: AUDIT-T-1002-REJECT-6847\"}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-handle_ticket-6",
+            "name": "skill__write_case_summary",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"status\": \"resolved_rejected\", \"ticket_id\": \"T-1002\", \"refund_cents\": 0, \"response\": \"李雷 您好,关于订单 o2 的退款申请,经审核:签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。 很抱歉本次无法为您办理退款;如有新的凭证,欢迎回复本工单补充说明。\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 1120
+      }
+    },
+    {
+      "frame_id": "cd1a36ff323c4115ae2f8d751c852547",
+      "skill": "local:classify_ticket@1.0.0",
+      "parent_id": "4894e68309904c6aa43d4b3bb635c1d8",
+      "input": {
+        "ticket_id": "T-1002"
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "category": "refund_request",
+        "confidence": 0.9
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-0",
+      "usage": {
+        "completion_tokens": 2,
+        "thinking_tokens": 0,
+        "steps": 2,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 2,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1002\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-classify_ticket-0",
+                "name": "get_ticket",
+                "args": {
+                  "ticket_id": "T-1002"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"ticket_id\": \"T-1002\", \"user_id\": \"u2\", \"order_id\": \"o2\", \"subject\": \"\\u9000\\u6b3e,\\u4e0d\\u60f3\\u8981\\u4e86\", \"body\": \"\\u4e1c\\u897f\\u6536\\u5230\\u6709\\u4e00\\u9635\\u5b50\\u4e86,\\u73b0\\u5728\\u4e0d\\u60f3\\u8981\\u4e86,\\u5e2e\\u6211\\u529e\\u7406\\u9000\\u6b3e\\u3002\", \"channel\": \"web\", \"status\": \"open\", \"created_at\": \"2026-07-20T12:00:00+00:00\"}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-classify_ticket-0",
+            "name": "get_ticket",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"category\": \"refund_request\", \"confidence\": 0.9}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 116
+      }
+    },
+    {
+      "frame_id": "9e3f8e9a8bf346b7bc6e5539db09a591",
+      "skill": "local:gather_context@1.0.0",
+      "parent_id": "4894e68309904c6aa43d4b3bb635c1d8",
+      "input": {
+        "ticket_id": "T-1002"
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "ticket": {
+          "ticket_id": "T-1002",
+          "user_id": "u2",
+          "order_id": "o2",
+          "subject": "退款,不想要了",
+          "body": "东西收到有一阵子了,现在不想要了,帮我办理退款。",
+          "channel": "web",
+          "status": "open",
+          "created_at": "2026-07-20T12:00:00+00:00"
+        },
+        "order": {
+          "order_id": "o2",
+          "user_id": "u2",
+          "total_cents": 25900,
+          "currency": "CNY",
+          "status": "delivered",
+          "created_at": "2026-05-25T12:00:00+00:00",
+          "delivered_at": "2026-05-31T12:00:00+00:00",
+          "items": [
+            {
+              "sku": "HOODIE-L-02",
+              "title": "连帽卫衣 L 码",
+              "qty": 1
+            }
+          ]
+        },
+        "user": {
+          "user_id": "u2",
+          "name": "李雷",
+          "email": "lilei@example.com",
+          "tier": "normal"
+        },
+        "facts": {
+          "order_total_cents": 25900,
+          "currency": "CNY",
+          "order_delivered": true,
+          "hours_since_created": 1344,
+          "days_since_created": 56,
+          "hours_since_delivered": 1200,
+          "days_since_delivered": 50,
+          "user_tier": "normal"
+        }
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-1",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1002\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "8c1f6ca57b124995965f1a9db10b12e7",
+      "skill": "local:estimate_priority@1.0.0",
+      "parent_id": "4894e68309904c6aa43d4b3bb635c1d8",
+      "input": {
+        "category": "refund_request",
+        "facts": {
+          "order_total_cents": 25900,
+          "currency": "CNY",
+          "order_delivered": true,
+          "hours_since_created": 1344,
+          "days_since_created": 56,
+          "hours_since_delivered": 1200,
+          "days_since_delivered": 50,
+          "user_tier": "normal"
+        }
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "priority": "medium",
+        "score": 50
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-2",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"category\": \"refund_request\", \"facts\": {\"order_total_cents\": 25900, \"currency\": \"CNY\", \"order_delivered\": true, \"hours_since_created\": 1344, \"days_since_created\": 56, \"hours_since_delivered\": 1200, \"days_since_delivered\": 50, \"user_tier\": \"normal\"}}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "ca3a25f42e534c29a8738272cce58674",
+      "skill": "local:assess_refund@1.0.0",
+      "parent_id": "4894e68309904c6aa43d4b3bb635c1d8",
+      "input": {
+        "category": "refund_request",
+        "facts": {
+          "order_total_cents": 25900,
+          "currency": "CNY",
+          "order_delivered": true,
+          "hours_since_created": 1344,
+          "days_since_created": 56,
+          "hours_since_delivered": 1200,
+          "days_since_delivered": 50,
+          "user_tier": "normal"
+        },
+        "order": {
+          "order_id": "o2",
+          "user_id": "u2",
+          "total_cents": 25900,
+          "currency": "CNY",
+          "status": "delivered",
+          "created_at": "2026-05-25T12:00:00+00:00",
+          "delivered_at": "2026-05-31T12:00:00+00:00",
+          "items": [
+            {
+              "sku": "HOODIE-L-02",
+              "title": "连帽卫衣 L 码",
+              "qty": 1
+            }
+          ]
+        }
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "decision": "reject",
+        "reasoning": "签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。"
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-3",
+      "usage": {
+        "completion_tokens": 2,
+        "thinking_tokens": 0,
+        "steps": 2,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 2,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"category\": \"refund_request\", \"facts\": {\"order_total_cents\": 25900, \"currency\": \"CNY\", \"order_delivered\": true, \"hours_since_created\": 1344, \"days_since_created\": 56, \"hours_since_delivered\": 1200, \"days_since_delivered\": 50, \"user_tier\": \"normal\"}, \"order\": {\"order_id\": \"o2\", \"user_id\": \"u2\", \"total_cents\": 25900, \"currency\": \"CNY\", \"status\": \"delivered\", \"created_at\": \"2026-05-25T12:00:00+00:00\", \"delivered_at\": \"2026-05-31T12:00:00+00:00\", \"items\": [{\"sku\": \"HOODIE-L-02\", \"title\": \"\\u8fde\\u5e3d\\u536b\\u8863 L \\u7801\", \"qty\": 1}]}}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-assess_refund-0",
+                "name": "skill__check_policy",
+                "args": {
+                  "category": "refund_request",
+                  "facts": {
+                    "order_total_cents": 25900,
+                    "currency": "CNY",
+                    "order_delivered": true,
+                    "hours_since_created": 1344,
+                    "days_since_created": 56,
+                    "hours_since_delivered": 1200,
+                    "days_since_delivered": 50,
+                    "user_tier": "normal"
+                  }
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"eligible\": false, \"reasons\": [\"\\u7b7e\\u6536\\u540e\\u65e0\\u7406\\u7531\\u9000\\u6b3e\\u7a97\\u53e3 7 \\u5929,\\u8ba2\\u5355\\u7b7e\\u6536\\u4e8e 50 \\u5929\\u524d,\\u8d85\\u51fa\\u7a97\\u53e3\"]}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-assess_refund-0",
+            "name": "skill__check_policy",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"decision\": \"reject\", \"reasoning\": \"签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 262
+      }
+    },
+    {
+      "frame_id": "b3fe97ba016947339554d6fe60a11c36",
+      "skill": "local:check_policy@1.0.0",
+      "parent_id": "ca3a25f42e534c29a8738272cce58674",
+      "input": {
+        "category": "refund_request",
+        "facts": {
+          "order_total_cents": 25900,
+          "currency": "CNY",
+          "order_delivered": true,
+          "hours_since_created": 1344,
+          "days_since_created": 56,
+          "hours_since_delivered": 1200,
+          "days_since_delivered": 50,
+          "user_tier": "normal"
+        }
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "eligible": false,
+        "reasons": [
+          "签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口"
+        ]
+      },
+      "error": null,
+      "call_id": "call-assess_refund-0",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"category\": \"refund_request\", \"facts\": {\"order_total_cents\": 25900, \"currency\": \"CNY\", \"order_delivered\": true, \"hours_since_created\": 1344, \"days_since_created\": 56, \"hours_since_delivered\": 1200, \"days_since_delivered\": 50, \"user_tier\": \"normal\"}}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "a2eca33d9528475d9d014900e377929a",
+      "skill": "local:draft_response@1.0.0",
+      "parent_id": "4894e68309904c6aa43d4b3bb635c1d8",
+      "input": {
+        "category": "refund_request",
+        "decision": "reject",
+        "user": {
+          "user_id": "u2",
+          "name": "李雷",
+          "email": "lilei@example.com",
+          "tier": "normal"
+        },
+        "order": {
+          "order_id": "o2",
+          "user_id": "u2",
+          "total_cents": 25900,
+          "currency": "CNY",
+          "status": "delivered",
+          "created_at": "2026-05-25T12:00:00+00:00",
+          "delivered_at": "2026-05-31T12:00:00+00:00",
+          "items": [
+            {
+              "sku": "HOODIE-L-02",
+              "title": "连帽卫衣 L 码",
+              "qty": 1
+            }
+          ]
+        },
+        "reasoning": "签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。",
+        "amount_cents": 0
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "response": "李雷 您好,关于订单 o2 的退款申请,经审核:签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。 很抱歉本次无法为您办理退款;如有新的凭证,欢迎回复本工单补充说明。"
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-4",
+      "usage": {
+        "completion_tokens": 2,
+        "thinking_tokens": 0,
+        "steps": 2,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 2,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"category\": \"refund_request\", \"decision\": \"reject\", \"user\": {\"user_id\": \"u2\", \"name\": \"\\u674e\\u96f7\", \"email\": \"lilei@example.com\", \"tier\": \"normal\"}, \"order\": {\"order_id\": \"o2\", \"user_id\": \"u2\", \"total_cents\": 25900, \"currency\": \"CNY\", \"status\": \"delivered\", \"created_at\": \"2026-05-25T12:00:00+00:00\", \"delivered_at\": \"2026-05-31T12:00:00+00:00\", \"items\": [{\"sku\": \"HOODIE-L-02\", \"title\": \"\\u8fde\\u5e3d\\u536b\\u8863 L \\u7801\", \"qty\": 1}]}, \"reasoning\": \"\\u7b7e\\u6536\\u540e\\u65e0\\u7406\\u7531\\u9000\\u6b3e\\u7a97\\u53e3 7 \\u5929,\\u8ba2\\u5355\\u7b7e\\u6536\\u4e8e 50 \\u5929\\u524d,\\u8d85\\u51fa\\u7a97\\u53e3\\u3002\\u4e0d\\u7b26\\u5408\\u9000\\u6b3e\\u653f\\u7b56,\\u62d2\\u7edd\\u9000\\u6b3e\\u3002\", \"amount_cents\": 0}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-draft_response-0",
+                "name": "skill__review_response",
+                "args": {
+                  "response": "李雷 您好,关于订单 o2 的退款申请,经审核:签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。 很抱歉本次无法为您办理退款;如有新的凭证,欢迎回复本工单补充说明。"
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          },
+          {
+            "role": "tool",
+            "content": "{\"ok\": true, \"value\": {\"ok\": true, \"issues\": []}, \"error\": null}",
+            "tool_calls": [],
+            "tool_call_id": "call-draft_response-0",
+            "name": "skill__review_response",
+            "reasoning": null,
+            "source": "tool_result",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"response\": \"李雷 您好,关于订单 o2 的退款申请,经审核:签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。 很抱歉本次无法为您办理退款;如有新的凭证,欢迎回复本工单补充说明。\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 232
+      }
+    },
+    {
+      "frame_id": "ae8048bc15b447c19f98526a417fc1af",
+      "skill": "local:review_response@1.0.0",
+      "parent_id": "a2eca33d9528475d9d014900e377929a",
+      "input": {
+        "response": "李雷 您好,关于订单 o2 的退款申请,经审核:签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。 很抱歉本次无法为您办理退款;如有新的凭证,欢迎回复本工单补充说明。"
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "ok": true,
+        "issues": []
+      },
+      "error": null,
+      "call_id": "call-draft_response-0",
+      "usage": {
+        "completion_tokens": 1,
+        "thinking_tokens": 0,
+        "steps": 1,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 1,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"response\": \"\\u674e\\u96f7 \\u60a8\\u597d,\\u5173\\u4e8e\\u8ba2\\u5355 o2 \\u7684\\u9000\\u6b3e\\u7533\\u8bf7,\\u7ecf\\u5ba1\\u6838:\\u7b7e\\u6536\\u540e\\u65e0\\u7406\\u7531\\u9000\\u6b3e\\u7a97\\u53e3 7 \\u5929,\\u8ba2\\u5355\\u7b7e\\u6536\\u4e8e 50 \\u5929\\u524d,\\u8d85\\u51fa\\u7a97\\u53e3\\u3002\\u4e0d\\u7b26\\u5408\\u9000\\u6b3e\\u653f\\u7b56,\\u62d2\\u7edd\\u9000\\u6b3e\\u3002 \\u5f88\\u62b1\\u6b49\\u672c\\u6b21\\u65e0\\u6cd5\\u4e3a\\u60a8\\u529e\\u7406\\u9000\\u6b3e;\\u5982\\u6709\\u65b0\\u7684\\u51ed\\u8bc1,\\u6b22\\u8fce\\u56de\\u590d\\u672c\\u5de5\\u5355\\u8865\\u5145\\u8bf4\\u660e\\u3002\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"ok\": true, \"issues\": []}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 136
+      }
+    },
+    {
+      "frame_id": "c1f7690cffc64383930c9f4df97f6c23",
+      "skill": "local:notify_customer@1.0.0",
+      "parent_id": "4894e68309904c6aa43d4b3bb635c1d8",
+      "input": {
+        "ticket_id": "T-1002",
+        "user_id": "u2",
+        "message": "李雷 您好,关于订单 o2 的退款申请,经审核:签收后无理由退款窗口 7 天,订单签收于 50 天前,超出窗口。不符合退款政策,拒绝退款。 很抱歉本次无法为您办理退款;如有新的凭证,欢迎回复本工单补充说明。"
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "sent": true,
+        "notification_id": "N-u2-483b1900"
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-5",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1002\", \"user_id\": \"u2\", \"message\": \"\\u674e\\u96f7 \\u60a8\\u597d,\\u5173\\u4e8e\\u8ba2\\u5355 o2 \\u7684\\u9000\\u6b3e\\u7533\\u8bf7,\\u7ecf\\u5ba1\\u6838:\\u7b7e\\u6536\\u540e\\u65e0\\u7406\\u7531\\u9000\\u6b3e\\u7a97\\u53e3 7 \\u5929,\\u8ba2\\u5355\\u7b7e\\u6536\\u4e8e 50 \\u5929\\u524d,\\u8d85\\u51fa\\u7a97\\u53e3\\u3002\\u4e0d\\u7b26\\u5408\\u9000\\u6b3e\\u653f\\u7b56,\\u62d2\\u7edd\\u9000\\u6b3e\\u3002 \\u5f88\\u62b1\\u6b49\\u672c\\u6b21\\u65e0\\u6cd5\\u4e3a\\u60a8\\u529e\\u7406\\u9000\\u6b3e;\\u5982\\u6709\\u65b0\\u7684\\u51ed\\u8bc1,\\u6b22\\u8fce\\u56de\\u590d\\u672c\\u5de5\\u5355\\u8865\\u5145\\u8bf4\\u660e\\u3002\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "777565aa8b2b4dfd8e608c05a448ebdf",
+      "skill": "local:write_case_summary@1.0.0",
+      "parent_id": "4894e68309904c6aa43d4b3bb635c1d8",
+      "input": {
+        "ticket_id": "T-1002",
+        "category": "refund_request",
+        "decision": "reject",
+        "refund_cents": 0,
+        "priority": "medium",
+        "user": {
+          "user_id": "u2",
+          "name": "李雷",
+          "email": "lilei@example.com",
+          "tier": "normal"
+        }
+      },
+      "depth": 2,
+      "status": "done",
+      "result": {
+        "summary": "工单 T-1002(refund_request)处理完成:决策 reject,退款 0 分,优先级 medium。客户:李雷 <***@***>\nEN: [EN] 工单 T-1002(refund_request)处理完成:决策 reject,退款 0 分,优先级 medium。客户:李雷 <***@***>\n审计编号: AUDIT-T-1002-REJECT-6847"
+      },
+      "error": null,
+      "call_id": "call-handle_ticket-6",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1002\", \"category\": \"refund_request\", \"decision\": \"reject\", \"refund_cents\": 0, \"priority\": \"medium\", \"user\": {\"user_id\": \"u2\", \"name\": \"\\u674e\\u96f7\", \"email\": \"lilei@example.com\", \"tier\": \"normal\"}}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "e7cb00a4aa204e7ab79d5ea13e941d95",
+      "skill": "local:redact_pii@1.0.0",
+      "parent_id": "777565aa8b2b4dfd8e608c05a448ebdf",
+      "input": {
+        "text": "工单 T-1002(refund_request)处理完成:决策 reject,退款 0 分,优先级 medium。客户:李雷 <lilei@example.com>"
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "text": "工单 T-1002(refund_request)处理完成:决策 reject,退款 0 分,优先级 medium。客户:李雷 <***@***>"
+      },
+      "error": null,
+      "call_id": "faf8398645354388ad4e0abd942372af",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"text\": \"\\u5de5\\u5355 T-1002(refund_request)\\u5904\\u7406\\u5b8c\\u6210:\\u51b3\\u7b56 reject,\\u9000\\u6b3e 0 \\u5206,\\u4f18\\u5148\\u7ea7 medium\\u3002\\u5ba2\\u6237:\\u674e\\u96f7 <lilei@example.com>\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "7cf894b3546141ee866413b31835e7d0",
+      "skill": "local:build_audit_log@1.0.0",
+      "parent_id": "777565aa8b2b4dfd8e608c05a448ebdf",
+      "input": {
+        "ticket_id": "T-1002",
+        "decision": "reject",
+        "amount_cents": 0
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "audit": "AUDIT-T-1002-REJECT-6847"
+      },
+      "error": null,
+      "call_id": "2ff4428e0cf84af5ba627a1d0fda1c68",
+      "usage": {
+        "completion_tokens": 0,
+        "thinking_tokens": 0,
+        "steps": 0,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 0,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"ticket_id\": \"T-1002\", \"decision\": \"reject\", \"amount_cents\": 0}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 0
+      }
+    },
+    {
+      "frame_id": "8ba5711fe91948d48efaaa080f3d50c7",
+      "skill": "local:translate_en@1.0.0",
+      "parent_id": "777565aa8b2b4dfd8e608c05a448ebdf",
+      "input": {
+        "text": "工单 T-1002(refund_request)处理完成:决策 reject,退款 0 分,优先级 medium。客户:李雷 <***@***>"
+      },
+      "depth": 3,
+      "status": "done",
+      "result": {
+        "translation": "[EN] 工单 T-1002(refund_request)处理完成:决策 reject,退款 0 分,优先级 medium。客户:李雷 <***@***>"
+      },
+      "error": null,
+      "call_id": "6def6d882b3a4ad39c964458672a83bd",
+      "usage": {
+        "completion_tokens": 1,
+        "thinking_tokens": 0,
+        "steps": 1,
+        "ttft_ms": 0,
+        "cost": 0.0,
+        "cache_write_tokens": 0,
+        "prompt_tokens": 1,
+        "total_ms": 0,
+        "cache_read_tokens": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"text\": \"\\u5de5\\u5355 T-1002(refund_request)\\u5904\\u7406\\u5b8c\\u6210:\\u51b3\\u7b56 reject,\\u9000\\u6b3e 0 \\u5206,\\u4f18\\u5148\\u7ea7 medium\\u3002\\u5ba2\\u6237:\\u674e\\u96f7 <***@***>\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "{\"translation\": \"[EN] 工单 T-1002(refund_request)处理完成:决策 reject,退款 0 分,优先级 medium。客户:李雷 <***@***>\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 49
+      }
+    }
+  ]
+}

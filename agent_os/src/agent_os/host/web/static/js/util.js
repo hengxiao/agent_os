@@ -45,12 +45,59 @@ export function shortSkill(skill) {
 /* 帧 id 缩写:32 位 hex 取前 6,便于"已过滤 f-xxx"等紧凑显示 */
 export const shortId = (id) => String(id ?? "").slice(0, 6) || "—";
 
-/* 空态块(§5 三态之 empty;各面板共用,样式 .empty 在 app.css) */
-export const emptyBlock = (title, hint) =>
+/* ── 空态(§5 三态之 empty;各面板共用,样式 .empty 在 app.css)────────
+   简洁线条风内联 SVG 图标(stroke currentColor)+ 标题 + 引导 + 可选动作按钮。 */
+
+const EMPTY_ICONS = {
+  /* 收件箱托盘:空列表(还没有数据) */
+  inbox:
+    `<path d="M2.5 9.6l1.6-4.8A1 1 0 0 1 5 4.2h6a1 1 0 0 1 .9.6l1.6 4.8"/>` +
+    `<path d="M2.5 9.6V12A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5V9.6"/>` +
+    `<path d="M2.5 9.6h3.2l.9 1.6h2.8l.9-1.6h3.2"/>`,
+  /* 放大镜:搜索/筛选无匹配、目标不存在 */
+  search: `<circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2L13.8 13.8"/>`,
+  /* 左入箭头 + 侧栏:从列表选择一项 */
+  select:
+    `<path d="M9.5 2.8H4A1.3 1.3 0 0 0 2.7 4v8A1.3 1.3 0 0 0 4 13.2h5.5"/>` +
+    `<path d="M6.8 8h6.4M10.7 5.3L13.4 8l-2.7 2.7"/>`,
+  /* 层叠:帧/帧树 */
+  layers:
+    `<path d="M8 2.5l5.5 2.8L8 8 2.5 5.3z"/>` +
+    `<path d="M2.5 8.3L8 11l5.5-2.7M2.5 11.3L8 14l5.5-2.7"/>`,
+  /* 波形:信号/时间线 */
+  activity: `<path d="M2 8h2.8l2-4.5 2.6 9L11.4 8H14"/>`,
+  /* 立方体:技能 */
+  box:
+    `<path d="M8 1.9l5.2 3v6.2L8 14.1l-5.2-3V4.9z"/>` +
+    `<path d="M13.2 4.9L8 8m0 0L2.8 4.9M8 8v6"/>`,
+  /* 终端:工具 */
+  terminal: `<path d="M3 4.2l3.8 3.8L3 11.8M8 12h5"/>`,
+  /* 播放:发起运行 */
+  run:
+    `<rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/>` +
+    `<path d="M6.6 5.6l3.9 2.4-3.9 2.4z"/>`,
+  /* 柱状图:用量/统计 */
+  chart: `<path d="M3.5 13.2V9.4M8 13.2V2.8M12.5 13.2V6.4"/>`,
+};
+
+const emptyIcon = (name) =>
+  `<span class="empty-icon" aria-hidden="true">` +
+  `<svg viewBox="0 0 16 16" width="22" height="22" fill="none" stroke="currentColor"` +
+  ` stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">` +
+  (EMPTY_ICONS[name] ?? EMPTY_ICONS.inbox) +
+  `</svg></span>`;
+
+/* 空态块:title 一行 + hint 一行;icon 取 EMPTY_ICONS 键名;
+   action = { label, dataAction, primary } 时在引导下放一个按钮。 */
+export const emptyBlock = (title, hint, icon = "inbox", action = null) =>
   `<div class="empty">` +
-  `<div class="empty-illust" aria-hidden="true">插画位</div>` +
+  emptyIcon(icon) +
   `<span class="empty-title">${esc(title)}</span>` +
   `<span class="empty-hint">${esc(hint)}</span>` +
+  (action
+    ? `<button class="btn${action.primary ? " btn-primary" : ""}"` +
+      ` data-action="${esc(action.dataAction)}">${esc(action.label)}</button>`
+    : "") +
   `</div>`;
 
 /* ── 路由规则描述(§4.6/§4.7):"Use when / Do not use when" 前缀分行高亮 ── */

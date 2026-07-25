@@ -1,0 +1,9 @@
+{
+  "run_id": "e7def3ce3c224735944a14898cb46653",
+  "skill": "handle_ticket",
+  "input": {
+    "ticket_id": "T-1002"
+  },
+  "host": "web",
+  "started_at": "2026-07-25T04:15:15.960742+00:00"
+}

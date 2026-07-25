@@ -104,7 +104,7 @@ function cellHtml(col, row, maxCost) {
 /* 表格 HTML:sortKey/sortDir 驱动列头箭头与行序;tfoot 合计行固定底部。 */
 export function usageTableHtml(usage, { sortKey = null, sortDir = "asc" } = {}) {
   const frames = Array.isArray(usage?.frames) ? usage.frames : [];
-  if (!frames.length) return emptyBlock("无 usage 数据", "checkpoint.json 缺失或未记录帧用量");
+  if (!frames.length) return emptyBlock("无 usage 数据", "checkpoint.json 缺失或未记录帧用量", "chart");
   const rows = sortKey ? sortRows(frames, sortKey, sortDir) : frames;
   const maxCost = Math.max(0, ...frames.map((f) => Number(f?.cost) || 0));
   const head = USAGE_COLUMNS.map((c) => {

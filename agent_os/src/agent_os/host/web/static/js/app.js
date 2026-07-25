@@ -126,8 +126,12 @@ function renderRunList() {
   if (!runs.length) {
     box.innerHTML =
       store.get("runs").length === 0
-        ? emptyBlock("还没有 run", "点击右上角 + New Run 发起第一次运行")
-        : emptyBlock("无匹配的 run", "调整搜索关键词或状态筛选");
+        ? emptyBlock("还没有 run", "点击右上角 + New Run 发起第一次运行", "run", {
+            label: "+ New Run",
+            dataAction: "open-launch",
+            primary: true,
+          })
+        : emptyBlock("无匹配的 run", "调整搜索关键词或状态筛选", "search");
     return;
   }
   box.innerHTML = runs.map(runItemHtml).join("");
@@ -165,7 +169,11 @@ function renderMain() {
   }
   main.innerHTML =
     `<div class="main-home">` +
-    emptyBlock("选择一个 run", "从左侧列表选择 run 查看详情,或点击 + New Run 发起新运行") +
+    emptyBlock("选择一个 run", "从左侧列表选择 run 查看详情,或点击 + New Run 发起新运行", "select", {
+      label: "+ New Run",
+      dataAction: "open-launch",
+      primary: true,
+    }) +
     `</div>`;
 }
 
@@ -239,6 +247,10 @@ document.addEventListener("click", (e) => {
     const act = action.dataset.action;
     if (act === "retry-runs") {
       poll();
+      return;
+    }
+    if (act === "open-launch") {
+      openLaunchDialog(); // 空态主按钮:同 + New Run
       return;
     }
     if (act === "copy") {

@@ -85,12 +85,14 @@ export const statusDot = (status) =>
   `<span class="status-dot" data-status="${normalizeStatus(status)}"` +
   ` title="${esc(status ?? "unknown")}" aria-hidden="true"></span>`;
 
+/* 帧行元信息(§4.2):steps/cost 弱色纯文本(非重描边 chip);
+   0 值是噪音(0 steps / $0.00),不渲染。 */
 function frameChips(frame) {
-  const steps = frame?.usage?.steps;
-  const cost = frame?.usage?.cost;
+  const steps = Number(frame?.usage?.steps) || 0;
+  const cost = Number(frame?.usage?.cost) || 0;
   let html = "";
-  if (steps != null) html += `<span class="chip chip-static">${esc(steps)} steps</span>`;
-  if (cost != null) html += `<span class="chip chip-static mono">${esc(fmtCost(cost))}</span>`;
+  if (steps > 0) html += `<span class="ft-meta">${esc(steps)} steps</span>`;
+  if (cost > 0) html += `<span class="ft-meta mono">${esc(fmtCost(cost))}</span>`;
   return html;
 }
 

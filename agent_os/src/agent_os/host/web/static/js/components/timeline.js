@@ -188,12 +188,14 @@ export function summarizeSignal(sig) {
 
 /* ── 渲染(HTML 字符串;DOM 接线在 workbench)───────────────────── */
 
-/* 信号名去 pre:/post: 前缀显示;前缀以 muted 小字保留(阶段语义) */
+/* 信号名去 pre:/post: 前缀显示;前缀渲染为弱色 micro chip(阶段语义,去冒号);
+   无阶段前缀的信号(run.* 等)补等宽占位,保持 name 列对齐 */
 function sigNameHtml(name) {
   const n = String(name ?? "");
   const m = n.match(/^(pre:|post:)(.*)$/);
-  if (!m) return `<span class="tl-name">${esc(n)}</span>`;
-  return `<span class="tl-phase">${esc(m[1])}</span><span class="tl-name">${esc(m[2])}</span>`;
+  if (!m) return `<span class="tl-phase-spacer" aria-hidden="true"></span><span class="tl-name">${esc(n)}</span>`;
+  const phase = m[1] === "pre:" ? "pre" : "post";
+  return `<span class="tl-phase" data-phase="${phase}">${phase}</span><span class="tl-name">${esc(m[2])}</span>`;
 }
 
 function groupLabel(g) {
@@ -202,7 +204,7 @@ function groupLabel(g) {
   return "帧边界";
 }
 
-function rowHtml({ signal, index, vetoed }, selection, t0) {
+function rowHtml({ signal, index, vetoed }, selection, t0, showTime) {
   const kind = signalKind(signal.name);
   const sel = selection?.signalIndex === index;
   const ts = Number(signal.ts);
@@ -216,12 +218,12 @@ function rowHtml({ signal, index, vetoed }, selection, t0) {
     sigNameHtml(signal.name) +
     (vetoed ? `<span class="tl-veto">vetoed</span>` : "") +
     `<span class="tl-sum">${esc(summary)}</span>` +
-    `<span class="tl-time" title="${esc(absTs(signal.ts))}">${esc(rel)}</span>` +
+    (showTime ? `<span class="tl-time" title="${esc(absTs(signal.ts))}">${esc(rel)}</span>` : "") +
     `</div>`
   );
 }
 
-function groupHtml(g, selection, t0) {
+function groupHtml(g, selection, t0, showTime) {
   const head =
     `<div class="tl-group-head" data-action="tl-toggle" data-group="${esc(g.key)}"` +
     ` role="button" tabindex="0" aria-expanded="${g.expanded}" title="点击折叠/展开本组">` +
@@ -234,7 +236,7 @@ function groupHtml(g, selection, t0) {
     `<span class="tl-count">${g.items.length}</span>` +
     `</div>`;
   const items = g.expanded
-    ? `<div class="tl-items">${g.items.map((it) => rowHtml(it, selection, t0)).join("")}</div>`
+    ? `<div class="tl-items">${g.items.map((it) => rowHtml(it, selection, t0, showTime)).join("")}</div>`
     : "";
   return (
     `<div class="tl-group" data-group="${esc(g.key)}"${g.anomaly ? ` data-anomaly="true"` : ""}>` +
@@ -328,6 +330,11 @@ export function renderTimeline(signals, view, { selection = null, frameSkill = n
   const rows = Array.isArray(signals) ? signals : [];
   if (!rows.length) return "";
   const t0 = Number(rows[0]?.ts);
+  // 时长列(§4.2):mock/同刻数据全是 +0.00s 噪音——全程 <50ms 时整列隐藏,
+  // 至少一行达到 +0.05s(真实 LLM/工具耗时量级)才显示
+  const showTime =
+    Number.isFinite(t0) &&
+    rows.some((s) => Number.isFinite(Number(s?.ts)) && Number(s.ts) - t0 >= 0.05);
   const filterBar = view.filtered
     ? `<div class="tl-filter" data-action="tl-clear" role="button" tabindex="0"` +
       ` title="点击清除过滤,显示全部信号">` +
@@ -338,10 +345,10 @@ export function renderTimeline(signals, view, { selection = null, frameSkill = n
   const groupsHtml = win
     ? gapHtml(win.topCount, win.topPad, "top") +
       sliceRowsToGroups(flattenTimelineRows(view.groups), win.start, win.end)
-        .map((g) => groupHtml(g, selection, t0))
+        .map((g) => groupHtml(g, selection, t0, showTime))
         .join("") +
       gapHtml(win.bottomCount, win.bottomPad, "bottom")
-    : view.groups.map((g) => groupHtml(g, selection, t0)).join("");
+    : view.groups.map((g) => groupHtml(g, selection, t0, showTime)).join("");
   return (
     filterBar +
     `<div class="tl-list" role="listbox" aria-label="信号时间线">` +

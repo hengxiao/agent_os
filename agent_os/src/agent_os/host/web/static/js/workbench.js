@@ -211,7 +211,14 @@ async function load() {
     renderShell();
     const q = wb.pendingQuery;
     wb.pendingQuery = null;
-    if (q?.frame) applyPendingQuery(q); // 深链接恢复(§4.1)
+    if (q?.frame) {
+      applyPendingQuery(q); // 深链接恢复(§4.1)
+    } else if (!store.get("selection") && wb.roots.length) {
+      // 默认选中根帧(§4.2:进入 run 即有三联动语境,检视器不再是空屏)
+      store.set({
+        selection: { frameId: wb.roots[0].frame.frame_id, signalIndex: null, source: "tree" },
+      });
+    }
     if (detail?.status === "running") startLive(); // §4.3:进行中 run 进 live 变体
   } catch (e) {
     if (wb.runId !== runId) return;
@@ -377,18 +384,23 @@ function renderHeader() {
   const skill = meta.skill ?? shortSkill(d.frames?.[0]?.skill);
   const status = d.status ?? meta.status;
   const cost = meta.cost ?? d.usage?.cost;
+  const steps = d.usage?.steps ?? meta.steps;
   wb.metaKey = `${skill}|${status}|${cost}|${meta.started_at}`;
-  let resultSummary = "—";
+  // result 摘要降级为次级一行(截断);无 result(进行中/异常)整行省略
+  let resultLine = "";
   if (d.result != null) {
+    let resultSummary;
     try {
       resultSummary = JSON.stringify(d.result);
     } catch {
       resultSummary = String(d.result);
     }
     if (resultSummary.length > 120) resultSummary = `${resultSummary.slice(0, 120)}…`;
+    resultLine = `<span class="wb-result mono" title="result 摘要">result: ${esc(resultSummary)}</span>`;
   }
   el.innerHTML =
     `<div class="card run-header wb-head">` +
+    `<div class="run-header-main">` +
     `<span class="run-title">${esc(skill)}</span>` +
     statusPill(status) +
     `<span class="run-id" title="${esc(wb.runId)}">` +
@@ -397,8 +409,10 @@ function renderHeader() {
     ` data-copy-label="已复制 run_id" data-tip="复制 run_id" aria-label="复制 run_id">${COPY_SVG}</button>` +
     `</span>` +
     `<span class="run-time" title="${esc(absTime(meta.started_at))}">${esc(relTime(meta.started_at))}</span>` +
-    `<span class="run-cost mono">${esc(fmtCost(cost))}</span>` +
-    `<span class="wb-result mono" title="result 摘要">result: ${esc(resultSummary)}</span>` +
+    (steps != null ? `<span class="meta-chip">${esc(steps)} steps</span>` : "") +
+    `<span class="meta-chip mono">${esc(fmtCost(cost))}</span>` +
+    `</div>` +
+    resultLine +
     `</div>` +
     // §4.4 异常 Banner:status + error 摘要 + 定位首个错误 ⌘J + Resume ▶
     (status === "failed" || status === "aborted" ? rcaBannerHtml(status, d.error) : "");
@@ -413,7 +427,7 @@ function renderTreePanel() {
     collapsed: wb.collapsedFrames,
     selection: store.get("selection"),
   });
-  el.innerHTML = html || emptyBlock("无帧数据", "该 run 尚未产生帧(checkpoint 缺失)");
+  el.innerHTML = html || emptyBlock("无帧数据", "该 run 尚未产生帧(checkpoint 缺失)", "layers");
 }
 
 /* 选中态定点更新(不整树重绘);时间线/RCA 来源时展开祖先并滚动到所属帧(§4.2 规则 1/§4.4) */
@@ -473,7 +487,7 @@ function renderTimelinePanel({ skipScroll = false } = {}) {
         frameSkill: view.filterFrameId ? shortSkill(findFrame(view.filterFrameId)?.skill) : null,
         window: win,
       })
-    : emptyBlock("无信号数据", "trace.jsonl 缺失或该 run 尚未产生信号");
+    : emptyBlock("无信号数据", "trace.jsonl 缺失或该 run 尚未产生信号", "activity");
   const guided = sel?.source === "timeline" || sel?.source === "rca"; // §4.2/§4.4 聚焦滚动
   if (!skipScroll && guided && sel.signalIndex != null && view.focused?.visible) {
     scrollSignalIntoView(sel.signalIndex);
@@ -853,7 +867,7 @@ function renderInspectorPanel() {
   const sel = store.get("selection");
   const fid = sel?.frameId ?? null;
   if (!fid) {
-    el.innerHTML = emptyBlock("选择一帧查看上下文", "点击左侧帧树的帧,或点击时间线信号联动定位");
+    el.innerHTML = emptyBlock("选择一帧查看上下文", "点击左侧帧树的帧,或点击时间线信号联动定位", "select");
     return;
   }
   const cached = wb.frames.get(fid);
@@ -897,7 +911,7 @@ function renderInspectorPanel() {
   const focusIdx = signal ? focusMessageIndex(signal, group?.step ?? null, msgs) : null;
   let msgsHtml = msgs.length
     ? renderMessages(msgs)
-    : emptyBlock("该帧无上下文消息", "frame.context.messages 为空");
+    : emptyBlock("该帧无上下文消息", "frame.context.messages 为空", "inbox");
   if (isRca && fe) {
     // 出错卡片:红色高亮 + 一次性脉冲(优先精确命中 focusIdx 对应的失败 tool 结果)
     const exact =
@@ -918,8 +932,8 @@ function renderInspectorPanel() {
     `<div class="insp-head">` +
     `<span class="insp-title">${esc(shortSkill(f.skill))} · f-${esc(shortId(fid))}</span>` +
     statusPill(f.status) +
-    (steps != null ? `<span class="chip chip-static">${esc(steps)} steps</span>` : "") +
-    (cost != null ? `<span class="chip chip-static mono">${esc(fmtCost(cost))}</span>` : "") +
+    (steps != null ? `<span class="meta-chip">${esc(steps)} steps</span>` : "") +
+    (cost != null ? `<span class="meta-chip mono">${esc(fmtCost(cost))}</span>` : "") +
     `<button class="btn btn-mini" data-action="wb-copy-frame" data-tip="复制该帧全部消息 JSON">复制全部 JSON</button>` +
     `</div>` +
     // §4.4 veto 归因卡(出错卡片上方):裁决来源 kind / 理由全文 / 被否决参数 JSON

@@ -186,6 +186,11 @@ async function loadList() {
     sv.status = "error";
   }
   renderList();
+  // 空屏规避(§4.6):未指定选中项时默认选中列表首项,详情不再是空态
+  if (sv.mounted && sv.status === "ready" && !sv.selected) {
+    const first = visibleSkills()[0];
+    if (first) select(first.name);
+  }
 }
 
 /* ── 取数:详情(全量 manifest,含 prompt 与 lint;Map 缓存)────────── */
@@ -288,8 +293,8 @@ function renderList() {
   if (!skills.length) {
     box.innerHTML =
       sv.skills.length === 0
-        ? emptyBlock("还没有技能", "在 agent-os.toml 配置 skills.path")
-        : emptyBlock("无匹配的技能", "调整搜索关键词");
+        ? emptyBlock("还没有技能", "在 agent-os.toml 配置 skills.path", "box")
+        : emptyBlock("无匹配的技能", "调整搜索关键词", "search");
     return;
   }
   box.innerHTML = skills.map(skillItemHtml).join("");
@@ -394,7 +399,7 @@ function renderDetail() {
   if (!box) return;
   const name = sv.selected;
   if (!name) {
-    box.innerHTML = emptyBlock("选择一个技能", "从左侧列表选择技能查看详情,或点 Run ▶ 发起运行");
+    box.innerHTML = emptyBlock("选择一个技能", "从左侧列表选择技能查看详情,或点 Run ▶ 发起运行", "select");
     return;
   }
   const cached = sv.details.get(name);

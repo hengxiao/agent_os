@@ -9,6 +9,7 @@
   --bg-2: #171d29;   /* 悬浮/选中 */
   --bg-3: #1f2837;   /* 悬停 */
   --line: #263043;   /* 分割线 */
+  --line-strong: #33405a; /* 强调描边(引导线 / hover 边界) */
   --fg-0: #e6ebf2;   /* 主文本 */
   --fg-1: #9aa7ba;   /* 次文本 */
   --fg-2: #5d6b82;   /* 弱化/占位 */
@@ -38,11 +39,20 @@
   --font-ui:  system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
 
+  --text-2xs: 10px; /* 微型标签(phase chip / 区块标签) */
   --text-xs: 11px;    /* 元信息、时间戳 */
   --text-sm: 12.5px;  /* 列表正文、表格 */
   --text-md: 14px;    /* 检视器正文 */
   --text-lg: 16px;    /* 面板标题 */
   --text-xl: 20px;    /* 页头 */
+
+  /* 状态点光晕(帧树状态点 ring / 输入 focus 环等;同色低透明度外扩) */
+  --ring-ok:      rgb(63 182 139 / 0.22);
+  --ring-danger:  rgb(229 83 75 / 0.22);
+  --ring-aborted: rgb(158 107 222 / 0.22);
+  --ring-warn:    rgb(217 160 63 / 0.22);
+  --ring-live:    rgb(59 158 255 / 0.28);
+  --ring-neutral: rgb(93 107 130 / 0.25);
 
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
   --r-sm: 4px; --r-md: 8px; --r-lg: 12px;
@@ -57,6 +67,8 @@
   /* ── 描边与阴影基元 ────────────────────────────────────────── */
   --stroke: 1px;           /* 常规描边 */
   --stroke-strong: 2px;    /* 选中边条 / focus 环 */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);   /* 面板级极轻阴影(浮起感) */
+  --shadow-md: 0 12px 32px rgb(0 0 0 / 0.45); /* Modal 级浮层阴影 */
   --shadow-pop: 0 4px 16px rgb(0 0 0 / 0.5);  /* Toast / Tooltip 浮层 */
   --overlay: rgb(0 0 0 / 0.55);               /* Modal 遮罩(§3.3 Modal) */
 }
@@ -79,6 +91,10 @@ body {
 }
 
 button, input { font: inherit; color: inherit; }
+
+/* hidden 属性守护:组件类名的 display 会覆盖 UA 的 [hidden] 规则,显式拉回
+   (Launch Dialog 错误条等以 el.hidden 控制显隐) */
+[hidden] { display: none !important; }
 
 /* 可见 focus 环(§6.4 可访问性基线:键盘可达 + 可见 focus 环) */
 :focus-visible {

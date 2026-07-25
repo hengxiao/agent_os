@@ -1,0 +1,494 @@
+{
+  "v": 1,
+  "run": {
+    "run_id": "f8a87330ffa3473aa44f1b7cc2f226b6",
+    "status": "failed",
+    "usage": {
+      "prompt_tokens": 8,
+      "cache_write_tokens": 0,
+      "completion_tokens": 8,
+      "steps": 8,
+      "cache_read_tokens": 0,
+      "cost": 0.0,
+      "total_ms": 0,
+      "thinking_tokens": 0,
+      "ttft_ms": 0
+    },
+    "result": null,
+    "error": "MaxDepthExceeded: 调用子技能 fib 将达到 depth=9,超过 max_depth=8"
+  },
+  "frames": [
+    {
+      "frame_id": "d12989d5c08441b6be8443998ddaa147",
+      "skill": "local:fib@1.0.0",
+      "parent_id": null,
+      "input": {
+        "n": 50
+      },
+      "depth": 1,
+      "status": "running",
+      "result": null,
+      "error": "调用子技能 fib 将达到 depth=9,超过 max_depth=8",
+      "call_id": null,
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "completion_tokens": 1,
+        "steps": 1,
+        "cache_read_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "ttft_ms": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 50}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-50",
+                "name": "skill__fib",
+                "args": {
+                  "n": 49
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    },
+    {
+      "frame_id": "ae2678bbad6847f78b9c8705d1d1c36b",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "d12989d5c08441b6be8443998ddaa147",
+      "input": {
+        "n": 49
+      },
+      "depth": 2,
+      "status": "running",
+      "result": null,
+      "error": "调用子技能 fib 将达到 depth=9,超过 max_depth=8",
+      "call_id": "call-fib-50",
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "completion_tokens": 1,
+        "steps": 1,
+        "cache_read_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "ttft_ms": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 49}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-49",
+                "name": "skill__fib",
+                "args": {
+                  "n": 48
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    },
+    {
+      "frame_id": "ddadd7edcfec4fb6a26e52cb25a3c312",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "ae2678bbad6847f78b9c8705d1d1c36b",
+      "input": {
+        "n": 48
+      },
+      "depth": 3,
+      "status": "running",
+      "result": null,
+      "error": "调用子技能 fib 将达到 depth=9,超过 max_depth=8",
+      "call_id": "call-fib-49",
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "completion_tokens": 1,
+        "steps": 1,
+        "cache_read_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "ttft_ms": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 48}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-48",
+                "name": "skill__fib",
+                "args": {
+                  "n": 47
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    },
+    {
+      "frame_id": "dd360ef3949c49d09d3ebe8bb93b77bd",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "ddadd7edcfec4fb6a26e52cb25a3c312",
+      "input": {
+        "n": 47
+      },
+      "depth": 4,
+      "status": "running",
+      "result": null,
+      "error": "调用子技能 fib 将达到 depth=9,超过 max_depth=8",
+      "call_id": "call-fib-48",
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "completion_tokens": 1,
+        "steps": 1,
+        "cache_read_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "ttft_ms": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 47}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-47",
+                "name": "skill__fib",
+                "args": {
+                  "n": 46
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    },
+    {
+      "frame_id": "da7788220dcb47e584f501ae82bcb0b8",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "dd360ef3949c49d09d3ebe8bb93b77bd",
+      "input": {
+        "n": 46
+      },
+      "depth": 5,
+      "status": "running",
+      "result": null,
+      "error": "调用子技能 fib 将达到 depth=9,超过 max_depth=8",
+      "call_id": "call-fib-47",
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "completion_tokens": 1,
+        "steps": 1,
+        "cache_read_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "ttft_ms": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 46}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-46",
+                "name": "skill__fib",
+                "args": {
+                  "n": 45
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    },
+    {
+      "frame_id": "9991fb240e944f7a9cc7947d13b3027f",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "da7788220dcb47e584f501ae82bcb0b8",
+      "input": {
+        "n": 45
+      },
+      "depth": 6,
+      "status": "running",
+      "result": null,
+      "error": "调用子技能 fib 将达到 depth=9,超过 max_depth=8",
+      "call_id": "call-fib-46",
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "completion_tokens": 1,
+        "steps": 1,
+        "cache_read_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "ttft_ms": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 45}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-45",
+                "name": "skill__fib",
+                "args": {
+                  "n": 44
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    },
+    {
+      "frame_id": "d26051fd24f2402c9121adf373034b58",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "9991fb240e944f7a9cc7947d13b3027f",
+      "input": {
+        "n": 44
+      },
+      "depth": 7,
+      "status": "running",
+      "result": null,
+      "error": "调用子技能 fib 将达到 depth=9,超过 max_depth=8",
+      "call_id": "call-fib-45",
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "completion_tokens": 1,
+        "steps": 1,
+        "cache_read_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "ttft_ms": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 44}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-44",
+                "name": "skill__fib",
+                "args": {
+                  "n": 43
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    },
+    {
+      "frame_id": "55aa9473070c43c2b05085bbc6438512",
+      "skill": "local:fib@1.0.0",
+      "parent_id": "d26051fd24f2402c9121adf373034b58",
+      "input": {
+        "n": 43
+      },
+      "depth": 8,
+      "status": "running",
+      "result": null,
+      "error": "调用子技能 fib 将达到 depth=9,超过 max_depth=8",
+      "call_id": "call-fib-44",
+      "usage": {
+        "prompt_tokens": 1,
+        "cache_write_tokens": 0,
+        "completion_tokens": 1,
+        "steps": 1,
+        "cache_read_tokens": 0,
+        "cost": 0.0,
+        "total_ms": 0,
+        "thinking_tokens": 0,
+        "ttft_ms": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"n\": 43}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          },
+          {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "id": "call-fib-43",
+                "name": "skill__fib",
+                "args": {
+                  "n": 42
+                }
+              }
+            ],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "system",
+            "meta": {}
+          }
+        ],
+        "working": {},
+        "pinned": [],
+        "token_estimate": 6
+      }
+    }
+  ]
+}

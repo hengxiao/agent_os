@@ -133,8 +133,9 @@ const clickFake = (root, { classes = "", dataset = {} }) => {
   assert.match(els.detail.innerHTML, /选择一个技能/, "未选中:详情空态引导");
   await flush();
 
-  /* 列表就绪:自引用 fib 无警示,互环 cyc_a/cyc_b 标 ⚠ */
+  /* 列表就绪:自引用 fib 无警示,互环 cyc_a/cyc_b 标 ⚠;默认选中首项 fib(空屏规避) */
   assert.match(els.list.innerHTML, /data-name="fib"/);
+  assert.match(els.list.innerHTML, /data-name="fib"[^>]*aria-selected="true"/, "默认选中首项");
   assert.match(els.list.innerHTML, /v1\.0\.0/, "version 列示");
   assert.match(els.list.innerHTML, /kind-chip">prompt</, "kind chip");
   const fibRow = els.list.innerHTML.match(/data-name="fib"[\s\S]*?<\/div>\n?/)?.[0] ?? "";
@@ -223,11 +224,16 @@ const clickFake = (root, { classes = "", dataset = {} }) => {
   assert.match(els.list.innerHTML, /skeleton-row/, "列表 loading 骨架");
   await flush();
 
-  /* 列表就绪:name + PermBadge */
+  /* 列表就绪:name + PermBadge;未指定选中项时默认选中首项(空屏规避) */
   assert.match(els.list.innerHTML, /data-name="fs_read"/);
   assert.match(els.list.innerHTML, /perm-badge" data-perm="READ"/, "READ 徽标");
   assert.match(els.list.innerHTML, /perm-badge" data-perm="EXEC"/, "EXEC 徽标");
-  assert.match(els.detail.innerHTML, /选择一个工具/, "未选中:详情空态");
+  assert.match(
+    els.list.innerHTML,
+    /data-name="fs_read"[^>]*aria-selected="true"/,
+    "默认选中列表首项",
+  );
+  assert.match(els.detail.innerHTML, /perm-badge-lg" data-perm="READ"/, "首项详情直接渲染");
 
   /* 权限筛选 chips:EXEC 单选 */
   const execChip = els.chips.children[4]; // [全部, READ, WRITE, NET, EXEC]

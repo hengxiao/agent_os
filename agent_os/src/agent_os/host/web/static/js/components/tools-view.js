@@ -144,6 +144,11 @@ async function loadList() {
     tv.status = "error";
   }
   renderList();
+  // 空屏规避(§4.7):未指定选中项时默认选中列表首项,详情不再是空态
+  if (tv.mounted && tv.status === "ready" && !tv.selected) {
+    const first = visibleTools()[0];
+    if (first) select(first.name);
+  }
   renderDetail(); // 详情数据源同列表:到位后重渲选中项
 }
 
@@ -206,8 +211,8 @@ function renderList() {
   if (!tools.length) {
     box.innerHTML =
       tv.tools.length === 0
-        ? emptyBlock("注册表为空", "内核未装配任何工具(检查 [tools] 配置)")
-        : emptyBlock("无匹配的工具", "调整搜索关键词或权限筛选");
+        ? emptyBlock("注册表为空", "内核未装配任何工具(检查 [tools] 配置)", "terminal")
+        : emptyBlock("无匹配的工具", "调整搜索关键词或权限筛选", "search");
     return;
   }
   box.innerHTML = tools.map(toolItemHtml).join("");
@@ -278,7 +283,7 @@ function renderDetail() {
   if (!box) return;
   const name = tv.selected;
   if (!name) {
-    box.innerHTML = emptyBlock("选择一个工具", "从左侧列表选择工具查看 spec 与权限等级");
+    box.innerHTML = emptyBlock("选择一个工具", "从左侧列表选择工具查看 spec 与权限等级", "select");
     return;
   }
   if (tv.status === "loading" || tv.status === "idle") {
@@ -295,7 +300,7 @@ function renderDetail() {
   }
   const tool = tv.tools.find((t) => t.name === name);
   if (!tool) {
-    box.innerHTML = emptyBlock(`工具 ${name} 不存在`, "注册表中没有该工具(可能已变更)");
+    box.innerHTML = emptyBlock(`工具 ${name} 不存在`, "注册表中没有该工具(可能已变更)", "search");
     return;
   }
   box.innerHTML = detailHtml(tool);

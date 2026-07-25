@@ -5,3 +5,8 @@ __pycache__/
 .ruff_cache/
 .ai_agent_book_tmp/
 ai-agent-book/
+# support_desk 示例的运行副作用(退款/通知/升级 JSONL 与遥测 traces)
+agent_os/examples/support_desk/data/*.jsonl
+agent_os/examples/support_desk/traces/
+# CLI 运行产物(RunRecord/trace/checkpoint)
+.agent-os/

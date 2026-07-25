@@ -1,0 +1,9 @@
+{
+  "users": [
+    { "user_id": "u1", "name": "王薇", "email": "wangwei@example.com", "tier": "vip" },
+    { "user_id": "u2", "name": "李雷", "email": "lilei@example.com", "tier": "normal" },
+    { "user_id": "u3", "name": "韩梅梅", "email": "hanmeimei@example.com", "tier": "normal" },
+    { "user_id": "u4", "name": "赵四", "email": "zhaosi@example.com", "tier": "normal" },
+    { "user_id": "u5", "name": "钱多多", "email": "qiandd@example.com", "tier": "vip" }
+  ]
+}

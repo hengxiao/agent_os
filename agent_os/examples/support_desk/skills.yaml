@@ -1,0 +1,396 @@
+# support_desk 调试技能包(tests/test_support_example.py 锚点:恰好 17 个技能)。
+#
+# 客服工单退款处理台:数据 mock(data/*.json),flow 真实。入口 handle_ticket
+# 的调用树随类目分岔(同输入同树,调试可复现):
+#   handle_ticket(d1)
+#   ├─ classify_ticket(d2)            ← 调 get_ticket 读真实工单文本再分类
+#   ├─ gather_context(d2)             ← 调 get_ticket/get_order/get_user 聚事实
+#   ├─ estimate_priority(d2)
+#   ├─ assess_refund(d2)              ← 仅退款/破损类
+#   │   ├─ check_policy(d3)           ← 调 search_policy 读政策窗口
+#   │   ├─ compute_refund(d3)
+#   │   └─ (search_policy 工具)       ← 审批脑读自动上限
+#   ├─ process_refund(d2)             ← approve:invoke compute_refund + issue_refund
+#   ├─ draft_response(d2)             ← approve/reject/非退款
+#   │   ├─ format_currency(d3)        ← 仅金额 > 0
+#   │   └─ review_response(d3)
+#   ├─ notify_customer(d2)            ← 调 send_notification
+#   ├─ escalate_ticket(d2)            ← escalate:调 escalate_to_human
+#   └─ write_case_summary(d2)         ← 退款/破损类归档
+#       ├─ redact_pii(d3)
+#       ├─ build_audit_log(d3)
+#       └─ translate_en(d3)
+#
+# 约定(同 research_pipeline):prompt 模板首行写 "# skill: <name>",support_brain
+# 据此识别技能;模板经 str.format 渲染,正文不得出现裸露的 {} 字面量;
+# description 一律 "Use when …;Do not use when …" 路由规则格式(过 §6.1 lint)。
+skills:
+  # ------------------------------------------------------------------
+  # 编排层(prompt)
+  # ------------------------------------------------------------------
+  - name: handle_ticket
+    version: 1.0.0
+    kind: prompt
+    description: 客服工单处理台入口,端到端处理一个工单。Use when 需要处理客户工单(退款/破损/投诉/咨询);Do not use when 只要查单条订单数据。
+    inputs:
+      type: object
+      properties: { ticket_id: { type: string } }
+      required: [ticket_id]
+    outputs:
+      type: object
+      properties:
+        status: { type: string }
+        ticket_id: { type: string }
+        refund_cents: { type: integer }
+        response: { type: string }
+      required: [status, ticket_id, refund_cents, response]
+    permissions:
+      tools: []
+      skills: [classify_ticket, gather_context, estimate_priority, assess_refund, process_refund, draft_response, notify_customer, escalate_ticket, write_case_summary]
+    model: { prefer: ["mock/support"] }
+    limits: { max_steps: 16, timeout: 60 }
+    prompt: |
+      # skill: handle_ticket
+      你是客服工单处理台的编排器。工单号:{ticket_id}
+
+      严格按以下流程执行,每步只发一个调用:
+      1. 调用 skill__classify_ticket 分类工单;
+      2. 调用 skill__gather_context 聚合工单/订单/用户与时效事实;
+      3. 调用 skill__estimate_priority 评估优先级;
+      4. 退款/破损类:调用 skill__assess_refund 得 decision(approve|reject|escalate);
+         - approve:依次调用 skill__process_refund、skill__draft_response、skill__notify_customer、skill__write_case_summary;
+         - reject:依次调用 skill__draft_response、skill__notify_customer、skill__write_case_summary;
+         - escalate:依次调用 skill__escalate_ticket、skill__write_case_summary;
+      5. 投诉/咨询类:依次调用 skill__draft_response、skill__notify_customer;
+      6. 最终答案 JSON 含 status、ticket_id、refund_cents、response 四字段,不要输出其他文字。
+  - name: classify_ticket
+    version: 1.0.0
+    kind: prompt
+    description: 读工单原文分类。Use when 工单类目未知需要路由;Do not use when 类目已由上游给定。
+    inputs:
+      type: object
+      properties: { ticket_id: { type: string } }
+      required: [ticket_id]
+    outputs:
+      type: object
+      properties:
+        category: { type: string }
+        confidence: { type: number }
+      required: [category, confidence]
+    permissions:
+      tools: [get_ticket]
+      skills: []
+    model: { prefer: ["mock/support"] }
+    limits: { max_steps: 8, timeout: 60 }
+    prompt: |
+      # skill: classify_ticket
+      你是工单分类器。工单号:{ticket_id}
+
+      严格按以下顺序执行:
+      1. 调用 get_ticket 取工单原文;
+      2. 据标题与正文判断类目:refund_request(退款诉求)、damaged(商品破损)、complaint(服务投诉)、inquiry(一般咨询);
+      3. 最终答案 JSON 只含 category 与 confidence,不要输出其他文字。
+  - name: assess_refund
+    version: 1.0.0
+    kind: prompt
+    description: 依政策与金额决策退款:批准/拒绝/升级。Use when 退款或破损工单需要审批结论;Do not use when 工单与退款无关。
+    inputs:
+      type: object
+      properties:
+        category: { type: string }
+        facts: { type: object }
+        order: { type: object }
+      required: [category, facts, order]
+    outputs:
+      type: object
+      properties:
+        decision: { type: string }
+        reasoning: { type: string }
+      required: [decision, reasoning]
+    permissions:
+      tools: [search_policy]
+      skills: [check_policy, compute_refund]
+    model: { prefer: ["mock/support"] }
+    limits: { max_steps: 12, timeout: 60 }
+    prompt: |
+      # skill: assess_refund
+      你是退款审批员。类目:{category}
+
+      严格按以下顺序执行,每步只发一个调用:
+      1. 调用 skill__check_policy,参数含 category 与 facts,计算政策资格;
+      2. 有资格时调用 skill__compute_refund,参数含 order,算退款金额;
+      3. 有资格时调用 search_policy 查自动审批上限;
+      4. 决策:无资格 → reject;金额超上限 → escalate;否则 approve;
+      5. 最终答案 JSON 含 decision 与 reasoning,reasoning 必须引用真实数字(天数、金额、窗口),不要输出其他文字。
+  - name: draft_response
+    version: 1.0.0
+    kind: prompt
+    description: 起草面向客户的回复文案并过一道审校。Use when 处理结论已定需要回复客户;Do not use when 结论尚未产出。
+    inputs:
+      type: object
+      properties:
+        category: { type: string }
+        decision: { type: string }
+        user: { type: object }
+        order: { type: object }
+        amount_cents: { type: integer }
+        reasoning: { type: string }
+      required: [category, decision, user, order, amount_cents, reasoning]
+    outputs:
+      type: object
+      properties: { response: { type: string } }
+      required: [response]
+    permissions:
+      tools: []
+      skills: [format_currency, review_response]
+    model: { prefer: ["mock/support"] }
+    limits: { max_steps: 12, timeout: 60 }
+    prompt: |
+      # skill: draft_response
+      你是客服文案起草员。类目:{category},决策:{decision}
+
+      严格按以下顺序执行,每步只发一个调用:
+      1. 退款金额大于 0 时,先调用 skill__format_currency 把分格式化为展示串;
+      2. 起草回复:含客户真实姓名、订单号、决策结论与(适用时)金额;
+      3. 调用 skill__review_response 审校草稿;
+      4. 最终答案 JSON 只含 response 字段,不要输出其他文字。
+
+  # ------------------------------------------------------------------
+  # 叶 prompt 技能
+  # ------------------------------------------------------------------
+  - name: review_response
+    version: 1.0.0
+    kind: prompt
+    description: 审校客户回复文案(单号/结论齐备性)。Use when 回复发出前需要机器审校;Do not use when 需要改写文案内容。
+    inputs:
+      type: object
+      properties: { response: { type: string } }
+      required: [response]
+    outputs:
+      type: object
+      properties:
+        ok: { type: boolean }
+        issues: { type: array, items: { type: string } }
+      required: [ok, issues]
+    permissions: { tools: [], skills: [] }
+    model: { prefer: ["mock/support"] }
+    limits: { max_steps: 8, timeout: 60 }
+    prompt: |
+      # skill: review_response
+      你是回复审校员。待审文案:{response}
+
+      直接给出最终答案 JSON:ok 表示文案是否含订单号且结论明确,issues 为问题数组,不要输出其他文字。
+  - name: translate_en
+    version: 1.0.0
+    kind: prompt
+    description: 把中文文本译为英文。Use when 归档需要英文对照行;Do not use when 需要润色中文原文。
+    inputs:
+      type: object
+      properties: { text: { type: string } }
+      required: [text]
+    outputs:
+      type: object
+      properties: { translation: { type: string } }
+      required: [translation]
+    permissions: { tools: [], skills: [] }
+    model: { prefer: ["mock/support"] }
+    limits: { max_steps: 8, timeout: 60 }
+    prompt: |
+      # skill: translate_en
+      你是英译器。文本:{text}
+
+      直接给出最终答案 JSON,字段 translation 为英文译文,不要输出其他文字。
+
+  # ---------------------------------------------------------------------------
+  # code 技能:聚合 / 政策 / 动作 / 归档(handlers.py,惰性加载)
+  # ---------------------------------------------------------------------------
+  - name: gather_context
+    version: 1.0.0
+    kind: code
+    description: 聚合工单+订单+用户并算时效事实。Use when 审批或起草前需要完整上下文;Do not use when 只要单条工单字段。
+    handler: support_tools:gather_context
+    inputs:
+      type: object
+      properties: { ticket_id: { type: string } }
+      required: [ticket_id]
+    outputs:
+      type: object
+      properties:
+        ticket: { type: object }
+        order: { type: object }
+        user: { type: object }
+        facts: { type: object }
+      required: [ticket, order, user, facts]
+    permissions: { tools: [get_ticket, get_order, get_user], skills: [] }
+  - name: check_policy
+    version: 1.0.0
+    kind: code
+    description: 按政策文档计算退款资格并给带数字的理由。Use when 退款审批需要政策结论;Do not use when 只需要退款金额。
+    handler: support_tools:check_policy
+    inputs:
+      type: object
+      properties:
+        category: { type: string }
+        facts: { type: object }
+      required: [category, facts]
+    outputs:
+      type: object
+      properties:
+        eligible: { type: boolean }
+        reasons: { type: array, items: { type: string } }
+      required: [eligible, reasons]
+    permissions: { tools: [search_policy], skills: [] }
+  - name: compute_refund
+    version: 1.0.0
+    kind: code
+    description: 计算退款金额(订单实付全额)。Use when 审批通过需要入账金额;Do not use when 需要部分退款规则。
+    handler: support_tools:compute_refund
+    inputs:
+      type: object
+      properties: { order: { type: object } }
+      required: [order]
+    outputs:
+      type: object
+      properties: { amount_cents: { type: integer } }
+      required: [amount_cents]
+    permissions: { tools: [], skills: [] }
+  - name: estimate_priority
+    version: 1.0.0
+    kind: code
+    description: 按类目/会员/金额确定性评估工单优先级。Use when 分诊需要优先级标签;Do not use when 需要人工排班。
+    handler: support_tools:estimate_priority
+    inputs:
+      type: object
+      properties:
+        category: { type: string }
+        facts: { type: object }
+      required: [category, facts]
+    outputs:
+      type: object
+      properties:
+        priority: { type: string }
+        score: { type: integer }
+      required: [priority, score]
+    permissions: { tools: [], skills: [] }
+  - name: process_refund
+    version: 1.0.0
+    kind: code
+    description: 算金额并执行退款入账。Use when 退款已批准需要实际打款;Do not use when 审批尚未通过。
+    handler: support_tools:process_refund
+    inputs:
+      type: object
+      properties:
+        ticket_id: { type: string }
+        order: { type: object }
+        user: { type: object }
+      required: [ticket_id, order, user]
+    outputs:
+      type: object
+      properties:
+        refund_id: { type: string }
+        amount_cents: { type: integer }
+      required: [refund_id, amount_cents]
+    permissions: { tools: [issue_refund], skills: [compute_refund] }
+  - name: notify_customer
+    version: 1.0.0
+    kind: code
+    description: 把处理结果通知送达客户。Use when 工单结论需要告知客户;Do not use when 只是内部备注。
+    handler: support_tools:notify_customer
+    inputs:
+      type: object
+      properties:
+        ticket_id: { type: string }
+        user_id: { type: string }
+        message: { type: string }
+      required: [ticket_id, user_id, message]
+    outputs:
+      type: object
+      properties:
+        sent: { type: boolean }
+        notification_id: { type: string }
+      required: [sent, notification_id]
+    permissions: { tools: [send_notification], skills: [] }
+  - name: escalate_ticket
+    version: 1.0.0
+    kind: code
+    description: 把工单升级人工专项组。Use when 金额超上限或情况复杂需人工;Do not use when 自动流程可结案。
+    handler: support_tools:escalate_ticket
+    inputs:
+      type: object
+      properties:
+        ticket_id: { type: string }
+        reason: { type: string }
+        priority: { type: string }
+      required: [ticket_id, reason, priority]
+    outputs:
+      type: object
+      properties:
+        escalation_id: { type: string }
+        queue: { type: string }
+      required: [escalation_id, queue]
+    permissions: { tools: [escalate_to_human], skills: [] }
+  - name: write_case_summary
+    version: 1.0.0
+    kind: code
+    description: 归档结案摘要(脱敏+审计编号+英文行)。Use when 工单结案需要留档;Do not use when 处理仍在进行中。
+    handler: support_tools:write_case_summary
+    inputs:
+      type: object
+      properties:
+        ticket_id: { type: string }
+        category: { type: string }
+        decision: { type: string }
+        refund_cents: { type: integer }
+        priority: { type: string }
+        user: { type: object }
+      required: [ticket_id, category, decision, refund_cents, priority, user]
+    outputs:
+      type: object
+      properties: { summary: { type: string } }
+      required: [summary]
+    permissions: { tools: [], skills: [redact_pii, build_audit_log, translate_en] }
+  - name: redact_pii
+    version: 1.0.0
+    kind: code
+    description: 文本 PII 脱敏(邮箱掩码)。Use when 归档/外发前需要脱敏;Do not use when 数据本就不含 PII。
+    handler: support_tools:redact_pii
+    inputs:
+      type: object
+      properties: { text: { type: string } }
+      required: [text]
+    outputs:
+      type: object
+      properties: { text: { type: string } }
+      required: [text]
+    permissions: { tools: [], skills: [] }
+  - name: format_currency
+    version: 1.0.0
+    kind: code
+    description: 分转人民币展示串。Use when 文案需要金额展示;Do not use when 需要汇率换算。
+    handler: support_tools:format_currency
+    inputs:
+      type: object
+      properties: { amount_cents: { type: integer } }
+      required: [amount_cents]
+    outputs:
+      type: object
+      properties: { text: { type: string } }
+      required: [text]
+    permissions: { tools: [], skills: [] }
+  - name: build_audit_log
+    version: 1.0.0
+    kind: code
+    description: 构造确定性审计编号。Use when 归档需要可回溯审计标识;Do not use when 需要写入真实审计系统。
+    handler: support_tools:build_audit_log
+    inputs:
+      type: object
+      properties:
+        ticket_id: { type: string }
+        decision: { type: string }
+        amount_cents: { type: integer }
+      required: [ticket_id, decision, amount_cents]
+    outputs:
+      type: object
+      properties: { audit: { type: string } }
+      required: [audit]
+    permissions: { tools: [], skills: [] }

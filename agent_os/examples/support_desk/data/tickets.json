@@ -1,0 +1,54 @@
+{
+  "tickets": [
+    {
+      "ticket_id": "T-1001",
+      "user_id": "u1",
+      "order_id": "o1",
+      "subject": "包裹一直没到,要求退款",
+      "body": "下单四十天了包裹还停在发货地,物流没有任何更新。我要求全额退款。",
+      "channel": "app",
+      "status": "open",
+      "created_at": "2026-07-20T12:00:00+00:00"
+    },
+    {
+      "ticket_id": "T-1002",
+      "user_id": "u2",
+      "order_id": "o2",
+      "subject": "退款,不想要了",
+      "body": "东西收到有一阵子了,现在不想要了,帮我办理退款。",
+      "channel": "web",
+      "status": "open",
+      "created_at": "2026-07-20T12:00:00+00:00"
+    },
+    {
+      "ticket_id": "T-1003",
+      "user_id": "u3",
+      "order_id": "o3",
+      "subject": "东西碎了,¥5000 的东西!",
+      "body": "刚签收两天,开箱发现屏幕整个碎裂。五千块买的东西啊,必须给个说法!",
+      "channel": "phone",
+      "status": "open",
+      "created_at": "2026-07-20T12:00:00+00:00"
+    },
+    {
+      "ticket_id": "T-1004",
+      "user_id": "u4",
+      "order_id": "o4",
+      "subject": "咨询:会员积分怎么算?",
+      "body": "请问我这笔订单能累计多少积分?积分大概什么时候到账?",
+      "channel": "app",
+      "status": "open",
+      "created_at": "2026-07-20T12:00:00+00:00"
+    },
+    {
+      "ticket_id": "T-1005",
+      "user_id": "u5",
+      "order_id": "o5",
+      "subject": "投诉:在线客服响应太慢",
+      "body": "昨天在线咨询等了两个小时,回复还很敷衍。我要投诉这种服务态度!",
+      "channel": "web",
+      "status": "open",
+      "created_at": "2026-07-20T12:00:00+00:00"
+    }
+  ]
+}

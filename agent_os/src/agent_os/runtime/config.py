@@ -6,6 +6,9 @@
                    max_wall_time/compression/seed/temperature,§2.4)
     [providers.*]→ kimi/anthropic/openai(兼容端点)/mock(dotted path 应答函数)
     [tools]      → builtins 内置工具;python_exec = docker|subprocess|off
+    [tools.custom] → module = "pkg.mod:func":宿主自定义工具注册钩子,
+                   importlib 加载后调用 ``func(registry)``(加载/注册失败抛 ConfigError);
+                   声明即授权,RunConfig 权限上限同步提到 EXEC(同 python_exec)
     [skills]     → LocalFileSkillRegistry
     [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加)
     [telemetry]  → JsonlTelemetrySink(目录自动创建)
@@ -194,6 +197,18 @@ def build_kernel(config: str | Path | dict[str, Any], *, extra_sidecars: Iterabl
         registry.register(python_exec_tool(sandbox))
         logic.append(sandbox)
         if run_cfg.tool_policy.max_permission < Permission.EXEC:
+            run_cfg.tool_policy = ToolPolicy(max_permission=Permission.EXEC)
+
+    custom = tools_cfg.get("custom") or {}
+    if custom:
+        register_fn = _load_dotted(str(custom.get("module", "")))
+        try:
+            register_fn(registry)
+        except Exception as e:  # 宿主工具注册失败归配置装配错误(退出码 4)
+            raise ConfigError(f"[tools.custom] 注册钩子执行失败: {e}") from e
+        if run_cfg.tool_policy.max_permission < Permission.EXEC:
+            # 与 python_exec 同理(§8.2 配置即授权):宿主显式装配自定义工具,
+            # 工具自报等级可能达 EXEC,不提上限必被分发层拒绝
             run_cfg.tool_policy = ToolPolicy(max_permission=Permission.EXEC)
 
     builder = KernelBuilder(run_cfg).tools(registry).logic_kernels(*logic)

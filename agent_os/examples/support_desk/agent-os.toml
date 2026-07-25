@@ -1,0 +1,28 @@
+# support_desk 调试配置(客服工单退款处理台;tests/test_support_example.py 锚点同拓扑)
+# 用法(仓库根目录):
+#   PYTHONPATH=examples/support_desk .venv/bin/agent-os run handle_ticket \
+#     --input '{"ticket_id": "T-1001"}' --config examples/support_desk/agent-os.toml --json
+
+[run]
+model = "mock/support"            # 技能 manifest 的 model.prefer 同值;路由到 mock provider
+max_depth = 10                    # 调用树最深 3 层,留足调试余量
+
+[providers.mock]
+brain = "brains:support_brain"    # 数据驱动 mock 大脑(需在 PYTHONPATH 上,见上用法)
+
+[tools]
+builtins = true                   # fs_read/fs_write/fs_edit/shell_exec/http_fetch
+python_exec = "off"               # 本场景不需要 python_exec 沙箱
+
+[tools.custom]
+module = "support_tools:register" # 宿主自定义场景工具(get_ticket/issue_refund 等 7 个)
+
+[skills]
+path = "examples/support_desk/skills.yaml"
+
+[sidecars]
+budget_guard = { max_cost = 2.0 }
+loop_detector = { threshold = 3, max_strikes = 2 }
+
+[telemetry]
+dir = "examples/support_desk/traces"

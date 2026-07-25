@@ -1,0 +1,17 @@
+{
+  "version": "2026-07-01",
+  "refund_windows": {
+    "not_delivered_normal_days": 30,
+    "not_delivered_vip_days": 45,
+    "delivered_no_questions_days": 7,
+    "damaged_report_hours": 48
+  },
+  "auto_approve_limit_cents": 100000,
+  "escalation": { "queue": "refund-specialists", "sla_hours": 24 },
+  "notes": [
+    "未签收订单退款窗口:普通用户自订单创建起 30 天,VIP 用户 45 天",
+    "已签收订单:签收后 7 天无理由退款",
+    "商品破损:签收后 48 小时内报损可按退款处理",
+    "单笔退款金额超过自动审批上限(100000 分)一律升级人工审核"
+  ]
+}

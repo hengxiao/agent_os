@@ -1,0 +1,54 @@
+{
+  "orders": [
+    {
+      "order_id": "o1",
+      "user_id": "u1",
+      "total_cents": 8900,
+      "currency": "CNY",
+      "status": "shipped",
+      "created_at": "2026-06-10T12:00:00+00:00",
+      "delivered_at": null,
+      "items": [{ "sku": "KB-MOUSE-01", "title": "无线键鼠套装", "qty": 1 }]
+    },
+    {
+      "order_id": "o2",
+      "user_id": "u2",
+      "total_cents": 25900,
+      "currency": "CNY",
+      "status": "delivered",
+      "created_at": "2026-05-25T12:00:00+00:00",
+      "delivered_at": "2026-05-31T12:00:00+00:00",
+      "items": [{ "sku": "HOODIE-L-02", "title": "连帽卫衣 L 码", "qty": 1 }]
+    },
+    {
+      "order_id": "o3",
+      "user_id": "u3",
+      "total_cents": 500000,
+      "currency": "CNY",
+      "status": "delivered",
+      "created_at": "2026-07-15T12:00:00+00:00",
+      "delivered_at": "2026-07-18T12:00:00+00:00",
+      "items": [{ "sku": "MON-4K-27", "title": "27 寸 4K 显示器", "qty": 1 }]
+    },
+    {
+      "order_id": "o4",
+      "user_id": "u4",
+      "total_cents": 12900,
+      "currency": "CNY",
+      "status": "delivered",
+      "created_at": "2026-07-05T12:00:00+00:00",
+      "delivered_at": "2026-07-10T12:00:00+00:00",
+      "items": [{ "sku": "CUP-THERMOS", "title": "保温杯 500ml", "qty": 1 }]
+    },
+    {
+      "order_id": "o5",
+      "user_id": "u5",
+      "total_cents": 5900,
+      "currency": "CNY",
+      "status": "delivered",
+      "created_at": "2026-07-12T12:00:00+00:00",
+      "delivered_at": "2026-07-15T12:00:00+00:00",
+      "items": [{ "sku": "CABLE-USBC-1M", "title": "USB-C 数据线 1m", "qty": 2 }]
+    }
+  ]
+}

@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
 import jsonschema
@@ -513,6 +514,9 @@ class Kernel:
                 frame=frame,
                 allowed_tools=manifest.permissions.tools,
                 tool_policy=self.config.tool_policy,
+                # §W0-1:RunConfig 的 workdir/read_paths 传入分发层(缺省 None → 每 run 临时目录)
+                workdir=Path(self.config.workdir) if self.config.workdir else None,
+                read_paths=[Path(p) for p in self.config.read_paths],
             ),
         )
         await self.signals.emit(

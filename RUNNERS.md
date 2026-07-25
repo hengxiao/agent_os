@@ -39,6 +39,8 @@ max_steps = 200
 max_cost = 2.0
 max_wall_time = 1800
 compression = "hierarchical"        # off = 消融档
+# workdir = "/path/to/project"      # §W0-1:run 工作目录(fs/shell 可写区;缺省每 run 临时目录)
+# read_paths = ["/path/to/vendor"]  # §W0-1:只读挂载(可在 workdir 之外,如源码目录)
 
 [providers.kimi]                    # KimiProvider();key 走环境变量
 [providers.anthropic]               # ClaudeProvider()

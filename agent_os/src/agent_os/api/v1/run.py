@@ -31,7 +31,7 @@ class LogicPolicy:
 
 @dataclass
 class RunConfig:
-    """§2.4(逐字冻结,含 ``seed`` / ``temperature`` 复现性钉死)。"""
+    """§2.4(逐字冻结,含 ``seed`` / ``temperature`` 复现性钉死;§W0-1 additive 增列 workdir 分区)。"""
 
     model: str = ""  # 可被 Skill 的 model.prefer 覆盖
     max_depth: int = 8
@@ -45,6 +45,9 @@ class RunConfig:
     logic_policy: LogicPolicy = field(default_factory=LogicPolicy)
     seed: int | None = None
     temperature: float | None = None
+    # —— §W0-1 workdir 可配置(additive;缺省 None → 每 run 临时目录,安全边界不静默放宽)——
+    workdir: str | None = None  # run 工作目录(fs/shell 共用解析点,可写产出区)
+    read_paths: list[str] = field(default_factory=list)  # 只读挂载(如源码目录,可在 workdir 之外)
 
 
 class RunStatus(Enum):

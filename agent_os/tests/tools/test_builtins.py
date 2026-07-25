@@ -9,7 +9,8 @@
 - ``fs_edit``:old_string→new_string **唯一匹配**才替换;
   未找到 / 多处匹配 → ``ok=False, kind=INVALID_ARGS``;
 - ``http_fetch_tool(transport=...)`` 工厂支持注入 httpx transport(测试用 MockTransport);
-- 三层权限:RunConfig 上限低于工具权限级时拒绝(§8.2)。
+- 三层权限:RunConfig 上限低于工具权限级时拒绝(§8.2);
+- ``shell_exec`` 返回 ``{stdout, stderr, exit_code, truncated, text}``(§W0-5 结构化返回)。
 """
 
 from __future__ import annotations
@@ -155,7 +156,8 @@ def test_shell_exec_runs_in_workdir():
 
     result = asyncio.run(main())
     assert result.ok, result.error
-    assert "hi" in result.value
+    assert "hi" in result.value["stdout"]  # §W0-5 结构化返回:text 为拼接版,脚本用 stdout
+    assert result.value["exit_code"] == 0
 
 
 def test_http_fetch_via_mock_transport():

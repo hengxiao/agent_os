@@ -96,6 +96,8 @@ ORCHESTRATE_SCHEMA: dict[str, Any] = {
         "``ctx.call_tool(name, args) -> {'ok','value','error'}``、"
         "``ctx.invoke(skill, input) -> 结果``(失败抛异常);"
         "把最终结果赋给变量 ``result``(须可 JSON 序列化)。"
+        "print() 输出会进返回值的 stdout 字段,是编排脚本的调试通道"
+        "(可 print 中间量,出错时看得到;不占后续轮次上下文)。"
     ),
     "parameters": {
         "type": "object",

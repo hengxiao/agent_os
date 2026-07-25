@@ -72,7 +72,11 @@ class ToolResult:
 
 @dataclass
 class ToolSpec:
-    """工具规格(§2.2,逐字冻结,含 v1 全部预留字段——baseline 可先不实现检查逻辑)。"""
+    """工具规格(§2.2,逐字冻结,含 v1 全部预留字段——baseline 可先不实现检查逻辑)。
+
+    STDLIB-CATALOG §W0-2 additive 增列:``cost_hint``/``replayable``/``concurrent_safe``
+    (声明不强制——只落库暴露,强制检查留到有真实违规案例再加)。
+    """
 
     name: str = ""
     description: str = ""  # 写 "when to use" + 边界 + 负例,不写 "what it does"
@@ -89,16 +93,21 @@ class ToolSpec:
     depends_on: list[str] = field(default_factory=list)  # 前置工具依赖
     conflicts_with: list[str] = field(default_factory=list)  # 互斥约束
     untrusted_source: bool = False  # 结果是否来自不可信内容(触发 source tagging)
+    # —— §W0-2 契约字段(additive,声明不强制)——
+    cost_hint: str = ""  # 成本量级("~10ms"/"~5s,大文件更久" 形式,不写绝对秒数依赖)
+    replayable: bool = False  # 可回放:replay/崩溃恢复重跑时可直接返回记录值(如 now)
+    concurrent_safe: bool = False  # §W0-2 命名;与 §14.1 预留 concurrency_safe 同义,声明时一并置位
 
 
 @dataclass
 class ToolContext:
-    """run 作用域资源注入(§2.2,逐字冻结)。工具不碰全局状态。"""
+    """run 作用域资源注入(§2.2,逐字冻结;§W0-1 additive 增列 ``read_paths``)。工具不碰全局状态。"""
 
     run_id: str = ""
     frame_id: str = ""
     principal: Any = None  # caller identity(user/tenant),v1 恒 None,契约预留
     workdir: str = ""  # 帧工作目录(限定 fs 工具范围)
+    read_paths: list[str] = field(default_factory=list)  # §W0-1 只读挂载(可在 workdir 之外)
     blob: BlobStore | None = None
     log: logging.Logger = field(default_factory=lambda: logging.getLogger("agent_os.tools"))
     credentials: dict[str, Any] = field(default_factory=dict)  # 按工具声明注入,不碰全局环境

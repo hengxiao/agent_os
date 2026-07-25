@@ -3,7 +3,8 @@
 ``agent-os.toml`` 等价完成 KernelBuilder 链式组装,供 CLI/Web 两个薄宿主共用::
 
     [run]        → RunConfig 各字段(model/max_depth/max_steps/max_cost/
-                   max_wall_time/compression/seed/temperature,§2.4)
+                   max_wall_time/compression/seed/temperature,§2.4;
+                   workdir/read_paths §W0-1 工作目录分区)
     [providers.*]→ kimi/anthropic/openai(兼容端点)/mock(dotted path 应答函数)
     [tools]      → builtins 内置工具;python_exec = docker|subprocess|off;
                    python_orchestrate = true|false(编排伪工具,缺省 false)
@@ -49,7 +50,7 @@ from agent_os.tools.local_registry import LocalPythonToolRegistry
 
 _log = logging.getLogger("agent_os.runtime.config")
 
-#: ``[run]`` 支持的字段(逐字对齐 §2.4 RunConfig 标量字段)
+#: ``[run]`` 支持的字段(逐字对齐 §2.4 RunConfig 标量字段;workdir/read_paths 见 §W0-1)
 _RUN_FIELDS = (
     "model",
     "max_depth",
@@ -60,6 +61,8 @@ _RUN_FIELDS = (
     "inline",
     "seed",
     "temperature",
+    "workdir",
+    "read_paths",
 )
 
 

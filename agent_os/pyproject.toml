@@ -52,6 +52,12 @@ packages = ["src/agent_os"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.ruff.lint.per-file-ignores]
+# STDLIB 锚点测试是冻结交付件(tests/tools/test_std_*.py 不许修改);
+# 其预留 import( RunConfig/json )属后续波次的接线点,豁免 F401 未使用告警。
+"tests/tools/test_std_foundation.py" = ["F401"]
+"tests/tools/test_std_tools.py" = ["F401"]
+
 
 
 

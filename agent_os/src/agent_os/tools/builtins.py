@@ -1,13 +1,17 @@
-"""内置工具(DESIGN.md §8.3;M1 四个基础件已实现,M5 补 fs_edit/python_exec 等)。
+"""内置工具(DESIGN.md §8.3;M1 四个基础件已实现,M5 补 fs_edit/python_exec 等;
+STDLIB-CATALOG §W0:统一路径解析器/错误 hint/if_match 乐观锁/shell_exec 结构化返回)。
 
 docstring 倡导"何时用/边界/负例"(§8.4);签名即 schema 推导来源。fs/shell 工具经
 约定参数 ``ctx`` 取 ``ToolContext``(见 ``local_registry._FunctionTool``),限定在
-run 工作目录内操作(§2.2);需要结构化错误时函数直接返回 ``ToolResult``。
+run 工作目录内操作(§2.2;§W0-1 起 read_paths 只读区可在 workdir 之外);
+需要结构化错误时函数直接返回 ``ToolResult``;错误 ``hint`` 是给模型的下一步
+动作建议(§W0-3),运行期事实(路径)现取,不硬编码。
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -31,23 +35,59 @@ from agent_os.api.v1 import (
     ToolSpec,
     Veto,
 )
-from agent_os.tools.local_registry import _FunctionTool, derive_spec
+from agent_os.tools.local_registry import _FunctionTool, derive_spec, resolve_work_path
+
+#: shell_exec 单条流(stdout/stderr)截断上限(§W0-5;截断时 ``truncated=True`` 显式标记)
+_SHELL_STREAM_MAX_CHARS = 100_000
 
 
-def _resolve_in_workdir(ctx: ToolContext | None, path: str) -> Path | ToolResult:
-    """把 ``path`` 解析到 run 工作目录内;逃逸(``../``、绝对路径)→ INVALID_ARGS(§2.2)。"""
-    workdir = Path(ctx.workdir if ctx is not None else ".").resolve()
-    target = Path(workdir, path).resolve()
-    if not target.is_relative_to(workdir):
+def _resolve_in_workdir(
+    ctx: ToolContext | None, path: str, *, write: bool = False
+) -> Path | ToolResult:
+    """把 ``path`` 按 §W0-1 三段判定解析(只读区/workdir 读写/越界 INVALID_ARGS);
+
+    解析本体是 ``local_registry.resolve_work_path``(fs 与 shell 共用同一解析器)。
+    """
+    workdir = ctx.workdir if ctx is not None else "."
+    read_paths = ctx.read_paths if ctx is not None else ()
+    return resolve_work_path(workdir, read_paths, path, write=write)
+
+
+def _check_if_match(target: Path, path: str, if_match: str) -> ToolResult | None:
+    """§W0-4 乐观锁:``if_match`` 与当前文件内容(或其 sha256 十六进制)比对。
+
+    不传(空串)= 不检查(向后兼容);不匹配拒写,error 带当前版本标识
+    (hash 前缀 + 内容前 40 字符),hint "内容已被修改,重读后重试";
+    文件不存在则无法比对 → NOT_FOUND。
+    """
+    if not if_match:
+        return None
+    if not target.is_file():
         return ToolResult(
             ok=False,
             error=ToolError(
-                kind=ToolErrorKind.INVALID_ARGS,
-                message=f"路径越界: {path}(fs 工具限定在工作目录内)",
+                kind=ToolErrorKind.NOT_FOUND,
+                message=f"文件不存在,无法比对 if_match: {path}",
                 retryable=False,
+                hint="去掉 if_match 可创建新文件;带锁写入前请先确认文件已存在",
             ),
         )
-    return target
+    current = target.read_text(encoding="utf-8")
+    digest = hashlib.sha256(current.encode("utf-8")).hexdigest()
+    if if_match in (current, digest):
+        return None
+    return ToolResult(
+        ok=False,
+        error=ToolError(
+            kind=ToolErrorKind.INVALID_ARGS,
+            message=(
+                f"if_match 不匹配: {path}"
+                f"(当前版本 sha256:{digest[:12]},内容前 40 字符 {current[:40]!r})"
+            ),
+            retryable=False,
+            hint="内容已被修改,重读后重试",
+        ),
+    )
 
 
 async def fs_read(
@@ -68,6 +108,7 @@ async def fs_read(
                 kind=ToolErrorKind.INVALID_ARGS,
                 message=f"offset/limit 必须 >= 1(收到 offset={offset}, limit={limit})",
                 retryable=False,
+                hint="offset 与 limit 均从 1 起计;读开头用 offset=1",
             ),
         )
     if not target.is_file():
@@ -77,6 +118,7 @@ async def fs_read(
                 kind=ToolErrorKind.NOT_FOUND,
                 message=f"文件不存在: {path}",
                 retryable=False,
+                hint=f"检查工作目录(当前 {target.parent});或用 fs_list 确认路径",
             ),
         )
     lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -84,29 +126,35 @@ async def fs_read(
     return "\n".join(f"{n}\t{line}" for n, line in enumerate(window, start=offset))
 
 
-async def fs_write(path: str, content: str, ctx: ToolContext | None = None) -> str | ToolResult:
-    """写文件(整体覆盖,自动建父目录,§8.3)。
+async def fs_write(
+    path: str, content: str, if_match: str = "", ctx: ToolContext | None = None
+) -> str | ToolResult:
+    """写文件(整体覆盖,自动建父目录,§8.3;``if_match`` 乐观锁见 §W0-4)。
 
     Use when 需要创建或整体覆盖文件;Do not use when 只需局部修改(用 fs_edit)。
+    ``if_match`` 为期望的当前内容(或其 sha256 十六进制):不匹配拒写,不传不检查。
     """
-    target = _resolve_in_workdir(ctx, path)
+    target = _resolve_in_workdir(ctx, path, write=True)
     if isinstance(target, ToolResult):
         return target
+    conflict = _check_if_match(target, path, if_match)
+    if conflict is not None:
+        return conflict
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     return f"已写入 {path}({len(content)} 字符)"
 
 
 async def fs_edit(
-    path: str, old_string: str, new_string: str, ctx: ToolContext | None = None
+    path: str, old_string: str, new_string: str, if_match: str = "", ctx: ToolContext | None = None
 ) -> str | ToolResult:
-    """局部编辑(old_string→new_string **唯一匹配**才替换,§8.3)。
+    """局部编辑(old_string→new_string **唯一匹配**才替换,§8.3;``if_match`` 乐观锁见 §W0-4)。
 
     Use when 只需局部修改文件;Do not use when 整体覆盖(用 fs_write)。
     未找到 / 多处匹配 → INVALID_ARGS(多处时请带更多上下文使匹配唯一);
     文件不存在 → NOT_FOUND;路径越出帧工作目录 → INVALID_ARGS(同 fs_read)。
     """
-    target = _resolve_in_workdir(ctx, path)
+    target = _resolve_in_workdir(ctx, path, write=True)
     if isinstance(target, ToolResult):
         return target
     if not target.is_file():
@@ -116,8 +164,12 @@ async def fs_edit(
                 kind=ToolErrorKind.NOT_FOUND,
                 message=f"文件不存在: {path}",
                 retryable=False,
+                hint=f"检查工作目录(当前 {target.parent});或用 fs_list 确认路径",
             ),
         )
+    conflict = _check_if_match(target, path, if_match)
+    if conflict is not None:
+        return conflict
     content = target.read_text(encoding="utf-8")
     count = content.count(old_string)
     if count == 0:
@@ -127,6 +179,7 @@ async def fs_edit(
                 kind=ToolErrorKind.INVALID_ARGS,
                 message=f"未找到 old_string: {old_string[:80]!r}(文件 {path})",
                 retryable=False,
+                hint="先用 fs_read 核对文件内容;old_string 须与文件完全一致(含空白与换行)",
             ),
         )
     if count > 1:
@@ -136,18 +189,29 @@ async def fs_edit(
                 kind=ToolErrorKind.INVALID_ARGS,
                 message=f"old_string 不唯一,多处匹配(×{count}):请提供更多上下文使匹配唯一",
                 retryable=False,
+                hint="扩大 old_string 上下文(前后各带几行)使匹配唯一,或用 fs_write 整体覆盖",
             ),
         )
     target.write_text(content.replace(old_string, new_string), encoding="utf-8")
     return f"已编辑 {path}(替换 1 处)"
 
 
-async def shell_exec(command: str, timeout: int = 30, ctx: ToolContext | None = None) -> str | ToolResult:
+async def shell_exec(
+    command: str, timeout: int = 30, ctx: ToolContext | None = None
+) -> dict[str, Any] | ToolResult:
     """执行 shell 命令(EXEC 级;一次性子进程,在帧工作目录内运行,捕获 stdout/stderr)。
 
-    持久会话形态(跨调用保持 cwd/env)留待后续里程碑;超时先由 ``timeout`` 参数
-    杀进程并返回 TIMEOUT,注册表 ``spec.timeout`` 兜底。防护主体是沙箱(§9.2)+
-    权限(§8.2);ToolGuard 正则仅为辅助(§5.4 能力上限)。
+    Use when 需要跑构建/测试/git 等外部命令;Do not use when 只是读写文件
+    (用 fs_read/fs_write,权限更低且返回结构化)或做纯计算(用 python_exec)。
+    每次调用是**独立子进程**:``cd``、venv 激活、环境变量都不跨调用保留。
+
+    返回 ``{"stdout", "stderr", "exit_code", "truncated", "text"}``(§W0-5):
+    结构化字段供编排脚本使用,``text`` 为拼接版供模型直读;单条流超
+    100_000 字符截断并显式标记 ``truncated``(不静默截断);非零退出不算
+    工具错误,``exit_code`` 照常返回。持久会话形态(跨调用保持 cwd/env)留待
+    后续里程碑;超时先由 ``timeout`` 参数杀进程并返回 TIMEOUT,注册表
+    ``spec.timeout`` 兜底。防护主体是沙箱(§9.2)+ 权限(§8.2);
+    ToolGuard 正则仅为辅助(§5.4 能力上限)。
     """
     proc = await asyncio.create_subprocess_shell(
         command,
@@ -166,14 +230,29 @@ async def shell_exec(command: str, timeout: int = 30, ctx: ToolContext | None = 
                 kind=ToolErrorKind.TIMEOUT,
                 message=f"命令超过 {timeout}s 未结束,已终止",
                 retryable=True,
+                hint=f"缩短命令运行时间,或用 timeout 参数放宽上限(当前 {timeout}s)",
             ),
         )
-    parts = [out.decode("utf-8", errors="replace")]
-    if err:
-        parts.append(f"[stderr]\n{err.decode('utf-8', errors='replace')}")
-    if proc.returncode:
-        parts.append(f"[exit code {proc.returncode}] 命令非零退出")
-    return "\n".join(parts)
+    stdout = out.decode("utf-8", errors="replace")
+    stderr = err.decode("utf-8", errors="replace")
+    truncated = len(stdout) > _SHELL_STREAM_MAX_CHARS or len(stderr) > _SHELL_STREAM_MAX_CHARS
+    stdout = stdout[:_SHELL_STREAM_MAX_CHARS]
+    stderr = stderr[:_SHELL_STREAM_MAX_CHARS]
+    exit_code = proc.returncode if proc.returncode is not None else 0
+    parts = [stdout]
+    if stderr:
+        parts.append(f"[stderr]\n{stderr}")
+    if exit_code:
+        parts.append(f"[exit code {exit_code}] 命令非零退出")
+    if truncated:
+        parts.append(f"[truncated] 输出超过 {_SHELL_STREAM_MAX_CHARS} 字符,已截断")
+    return {
+        "stdout": stdout,
+        "stderr": stderr,
+        "exit_code": exit_code,
+        "truncated": truncated,
+        "text": "\n".join(parts),
+    }
 
 
 def http_fetch_tool(transport: httpx.AsyncBaseTransport | None = None) -> Tool:
@@ -197,7 +276,13 @@ def http_fetch_tool(transport: httpx.AsyncBaseTransport | None = None) -> Tool:
         content = raw[:max_bytes].decode(resp.encoding or "utf-8", errors="replace")
         return {"status": resp.status_code, "content": content, "truncated": truncated}
 
-    spec = derive_spec(http_fetch, permission=Permission.NET, timeout=30.0, untrusted_source=True)
+    spec = derive_spec(
+        http_fetch,
+        permission=Permission.NET,
+        timeout=30.0,
+        untrusted_source=True,
+        cost_hint="~1s,取决于网络与页面大小",
+    )
     return _FunctionTool(http_fetch, spec)
 
 

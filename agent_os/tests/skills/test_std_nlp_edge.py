@@ -47,7 +47,11 @@ W3_PROMPT_SKILLS = (
 
 
 def always_a_brain(req: ChatRequest) -> ChatResponse:
-    """恒返回 winner=A 的评审大脑:两评标签一致 → pairwise_compare 应判 a 胜。"""
+    """恒返回 winner=A 的评审大脑 = **纯位置偏见**裁判。
+
+    槽位标签随 a/b 对调必然翻转,故"两轮同标签"说明裁判在看位置而非内容
+    → pairwise_compare 应判平(§W3-5:位置偏见防控是技能定义的一部分)。
+    """
     return ChatResponse(
         message=Message(role=Role.ASSISTANT, content=json.dumps({"winner": "A", "reason": "x"})),
         finish_reason="stop",
@@ -130,9 +134,10 @@ def test_calibrate_multi_class_kappa():
 # ---------------------------------------------------------------------------
 
 
-def test_pairwise_consistent_labels_yield_original_value():
+def test_pairwise_same_slot_twice_is_position_bias_tie():
+    """两评同为 A(同一槽位)= 位置偏见 → 判平,不得输出胜者。"""
     r = run("pairwise_compare", {"a": "方案甲", "b": "方案乙", "question": "哪个更简洁"})
-    assert r["winner"] == "方案甲", "两评同为 A → 按第一轮 A=a 还原为原始输入值"
+    assert r["winner"] == "tie", "两轮同槽位说明裁判在看位置而非内容,结论不可信"
     assert r["rounds"] == 2
 
 

@@ -22,10 +22,40 @@ STDLIB 第 3 波(STDLIB-CATALOG §W3;STDLIB §4.2-§4.4),同一 `skills.yaml` �
   `calibrate_judge`(code,Cohen's kappa ≥ 0.7 门禁)、`pairwise_compare`
   (code 编排,内建交换顺序两评,不一致判平;私有依赖 `pairwise_judge_once`)。
 
+STDLIB 第 4 波(STDLIB-CATALOG §W4-1),同一 `skills.yaml` 追加:
+
+- `std/files` 五件(code,TRUSTED 档):`progress_track`(JSON 进度文件,
+  init/update/summary,确定性不读钟)/ `run_tests`(EXEC 级,workdir 内跑
+  pytest 并结构化解析 `{passed, failed, errors, failures, ok}`)/
+  `read_file_smart`(L0 概要 / L1 结构 / L2 带行号分页)/ `apply_patch`
+  (unified diff,上下文不匹配整组拒绝)/ `summarize_tree`(目录树摘要,
+  与 fs_list 同一棵遍历器)。permissions 全空:KernelBuilder §6.1 闸门拒绝
+  "声明了未注册工具"的 manifest,而既有装配用空工具表加载本文件;路径安全
+  由内核统一解析器 resolve_work_path 保证(与 fs 工具同一边界)。
+
+STDLIB 第 4 波续(STDLIB-CATALOG §W4-2~W4-4;STDLIB §4.6/§4.7),同一
+`skills.yaml` 追加:
+
+- `std/web`:`fetch_page`(code,同名工具的 run() 薄适配——工具面在
+  `LocalPythonToolRegistry` **构造器**注册:三个 web 技能 permissions.tools
+  都声明 `[fetch_page]`,而既有锚点用空工具表加载本文件,§6.1 闸门要求声明
+  对每个注册表可见;http_fetch 依赖在调用时按名查找,可同名覆盖 mock)/
+  `research_one`(prompt,单轮检索调研)/ `research_iterative`(code,
+  经 `ctx.chat` 自驾驶"检索→自评→精化→再检索"协议——帧循环把无
+  tool_calls 的响应判为终答,自评回合走不通,形态取舍详见
+  `web_handlers.py` 模块 docstring);
+- `std/memory` 文件版四件:`memory_extract` / `memory_reconcile`(prompt
+  管线对;矛盾项必须 DELETE 不得并存,四决策是这个包成立的前提)+
+  `memory_consolidate`(code,评分剪枝 + 近重复去重,`today` 可注入)/
+  `memory_check`(code,"主语+属性"同键不同值即冲突,纯规则);
+- `std/learn` 三件:`distill_experience` / `reflect_on_failure`(prompt)+
+  `verify_before_store`(code 入库闸门:结构归一后深比较,bool ≠ 1)。
+  handler 模块:`web_handlers` / `memory_handlers` / `learn_handlers`。
+
 ## 装配
 
 handler 为 `<模块>:<fn>` dotted path(W2 是 `transform`,W3 eval 是
-`eval_handlers`;均在本目录),装配方需把本目录放上 `sys.path`
+`eval_handlers`,W4-1 是 `files_handlers`;均在本目录),装配方需把本目录放上 `sys.path`
 (LocalFileSkillRegistry 不做注入):测试侧由仓库根 `conftest.py`
 钉入;宿主/CLI 侧把本目录作为一个 skill set 经 `--skillsets <其父目录>` 加载
 (`load_skillsets` 约定:`<root>/<set>/skills.yaml`,set 目录在装配时自动注入
@@ -34,4 +64,6 @@ handler 为 `<模块>:<fn>` dotted path(W2 是 `transform`,W3 eval 是
 ```bash
 .venv/bin/pytest -q tests/skills/test_std_transform.py   # W2 锚点
 .venv/bin/pytest -q tests/skills/test_std_nlp.py         # W3 锚点
+.venv/bin/pytest -q tests/skills/test_std_files.py       # W4-1 锚点
+.venv/bin/pytest -q tests/skills/test_std_domain.py      # W4-2~4 锚点
 ```

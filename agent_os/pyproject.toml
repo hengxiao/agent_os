@@ -61,6 +61,9 @@ testpaths = ["tests"]
 # 其拒绝路径断言用 pytest.raises(Exception) 宽口径(内核异常类型属内核实现细节),
 # 豁免 B017 盲断言告警。
 "tests/skills/test_std_transform.py" = ["B017"]
+# W4-2~4 锚点(tests/skills/test_std_domain.py)同为冻结交付件;
+# 其预留 import( pytest )属后续波次的接线点,豁免 F401 未使用告警。
+"tests/skills/test_std_domain.py" = ["F401"]
 
 
 

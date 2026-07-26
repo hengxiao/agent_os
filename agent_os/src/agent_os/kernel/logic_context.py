@@ -7,6 +7,9 @@
 ``spawn`` / ``wait`` 为 §3.4 后台帧原语(委托 kernel.spawn_frame/wait_frame);
 ``board`` 为黑板命名空间代理(§12):按 manifest.permissions.blackboard 白名单
 逐次仲裁后透传 kernel.blackboard,无黑板时为 None。
+``chat``(§W4-3 扩展)直连 ProviderManager:code 技能自驾驶多轮对话用
+(检索→自评→精化这类协议,帧循环的"无 tool_calls 即终答"判定走不通);
+模型解析与 ContextManager.build 同口径,usage 记账与帧循环同闸。
 """
 
 from __future__ import annotations
@@ -16,7 +19,15 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from agent_os.api.v1 import Envelope, SkillFrame, SkillManifest, ToolCall
+from agent_os.api.v1 import (
+    ChatRequest,
+    ChatResponse,
+    Envelope,
+    Message,
+    SkillFrame,
+    SkillManifest,
+    ToolCall,
+)
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.tools.blob import InMemoryBlobStore
 
@@ -96,6 +107,35 @@ class KernelLogicContext:
             self._frame,
             self._manifest,
         )
+
+    async def chat(self, messages: list[Message]) -> ChatResponse:
+        """直连 ProviderManager 的 LLM 通道(TRUSTED 编排者能力面,§9.3 impl 扩展)。
+
+        用途:code 技能自驾驶多轮对话(std/web ``research_iterative`` 的
+        检索→自评→精化协议)——帧循环把"无 tool_calls 的响应"判为最终答案
+        (§3.1 步骤 5),自评回合这类中间 JSON 会终止循环,迭代协议只能由
+        code 技能自己开车。模型解析与 ContextManager.build 同口径
+        (manifest.model.prefer → RunConfig.model);usage 走 kernel.account
+        记账(预算/步数闸门与帧循环一致);dict 形 tool_calls 归一化同 runner。
+        """
+        policy = self._manifest.model
+        model = (policy.prefer[0] if policy and policy.prefer else "") or self._kernel.config.model
+        temperature = (
+            policy.temperature
+            if policy and policy.temperature is not None
+            else self._kernel.config.temperature
+        )
+        req = ChatRequest(model=model, messages=list(messages), temperature=temperature)
+        resp = await self._kernel.providers.chat(req)
+        resp.message.tool_calls = [
+            ToolCall(id=str(tc.get("id", "")), name=str(tc.get("name", "")),
+                     args=dict(tc.get("args") or {}))
+            if isinstance(tc, dict)
+            else tc
+            for tc in resp.message.tool_calls
+        ]
+        self._kernel.account(self._frame, resp.usage)
+        return resp
 
     async def spawn(self, skill: str, input: dict[str, Any]) -> str:
         """spawn 后台帧(§3.4):父帧不挂起,返回子帧 frame_id;白名单/深度检查同 invoke。"""

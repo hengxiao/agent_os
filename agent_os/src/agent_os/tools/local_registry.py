@@ -13,6 +13,8 @@ fs_read/fs_write/fs_edit/shell_exec 共用的统一路径解析器(三段判定,
 ``_run_states`` 是 run 级工具状态表(todo 清单等,同 run_id 跨帧共享,checkpoint
 随档持久见 kernel.checkpoint);§W1-5:``bind_skills`` 注入 SkillRegistry 引用,
 作 skill_search 的技能数据源(装配钩子,同 bind_signals 先例)。
+§W4-3:构造器注册 ``fetch_page``(std/web 工具面,实现与注册时机说明见
+tools/std_web.py)。
 """
 
 from __future__ import annotations
@@ -100,6 +102,11 @@ class LocalPythonToolRegistry:
         self._run_states: dict[str, dict[str, Any]] = {}
         #: §W1-5 skill_search 的技能数据源(KernelBuilder 装配时经 bind_skills 注入)
         self._skills: Any = None
+        # §W4-3 std/web:fetch_page 构造器注册(为什么不在 with_builtins:
+        # 见 tools/std_web.py 模块 docstring 的 §6.1 闸门联动说明)
+        from agent_os.tools.std_web import fetch_page_tool
+
+        self.register(fetch_page_tool(self))
 
     def tool(
         self, *, permission: Permission = Permission.READ, timeout: float = 30.0, **spec_kw: Any

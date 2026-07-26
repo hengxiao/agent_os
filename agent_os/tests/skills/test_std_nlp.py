@@ -198,18 +198,53 @@ def test_calibrate_judge_kappa():
     assert r["passes"] is True, "完全一致应过 0.7 门禁"
 
 
-def test_pairwise_compare_swaps_order_and_ties_on_disagreement():
+def _pairwise_brain(winner_of):
+    """构造 pairwise 假裁判:``winner_of(req) -> "A"|"B"``,并记录调用次数。"""
     calls = {"n": 0}
 
     def brain(req: ChatRequest) -> ChatResponse:
         calls["n"] += 1
-        winner = "A" if calls["n"] % 2 == 1 else "B"  # 两次相反 → 应判平
         return ChatResponse(
-            message=Message(role=Role.ASSISTANT, content=json.dumps({"winner": winner, "reason": "x"})),
+            message=Message(
+                role=Role.ASSISTANT,
+                content=json.dumps({"winner": winner_of(req), "reason": "x"}),
+            ),
             finish_reason="stop",
             usage=ChatUsage(prompt=1, completion=1),
         )
 
-    r = asyncio.run(_kernel(brain=brain).run("pairwise_compare", {"a": "方案甲", "b": "方案乙", "question": "哪个更简洁"}))
+    return brain, calls
+
+
+def test_pairwise_compare_ties_on_position_bias():
+    """**纯位置偏见**(两轮都选同一槽位)→ 判平。
+
+    槽位标签随 a/b 对调必然翻转,故"两轮同标签"恰恰说明裁判在看位置而非内容。
+    """
+    brain, calls = _pairwise_brain(lambda req: "A")  # 恒选 A 槽
+
+    r = asyncio.run(
+        _kernel(brain=brain).run(
+            "pairwise_compare", {"a": "方案甲", "b": "方案乙", "question": "哪个更简洁"}
+        )
+    )
     assert calls["n"] == 2, "必须内建交换顺序两评"
-    assert r["winner"] == "tie"
+    assert r["winner"] == "tie", "两轮同槽位 = 位置偏见,结论不可信"
+
+
+def test_pairwise_compare_picks_content_consistent_winner():
+    """**无位置偏见**(始终选同一份内容)→ 标签翻转,取该内容为胜者。"""
+    def pick_jia(req: ChatRequest) -> str:
+        """始终选"方案甲"这份内容,不看它落在哪个槽位。"""
+        slots = json.loads(req.messages[1].content)  # 帧输入以首条 USER 消息进入
+        return "A" if slots["a"] == "方案甲" else "B"
+
+    brain, calls = _pairwise_brain(pick_jia)
+
+    r = asyncio.run(
+        _kernel(brain=brain).run(
+            "pairwise_compare", {"a": "方案甲", "b": "方案乙", "question": "哪个更简洁"}
+        )
+    )
+    assert calls["n"] == 2
+    assert r["winner"] == "方案甲", "同一内容两轮都赢 → 还原为原始输入值"

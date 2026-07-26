@@ -1,0 +1,16 @@
+{
+  "status": "failed",
+  "result": null,
+  "error": "AssertionError: {'ok': False, 'value': None, 'error': {'kind': 'interrupted', 'message': 'interrupted', 'retryable': False, 'hint': ''}}",
+  "usage": {
+    "thinking_tokens": 0,
+    "total_ms": 0,
+    "prompt_tokens": 8,
+    "cost": 0.0,
+    "cache_write_tokens": 0,
+    "completion_tokens": 8,
+    "cache_read_tokens": 0,
+    "ttft_ms": 0,
+    "steps": 8
+  }
+}

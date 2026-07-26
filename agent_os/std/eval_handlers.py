@@ -48,6 +48,17 @@ async def calibrate_judge(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
         )
     human = [g.get("human_score") if isinstance(g, dict) else None for g in gold]
     judge = list(judge_scores)
+    # 类别口径要求标签可哈希;非标量在此报可读错误,而不是让 set() 抛
+    # "unhashable type"(§W0-3:错误须指向下一步动作)。schema 层已收紧 items,
+    # 这里是直接调用路径的防御。
+    for label, seq in (("gold[].human_score", human), ("judge_scores[]", judge)):
+        bad = next((v for v in seq if isinstance(v, (dict, list, set))), None)
+        if bad is not None:
+            raise TypeError(
+                f"{label} 必须是标量类别标签(字符串/数字/布尔/null),得到 "
+                f"{type(bad).__name__};judge_scores 是与 gold 等长的**扁平**分数数组,"
+                "不是 [{item, score}] 对象数组"
+            )
     agreement = sum(1 for h, j in zip(human, judge) if h == j) / len(human)
     kappa = _cohen_kappa(human, judge)
     return {
@@ -66,15 +77,21 @@ def _winner_label(value: Any) -> str | None:
 async def pairwise_compare(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """``{a, b, question}`` → 内建交换顺序两评 → ``{winner, rounds}``。
 
-    第二轮把 a/b 对调后再评:两评给出**相同胜者标签**才算一致(标签随交换顺序
-    翻转,说明结论不稳定——位置偏见——判平);一致时胜者按第一轮的 A=a、B=b
-    还原为原始输入值。轮数恒为 2。
+    第二轮把 a/b 对调后再评。判定看的是**同一份内容**是否两轮都赢,而槽位标签
+    随对调必然翻转,故:
+
+    - ``w1 != w2``(A→B 或 B→A):同一内容两轮都赢 → 结论稳定,取该内容为胜者
+      (``w1 == "A"`` ⇒ 第一轮槽 A 是 ``a`` 获胜 ⇒ 胜者为 ``a``);
+    - ``w1 == w2``:裁判两轮都选了**同一个槽位** → 位置偏见,结论不可信 → 判平;
+    - 任一轮标签无法识别 → 判平。
+
+    轮数恒为 2。位置偏见防控是本技能定义的一部分,不是可选后处理(§W3-5)。
     """
     a, b, question = input.get("a"), input.get("b"), input.get("question")
     first = await ctx.invoke("pairwise_judge_once", {"a": a, "b": b, "question": question})
     second = await ctx.invoke("pairwise_judge_once", {"a": b, "b": a, "question": question})
     w1 = _winner_label(first.get("winner") if isinstance(first, dict) else None)
     w2 = _winner_label(second.get("winner") if isinstance(second, dict) else None)
-    if w1 is not None and w1 == w2:
+    if w1 is not None and w2 is not None and w1 != w2:
         return {"winner": a if w1 == "A" else b, "rounds": 2}
     return {"winner": "tie", "rounds": 2}

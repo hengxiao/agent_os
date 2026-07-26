@@ -354,6 +354,18 @@ class Kernel:
             req = await self.context.build(frame)
             await self.signals.emit(self._sig(PRE_LLM_REQUEST, frame, {"model": req.model}))
             resp = await self.providers.chat(req)
+            # dict 形 tool_calls 归一化为 ToolCall(§4.1 契约形态;mock/第三方 provider
+            # 可能回 dict)——在进帧上下文前统一,分发/调用签名/检查点只处理一种形态
+            resp.message.tool_calls = [
+                ToolCall(
+                    id=str(tc.get("id", "")),
+                    name=str(tc.get("name", "")),
+                    args=dict(tc.get("args") or {}),
+                )
+                if isinstance(tc, dict)
+                else tc
+                for tc in resp.message.tool_calls
+            ]
             await self.signals.emit(
                 self._sig(
                     POST_LLM_RESPONSE,

@@ -143,3 +143,41 @@ def test_std_skills_conform_to_gate() -> None:
         if not m.outputs:
             problems.append(f"{m.name}: 缺 outputs schema(§8.2 要求可机器校验)")
     assert not problems, "std 技能未过门槛:\n" + "\n".join(problems)
+
+
+def _schema_defects(node: object, trail: str) -> list[str]:
+    """递归找 schema 结构缺陷,返回人可读的问题清单。
+
+    主要抓 **YAML 流式映射被中文逗号劈开**这一类:``{description: 含,逗号}``
+    会被解析成 ``{description: "含", "逗号": None}``——描述截半,并混入一个
+    值为 null 的伪键。jsonschema 忽略未知关键字,故这类错误**静默通过**校验,
+    只能靠结构体检抓。
+    """
+    defects: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if value is None:
+                defects.append(
+                    f"{trail}: 键 {key!r} 的值为 null"
+                    "(疑似流式映射被逗号劈开;给含中文逗号的值加引号)"
+                )
+            defects.extend(_schema_defects(value, f"{trail}.{key}"))
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            defects.extend(_schema_defects(value, f"{trail}[{i}]"))
+    return defects
+
+
+def test_std_skill_schemas_are_well_formed() -> None:
+    """std 技能的 inputs/outputs schema 结构良好(无 null 值伪键)。
+
+    对应实机发现:6 个技能 9 处描述被中文逗号劈坏,模型看到的是半句话。
+    """
+    manifests = _std_manifests()
+    if manifests is None:
+        pytest.skip("std 技能包尚未落地")
+    defects: list[str] = []
+    for m in manifests:
+        defects.extend(_schema_defects(m.inputs, f"{m.name}.inputs"))
+        defects.extend(_schema_defects(m.outputs, f"{m.name}.outputs"))
+    assert not defects, "std 技能 schema 结构缺陷:\n" + "\n".join(defects)

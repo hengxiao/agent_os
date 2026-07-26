@@ -37,6 +37,9 @@ __all__ = [
     "RUN_FINISHED",
     "RUN_STARTED",
     "SIGNAL_NAMES",
+    "SUPERVISOR_ANSWER",
+    "SUPERVISOR_ASK",
+    "SUPERVISOR_TIMEOUT",
     "Signal",
 ]
 
@@ -78,6 +81,11 @@ BLACKBOARD_WRITE = "blackboard.write"
 BUDGET_WARNING = "budget.warning"  # 80%
 BUDGET_EXCEEDED = "budget.exceeded"
 
+#: supervisor 裁决路由(SUPERVISOR.md v2 §5;S1):ask/answer 成对渲染,timeout 记等待时长
+SUPERVISOR_ASK = "supervisor.ask"
+SUPERVISOR_ANSWER = "supervisor.answer"
+SUPERVISOR_TIMEOUT = "supervisor.timeout"
+
 #: 目录全集(测试用)
 SIGNAL_NAMES: tuple[str, ...] = (
     RUN_STARTED,
@@ -105,6 +113,9 @@ SIGNAL_NAMES: tuple[str, ...] = (
     BLACKBOARD_WRITE,
     BUDGET_WARNING,
     BUDGET_EXCEEDED,
+    SUPERVISOR_ASK,
+    SUPERVISOR_ANSWER,
+    SUPERVISOR_TIMEOUT,
 )
 
 

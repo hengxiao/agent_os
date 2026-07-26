@@ -70,3 +70,6 @@ testpaths = ["tests"]
 
 
 
+# S1 锚点(tests/kernel/test_supervisor.py)同为冻结交付件;
+# 其预留变量( seen )属后续波次的接线点,豁免 F841 未使用告警。
+"tests/kernel/test_supervisor.py" = ["F841"]

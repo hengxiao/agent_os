@@ -1,5 +1,6 @@
 """内核 runner(DESIGN.md §3.1 语义伪码的落点;M0 单帧 runner,M2 调用栈/压栈挂起,
-M4 verdict 仲裁与 sidecar 接线,M5a checkpoint/resume 断电恢复)。
+M4 verdict 仲裁与 sidecar 接线,M5a checkpoint/resume 断电恢复,
+S1 ask_supervisor 拦截/就地挂起/回答注入与 resume 重问,SUPERVISOR.md v2 §2/§4)。
 
 agent loop 顺序:safe point(run 中止标志)→ pre:step 检查点(verdict 仲裁,§5.2)
 → 强制压缩检查 → context.maintain/build → providers.chat →
@@ -17,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,7 @@ from typing import Any
 import jsonschema
 
 from agent_os.api.v1 import (
+    ASK_SUPERVISOR_TOOL,
     ORCHESTRATE_TOOL,
     POST_FRAME_POP,
     POST_FRAME_PUSH,
@@ -71,7 +74,11 @@ from agent_os.api.v1 import (
     TrustLevel,
     Veto,
 )
-from agent_os.kernel.checkpoint import dump_checkpoint, resume_from_checkpoint
+from agent_os.kernel.checkpoint import (
+    _last_tool_message,
+    dump_checkpoint,
+    resume_from_checkpoint,
+)
 from agent_os.kernel.control import FORCE_COMPRESS_KEY
 from agent_os.kernel.errors import (
     BudgetExceeded,
@@ -155,6 +162,7 @@ class Kernel:
         telemetry: Any = None,  # TelemetrySink(§10)
         memory: Any = None,  # MemoryService(§11)
         blackboard: Any = None,  # Blackboard(§12)
+        supervisor: Any = None,  # SupervisorManager(SUPERVISOR.md §2.3;S1 handler 通道)
         stack: FrameStack | None = None,
     ) -> None:
         self.config = config or RunConfig()
@@ -168,6 +176,7 @@ class Kernel:
         self.telemetry = telemetry
         self.memory = memory
         self.blackboard = blackboard
+        self.supervisor = supervisor
         self.stack = stack or FrameStack(max_depth=self.config.max_depth)
         self._runs: dict[str, Run] = {}
         #: run 中止标志表(dict[run_id, reason];RunControl.stop/pause 置位,
@@ -503,6 +512,10 @@ class Kernel:
                     f"工具 {call.name} 不在技能 {manifest.name} 的 tools 白名单",
                 ),
             }
+        if call.name == ASK_SUPERVISOR_TOOL:
+            # 内核拦截式伪工具(SUPERVISOR.md §2.1,同 python_orchestrate 先例):
+            # 白名单照常先查,再放行到 supervisor 通道
+            return await self._ask_supervisor(call, frame)
         verdicts = await self.signals.emit(
             self._sig(PRE_TOOL_CALL, frame, {"tool": call.name, "args": dict(call.args)})
         )
@@ -535,6 +548,81 @@ class Kernel:
             self._sig(POST_TOOL_CALL, frame, {"tool": call.name, "ok": result.ok})
         )
         return _result_payload(result)
+
+    # ------------------------------------------------------------------
+    # SUPERVISOR.md §2:ask_supervisor 伪工具——就地挂起,等本 run 调用方裁决(S1)
+    # ------------------------------------------------------------------
+
+    async def _ask_supervisor(self, call: ToolCall, frame: SkillFrame) -> dict[str, Any]:
+        """``ask_supervisor`` 分发:pending 落盘 → supervisor.ask → 答案作 tool result。
+
+        **就地挂起**(§2.2):``await supervisor.ask`` 自然阻塞本帧 loop——无需
+        YIELD 机制,父帧照常停在自己的 await 点;**run 完成判定**因此天然安全:
+        run 只在整棵 run_frame 树返回后才置 DONE,handler 未回答期间状态保持
+        RUNNING(§7 runner 行"run 完成判定含'无 pending ask'"由 await 结构满足)。
+        """
+        if self.supervisor is None:
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(
+                    ToolErrorKind.NOT_FOUND,
+                    "未装配 supervisor handler",
+                    hint="用 KernelBuilder.supervisor(handler) 注入调用方通道(§2.3)",
+                ),
+            }
+        question_id = f"q-{uuid.uuid4().hex[:12]}"
+        # pending ask 先入 working(checkpoint 随帧序列化,§4;resume 凭此重新提问)
+        frame.context.working["_pending_ask"] = {
+            "question_id": question_id,
+            "call_id": call.id,  # resume 结算时定位未配对的 ask 调用
+            "question": str(call.args.get("question") or ""),
+            "context": dict(call.args.get("context") or {}),
+            "asked_at": time.time(),
+        }
+        ask_args = dict(call.args)
+        ask_args["question_id"] = question_id  # Question 与落盘 pending 同一 id
+        outcome = await self.supervisor.ask(frame, ask_args)
+        # 仅正常闭环(含超时/兜底)才清 pending;异常(断电/取消)保留,供 resume 重问
+        frame.context.working.pop("_pending_ask", None)
+        if outcome.get("ok") is False:
+            return {"ok": False, "value": None, "error": outcome["error"]}
+        return {
+            "ok": True,
+            "value": {
+                "answer": outcome["answer"],
+                "decided_by": outcome["decided_by"],
+                "question_id": question_id,
+            },
+            "error": None,
+        }
+
+    async def _settle_pending_ask(self, frame: SkillFrame) -> bool:
+        """resume 结算 pending ask(§4):重新向调用方提问,结果写为该 call 的 tool result。
+
+        在 ``_settle_unpaired_calls`` 之前调用:pending ask 的 ask 调用不是
+        "分发到一半断电",不得落入 interrupted 占位——重新走 ``_ask_supervisor``
+        (新 question_id/asked_at 落盘再清),配对原子性天然闭合(§7.4 不变量 2)。
+        已配对的(如 stop 时 CancelledError 分支写入的 interrupted 占位)不重问,
+        只清标志。返回 True 表示重新提问并结算了一条调用。
+        """
+        pending = frame.context.working.pop("_pending_ask", None)
+        if pending is None:
+            return False
+        call_id = pending.get("call_id")
+        messages = frame.context.messages
+        for index, msg in enumerate(messages):
+            if msg.role is not Role.ASSISTANT:
+                continue
+            for call in msg.tool_calls:
+                if call.id != call_id or call.name != ASK_SUPERVISOR_TOOL:
+                    continue
+                if _last_tool_message(messages, index, call.id) is not None:
+                    return False  # 已结算:只清 pending 标志
+                payload = await self._ask_supervisor(call, frame)
+                messages.append(self._tool_message(call, payload))
+                return True
+        return False
 
     def _syscall_dispatcher(
         self, frame: SkillFrame, manifest: SkillManifest, stats: dict[str, Any] | None = None

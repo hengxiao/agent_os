@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_os.api.v1 import ORCHESTRATE_TOOL, RunConfig
+from agent_os.api.v1 import ASK_SUPERVISOR_TOOL, ORCHESTRATE_TOOL, RunConfig
 from agent_os.context.manager import ContextManager
 from agent_os.context.rolling_window import RollingWindowCompressor
 from agent_os.kernel import Kernel
@@ -33,6 +33,7 @@ from agent_os.kernel.signals import InProcessSignalBus
 from agent_os.kernel.stack import FrameStack
 from agent_os.providers.manager import ProviderManager
 from agent_os.sidecars.supervisor import SidecarSupervisor
+from agent_os.supervisor import SupervisorManager
 from agent_os.tools.local_registry import LocalPythonToolRegistry
 
 
@@ -50,6 +51,7 @@ class KernelBuilder:
         self._telemetry: Any = None
         self._memory: Any = None
         self._blackboard: Any = None
+        self._supervisor: dict[str, Any] | None = None
         self._retry: dict[str, Any] = {}
 
     def providers(self, *providers: Any) -> KernelBuilder:
@@ -88,6 +90,29 @@ class KernelBuilder:
         self._blackboard = blackboard
         return self
 
+    def supervisor(
+        self,
+        handler: Any = None,
+        *,
+        timeout_s: float = 120.0,
+        on_timeout: str = "fail",
+        default_answer: str = "",
+    ) -> KernelBuilder:
+        """注入 supervisor 调用方通道(SUPERVISOR.md §2.3 handler 通道 / §6 配置;S1)。
+
+        ``handler``:``async def handler(question: Question) -> Answer``(契约见
+        ``api/v1/supervisor.py``);``None`` 表示仅预置策略字段(TOML
+        ``[supervisor]`` 段形态,handler 由 S2 宿主通道随后在 builder 层注册),
+        此时 build 不装配 SupervisorManager。
+        """
+        self._supervisor = {
+            "handler": handler,
+            "timeout_s": timeout_s,
+            "on_timeout": on_timeout,
+            "default_answer": default_answer,
+        }
+        return self
+
     def retry(
         self, *, max_attempts: int | None = None, backoff_base: float | None = None
     ) -> KernelBuilder:
@@ -108,6 +133,8 @@ class KernelBuilder:
         sidecars(M4)装配 RunControlImpl + SidecarSupervisor 并注册到总线(§5);
         telemetry(M5a)作为总线特权订阅者接入(§5.1:全量订阅,不算 sidecar);
         blackboard(M5b)接线到 kernel.blackboard(§12:StatusBoard 与帧间消息);
+        supervisor(S1)有 handler 才装配 SupervisorManager 挂到 kernel.supervisor
+        (SUPERVISOR.md §2.3;仅预置策略字段时不装配,运行时按"未装配"报 not_found);
         装配期权限闸门(§6.1):manifest 声明的工具必须在注册表中,缺失即拒绝加载。
         """
         unsupported: list[str] = []
@@ -129,7 +156,9 @@ class KernelBuilder:
                     t
                     for m in skills.manifests()
                     for t in m.permissions.tools
-                    if not tools.has(t) and t != ORCHESTRATE_TOOL  # 伪工具由内核拦截,不进 registry
+                    # 伪工具由内核拦截,不进 registry(python_orchestrate /
+                    # ask_supervisor,SUPERVISOR.md §2.1)
+                    if not tools.has(t) and t not in (ORCHESTRATE_TOOL, ASK_SUPERVISOR_TOOL)
                 }
             )
             if missing:
@@ -148,6 +177,12 @@ class KernelBuilder:
         if self._telemetry is not None:
             # §5.1:Telemetry 是总线的特权订阅者(全量订阅),不算 sidecar
             bus.subscribe("*", self._telemetry.record)
+        sup_manager = None
+        if self._supervisor is not None and self._supervisor["handler"] is not None:
+            # SUPERVISOR.md §2.3:S1 装配级 handler 通道(S2 宿主通道随后在 builder 层注册)
+            sup_manager = SupervisorManager(self._supervisor["handler"], signals=bus, **{
+                k: self._supervisor[k] for k in ("timeout_s", "on_timeout", "default_answer")
+            })
         kernel = Kernel(
             config=self.config,
             providers=providers,
@@ -158,6 +193,7 @@ class KernelBuilder:
             signals=bus,
             telemetry=self._telemetry,
             blackboard=self._blackboard,
+            supervisor=sup_manager,
             stack=FrameStack(max_depth=self.config.max_depth),
         )
         if self._sidecars:

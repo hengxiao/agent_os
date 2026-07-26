@@ -13,6 +13,9 @@
                    声明即授权,RunConfig 权限上限同步提到 EXEC(同 python_exec)
     [skills]     → LocalFileSkillRegistry
     [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加)
+    [supervisor] → timeout_s / on_timeout / default_answer(SUPERVISOR.md §6;TOML
+                   写不了可调用 handler——此处只加载策略字段,handler 注入走
+                   KernelBuilder.supervisor(handler) API,S2 宿主通道在 builder 层注册)
     [telemetry]  → JsonlTelemetrySink(目录自动创建)
     [retry]      → ProviderManager 的 max_attempts / backoff_base
 
@@ -248,6 +251,25 @@ def build_kernel(config: str | Path | dict[str, Any], *, extra_sidecars: Iterabl
     sidecars = [*_sidecars(cfg.get("sidecars") or {}), *extra_sidecars]
     if sidecars:
         builder.sidecars(*sidecars)
+    sup_cfg = cfg.get("supervisor") or {}
+    if sup_cfg:
+        unknown = sorted(set(sup_cfg) - {"timeout_s", "on_timeout", "default_answer"})
+        if unknown:
+            raise ConfigError(
+                f"[supervisor] 含未知字段: {unknown}"
+                f"(支持: timeout_s/on_timeout/default_answer;handler 为可调用,"
+                f"须走 KernelBuilder.supervisor API 注入)"
+            )
+        if sup_cfg.get("on_timeout", "fail") not in ("fail", "default_answer"):
+            raise ConfigError(
+                f"[supervisor] on_timeout 应为 'fail' | 'default_answer',"
+                f"得到: {sup_cfg.get('on_timeout')!r}"
+            )
+        # handler 写不进 TOML:只预置策略字段,build 不装配 Manager(§6;
+        # 运行时 ask 按"未装配 supervisor handler"报 not_found,fail-closed)
+        builder.supervisor(
+            None, **{k: sup_cfg[k] for k in ("timeout_s", "on_timeout", "default_answer") if k in sup_cfg}
+        )
     telemetry_dir = (cfg.get("telemetry") or {}).get("dir")
     if telemetry_dir:
         builder.telemetry(JsonlTelemetrySink(telemetry_dir))

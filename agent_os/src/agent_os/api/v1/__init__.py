@@ -16,5 +16,6 @@ from .run import *
 from .sidecars import *
 from .signals import *
 from .skills import *
+from .supervisor import *
 from .telemetry import *
 from .tools import *

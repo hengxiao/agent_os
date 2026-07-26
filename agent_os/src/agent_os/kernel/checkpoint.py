@@ -27,6 +27,11 @@ WAL 原则:"trajectory 是 Agent 的全部状态"——帧 transcript 完整入�
    → **就地改写**为子帧真实结果(严格保持 tool_call/tool_result 一一配对);
 3. 调用完全无工具结果(分发到一半断电)且无子帧 → 追加中断占位结果
    (``ok=False, kind=interrupted``,§3.1 中断配对)。
+
+例外(SUPERVISOR.md §4):``ask_supervisor`` 调用无工具结果且帧 ``working`` 含
+``_pending_ask`` 时**不是**"分发到一半断电"——恢复时先经
+``Kernel._settle_pending_ask`` 重新向调用方提问并写回真实答案,
+再进入上面三条规则结算其余调用。
 """
 
 from __future__ import annotations
@@ -281,6 +286,9 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
         for frame in sorted(frames, key=lambda f: f.depth, reverse=True):
             if frame.status is FrameStatus.DONE:
                 continue
+            # pending ask(SUPERVISOR.md §4):重新向调用方提问结算,
+            # 先于未配对结算——不得落入 interrupted 占位
+            await kernel._settle_pending_ask(frame)
             _settle_unpaired_calls(kernel, frame)
             skill_obj = kernel.skills.get(frame.skill)
             try:

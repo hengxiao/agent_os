@@ -6,6 +6,11 @@ host/shared 的读取层与 :class:`RunManager`,不 import 内核私有实现(§
 校验错归类(与 CLI 退出码 2 同类,§3.3):技能不存在/输入不合 schema 等
 "run 未开始"的失败统一返回 ``200 + {"status": "failed", "error": ...}``;
 ``skill_set`` 未知(D6)属请求本身非法,归 400。
+
+S2 增量(SUPERVISOR.md v2 §2.3/§5):supervisor 收件箱两个端点——
+``GET /api/supervisor/pending`` 列挂起中的裁决请求,
+``POST /api/supervisor/{question_id}/answer`` 作答结算(对应 run 恢复);
+Web 收件箱即默认宿主通道,装配即得。
 """
 
 from __future__ import annotations
@@ -79,6 +84,12 @@ class ReloadBody(BaseModel):
     """``POST /api/skills/reload`` 请求体(D6):``skill_set`` 限定重载哪个 set,缺省全部。"""
 
     skill_set: str | None = None
+
+
+class SupervisorAnswerBody(BaseModel):
+    """``POST /api/supervisor/{question_id}/answer`` 请求体(SUPERVISOR.md §2.4;S2)。"""
+
+    answer: str
 
 
 def _run_dir(artifacts_root: Path, run_id: str) -> Path:
@@ -400,6 +411,32 @@ def create_app(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"checkpoint 畸形: {e}") from e
         return _jsonable(record)
+
+    @app.get("/api/supervisor/pending")
+    def list_supervisor_pending() -> list[dict[str, Any]]:
+        """supervisor 收件箱(SUPERVISOR.md §5;S2):挂起中的裁决请求列表。
+
+        Web 收件箱即默认宿主通道(§2.3):run 无需注入 handler,装配即得;
+        每行含 question_id/run_id/frame_id/question/context/options/urgency/asked_at。
+        """
+        return manager.supervisor_pending()
+
+    @app.post("/api/supervisor/{question_id}/answer")
+    def answer_supervisor(question_id: str, body: SupervisorAnswerBody) -> dict[str, Any]:
+        """作答(S2):结算挂起问题,提问帧以答案为 tool result 恢复(§2.4)。
+
+        答案不匹配 options → 400 且问题保持挂起(§3:格式错误返回调用方重答,
+        不重问子帧);找不到 question_id → 404。
+        """
+        try:
+            manager.supervisor_answer(question_id, body.answer)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail=f"找不到 supervisor 问题: {question_id}"
+            ) from None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        return {"ok": True, "question_id": question_id}
 
     @app.get("/api/skillsets")
     def list_skillsets() -> list[dict[str, Any]]:

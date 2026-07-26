@@ -10,6 +10,8 @@ from types import SimpleNamespace
 from typing import Any
 
 from agent_os.api.v1 import (
+    ASK_SUPERVISOR_SCHEMA,
+    ASK_SUPERVISOR_TOOL,
     ORCHESTRATE_SCHEMA,
     ORCHESTRATE_TOOL,
     POST_COMPRESS,
@@ -32,6 +34,13 @@ from agent_os.skills.loader import render_prompt
 #: 预算剩余低于该比例时,hint 切换为收敛策略(§7.3:读数 + 操作策略)
 LOW_BUDGET_RATIO = 0.2
 
+#: ask_supervisor 伪工具对 LLM 的呈现文案(SUPERVISOR.md §2.1;参数 schema 在契约层)
+_ASK_SUPERVISOR_DESCRIPTION = (
+    "请求上级(本 run 的调用方)裁决。Use when 决策超出自主权限(审批/放行/降级兜底);"
+    "Do not use when 可自行判断的常规步骤。调用后本帧挂起,答案作为 tool result 返回;"
+    "提供 options 时上级须从中选择作答。"
+)
+
 #: 内联能力段快照在帧工作内存的键(SKILL-INLINING.md §4.2:帧首次 build 冻结,
 #: 随帧入 checkpoint——前缀稳定 + 热重载钉版本 + resume 确定性一举解决)
 INLINE_CAPS_KEY = "_inline_caps"
@@ -46,6 +55,9 @@ class ContextManager:
     - ``build``:组装逻辑与 :class:`MinimalContextManager` 相同(SYSTEM 渲染 + 帧上下文
       + 白名单工具 schema + 伪工具 schema + model/temperature 解析,顺序与序列化结果
       跨步固定,§7.4 不变量 5),另在 ``status_bar`` 开启时尾部追加状态元消息(§7.3);
+      伪工具面的两个开关:``python_orchestrate`` 随 ``RunConfig.orchestrate`` 消融档,
+      ``ask_supervisor`` 随构造参数 ``supervisor``(S2:内核是否装了 supervisor 通道,
+      SUPERVISOR.md §2.1);
     - ``maintain``:超 cap 时经 compressor 压到 ``int(cap * target_ratio)``,
       前后发 ``pre/post:compress`` 信号(§7.4 不变量 4);``compression == "off"``
       (RunConfig 或 manifest ``context_policy.compress``)时全部短路(§7.1 消融档)。
@@ -63,6 +75,7 @@ class ContextManager:
         status_bar: bool = True,
         default_max_tokens: int = 128_000,
         target_ratio: float = 0.8,
+        supervisor: bool = True,
     ) -> None:
         self._skills = skills
         self._tools = tools
@@ -73,6 +86,10 @@ class ContextManager:
         self._status_bar = status_bar
         self._default_max_tokens = default_max_tokens
         self._target_ratio = target_ratio
+        #: S2(SUPERVISOR.md §2.1):manifest 声明 ``ask_supervisor`` 且内核装了
+        #: supervisor 通道时,伪工具 schema 才补进可见工具面;KernelBuilder 按
+        #: 装配结果显式传入,独立使用(未经 builder)默认按声明呈现
+        self._supervisor = supervisor
 
     @classmethod
     def default(cls, compressor: Compressor | None = None, **kw: Any) -> ContextManager:
@@ -96,6 +113,17 @@ class ContextManager:
             # 编排伪工具不在 registry(内核拦截,CODE-ORCHESTRATION.md §2.1),
             # 由此处按声明 + 消融开关补进可见工具面
             tools.append(dict(ORCHESTRATE_SCHEMA))
+        if ASK_SUPERVISOR_TOOL in manifest.permissions.tools and self._supervisor:
+            # ask_supervisor 伪工具同样不进 registry(SUPERVISOR.md §2.1 内核拦截);
+            # 仅在内核装了 supervisor 通道时呈现(S2)——无通道时模型调了也只能
+            # 吃 not_found,不如不呈现
+            tools.append(
+                {
+                    "name": ASK_SUPERVISOR_TOOL,
+                    "description": _ASK_SUPERVISOR_DESCRIPTION,
+                    "parameters": dict(ASK_SUPERVISOR_SCHEMA),
+                }
+            )
         hidden = set(caps["hidden"]) if caps is not None else set()
         tools.extend(
             {"name": s.name, "description": s.description, "parameters": s.parameters}

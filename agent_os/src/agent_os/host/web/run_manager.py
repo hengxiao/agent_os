@@ -48,6 +48,17 @@ D6 增量(一站多 skill set;tests/test_skillsets.py 锚点):
 - ``start_run(..., skill_set=...)``:显式 set 用该 set 装配;未指定时唯一 set
   自动生效,否则全局 config(向后兼容);run 记录(内存态 + meta.json/result.json)
   带 ``skill_set``(全局 run 记 ``"default"``)。
+
+S2 增量(SUPERVISOR.md v2 §2.3/§5;tests/web/test_supervisor_channel.py 锚点):
+
+- **Web 收件箱即默认宿主通道**:``_assemble_kernel`` 经
+  ``build_kernel(supervisor_handler=...)`` 注入 supervisor handler——通道选择
+  顺序(§2.3):run 级注入(``start_run(supervisor_handler=...)``)> 装配级注入
+  (``RunManager(supervisor_handler=...)``)> 进程共享 :class:`InboxChannel`;
+- ``supervisor_pending`` / ``supervisor_answer``:收件箱查询与结算
+  (``GET /api/supervisor/pending`` / ``POST /api/supervisor/{id}/answer``
+  数据源);options 校验在结算前,不匹配归 ``ValueError``(路由 400,
+  问题保持挂起,§3:格式错误返回调用方重答)。
 """
 
 from __future__ import annotations
@@ -65,6 +76,7 @@ from agent_os.api.v1 import RUN_STARTED, Allow, Mode, RunControl, Signal
 from agent_os.host.shared.artifacts import execute_resume, execute_run
 from agent_os.host.shared.runrecord import STATUS_FAILED
 from agent_os.runtime.config import build_kernel, load_config, load_skillsets
+from agent_os.supervisor import InboxChannel
 
 #: hub 关闭时投递给订阅者的哨兵(§4.2:run 结束后 SSE 发终止事件并关闭)
 HUB_CLOSED: Any = object()
@@ -242,6 +254,7 @@ class RunManager:
         config_path: str | Path,
         artifacts_root: Path,
         skillsets_dir: str | Path | None = None,
+        supervisor_handler: Any = None,
     ) -> None:
         self._config_path = config_path
         self._artifacts_root = Path(artifacts_root)
@@ -250,6 +263,10 @@ class RunManager:
         self._hubs: dict[str, SignalHub] = {}
         self._skills_registry: Any = None  # 惰性装配的共享 registry(reload/查询用)
         self._tools_registry: Any = None  # 惰性装配的共享 tools registry(D4 查询用)
+        #: S2 supervisor 通道(SUPERVISOR.md §2.3):装配级注入的 handler(优先),
+        #: 与进程共享的 InboxChannel(缺省——Web 收件箱即默认宿主通道)
+        self._supervisor_handler = supervisor_handler
+        self._inbox = InboxChannel()
         #: D6 一站多 set:{set 名: set 目录(resolve 后,sys.path/模块逐出比较一致)}
         self._sets: dict[str, Path] = (
             {name: d.resolve() for name, d in load_skillsets(skillsets_dir).items()}
@@ -310,6 +327,7 @@ class RunManager:
         self,
         overrides: dict[str, Any] | None = None,
         skill_set: str | None = None,
+        supervisor_handler: Any = None,
     ) -> Any:
         """按 config 装配一个 run 的内核;恒附带 _StopBridge 保证 ctl 存在(stop 通道)。
 
@@ -319,18 +337,30 @@ class RunManager:
 
         ``skill_set``(D6):用该 set 的装配(``_base_config``);全程持
         ``_assemble_lock``,与并发 run/其它 set 的装配串行化(sys.path 是进程全局)。
+
+        ``supervisor_handler``(S2):run 级注入的 supervisor 通道;缺省回落
+        装配级 handler,再缺省回落进程共享 InboxChannel(§2.3 选择顺序)。
         """
+        handler = supervisor_handler
+        if handler is None:
+            handler = self._supervisor_handler
+        if handler is None:
+            handler = self._inbox
         with self._assemble_lock:
             base = self._base_config(skill_set)
             if not overrides:
-                return build_kernel(base, extra_sidecars=[_StopBridge()])
+                return build_kernel(
+                    base, extra_sidecars=[_StopBridge()], supervisor_handler=handler
+                )
             cfg = load_config(base) if isinstance(base, (str, Path)) else dict(base)
             run_section = dict(cfg.get("run") or {})
             for key in OVERRIDE_FIELDS:
                 if key in overrides and overrides[key] is not None:
                     run_section[key] = overrides[key]
             cfg["run"] = run_section
-            return build_kernel(cfg, extra_sidecars=[_StopBridge()])
+            return build_kernel(
+                cfg, extra_sidecars=[_StopBridge()], supervisor_handler=handler
+            )
 
     async def start_run(
         self,
@@ -339,6 +369,7 @@ class RunManager:
         wait: bool = False,
         overrides: dict[str, Any] | None = None,
         skill_set: str | None = None,
+        supervisor_handler: Any = None,
     ) -> str:
         """启动一个 run 并返回 run_id;``wait=True`` 时阻塞到 run 结束。
 
@@ -347,6 +378,8 @@ class RunManager:
         ``overrides`` 见 :meth:`_assemble_kernel`(D3,只影响本次 run)。
         ``skill_set``(D6):用该 set 的装配;缺省见 :meth:`_resolve_set`;run 记录
         (内存态 + meta.json/result.json)带 ``skill_set``(全局 run 记 ``"default"``)。
+        ``supervisor_handler``(S2):run 级注入的 supervisor 通道(§2.3 选择顺序
+        第一级;REST 层传不了可调用,供嵌入方程序化调用),缺省见 :meth:`_assemble_kernel`。
         """
         effective = self._resolve_set(skill_set)
         tag = effective or "default"
@@ -374,7 +407,9 @@ class RunManager:
 
         def _work() -> None:
             try:
-                kernel = self._assemble_kernel(overrides, skill_set=effective)
+                kernel = self._assemble_kernel(
+                    overrides, skill_set=effective, supervisor_handler=supervisor_handler
+                )
                 state["kernel"] = kernel
 
                 async def _fan(sig: Signal) -> None:
@@ -507,6 +542,34 @@ class RunManager:
             "started_at": meta.get("started_at") or datetime.now(UTC).isoformat(),
             "kernel": None,
         }
+
+    # ------------------------------------------------------------------
+    # S2 supervisor 收件箱(SUPERVISOR.md §2.3/§5):Web 收件箱即默认宿主通道
+    # ------------------------------------------------------------------
+
+    def supervisor_pending(self) -> list[dict[str, Any]]:
+        """``GET /api/supervisor/pending`` 数据源:默认通道(InboxChannel)的挂起列表。"""
+        return self._inbox.pending()
+
+    def supervisor_answer(self, question_id: str, answer: str) -> None:
+        """``POST /api/supervisor/{question_id}/answer``:校验 options 后结算收件箱。
+
+        找不到 question_id → ``KeyError``(路由归 404);answer 不在 options 内 →
+        ``ValueError``(路由归 400,问题保持挂起——§3:格式错误返回调用方重答,
+        不重问子帧)。结算时 ``decided_by`` 标 ``"host:web-ui"``(§2.1 通道标注)。
+        """
+        question = self._inbox.get(question_id)
+        if question is None:
+            raise KeyError(f"找不到 supervisor 问题: {question_id}")
+        if question.options is not None and answer not in question.options:
+            raise ValueError(
+                f"答案 {answer!r} 不在 options {question.options} 内,请从 options 中选择作答"
+            )
+        if not self._inbox.answer(
+            question_id, {"answer": answer, "decided_by": "host:web-ui"}
+        ):
+            # 竞态:get 之后问题刚好超时/终结被摘除,按找不到归类
+            raise KeyError(f"找不到 supervisor 问题: {question_id}")
 
     def _shared_registry(self, skill_set: str | None = None) -> Any:
         """惰性装配共享 skills registry(reload/只读查询用)。

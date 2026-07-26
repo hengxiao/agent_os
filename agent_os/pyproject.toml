@@ -73,3 +73,8 @@ testpaths = ["tests"]
 # S1 锚点(tests/kernel/test_supervisor.py)同为冻结交付件;
 # 其预留变量( seen )属后续波次的接线点,豁免 F841 未使用告警。
 "tests/kernel/test_supervisor.py" = ["F841"]
+
+# S2 锚点(tests/web/test_supervisor_channel.py)同为冻结交付件;
+# 其预留 import( json )与函数内组装 import 形态属锚点固定写法,豁免 F401/I001 告警
+# (豁免 F401 后行内 noqa 变为未使用,一并豁免 RUF100)。
+"tests/web/test_supervisor_channel.py" = ["F401", "I001", "RUF100"]

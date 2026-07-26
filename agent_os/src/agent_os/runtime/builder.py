@@ -102,7 +102,8 @@ class KernelBuilder:
 
         ``handler``:``async def handler(question: Question) -> Answer``(契约见
         ``api/v1/supervisor.py``);``None`` 表示仅预置策略字段(TOML
-        ``[supervisor]`` 段形态,handler 由 S2 宿主通道随后在 builder 层注册),
+        ``[supervisor]`` 段形态,handler 由宿主通道经同一 API 注入——S2:
+        ``build_kernel(supervisor_handler=...)`` 的 Web 收件箱 / CLI 协议),
         此时 build 不装配 SupervisorManager。
         """
         self._supervisor = {
@@ -163,12 +164,22 @@ class KernelBuilder:
             )
             if missing:
                 raise SkillLoadError(f"manifest 声明的工具未注册(§6.1 权限闸门): {missing}")
+        sup_manager = None
+        if self._supervisor is not None and self._supervisor["handler"] is not None:
+            # SUPERVISOR.md §2.3:装配级 handler 通道(S2 宿主通道——Web 收件箱 /
+            # CLI 协议——经 build_kernel(supervisor_handler=...) 走同一注入入口)
+            sup_manager = SupervisorManager(self._supervisor["handler"], signals=bus, **{
+                k: self._supervisor[k] for k in ("timeout_s", "on_timeout", "default_answer")
+            })
         context = self._context or ContextManager.default(
             RollingWindowCompressor(),
             skills=skills,
             tools=tools,
             config=self.config,
             signals=bus,
+            # S2(SUPERVISOR.md §2.1):ask_supervisor 伪工具 schema 只在装了
+            # supervisor 通道时呈现给 LLM;嵌入方自带 context manager 时自行决定
+            supervisor=sup_manager is not None,
         )
         if hasattr(tools, "bind_signals"):
             tools.bind_signals(bus)
@@ -177,12 +188,6 @@ class KernelBuilder:
         if self._telemetry is not None:
             # §5.1:Telemetry 是总线的特权订阅者(全量订阅),不算 sidecar
             bus.subscribe("*", self._telemetry.record)
-        sup_manager = None
-        if self._supervisor is not None and self._supervisor["handler"] is not None:
-            # SUPERVISOR.md §2.3:S1 装配级 handler 通道(S2 宿主通道随后在 builder 层注册)
-            sup_manager = SupervisorManager(self._supervisor["handler"], signals=bus, **{
-                k: self._supervisor[k] for k in ("timeout_s", "on_timeout", "default_answer")
-            })
         kernel = Kernel(
             config=self.config,
             providers=providers,

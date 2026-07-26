@@ -14,8 +14,9 @@
     [skills]     → LocalFileSkillRegistry
     [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加)
     [supervisor] → timeout_s / on_timeout / default_answer(SUPERVISOR.md §6;TOML
-                   写不了可调用 handler——此处只加载策略字段,handler 注入走
-                   KernelBuilder.supervisor(handler) API,S2 宿主通道在 builder 层注册)
+                   写不了可调用 handler——此处只加载策略字段,handler 由宿主经
+                   build_kernel(supervisor_handler=...) 注入,S2:Web 收件箱
+                   默认通道 / CLI stderr 协议)
     [telemetry]  → JsonlTelemetrySink(目录自动创建)
     [retry]      → ProviderManager 的 max_attempts / backoff_base
 
@@ -196,7 +197,12 @@ def _sidecars(cfg: dict[str, Any]) -> list[Any]:
     return sidecars
 
 
-def build_kernel(config: str | Path | dict[str, Any], *, extra_sidecars: Iterable[Any] = ()) -> Any:
+def build_kernel(
+    config: str | Path | dict[str, Any],
+    *,
+    extra_sidecars: Iterable[Any] = (),
+    supervisor_handler: Any = None,
+) -> Any:
     """按 RUNNERS.md §2.1 把 ``agent-os.toml``(或等价 dict)装配为 Kernel。
 
     缺省:无 ``[run]`` 用 RunConfig 默认;无 ``[providers]`` → 空 Manager
@@ -206,6 +212,13 @@ def build_kernel(config: str | Path | dict[str, Any], *, extra_sidecars: Iterabl
 
     ``extra_sidecars``:配置文件之外由宿主追加的 sidecar(Web runner 的 stop
     通道占位 sidecar;M4 起仅有 sidecar 时 builder 才装配 ``kernel.ctl``)。
+
+    ``supervisor_handler``(S2,SUPERVISOR.md §2.3):宿主注入的调用方通道
+    (``async def handler(question) -> Answer``),与 TOML ``[supervisor]``
+    段的策略字段(timeout_s/on_timeout/default_answer)合并装配
+    SupervisorManager;不传则维持 S1 行为(仅预置策略,运行时 ask 报
+    not_found,fail-closed)。Web 宿主传 InboxChannel(默认通道),
+    CLI 传 stderr/stdin 协议 handler。
     """
     cfg = load_config(config) if isinstance(config, (str, Path)) else dict(config)
     run_cfg = _run_config(cfg.get("run") or {})
@@ -252,23 +265,25 @@ def build_kernel(config: str | Path | dict[str, Any], *, extra_sidecars: Iterabl
     if sidecars:
         builder.sidecars(*sidecars)
     sup_cfg = cfg.get("supervisor") or {}
-    if sup_cfg:
-        unknown = sorted(set(sup_cfg) - {"timeout_s", "on_timeout", "default_answer"})
-        if unknown:
-            raise ConfigError(
-                f"[supervisor] 含未知字段: {unknown}"
-                f"(支持: timeout_s/on_timeout/default_answer;handler 为可调用,"
-                f"须走 KernelBuilder.supervisor API 注入)"
-            )
-        if sup_cfg.get("on_timeout", "fail") not in ("fail", "default_answer"):
-            raise ConfigError(
-                f"[supervisor] on_timeout 应为 'fail' | 'default_answer',"
-                f"得到: {sup_cfg.get('on_timeout')!r}"
-            )
-        # handler 写不进 TOML:只预置策略字段,build 不装配 Manager(§6;
-        # 运行时 ask 按"未装配 supervisor handler"报 not_found,fail-closed)
+    unknown = sorted(set(sup_cfg) - {"timeout_s", "on_timeout", "default_answer"})
+    if unknown:
+        raise ConfigError(
+            f"[supervisor] 含未知字段: {unknown}"
+            f"(支持: timeout_s/on_timeout/default_answer;handler 为可调用,"
+            f"须走 build_kernel(supervisor_handler=...) / KernelBuilder.supervisor API 注入)"
+        )
+    if sup_cfg.get("on_timeout", "fail") not in ("fail", "default_answer"):
+        raise ConfigError(
+            f"[supervisor] on_timeout 应为 'fail' | 'default_answer',"
+            f"得到: {sup_cfg.get('on_timeout')!r}"
+        )
+    if sup_cfg or supervisor_handler is not None:
+        # handler 写不进 TOML:策略字段来自 [supervisor] 段,通道由宿主注入(§2.3);
+        # 两者皆无则维持 S1 行为——build 不装配 Manager,运行时 ask 按
+        # "未装配 supervisor handler" 报 not_found(fail-closed)
         builder.supervisor(
-            None, **{k: sup_cfg[k] for k in ("timeout_s", "on_timeout", "default_answer") if k in sup_cfg}
+            supervisor_handler,
+            **{k: sup_cfg[k] for k in ("timeout_s", "on_timeout", "default_answer") if k in sup_cfg},
         )
     telemetry_dir = (cfg.get("telemetry") or {}).get("dir")
     if telemetry_dir:

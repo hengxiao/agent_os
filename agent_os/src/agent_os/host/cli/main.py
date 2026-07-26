@@ -9,11 +9,18 @@
 | 2 | 输入/配置/技能校验错误(SkillLoadError、输入不合 schema、输入 JSON 解析错) |
 | 3 | run 失败或中止(技能返回错误、OutputValidationError、RunAborted) |
 | 4 | 宿主/基础设施错误(配置缺失、provider 装配失败、docker 不可用) |
+
+S2 增量(SUPERVISOR.md v2 §2.3):CLI 宿主通道——run/resume 装配时注入
+``_cli_supervisor`` handler,run 挂起时把 question JSON 写 stderr(coding agent
+可解析),从 stdin 读一行作答,单命令进程内闭环;跨进程 pending/answer 子命令
+在单进程 CLI 下无收件箱可查,异步收件箱形态由 Web 宿主承载。replay 不注入
+(回放按 trace 记录值走,不问第二次,§4)。
 """
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -21,6 +28,7 @@ from typing import Any
 
 import yaml
 
+from agent_os.api.v1 import Question
 from agent_os.host.shared.artifacts import (
     execute_resume,
     execute_run,
@@ -46,20 +54,49 @@ def _parse_input(raw: str) -> Any:
     return json.loads(raw)
 
 
-def _build_kernel(config: str, inline: str | None = None) -> Any:
+async def _cli_supervisor(question: Question) -> dict[str, Any]:
+    """CLI 宿主通道(SUPERVISOR.md §2.3;S2 简化形态):stderr 打印 + stdin 作答。
+
+    run 挂起时把 question 以单行 JSON 写 stderr(coding agent 可解析的协议行),
+    随后从 stdin 读一行作为回答,run 进程内闭环;``previous_error`` 透传
+    (options 不合时 SupervisorManager 的重问,§3)。stdin EOF 读得空串,
+    通常不合 options,重问耗尽后按不合法答案闭环(帧可降级)。
+    """
+    row: dict[str, Any] = {
+        "type": "supervisor.ask",
+        "question_id": question.question_id,
+        "run_id": question.run_id,
+        "frame_id": question.frame_id,
+        "question": question.question,
+        "context": question.context,
+        "options": question.options,
+        "urgency": question.urgency,
+    }
+    if question.previous_error:
+        row["previous_error"] = question.previous_error
+    print(json.dumps(row, ensure_ascii=False, default=repr), file=sys.stderr, flush=True)
+    line = await asyncio.to_thread(sys.stdin.readline)
+    return {"answer": line.strip(), "decided_by": "host:cli"}
+
+
+def _build_kernel(config: str, inline: str | None = None, supervisor: bool = True) -> Any:
     """build_kernel 的退出码归类包装:SkillLoadError → 2,其余装配失败 → 4。
 
     ``inline``(``--inline on|off``,SKILL-INLINING.md §9 消融开关):覆盖本次 run 的
     ``[run].inline``;缺省用配置文件值。改动只落在本次装配私有的 dict 副本上。
+
+    ``supervisor``(S2,§2.3):注入 CLI 宿主通道(``_cli_supervisor``);replay
+    传 False——回放按 trace 记录值走,不应阻塞等 stdin(§4)。
     """
+    handler = _cli_supervisor if supervisor else None
     try:
         if inline is None:
-            return build_kernel(config)
+            return build_kernel(config, supervisor_handler=handler)
         cfg = load_config(config)
         run_section = dict(cfg.get("run") or {})
         run_section["inline"] = inline
         cfg["run"] = run_section
-        return build_kernel(cfg)
+        return build_kernel(cfg, supervisor_handler=handler)
     except SkillLoadError:
         raise
     except Exception as e:  # 装配失败统一归基础设施错(§3.3 退出码 4)
@@ -211,7 +248,7 @@ def _cmd_replay(args: argparse.Namespace) -> int:
         print(f"replay 产物无效: {e}", file=sys.stderr)
         return 2
     try:
-        kernel = _build_kernel(args.config)
+        kernel = _build_kernel(args.config, supervisor=False)  # replay 不问第二次(§4)
     except SkillLoadError as e:
         print(f"技能校验错误: {e}", file=sys.stderr)
         return 2

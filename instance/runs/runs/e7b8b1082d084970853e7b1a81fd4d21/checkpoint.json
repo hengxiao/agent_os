@@ -1,0 +1,70 @@
+{
+  "v": 1,
+  "run": {
+    "run_id": "e7b8b1082d084970853e7b1a81fd4d21",
+    "status": "failed",
+    "usage": {
+      "cache_read_tokens": 0,
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "cost": 0.0,
+      "steps": 0,
+      "thinking_tokens": 0,
+      "total_ms": 0,
+      "cache_write_tokens": 0,
+      "ttft_ms": 0
+    },
+    "result": null,
+    "error": "ProviderError: Incorrect API key provided",
+    "run_state": {}
+  },
+  "frames": [
+    {
+      "frame_id": "3442310482894f6ab4b2a03a8b5198bc",
+      "skill": "local:plan_trip@1.0.0",
+      "parent_id": null,
+      "input": {
+        "request": "想带老人从上海去西安玩 3 天 2 夜,预算 3000 元"
+      },
+      "depth": 1,
+      "status": "done",
+      "result": null,
+      "error": "Incorrect API key provided",
+      "call_id": null,
+      "usage": {
+        "cache_read_tokens": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cost": 0.0,
+        "steps": 0,
+        "thinking_tokens": 0,
+        "total_ms": 0,
+        "cache_write_tokens": 0,
+        "ttft_ms": 0
+      },
+      "context": {
+        "messages": [
+          {
+            "role": "user",
+            "content": "{\"request\": \"\\u60f3\\u5e26\\u8001\\u4eba\\u4ece\\u4e0a\\u6d77\\u53bb\\u897f\\u5b89\\u73a9 3 \\u5929 2 \\u591c,\\u9884\\u7b97 3000 \\u5143\"}",
+            "tool_calls": [],
+            "tool_call_id": null,
+            "name": null,
+            "reasoning": null,
+            "source": "parent_input",
+            "meta": {}
+          }
+        ],
+        "working": {
+          "_inline_caps": {
+            "text": "",
+            "hidden": [],
+            "skills": []
+          }
+        },
+        "pinned": [],
+        "token_estimate": 35
+      }
+    }
+  ]
+}

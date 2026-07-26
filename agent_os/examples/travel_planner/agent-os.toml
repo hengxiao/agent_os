@@ -12,6 +12,10 @@ max_depth = 8                     # 调用树最深 2 层(plan_trip → 子技�
 
 [providers.kimi]                  # API key 走 MOONSHOT_API_KEY / KIMI_API_KEY 环境变量(KimiProvider 缺省)
 
+[providers.mock]
+brain = "brains:travel_brain"     # 无 key 时的本地复现;同时覆盖全局配置继承来的 mock brain
+                                  # (多 skill set 站点深合并时,set 目录 brains.py 在 sys.path 首位)
+
 [tools]
 builtins = true                   # fs_read/fs_write/fs_edit/shell_exec/http_fetch
 

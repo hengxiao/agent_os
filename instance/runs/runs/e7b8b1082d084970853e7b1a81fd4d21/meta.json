@@ -1,0 +1,10 @@
+{
+  "run_id": "e7b8b1082d084970853e7b1a81fd4d21",
+  "skill": "plan_trip",
+  "input": {
+    "request": "想带老人从上海去西安玩 3 天 2 夜,预算 3000 元"
+  },
+  "host": "web",
+  "started_at": "2026-07-26T18:11:18.875941+00:00",
+  "skill_set": "travel_planner"
+}

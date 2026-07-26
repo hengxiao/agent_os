@@ -1,0 +1,17 @@
+{
+  "status": "failed",
+  "result": null,
+  "error": "ProviderError: Incorrect API key provided",
+  "usage": {
+    "cache_read_tokens": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "cost": 0.0,
+    "steps": 0,
+    "thinking_tokens": 0,
+    "total_ms": 0,
+    "cache_write_tokens": 0,
+    "ttft_ms": 0
+  },
+  "skill_set": "travel_planner"
+}

@@ -79,6 +79,10 @@ async def _cli_supervisor(question: Question) -> dict[str, Any]:
     return {"answer": line.strip(), "decided_by": "host:cli"}
 
 
+#: §5/S3 ``supervisor.ask`` 信号通道标签(SupervisorManager 读取)
+_cli_supervisor.supervisor_channel = "cli"
+
+
 def _build_kernel(config: str, inline: str | None = None, supervisor: bool = True) -> Any:
     """build_kernel 的退出码归类包装:SkillLoadError → 2,其余装配失败 → 4。
 

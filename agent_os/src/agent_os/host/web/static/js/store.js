@@ -37,4 +37,5 @@ export const store = createStore({
   liveConn: null,
   skillsets: [], // D6:[{name, skills, path}](空 = 未配置多 set,UI 与单站一致)
   skillSet: null, // D6:当前 set 过滤(null = 全部;hash ?set= 深链接恢复)
+  inboxPending: [], // S3(SUPERVISOR.md §5):GET /api/supervisor/pending 待答问题(app 5s 轮询)
 });

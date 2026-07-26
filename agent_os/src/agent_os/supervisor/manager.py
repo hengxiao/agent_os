@@ -60,6 +60,9 @@ class SupervisorManager:
                 f"on_timeout 应为 'fail' | 'default_answer',得到: {on_timeout!r}"
             )
         self._handler = handler
+        #: §5/S3 ``supervisor.ask`` 信号的通道标签:handler 可带 ``supervisor_channel``
+        #: 属性声明宿主通道(InboxChannel = "inbox",CLI 协议 = "cli"),缺省 "handler"
+        self._channel = str(getattr(handler, "supervisor_channel", "handler"))
         self._signals = signals
         self._timeout_s = float(timeout_s)
         self._on_timeout = on_timeout
@@ -92,7 +95,7 @@ class SupervisorManager:
                     "context": question.context,
                     "options": question.options,
                     "urgency": question.urgency,
-                    "channel": "handler",  # §2.3:S1 仅嵌入方 handler 通道
+                    "channel": self._channel,  # §5:问题走了哪条通道(inbox|cli|handler)
                 },
             )
         )

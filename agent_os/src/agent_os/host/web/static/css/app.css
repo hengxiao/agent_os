@@ -108,6 +108,27 @@ body {
   animation: pulse 2s ease-in-out infinite;
 }
 
+/* Supervisor 收件箱入口(S3,§5):图标 + 待答计数徽标(>0 显示;含 high 变 --danger) */
+.sup-btn { position: relative; }
+.sup-badge {
+  position: absolute;
+  top: calc(var(--s1) * -1);
+  right: calc(var(--s1) * -1);
+  min-width: var(--s4);
+  height: var(--s4);
+  padding: 0 var(--s1);
+  border-radius: var(--s3);
+  background: var(--live);
+  color: var(--bg-0);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: var(--s4);
+  text-align: center;
+  pointer-events: none;
+}
+.sup-badge[data-high="true"] { background: var(--danger); }
+
 /* ── 按钮 ─────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;
@@ -731,6 +752,16 @@ body[data-route="tools"] .sidebar { display: none; }
 }
 .ft-kind[data-kind="prompt"] { color: var(--sig-llm); }
 .ft-kind[data-kind="code"] { color: var(--sig-tool); }
+/* "等待上级"标注(S3,SUPERVISOR.md §5):挂起等上级裁决的帧;warn 色双编码 */
+.ft-wait {
+  flex-shrink: 0;
+  padding: 0 var(--s1);
+  border: var(--stroke) solid var(--warn);
+  border-radius: var(--r-sm);
+  font-size: var(--text-2xs);
+  line-height: var(--s4);
+  color: var(--warn);
+}
 /* 折叠块的子帧计数(+N) */
 .ft-count {
   flex-shrink: 0;
@@ -1805,6 +1836,118 @@ th.is-sorted .us-sort { color: var(--live); }
   text-align: center;
 }
 .sk-desc { font-size: var(--text-sm); color: var(--fg-1); }
+
+/* ── Supervisor 收件箱抽屉(S3,SUPERVISOR.md §5)────────────────
+   右侧抽屉(遮罩 + 420px 面板);问题卡片:urgency 左色条(high=--danger)、
+   question、context 可展开、options 按钮组 / 文本输入、错误条(重答语义)。 */
+.inbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: flex-end;
+  background: var(--overlay);
+}
+.inbox-drawer {
+  display: flex;
+  flex-direction: column;
+  width: calc(var(--s8) * 17.5); /* 420px */
+  max-width: 100%;
+  height: 100%;
+  background: var(--bg-1);
+  border-left: var(--stroke) solid var(--line);
+  box-shadow: var(--shadow-md);
+}
+.inbox-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-bottom: var(--stroke) solid var(--line);
+  flex-shrink: 0;
+}
+.inbox-title { font-size: var(--text-lg); font-weight: 600; }
+.inbox-count {
+  flex: 1;
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.inbox-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s4);
+  overflow-y: auto;
+}
+.sup-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  background: var(--bg-2);
+  border: var(--stroke) solid var(--line);
+  border-left: var(--stroke-accent) solid var(--line); /* urgency 色条:normal 中性 */
+  border-radius: var(--r-md);
+}
+.sup-card[data-urgency="high"] { border-left-color: var(--danger); } /* high=--danger */
+.sup-card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+}
+.sup-urg {
+  flex-shrink: 0;
+  padding: 0 var(--s1);
+  border: var(--stroke) solid var(--danger);
+  border-radius: var(--r-sm);
+  font-size: var(--text-2xs);
+  line-height: var(--s4);
+  color: var(--danger);
+}
+.sup-q { font-size: var(--text-sm); font-weight: 600; word-break: break-word; }
+.sup-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+}
+.sup-link { color: var(--live); text-decoration: none; font-family: var(--font-mono); }
+.sup-link:hover { text-decoration: underline; }
+.sup-time { margin-left: auto; }
+.sup-ctx summary {
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--fg-1);
+}
+.sup-ctx pre {
+  margin: var(--s1) 0 0;
+  padding: var(--s2);
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+  overflow-x: auto;
+}
+/* 错误条(§3 previous_error 语义:答案被拒/重问原因) */
+.sup-error {
+  padding: var(--s1) var(--s2);
+  background: var(--bg-0);
+  border-left: var(--stroke-strong) solid var(--danger);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+  color: var(--fg-0);
+}
+.sup-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+.sup-actions .sup-input { flex: 1; min-width: 0; }
+
+/* run 头"等待上级裁决"Banner(帧拿不到精确标注时的兜底,S3 §5) */
+.wb-wait { align-items: center; }
+.wb-wait .banner-main { flex: 1; }
 
 /* ── 打印样式(§6.3:RCA 页可打印贴 issue)──────────────────────
    隐藏侧栏 / TopBar / 按钮;Workbench 三栏转单栏(帧树摘要 → 时间线 →

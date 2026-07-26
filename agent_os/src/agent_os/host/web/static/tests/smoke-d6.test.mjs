@@ -35,7 +35,7 @@ const runList = mk("div", "runList");
 sidebar.appendChild(runList);
 const main = mk("main", "main");
 const toastStack = mk("div", "toastStack");
-for (const el of [sidebar, main, mk("button", "liveIndicator"), mk("button", "newRunBtn"), toastStack]) {
+for (const el of [sidebar, main, mk("button", "liveIndicator"), mk("button", "inboxBtn"), mk("button", "newRunBtn"), toastStack]) {
   doc.body.appendChild(el);
 }
 doc.querySelector = (sel) => doc.body.querySelector(sel); // $ / toast() 用

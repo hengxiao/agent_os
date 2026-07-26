@@ -1,6 +1,7 @@
 # Supervisor 子系统设计稿:ask_supervisor
 
-> 状态:**设计稿 v2**(未实现)。
+> 状态:**已实现**(S1 内核机制 / S2 宿主通道 / S3 策略完备收官;
+> S3 增量:Web 收件箱 UI + urgency 呈现 + 嵌套监督示例 + 信号 channel 标签)。
 > **v1 → v2 修正**:"caller"的语义——v1 把默认上级设计为**父帧的 LLM**
 > (调用栈内部路由);经指正,caller 指**整个 agent 的调用方**(启动本 run 的
 > 宿主/应用)。内部栈不再做 YIELD 让渡(v2 删除该机制),语义大幅简化。
@@ -200,7 +201,8 @@ manifest 侧只需 `permissions.tools` 声明 `ask_supervisor`。
 
 里程碑:**S1** 内核机制(拦截/挂起/注入/重入 + handler 通道 + 信号)→
 **S2** 宿主通道(CLI + Web 端点 + 收件箱 UI 基础)→ **S3** 策略完备
-(超时/兜底 + urgency 排序 + 嵌套监督文档与示例)。
+(超时/兜底 + urgency 排序 + 嵌套监督文档与示例 + Web 收件箱 UI +
+信号 channel 标签;嵌套示例见 `agent_os/examples/supervision/`)。
 
 ---
 

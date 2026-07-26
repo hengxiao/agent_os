@@ -1,0 +1,69 @@
+# supervision 嵌套监督示例技能包(tests/examples/test_supervision_nested.py 锚点)。
+#
+# 嵌套监督(SUPERVISOR.md v2 §2.5):内层 agent(junior_clerk)的
+# ask_supervisor 问题路由给它的调用方——外层应用 outer.py;外层应用自己
+# 也是 agent,它的 supervisor_handler 就是它的裁决点:再起一个外层 run
+# 问 team_lead(外层 LLM),把裁决返回内层。权威链(子 agent → 调用 agent)
+# 完全发生在 agent 边界之外,内核只看到一次 handler 往返。
+#
+# 约定(同 support_desk):prompt 模板经 str.format(**input) 渲染,正文不得
+# 出现裸露的 {} 字面量;description 一律 "Use when …;Do not use when …"。
+skills:
+  # 内层 agent:报销文员。大额报销必须经 ask_supervisor 请求上级(本 run
+  # 调用方——这里是外层应用)裁决,并按裁决回答。
+  - name: junior_clerk
+    version: 1.0.0
+    kind: prompt
+    description: 报销文员,处理报销申请,大额须上级裁决。Use when 需要处理报销申请;Do not use when 与报销无关的事务。
+    inputs:
+      type: object
+      properties: { amount: { type: integer } }
+      required: [amount]
+    outputs:
+      type: object
+      properties:
+        decision: { type: string }
+        decided_by: { type: string }
+      required: [decision, decided_by]
+    permissions:
+      tools: [ask_supervisor]
+      skills: []
+    model: { prefer: ["mock/x"] }
+    limits: { max_steps: 6 }
+    prompt: |
+      你是报销文员。报销金额:{amount} 元
+
+      严格按以下顺序执行:
+      1. 调用 ask_supervisor 请求上级裁决本笔报销(question 说清金额,
+         context 带 amount_cents,options 为 approve/reject);
+      2. 按裁决给出最终答案 JSON:decision 为裁决答案,decided_by 照抄
+         裁决来源,不要输出其他文字。
+  # 外层 agent:团队主管。接收调用方(外层应用)转来的下属裁决请求,
+  # 按政策(≤ ¥3000 自动批准)给出答案。它本身就是内层 agent 的"上级"。
+  - name: team_lead
+    version: 1.0.0
+    kind: prompt
+    description: 团队主管,裁决下属上报的审批请求。Use when 下属 agent 上报裁决请求需要答复;Do not use when 直接处理业务申请。
+    inputs:
+      type: object
+      properties:
+        question: { type: string }
+        context: { type: object }
+        options:
+          type: array
+          items: { type: string }
+      required: [question, context]
+    outputs:
+      type: object
+      properties: { answer: { type: string } }
+      required: [answer]
+    permissions:
+      tools: []
+      skills: []
+    model: { prefer: ["mock/x"] }
+    limits: { max_steps: 4 }
+    prompt: |
+      你是团队主管。下属上报的裁决请求:{question}
+
+      审批政策:金额不超过 ¥3000(300000 分)自动批准,否则拒绝。
+      直接给出最终答案 JSON:answer 为 approve 或 reject,不要输出其他文字。

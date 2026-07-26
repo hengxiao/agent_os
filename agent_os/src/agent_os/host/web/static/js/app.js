@@ -12,6 +12,12 @@ import { openLaunchDialog } from "./components/launch-dialog.js";
 import { closeSkillsView, openSkillsView } from "./components/skills-view.js";
 import { closeToolsView, openToolsView } from "./components/tools-view.js";
 import {
+  openInbox,
+  pollInbox,
+  renderInboxBadge,
+  toggleInbox,
+} from "./components/inbox.js";
+import {
   closeWorkbench,
   openWorkbench,
   reconnectLive,
@@ -302,6 +308,7 @@ store.subscribe((state, patch) => {
   }
   if ("runs" in patch || "runsStatus" in patch) renderRunList();
   if ("liveConn" in patch) renderLiveIndicator(); // §5 SSE 连接态 → TopBar live 点
+  if ("inboxPending" in patch) renderInboxBadge(); // S3 §5:待答计数徽标(>0 显示,high 变色)
   if ("skillsets" in patch) {
     sanitizeSkillSet(); // hash 恢复的 set 名未知 → 回落全部(可能嵌套发 skillSet patch)
     renderSetSelect();
@@ -326,6 +333,10 @@ document.addEventListener("click", (e) => {
     }
     if (act === "open-launch") {
       openLaunchDialog(); // 空态主按钮:同 + New Run
+      return;
+    }
+    if (act === "open-inbox") {
+      openInbox(); // S3 §5:run 头"等待上级裁决"Banner 的入口
       return;
     }
     if (act === "copy") {
@@ -384,6 +395,8 @@ $("#liveIndicator").addEventListener("click", () => {
   }
   poll();
 });
+// S3(SUPERVISOR.md §5):TopBar 收件箱图标 → 抽屉开关
+$("#inboxBtn").addEventListener("click", () => toggleInbox());
 // + New Run 主按钮(§4.3):打开 Launch Modal(不打断当前页;成功后跳 #/runs/<id> 进 live)
 $("#newRunBtn").addEventListener("click", () => openLaunchDialog());
 
@@ -466,4 +479,9 @@ applyRoute();
 renderChips();
 loadSkillsets(); // D6:到达后渲染 set 下拉,并 sanitize hash 恢复的 set 名
 poll();
-setInterval(poll, POLL_INTERVAL);
+pollInbox(); // S3:supervisor 收件箱随同一周期轮询
+renderInboxBadge();
+setInterval(() => {
+  poll();
+  pollInbox();
+}, POLL_INTERVAL);

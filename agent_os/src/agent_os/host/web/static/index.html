@@ -16,6 +16,16 @@
     <a class="nav-item" href="#/tools" data-nav="tools">Tools</a>
   </nav>
   <div class="topbar-side">
+    <button class="icon-btn sup-btn" id="inboxBtn" data-tip="Supervisor 收件箱"
+            aria-label="Supervisor 收件箱">
+      <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor"
+           stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M2.5 9.6l1.6-4.8A1 1 0 0 1 5 4.2h6a1 1 0 0 1 .9.6l1.6 4.8"/>
+        <path d="M2.5 9.6V12A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5V9.6"/>
+        <path d="M2.5 9.6h3.2l.9 1.6h2.8l.9-1.6h3.2"/>
+      </svg>
+      <span class="sup-badge" id="inboxBadge" hidden>0</span>
+    </button>
     <button class="live-indicator" id="liveIndicator" data-state="connecting"
             title="连接中…" aria-label="API 连接状态,点击立即重试"></button>
     <button class="btn btn-primary" id="newRunBtn" data-tip="发起新运行">+ New Run</button>

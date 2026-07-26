@@ -116,6 +116,7 @@ const wb = {
   kindByName: new Map(), // skill 名 → kind(prompt/code)
   usageByFid: new Map(), // frame_id → /usage 帧行(tokens/cost)
   durations: new Map(), // frame_id → 帧时长 ms(frameDurations 纯函数)
+  waitKey: "", // S3:本 run 待答问题指纹(收件箱变化仅问题集变化才重绘头/树)
   metaKey: "", // runs 列表元信息指纹(轮询时仅元信息变化才重绘页头)
   els: null, // { head, live, tree, timeline, inspector } 面板引用
   live: null, // live 会话(§4.3):{ state, es, pollId, tickId, follow, ending, knownFrames, bar, startMs }
@@ -166,6 +167,7 @@ export function openWorkbench(main, runId, query = null) {
     wb.kindByName = new Map();
     wb.usageByFid = new Map();
     wb.durations = new Map();
+    wb.waitKey = "";
     wb.metaKey = "";
     wb.els = null;
     store.set({ selection: null }); // 换 run 清空三联动
@@ -197,7 +199,25 @@ export function closeWorkbench() {
   wb.kindByName = new Map();
   wb.usageByFid = new Map();
   wb.durations = new Map();
+  wb.waitKey = "";
 }
+
+/* ── S3(SUPERVISOR.md §5):本 run 的"等待上级"标注数据源 ─────────
+   收件箱 pending(app.js 5s 轮询写 store.inboxPending)里 run_id 匹配的问题;
+   提问帧在帧树 → 帧块加"等待上级"chip(简单方式);拿不到精确帧 → run 头 Banner。 */
+
+const pendingForRun = () =>
+  (store.get("inboxPending") ?? []).filter((q) => q?.run_id === wb.runId);
+
+const treeFrameIds = () => {
+  const ids = new Set();
+  const walk = (node) => {
+    if (node?.frame?.frame_id) ids.add(node.frame.frame_id);
+    (node?.children ?? []).forEach(walk);
+  };
+  (wb.roots ?? []).forEach(walk);
+  return ids;
+};
 
 /* ── 取数:detail + signals 并行;帧上下文按选中懒加载 ────────────── */
 
@@ -521,13 +541,36 @@ function renderHeader() {
     resultLine +
     `</div>` +
     // §4.4 异常 Banner:status + error 摘要 + 定位首个错误 ⌘J + Resume ▶
-    (status === "failed" || status === "aborted" ? rcaBannerHtml(status, d.error) : "");
+    (status === "failed" || status === "aborted" ? rcaBannerHtml(status, d.error) : "") +
+    waitBannerHtml();
+}
+
+/* S3(SUPERVISOR.md §5):本 run 有待答问题且提问帧拿不到(不在当前帧树)→
+   页头"等待上级裁决"Banner(帧拿得到时走帧树 chip,见 frameExtras.waiting)。 */
+function waitBannerHtml() {
+  const pending = pendingForRun();
+  if (!pending.length) return "";
+  const ids = treeFrameIds();
+  const unmatched = pending.filter((q) => !q?.frame_id || !ids.has(q.frame_id));
+  if (!unmatched.length) return "";
+  return (
+    `<div class="banner wb-wait" data-tone="warn" role="alert">` +
+    `<span class="banner-icon" aria-hidden="true">⚠</span>` +
+    `<div class="banner-main">` +
+    `<span class="banner-title">等待上级裁决</span>` +
+    `<span class="banner-body">${unmatched.length} 个裁决请求等待调用方作答` +
+    `(提问帧不在当前帧树,详情见收件箱)</span>` +
+    `</div>` +
+    `<button class="btn" data-action="open-inbox">打开收件箱</button>` +
+    `</div>`
+  );
 }
 
 /* ── 渲染:帧树(左栏)───────────────────────────────────────────── */
 
 /* 帧块旁挂数据(§4.2 块头 chip/metadata):kind 按 skill 名 join /api/skills(载入一次);
-   tokens/cost 按 frame_id join /usage;duration 取该帧首末信号 ts 差(frameDurations)。 */
+   tokens/cost 按 frame_id join /usage;duration 取该帧首末信号 ts 差(frameDurations);
+   waiting(S3,§5):收件箱 pending 里本 run 的提问帧 → "等待上级"标注。 */
 function frameExtras(frame) {
   const u = wb.usageByFid.get(frame?.frame_id);
   return {
@@ -535,6 +578,7 @@ function frameExtras(frame) {
     tokens: (Number(u?.prompt_tokens) || 0) + (Number(u?.completion_tokens) || 0),
     cost: Number(u?.cost) || 0,
     durationMs: wb.durations.get(frame?.frame_id) ?? null,
+    waiting: pendingForRun().some((q) => q?.frame_id && q.frame_id === frame?.frame_id),
   };
 }
 
@@ -1223,5 +1267,14 @@ store.subscribe((state, patch) => {
     const key = `${meta.skill ?? shortSkill(d.frames?.[0]?.skill)}|${d.status ?? meta.status}|` +
       `${meta.cost ?? d.usage?.cost}|${meta.started_at}`;
     if (key !== wb.metaKey) renderHeader();
+  }
+  if ("inboxPending" in patch && wbActive()) {
+    // S3 §5:收件箱变化 → 帧树"等待上级"chip / 页头 Banner(仅本 run 问题集变化才重绘)
+    const key = pendingForRun().map((q) => `${q?.question_id}:${q?.frame_id}`).join("|");
+    if (key !== wb.waitKey) {
+      wb.waitKey = key;
+      renderHeader();
+      renderTreePanel();
+    }
   }
 });

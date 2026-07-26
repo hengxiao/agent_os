@@ -365,3 +365,54 @@ def test_pairing_invariant_through_suspend_resume(tmp_path):
             elif m.role is Role.TOOL and m.tool_call_id:
                 result_ids.add(m.tool_call_id)
         assert call_ids == result_ids, f"配对阵损坏: {call_ids ^ result_ids}"
+
+
+# ---------------------------------------------------------------------------
+# 信号 channel 标签(S3,§5)
+# ---------------------------------------------------------------------------
+
+
+def test_signal_channel_label_default_handler(tmp_path):
+    """supervisor.ask 信号 payload 带 channel:嵌入方 handler 缺省标 "handler"。"""
+    asks = []
+
+    async def rec(sig):
+        asks.append(sig)
+
+    async def handler(question):
+        return {"answer": "approve", "decided_by": "test-handler"}
+
+    kernel = _build(tmp_path, handler)
+    kernel.signals.subscribe("supervisor.ask", rec)
+    asyncio.run(kernel.run("expense_report", {"amount": 5000}))
+
+    assert len(asks) == 1
+    assert asks[0].payload["channel"] == "handler"
+
+
+def test_signal_channel_label_from_handler_attribute(tmp_path):
+    """handler 带 supervisor_channel 属性时按属性标注(inbox|cli 宿主通道的标记方式)。"""
+    asks = []
+
+    async def rec(sig):
+        asks.append(sig)
+
+    async def handler(question):
+        return {"answer": "approve", "decided_by": "test-handler"}
+
+    handler.supervisor_channel = "inbox"  # InboxChannel/CLI 协议的同款标法
+    kernel = _build(tmp_path, handler)
+    kernel.signals.subscribe("supervisor.ask", rec)
+    asyncio.run(kernel.run("expense_report", {"amount": 5000}))
+
+    assert len(asks) == 1
+    assert asks[0].payload["channel"] == "inbox"
+
+
+def test_host_channels_declare_labels():
+    """宿主默认通道自报标签:Web 收件箱 = inbox,CLI 协议 = cli(S3,§5)。"""
+    from agent_os.host.cli.main import _cli_supervisor
+    from agent_os.supervisor import InboxChannel
+
+    assert InboxChannel().supervisor_channel == "inbox"
+    assert _cli_supervisor.supervisor_channel == "cli"

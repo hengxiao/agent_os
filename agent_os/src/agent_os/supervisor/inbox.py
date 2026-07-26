@@ -24,6 +24,9 @@ from agent_os.api.v1 import Question
 class InboxChannel:
     """pending dict + Future 结算的宿主收件箱(§2.3 handler 接口;S2)。"""
 
+    #: §5/S3 ``supervisor.ask`` 信号通道标签(SupervisorManager 读取)
+    supervisor_channel = "inbox"
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._pending: dict[str, dict[str, Any]] = {}

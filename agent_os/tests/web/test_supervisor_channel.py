@@ -116,6 +116,35 @@ def test_web_inbox_pending_and_answer_resumes_run(tmp_path):
     assert detail["result"] == {"decision": "approve"}
 
 
+def test_signal_channel_label_inbox_end_to_end(tmp_path):
+    """S3(§5):Web 收件箱作答的 run,trace 里 supervisor.ask 的 channel = "inbox"。"""
+    client = _client(tmp_path)
+    r = client.post("/api/runs", json={"skill": "expense_report", "input": {"amount": 5000}})
+    run_id = r.json()["run_id"]
+
+    deadline = time.monotonic() + 10
+    pending = []
+    while time.monotonic() < deadline:
+        pending = client.get("/api/supervisor/pending").json()
+        if pending:
+            break
+        time.sleep(0.1)
+    assert pending
+    client.post(f"/api/supervisor/{pending[0]['question_id']}/answer", json={"answer": "approve"})
+
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if client.get(f"/api/runs/{run_id}").json()["status"] == "done":
+            break
+        time.sleep(0.1)
+    trace = (tmp_path / "runs" / "runs" / run_id / "trace.jsonl").read_text(encoding="utf-8")
+    asks = [
+        json.loads(line) for line in trace.splitlines()
+        if json.loads(line).get("name") == "supervisor.ask"
+    ]
+    assert asks and asks[0]["payload"]["channel"] == "inbox"
+
+
 def test_answer_outside_options_rejected(tmp_path):
     """提交不匹配 options 的回答 → 400/422,问题仍在 pending。"""
     client = _client(tmp_path)

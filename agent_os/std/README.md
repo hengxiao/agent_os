@@ -1,4 +1,4 @@
-# std/transform — 纯函数技能包
+# std — 标准技能包
 
 STDLIB 第 2 波(STDLIB-CATALOG §W2;STDLIB §4.1):20 个 code 技能,全部零 LLM、
 零外部依赖(仅标准库)、确定性,permissions 全空——纯转换,不触网、不读状态
@@ -10,14 +10,28 @@ STDLIB 第 2 波(STDLIB-CATALOG §W2;STDLIB §4.1):20 个 code 技能,全部零 
 `retrieval_metrics` / `injection_scan` / `redact_pii` / `identifier_guard` /
 `make_handoff` / `date_normalize` / `citation_check`。
 
+STDLIB 第 3 波(STDLIB-CATALOG §W3;STDLIB §4.2-§4.4),同一 `skills.yaml` 追加:
+
+- `std/nlp` 七件(prompt):`summarize` / `classify` / `extract`(JSON Schema
+  驱动)/ `translate` / `rewrite` / `qa_over_text` / `compress_context`
+  (任务感知,与 `summarize` 不可互替)。一律省略 model 段(回落 RunConfig
+  缺省模型)、permissions 全空、prompt 无裸 `{}`;
+- `std/style` 三件(inline merge):`tone_neutral` / `untrusted_content`
+  (`<external_content>` 标记约定,与 `injection_scan` 配对)/ `knowledge_linking`;
+- `std/eval`:`judge`(prompt,rubric schema 化,veto 一票否决)、
+  `calibrate_judge`(code,Cohen's kappa ≥ 0.7 门禁)、`pairwise_compare`
+  (code 编排,内建交换顺序两评,不一致判平;私有依赖 `pairwise_judge_once`)。
+
 ## 装配
 
-handler 为 `transform:<fn>` dotted path(本目录 `transform.py`),装配方需把本目录
-放上 `sys.path`(LocalFileSkillRegistry 不做注入):测试侧由仓库根 `conftest.py`
+handler 为 `<模块>:<fn>` dotted path(W2 是 `transform`,W3 eval 是
+`eval_handlers`;均在本目录),装配方需把本目录放上 `sys.path`
+(LocalFileSkillRegistry 不做注入):测试侧由仓库根 `conftest.py`
 钉入;宿主/CLI 侧把本目录作为一个 skill set 经 `--skillsets <其父目录>` 加载
 (`load_skillsets` 约定:`<root>/<set>/skills.yaml`,set 目录在装配时自动注入
 `sys.path`,见 runtime/config.py 与 host/web/run_manager.py)。
 
 ```bash
-.venv/bin/pytest -q tests/skills/test_std_transform.py   # 锚点
+.venv/bin/pytest -q tests/skills/test_std_transform.py   # W2 锚点
+.venv/bin/pytest -q tests/skills/test_std_nlp.py         # W3 锚点
 ```

@@ -26,7 +26,6 @@ import traceback
 import types
 import typing
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,35 +36,16 @@ import jsonschema
 
 from agent_os.api.v1 import (
     Permission,
-    SkillFrame,
     Tool,
     ToolCall,
     ToolContext,
+    ToolDispatchContext,
     ToolError,
     ToolErrorKind,
-    ToolPolicy,
     ToolResult,
     ToolSpec,
 )
 from agent_os.tools.blob import InMemoryBlobStore
-
-
-@dataclass
-class ToolDispatchContext:
-    """``dispatch`` 的帧侧上下文:§8.2 三层权限交集中帧白名单与 RunConfig 上限由内核传入。
-
-    §W0-1 additive:``workdir``/``read_paths`` 由 runner 从 RunConfig 传入;
-    缺省 ``None`` → 保持现状(每 run 临时目录,安全边界不静默放宽)。
-    §W1-3 additive:``replay_records`` 由 host replay 注入(trace 记录值);
-    缺省 ``None`` → 正常执行(锚点直接构造 ctx 验证回放语义)。
-    """
-
-    frame: SkillFrame
-    allowed_tools: list[str] = field(default_factory=list)  # 帧 manifest.tools 白名单
-    tool_policy: ToolPolicy = field(default_factory=ToolPolicy)  # RunConfig 全局上限
-    workdir: Path | None = None  # §W0-1 run 工作目录(fs/shell 共用解析点)
-    read_paths: list[Path] = field(default_factory=list)  # §W0-1 只读挂载(可在 workdir 之外)
-    replay_records: dict[str, list] | None = None  # §W1-3 replayable 工具按调用序弹出的记录值
 
 
 class _FunctionTool:

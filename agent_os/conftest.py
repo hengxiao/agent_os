@@ -9,8 +9,20 @@
 from __future__ import annotations
 
 import sys
+import urllib.request
 from pathlib import Path
 
 STD_DIR = str(Path(__file__).resolve().parent / "std")
 if STD_DIR not in sys.path:
     sys.path.insert(0, STD_DIR)
+
+# travel_planner 锚点(tests/examples/test_travel_planner.py,冻结交付件)的 live smoke
+# 用 ``urllib.request.urlopen`` 缺省 UA(Python-urllib/x.y)探测 wikivoyage.org 可达性;
+# Wikimedia 对缺省 UA 一律 403(机器人政策要求可识别 UA),本机实测可达却被误判为
+# 不可达而 skip。在此把全局 opener 的 UA 换成可识别串(与 travel_tools 同一串),
+# 只加请求头,不改变任何其他行为;全仓仅此一处 urllib 外呼,无连带影响。
+_urlopen_opener = urllib.request.build_opener()
+_urlopen_opener.addheaders = [
+    ("User-Agent", "agent-os-travel-planner/0.1 (live demo; contact: local-run)")
+]
+urllib.request.install_opener(_urlopen_opener)

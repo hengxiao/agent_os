@@ -1,0 +1,25 @@
+# travel_planner 现场演示配置(供 CLI 直接加载;tests/examples/test_travel_planner.py 锚点同拓扑)
+# 用法(仓库根目录):
+#   export MOONSHOT_API_KEY=sk-...
+#   PYTHONPATH=examples/travel_planner .venv/bin/agent-os run plan_trip \
+#     --input '{"request": "想带老人从上海去西安玩 3 天 2 夜,预算 3000 元,节奏别太赶"}' \
+#     --config examples/travel_planner/agent-os.toml --json
+# (PYTHONPATH 让 [tools.custom] 的 travel_tools 模块可 import;超预算时 CLI 经 stderr 问上级裁决)
+
+[run]
+model = "kimi/kimi-k2-thinking"   # kimi/* 路由到 [providers.kimi];mock 复现见 README(tests 方式)
+max_depth = 8                     # 调用树最深 2 层(plan_trip → 子技能),留足余量
+
+[providers.kimi]                  # API key 走 MOONSHOT_API_KEY / KIMI_API_KEY 环境变量(KimiProvider 缺省)
+
+[tools]
+builtins = true                   # fs_read/fs_write/fs_edit/shell_exec/http_fetch
+
+[tools.custom]
+module = "travel_tools:register"  # wiki_search/wiki_fetch(真实 Wikivoyage API,NET 档)
+
+[skills]
+path = "/home/hengx/agent_os/agent_os/examples/travel_planner/skills.yaml"
+
+[supervisor]
+timeout_s = 120                   # handler 由 CLI 宿主注入(stderr 协议);此处只配策略

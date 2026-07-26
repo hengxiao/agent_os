@@ -269,3 +269,23 @@ def support_brain(req: ChatRequest) -> ChatResponse:
         sys.modules["support_desk_brains"] = module
         spec.loader.exec_module(module)
     return module.support_brain(req)
+
+
+def travel_brain(req: ChatRequest) -> ChatResponse:
+    """``examples/travel_planner`` 的 mock 大脑代理(与 support_brain 同一共存桥机制)。
+
+    tests/examples/test_travel_planner.py 同样以扁平名 ``import brains`` 取
+    ``travel_brain``;全量 pytest 单进程内 ``sys.modules["brains"]`` 已被本模块
+    (research_pipeline,字母序先跑)缓存,故 travel_planner 的 ``brains.py`` 本体
+    经本代理以独立模块名 ``travel_planner_brains`` 按文件路径加载。单独跑
+    test_travel_planner.py 时本体直接被 import,本代理不会被用到。
+    """
+    module = sys.modules.get("travel_planner_brains")
+    if module is None:
+        path = Path(__file__).resolve().parent.parent / "travel_planner" / "brains.py"
+        spec = importlib.util.spec_from_file_location("travel_planner_brains", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["travel_planner_brains"] = module
+        spec.loader.exec_module(module)
+    return module.travel_brain(req)

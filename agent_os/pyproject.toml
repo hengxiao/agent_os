@@ -78,3 +78,8 @@ testpaths = ["tests"]
 # 其预留 import( json )与函数内组装 import 形态属锚点固定写法,豁免 F401/I001 告警
 # (豁免 F401 后行内 noqa 变为未使用,一并豁免 RUF100)。
 "tests/web/test_supervisor_channel.py" = ["F401", "I001", "RUF100"]
+
+# travel_planner 锚点(tests/examples/test_travel_planner.py)同为冻结交付件;
+# 其预留 import( ChatRequest 等,供示例 brains 对照参照)属锚点固定写法,
+# 豁免 F401/I001;live smoke 的网络可达性探测保留宽口径 except,豁免 BLE001。
+"tests/examples/test_travel_planner.py" = ["F401", "I001", "BLE001"]

@@ -10,16 +10,9 @@ from enum import Enum
 from typing import Any
 
 from .frames import Usage
-from .tools import Permission
+from .tools import ToolPolicy  # ToolPolicy 契约本体在 tools.py(工具层),此处 re-export
 
 __all__ = ["LogicPolicy", "Run", "RunConfig", "RunStatus", "ToolPolicy"]
-
-
-@dataclass
-class ToolPolicy:
-    """§2.4:工具权限全局上限(三层权限交集之一,§8.2)。"""
-
-    max_permission: Permission = Permission.WRITE
 
 
 @dataclass

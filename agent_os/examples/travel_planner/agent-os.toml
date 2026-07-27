@@ -7,10 +7,15 @@
 # (PYTHONPATH 让 [tools.custom] 的 travel_tools 模块可 import;超预算时 CLI 经 stderr 问上级裁决)
 
 [run]
-model = "kimi/kimi-k2-thinking"   # kimi/* 路由到 [providers.kimi];mock 复现见 README(tests 方式)
+model = "openai/kimi-for-coding"  # 真机演示:Kimi Code 端点(需 MOONSHOT_API_KEY)
+# 无 key 本地复现:改成 "mock/travel"(确定性大脑,同一份真实 Wikivoyage 数据)
 max_depth = 8                     # 调用树最深 2 层(plan_trip → 子技能),留足余量
 
-[providers.kimi]                  # API key 走 MOONSHOT_API_KEY / KIMI_API_KEY 环境变量(KimiProvider 缺省)
+[providers.openai]
+base_url = "https://api.kimi.com/coding/v1"   # Kimi Code 平台(OpenAI 兼容协议)
+api_key_env = "MOONSHOT_API_KEY"              # key 从环境变量读,不落盘
+
+[providers.kimi]                  # 备选:Moonshot 开放平台(api.moonshot.cn/.ai,按量计费)
 
 [providers.mock]
 brain = "brains:travel_brain"     # 无 key 时的本地复现;同时覆盖全局配置继承来的 mock brain

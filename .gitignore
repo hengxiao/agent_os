@@ -10,3 +10,10 @@ agent_os/examples/support_desk/data/*.jsonl
 agent_os/examples/support_desk/traces/
 # CLI 运行产物(RunRecord/trace/checkpoint)
 .agent-os/
+.env
+.env.*
+*.key
+secrets.env
+# Web/CLI 宿主的 run 产物与遥测(每次运行生成,不入库)
+instance/runs/
+instance/traces/

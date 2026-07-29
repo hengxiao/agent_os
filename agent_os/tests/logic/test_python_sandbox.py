@@ -87,3 +87,47 @@ def test_parse_driver_stdout_json_without_value_key():
 def test_parse_driver_stdout_empty():
     assert _parse_driver_stdout("") == (None, "")
     assert _parse_driver_stdout("\n \n") == (None, "\n \n")
+
+
+# ---------------------------------------------------------------------------
+# §9.2 隔离面(实测钉住当前等级;退化时立刻可见)
+# ---------------------------------------------------------------------------
+
+
+def test_host_env_is_not_inherited():
+    """**凭证隔离**:宿主环境变量不进沙箱。
+
+    回归的是一个真实缺陷:``python_exec`` 曾以 ``env={**os.environ}`` 起子进程,
+    LLM 一行 ``os.environ["ANTHROPIC_API_KEY"]`` 即可读走凭证并经网络外发。
+    """
+    import os
+
+    os.environ["AGENT_OS_TEST_SECRET"] = "sk-must-not-leak"
+    try:
+        result = _run(ExecRequest(source="import os; print(os.environ.get('AGENT_OS_TEST_SECRET'))"))
+    finally:
+        del os.environ["AGENT_OS_TEST_SECRET"]
+    assert result.error is None, result.error
+    assert "sk-must-not-leak" not in result.stdout, "宿主凭证泄漏进沙箱"
+    assert "None" in result.stdout
+
+
+def test_sandbox_cwd_is_isolated_temp_dir():
+    """**cwd 隔离**:工作目录是空临时目录,不是宿主 cwd(通常为用户仓库根)。"""
+    import os
+
+    result = _run(ExecRequest(source="import os; print(os.getcwd()); print(os.listdir('.'))"))
+    assert result.error is None, result.error
+    cwd_line, listing = result.stdout.strip().splitlines()[:2]
+    assert cwd_line != os.getcwd(), "沙箱继承了宿主工作目录"
+    assert "agent-os-sbx-" in cwd_line
+    assert listing == "[]", "沙箱工作目录应为空,不应能直接列出项目文件"
+
+
+def test_pythonpath_still_reaches_driver_mode():
+    """env 白名单不得误伤 code 技能:驱动脚本形态仍要能 import 宿主侧 handler 包。"""
+    result = _run(
+        ExecRequest(source="tests.helpers.code_skills", entry="pure_add", args={"a": 2, "b": 3})
+    )
+    assert result.error is None, result.error
+    assert result.value == {"sum": 5}

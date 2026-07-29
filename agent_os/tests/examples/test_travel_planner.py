@@ -29,6 +29,7 @@ from agent_os.providers.mock import MockProvider
 from agent_os.runtime.builder import KernelBuilder
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.local_registry import LocalPythonToolRegistry
+from tests.helpers.kernels import load_example_module
 
 PLANNER_DIR = Path(__file__).resolve().parents[2] / "examples" / "travel_planner"
 
@@ -91,13 +92,8 @@ def _build(brain, handler=None):
 
 
 def _brain():
-    sys.path.insert(0, str(PLANNER_DIR))
-    try:
-        import brains
-
-        return brains.travel_brain
-    finally:
-        sys.path.remove(str(PLANNER_DIR))
+    """专属模块名加载,不与其它示例的 brains.py 争 sys.modules(见 helper docstring)。"""
+    return load_example_module("travel_planner").travel_brain
 
 
 def test_loads_skills():

@@ -165,3 +165,37 @@ def test_summarize_tree(tmp_path):
     assert "src" in r["summary"]
     assert r["file_count"] == 3
     assert "README.md" in r["summary"]
+
+
+def test_apply_patch_preserves_crlf(tmp_path):
+    """**参数保真度**(§8 第 7 条):补丁只该改它覆盖的行,不得把整文件换行改掉。
+
+    回归的是一个真实缺陷:写回用 ``write_text`` 默认换行翻译,CRLF 文件被整体
+    转成 LF,返回值仍是 ``{"applied": true}`` —— 用户看不到任何异常信号。
+    """
+    target = tmp_path / "crlf.txt"
+    target.write_bytes(b"alpha\r\nbeta\r\ngamma\r\n")
+    patch = (
+        "--- a/crlf.txt\n+++ b/crlf.txt\n@@ -1,3 +1,3 @@\n"
+        " alpha\n-beta\n+BETA\n gamma\n"
+    )
+    r = run("apply_patch", {"patch": patch}, tmp_path)
+    assert r["applied"] is True, r
+
+    raw = target.read_bytes()
+    assert b"BETA" in raw, "补丁内容未应用"
+    assert raw.count(b"\r\n") == 3, f"CRLF 行尾被静默改写: {raw!r}"
+    assert b"\n" not in raw.replace(b"\r\n", b""), "混入了裸 LF"
+
+
+def test_apply_patch_refuses_non_utf8_instead_of_corrupting(tmp_path):
+    """非 UTF-8 文件应**拒绝**并说明,而不是用 U+FFFD 覆盖写回(静默毁数据)。"""
+    target = tmp_path / "latin.txt"
+    original = b"caf\xe9\nbar\n"  # latin-1 的 é,不是合法 UTF-8
+    target.write_bytes(original)
+    patch = "--- a/latin.txt\n+++ b/latin.txt\n@@ -1,2 +1,2 @@\n caf\n-bar\n+BAR\n"
+
+    r = run("apply_patch", {"patch": patch}, tmp_path)
+    assert r["applied"] is False
+    assert "UTF-8" in r["reason"]
+    assert target.read_bytes() == original, "拒绝时不得改动文件"

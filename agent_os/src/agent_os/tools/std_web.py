@@ -17,7 +17,8 @@ std/skills.yaml 中 ``fetch_page`` / ``research_one`` / ``research_iterative``
 from __future__ import annotations
 
 import re
-from html import unescape
+import secrets
+from html import escape, unescape
 from typing import TYPE_CHECKING, Any
 
 from agent_os.api.v1 import (
@@ -41,11 +42,22 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _BLANK_RE = re.compile(r"\s+")
 
 
+#: 隔离标记的中和目标:反转义**之后**页面内容里若还残留边界串,说明它来自
+#: 实体编码(如 ``&lt;/external_content&gt;``)——那是攻击者可控内容,不是我们的边界。
+_BOUNDARY_RE = re.compile(r"</?\s*external_content", re.IGNORECASE)
+
+
 def _extract_text(html: str) -> str:
-    """基础正文清洗:去 script/style 块 → 去标签 → 实体反转义 → 折叠空白。"""
+    """基础正文清洗:去 script/style 块 → 去标签 → 实体反转义 → **中和边界串** → 折叠空白。
+
+    中和这一步是必需的:去标签发生在反转义**之前**,页面里写 ``&lt;/external_content&gt;``
+    不含真实尖括号,能整个穿过标签剥离,再被 unescape 还原成真实闭合标记,
+    其后内容就落进"可信区"。实测过的真实绕过,故在此显式中和。
+    """
     text = _SCRIPT_STYLE_RE.sub(" ", html)
     text = _TAG_RE.sub(" ", text)
-    return _BLANK_RE.sub(" ", unescape(text)).strip()
+    text = _BOUNDARY_RE.sub("[external_content]", unescape(text))
+    return _BLANK_RE.sub(" ", text).strip()
 
 
 def fetch_page_tool(registry: LocalPythonToolRegistry) -> Tool:
@@ -87,9 +99,15 @@ def fetch_page_tool(registry: LocalPythonToolRegistry) -> Tool:
             text = text[:max_chars]
             truncated = True
             note = "\n[truncated] 正文过长已截断" + (f",全文见 {spill_ref}" if spill_ref else "")
+        # 边界带随机 id:即便中和被绕过,页面也猜不到本次 id,无法伪造闭合(纵深防御)
+        fence = secrets.token_hex(4)
         out: dict[str, Any] = {
             "source": url,
-            "content": f'<external_content source="{url}">\n{text}{note}\n</external_content>',
+            "content": (
+                f'<external_content id="{fence}" source="{escape(url, quote=True)}">\n'
+                f"{text}{note}\n"
+                f'</external_content id="{fence}">'
+            ),
             "truncated": truncated,
             "status": payload.get("status", 0),
         }

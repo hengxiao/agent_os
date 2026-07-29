@@ -286,9 +286,57 @@ def http_fetch_tool(transport: httpx.AsyncBaseTransport | None = None) -> Tool:
     return _FunctionTool(http_fetch, spec)
 
 
-async def blob_get(ref: str, offset: int = 0, limit: int | None = None) -> str:
-    """分页读取 blob(§8.3 offset/limit)。"""
-    raise NotImplementedError("M3")
+async def blob_get(
+    ref: str, offset: int = 0, limit: int = 20_000, ctx: ToolContext | None = None
+) -> dict[str, Any] | ToolResult:
+    """分页取回 spill 出去的大结果(READ;§8.3 offset/limit)。
+
+    Use when 某个工具返回里带 ``spill_ref``、需要看被截断掉的全文;
+    Do not use when 手上没有 ref(它由产生大输出的工具给出,不能自己拼)。
+    返回 ``{content, offset, limit, total_bytes, truncated}``——``truncated``
+    为真表示还有后续,用 ``offset += limit`` 继续取。
+    """
+    if ctx is None or ctx.blob is None:
+        return ToolResult(
+            ok=False,
+            error=ToolError(
+                kind=ToolErrorKind.INTERNAL,
+                message="当前装配未提供 blob store",
+                retryable=False,
+                hint="spill 依赖 blob store;检查 KernelBuilder 的工具装配",
+            ),
+        )
+    if offset < 0 or limit < 1:
+        return ToolResult(
+            ok=False,
+            error=ToolError(
+                kind=ToolErrorKind.INVALID_ARGS,
+                message=f"offset 须 >= 0、limit 须 >= 1(收到 offset={offset}, limit={limit})",
+                retryable=False,
+                hint="从头取用 offset=0;按 offset += limit 翻页",
+            ),
+        )
+    try:
+        chunk = await ctx.blob.get(ref, offset=offset, limit=limit)
+        total = len(await ctx.blob.get(ref))
+    except KeyError:
+        return ToolResult(
+            ok=False,
+            error=ToolError(
+                kind=ToolErrorKind.NOT_FOUND,
+                message=f"blob 不存在: {ref}",
+                retryable=False,
+                hint="ref 只在本 run 内有效,且须来自工具返回的 spill_ref,不能自行构造",
+            ),
+        )
+    return {
+        "content": chunk.decode("utf-8", errors="replace"),
+        "offset": offset,
+        "limit": limit,
+        "total_bytes": total,
+        # 显式截断标记(§3.2 契约 2):模型据此知道自己还没看全
+        "truncated": offset + len(chunk) < total,
+    }
 
 
 async def ask_user(question: str) -> str:

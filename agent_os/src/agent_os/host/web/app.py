@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -280,14 +281,39 @@ def create_app(
     config_path: str | Path,
     artifacts_root: Path = Path(".agent-os"),
     skillsets_dir: str | Path | None = None,
+    token: str | None = None,
 ) -> FastAPI:
     """装配 Web UI Runner(§4.2):RunManager + REST + SSE + 静态 SPA。
 
     ``skillsets_dir``(D6):一站多 skill set 根目录(``<root>/<set>/skills.yaml``)。
+
+    ``token``(RUNNERS.md §4.5):非 None 时全站要求
+    ``Authorization: Bearer <token>``(或 ``?token=`` 供 EventSource 用——SSE
+    的浏览器 API 不支持自定义头)。缺省 None = 无认证,**只可用于 loopback**;
+    ``serve.py`` 在绑定非 loopback 且未给 token 时拒绝启动。
     """
     manager = RunManager(config_path, Path(artifacts_root), skillsets_dir=skillsets_dir)
     root = Path(artifacts_root)
     app = FastAPI(title="Agent OS Web UI")
+
+    if token:
+        @app.middleware("http")
+        async def _require_token(request: Request, call_next):  # type: ignore[no-untyped-def]
+            """Bearer 令牌门(§4.5)。常量时间比对,避免按字符早退泄漏前缀。"""
+            supplied = ""
+            header = request.headers.get("authorization", "")
+            if header.startswith("Bearer "):
+                supplied = header[len("Bearer "):]
+            elif "token" in request.query_params:
+                # EventSource 不能带自定义头,SSE 只能走 query 串
+                supplied = request.query_params["token"]
+            if not secrets.compare_digest(supplied, token):
+                return JSONResponse(
+                    {"detail": "需要 Authorization: Bearer <token>(RUNNERS.md §4.5)"},
+                    status_code=401,
+                )
+            return await call_next(request)
+
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)

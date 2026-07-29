@@ -273,6 +273,7 @@ class LocalPythonToolRegistry:
         经 ``bind_skills`` 注入(未装配时只检索工具面)。
         """
         from agent_os.tools.builtins import (
+            blob_get,
             fs_edit,
             fs_read,
             fs_write,
@@ -301,6 +302,16 @@ class LocalPythonToolRegistry:
         reg.tool(permission=Permission.WRITE, timeout=10.0, cost_hint="~10ms")(fs_edit)
         reg.tool(permission=Permission.EXEC, cost_hint="~100ms 起,取决于命令")(shell_exec)
         reg.register(http_fetch_tool(transport=http_transport))
+        # spill 的读取端(§8.3):没有它,所有返回 spill_ref 的工具都是死胡同——
+        # 模型被告知"用 blob_get 取全文"却调不到该工具
+        reg.tool(
+            permission=Permission.READ,
+            idempotent=True,
+            cacheable=True,
+            concurrent_safe=True,
+            concurrency_safe=True,
+            cost_hint="~1ms(进程内 blob)",
+        )(blob_get)
         # —— §W1 核心工具(契约字段同 READ 档统一声明,门槛见 tests/test_std_gate.py)——
         reg.tool(
             permission=Permission.READ,

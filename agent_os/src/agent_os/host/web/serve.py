@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
+import os
 from pathlib import Path
 
 
@@ -28,6 +30,18 @@ def _skillsets_dir(args: argparse.Namespace) -> Path | None:
     return path if path.is_absolute() else Path(args.config).resolve().parent / path
 
 
+def _is_loopback(host: str) -> bool:
+    """判定绑定地址是否只对本机可见(§4.5 免认证的唯一前提)。
+
+    非 IP 字面量(如主机名)一律按**非** loopback 处理——解析结果取决于 DNS,
+    不该拿它当安全边界(fail-safe)。
+    """
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host == "localhost"
+
+
 def main() -> None:
     """CLI 入口(``agent-os-web = agent_os.host.web.serve:main``)。"""
     parser = argparse.ArgumentParser(
@@ -43,14 +57,31 @@ def main() -> None:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--token",
+        default=os.environ.get("AGENT_OS_WEB_TOKEN"),
+        help="Bearer 令牌;绑定非 loopback 时必需(§4.5)。缺省读 AGENT_OS_WEB_TOKEN",
+    )
     args = parser.parse_args()
+
+    if not _is_loopback(args.host) and not args.token:
+        # §4.5:本服务能执行带 shell_exec 的技能,暴露到网络而无令牌等于开放 RCE
+        parser.error(
+            f"--host {args.host} 绑定到非 loopback 地址,必须同时给 --token"
+            "(或设 AGENT_OS_WEB_TOKEN 环境变量);仅 127.0.0.1/::1 可免认证"
+        )
 
     import uvicorn  # optional extra `agent-os[web]`,延迟 import 保持主依赖干净
 
     from agent_os.host.web.app import create_app
 
     uvicorn.run(
-        create_app(args.config, Path(args.artifacts), skillsets_dir=_skillsets_dir(args)),
+        create_app(
+            args.config,
+            Path(args.artifacts),
+            skillsets_dir=_skillsets_dir(args),
+            token=args.token,
+        ),
         host=args.host,
         port=args.port,
     )

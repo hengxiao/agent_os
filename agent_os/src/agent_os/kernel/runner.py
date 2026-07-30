@@ -15,7 +15,9 @@ agent loop 顺序:safe point(run 中止标志)→ pre:step 检查点(verdict 仲
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
+import inspect
 import json
 import logging
 import time
@@ -239,6 +241,32 @@ class Kernel:
             # run 收尾:取消在跑的 ASYNC sidecar 任务(§5.3)
             if self.sidecars is not None:
                 await self.sidecars.close()
+            await self._release_run(run.run_id)
+
+    async def _release_run(self, run_id: str) -> None:
+        """run 边界的资源回收:后台帧 → telemetry 句柄 → 工具临时目录。
+
+        逐项都是"只增不减"的登记表(审计发现:全仓原先无任何回收点),长驻
+        宿主跑够多 run 会 fd 耗尽 + /tmp 塞满。子系统未提供对应方法时静默跳过
+        (契约层没强制这些方法,duck-typing 探测)。
+        """
+        # 后台帧(§3.4):run 已结算,残留任务不该继续记账进已结算的 usage
+        for frame_id, task in list(self._spawned.items()):
+            if not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+            self._spawned.pop(frame_id, None)
+        for subsystem, method in ((self.telemetry, "close_run"), (self.tools, "release_run")):
+            fn = getattr(subsystem, method, None)
+            if fn is None:
+                continue
+            try:
+                result = fn(run_id)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception as e:  # noqa: BLE001 — 回收失败不该改变 run 的结果
+                _log.warning("run %s 的 %s 回收失败: %r", run_id[:8], method, e)
 
     # ------------------------------------------------------------------
     # §10.2 检查点(M5a):WAL 原则——轨迹即全部状态,恢复 = 重入 loop 而非重跑

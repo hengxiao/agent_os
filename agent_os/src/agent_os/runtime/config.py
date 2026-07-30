@@ -19,6 +19,8 @@
                    默认通道 / CLI stderr 协议)
     [telemetry]  → JsonlTelemetrySink(目录自动创建)
     [retry]      → ProviderManager 的 max_attempts / backoff_base
+    [prices]     → 每模型每百万 token 单价({input, output, cache_read?});
+                   缺它则 usage.cost 恒 0,max_cost/BudgetGuard 不会触发(装配期告警)
 
 两个错误归类的锚点:配置文件缺失/畸形/provider 装配失败抛 :class:`ConfigError`
 (宿主归退出码 4);技能清单/权限闸门问题由 KernelBuilder 抛 SkillLoadError(归 2)。
@@ -163,6 +165,27 @@ def _sandbox_kernel(mode: str) -> Any | None:
     raise ConfigError(f"未知的 tools.python_exec 后端: {mode!r}(docker|subprocess|off)")
 
 
+def _prices(cfg: dict[str, Any]) -> dict[str, dict[str, float]]:
+    """``[prices]`` → ``{model_or_prefix: {input, output, ...}}``(每百万 token 美元)。
+
+    键可为完整 model 串(``"openai/kimi-k2.7"``)或 provider 前缀(``"openai"``),
+    精确匹配优先。值里的未知字段直接报错——单价拼错会静默失去成本护栏。
+    """
+    known = {"input", "output", "cache_read", "cache_write"}
+    table: dict[str, dict[str, float]] = {}
+    for model, raw in cfg.items():
+        if not isinstance(raw, dict):
+            raise ConfigError(f"[prices] {model!r} 应为表(如 {{ input = 3.0, output = 15.0 }})")
+        unknown = sorted(set(raw) - known)
+        if unknown:
+            raise ConfigError(f"[prices] {model!r} 含未知字段: {unknown}(支持: {sorted(known)})")
+        try:
+            table[model] = {k: float(v) for k, v in raw.items()}
+        except (TypeError, ValueError) as e:
+            raise ConfigError(f"[prices] {model!r} 的单价须为数字: {e}") from None
+    return table
+
+
 def _sidecars(cfg: dict[str, Any]) -> list[Any]:
     sidecars: list[Any] = []
     unknown = sorted(set(cfg) - {"budget_guard", "loop_detector", "tool_guard_rules"})
@@ -288,6 +311,16 @@ def build_kernel(
     telemetry_dir = (cfg.get("telemetry") or {}).get("dir")
     if telemetry_dir:
         builder.telemetry(JsonlTelemetrySink(telemetry_dir))
+    prices = _prices(cfg.get("prices") or {})
+    builder.prices(prices)
+    if not prices:
+        # fail-open 警示:配了成本上限却没有价格源 = 没有护栏,必须让人知道
+        _log.warning(
+            "未配置 [prices] 模型单价表:usage.cost 将恒为 0,"
+            "RunConfig.max_cost=%.2f 与 BudgetGuard 的成本上限**不会触发**"
+            "(§4.2 记账;按量计费端点请补 [prices])",
+            run_cfg.max_cost,
+        )
     retry = cfg.get("retry") or {}
     if retry:
         builder.retry(

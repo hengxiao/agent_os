@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import shutil
 import tempfile
 import traceback
 import types
@@ -246,6 +247,17 @@ class LocalPythonToolRegistry:
         if isinstance(result, ToolResult):
             return result
         return ToolResult(ok=True, value=result)
+
+    def release_run(self, run_id: str) -> None:
+        """run 收尾:删掉该 run 的临时工作目录并忘掉登记。
+
+        不删的话 ``mkdtemp`` 的结果只增不减——长驻宿主会把 /tmp 塞满
+        (审计发现:全仓原先无任何 rmtree)。已配置 workdir(§W0-1 分区)时
+        不属本注册表所有,不动。
+        """
+        wd = self._workdirs.pop(run_id, None)
+        if wd:
+            shutil.rmtree(wd, ignore_errors=True)
 
     def _workdir(self, run_id: str) -> str:
         """每 run 一个临时工作目录(限定 fs 工具范围,§2.2;§W0-1 缺省档,配置 workdir 时不走这里)。"""

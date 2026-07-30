@@ -114,6 +114,16 @@ class KernelBuilder:
         }
         return self
 
+    def prices(self, table: dict[str, dict[str, float]] | None) -> KernelBuilder:
+        """模型单价表(RUNNERS.md §2.1 ``[prices]``):每百万 token 美元价。
+
+        没有它 ``usage.cost`` 恒为 0,``RunConfig.max_cost`` 与 BudgetGuard
+        都不会触发(fail-open 在钱上),故 :func:`build` 会在缺表时告警。
+        """
+        if table:
+            self._retry["prices"] = table
+        return self
+
     def retry(
         self, *, max_attempts: int | None = None, backoff_base: float | None = None
     ) -> KernelBuilder:

@@ -218,6 +218,19 @@ const clickAction = (dataset) => {
   assert.equal(row2.querySelector(".dh-bp-kind").value, "step");
   assert.equal(row2.querySelector(".dh-bp-match").disabled, true, "step 忽略 match(禁用)");
 
+  /* 回归:真实浏览器里 children 是 HTMLCollection(可迭代、有 length/索引,但无 .map)——
+     collectBreakpoints 必须展开再 map,否则提交即抛 TypeError:POST 不发、按钮卡「启动中…」 */
+  const rowsArr = [...rowsBox.children];
+  Object.defineProperty(rowsBox, "children", {
+    configurable: true,
+    get: () => {
+      const like = { length: rowsArr.length, item: (i) => rowsArr[i] ?? null };
+      rowsArr.forEach((r, i) => { like[i] = r; });
+      like[Symbol.iterator] = function* () { yield* rowsArr; };
+      return like;
+    },
+  });
+
   requests.length = 0;
   submit.trigger("click");
   await flush();

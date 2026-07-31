@@ -201,7 +201,9 @@ function addBpRow(kind = "step", match = "") {
 
 /* 表单 → 启动前断点数组(match 缺省 "*";step/error 恒 "*") */
 function collectBreakpoints() {
-  return (dh.els?.bpRows?.children ?? []).map((row) => {
+  // children 是 HTMLCollection,没有 .map——必须展开为数组(否则点击提交即抛
+  // TypeError,且发生在 try 之前:POST 不发、按钮卡「启动中…」)
+  return [...(dh.els?.bpRows?.children ?? [])].map((row) => {
     const kind = row.querySelector(".dh-bp-kind")?.value ?? "step";
     const raw = row.querySelector(".dh-bp-match")?.value ?? "";
     return { kind, match: matchEditable(kind) ? raw.trim() || "*" : "*" };
@@ -314,10 +316,10 @@ async function submitSession() {
   els.submit.disabled = true;
   els.submit.textContent = "启动中…";
   showModalError("");
-  const breakpoints = collectBreakpoints();
-  const body = { skill: els.skill.value, input: value };
-  if (breakpoints.length) body.breakpoints = breakpoints; // run 启动前注册(启动即断)
   try {
+    const breakpoints = collectBreakpoints();
+    const body = { skill: els.skill.value, input: value };
+    if (breakpoints.length) body.breakpoints = breakpoints; // run 启动前注册(启动即断)
     const res = await postJson("/api/debug/sessions", body);
     if (res?.session_id) {
       recordSession({

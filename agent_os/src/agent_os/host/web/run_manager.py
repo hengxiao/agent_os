@@ -87,6 +87,7 @@ import dataclasses
 import json
 import sys
 import threading
+import time
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
@@ -108,6 +109,9 @@ from agent_os.kernel.debug import RESUME_COMMANDS as DEBUG_RESUME_COMMANDS
 from agent_os.kernel.debug import DebugController
 from agent_os.kernel.errors import AgentOSError
 from agent_os.runtime.config import build_kernel, load_config, load_skillsets
+
+#: rerun 等 stop verdict 落地的兜底(秒):超时按 best-effort 收尾,不悬挂
+_RERUN_STOP_TIMEOUT = 10.0
 from agent_os.supervisor import InboxChannel
 
 #: hub 关闭时投递给订阅者的哨兵(§4.2:run 结束后 SSE 发终止事件并关闭)
@@ -686,9 +690,16 @@ class RunManager:
         if session.state != "detached":
             if session.state == "paused":
                 await self._in_debug_loop(session, lambda: session.resume("stop"))
+                # 等 stop verdict 落地(run 中止 → controller 自动 detach)再收尾:
+                # 立即 detach 会让 _resume_verdict 先见 DETACHED 吞掉 stop,
+                # 旧 run 变成跑完而不是中止(时序竞争)
+                deadline = time.monotonic() + _RERUN_STOP_TIMEOUT
+                while session.state != "detached" and time.monotonic() < deadline:
+                    await asyncio.sleep(0.01)
             elif session.run_id:
                 await self.stop_run(session.run_id)  # best-effort:已结束则 False
-            await self._in_debug_loop(session, session.detach)
+            if session.state != "detached":
+                await self._in_debug_loop(session, session.detach)
             self._debug.close_session(session.id)
             self._debug_loops.pop(session.id, None)
         return await self.start_debug_session(
@@ -781,7 +792,14 @@ class RunManager:
         async def _wrap() -> None:
             fn()
 
-        await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(_wrap(), loop))
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_wrap(), loop)
+        except RuntimeError:
+            # 竞态:``is_running`` 检查与投递之间 loop 已关闭(run 刚结束)——
+            # 此时没有阻塞中的 wait,直接调用是纯内存操作,安全
+            fn()
+            return
+        await asyncio.wrap_future(fut)
 
     async def debug_command(self, session_id: str, command: str) -> None:
         """恢复命令(仅 paused):continue/三种单步/stop;状态不对 → :class:`AgentOSError`(409)。"""

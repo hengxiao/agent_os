@@ -4,7 +4,8 @@
    2) 启动解析:URL(?theme=)> localStorage > classic;URL 命中同时持久化;
    3) applyTheme:<html data-theme> + localStorage + hash ?theme= 同步
       (classic 为默认省略参数);未知主题 → warn + 回落 classic;
-   4) scope 回落(§5):moe 只验收 debug,非 debug 页面强制回落 classic;
+   4) scope 回落(§5):合成 scoped 主题验证未验收页面强制回落 classic
+      (moe 自 T1.1 起 app-wide 全站);
    5) 切换器:渲染(两项 + swatch 色板)、点击切换联动 data-theme/localStorage;
    6) MascotLayer:moe 下出现(控制条右侧,表情随会话状态),classic 下不出现;
    7) 文案表:状态短语/空断点列表随主题切换(classic = 现状文案)。
@@ -138,7 +139,7 @@ const {
     }
   }
   assert.equal(byId.classic.scope, "app-wide", "classic 全站");
-  assert.deepEqual(byId.moe.scope, ["debug"], "moe 只验收 debug(T1)");
+  assert.equal(byId.moe.scope, "app-wide", "moe 全站(T1.1)");
   assert.equal(byId.classic.mascot, null, "classic 无 mascot");
   assert.equal(byId.moe.mascot, "mochi", "moe mascot = mochi");
   assert.deepEqual(
@@ -163,16 +164,15 @@ const {
   storageMap.set(THEME_STORAGE_KEY, "classic"); // localStorage 与 URL 冲突
   locationStub.hash = "#/debug/dbg-s1?theme=moe";
   const eff = initTheme();
-  assert.equal(eff, DEFAULT_THEME, "URL=moe 但当前页 runs(moe 未验收)→ 回落 classic");
-  assert.equal(doc.documentElement.dataset.theme, "classic", "data-theme 跟随有效主题");
+  assert.equal(eff, "moe", "URL=moe 优先于 localStorage(moe 全站,T1.1)");
+  assert.equal(doc.documentElement.dataset.theme, "moe", "data-theme 跟随有效主题");
   assert.equal(
     storageMap.get(THEME_STORAGE_KEY), "moe", "URL 命中的主题写入持久化(深链接同款气质)");
 
   doc.body.dataset.route = "debug";
-  assert.equal(syncTheme(), "moe", "进入 debug 页 → moe 生效");
-  assert.equal(doc.documentElement.dataset.theme, "moe");
+  assert.equal(syncTheme(), "moe", "debug 页:moe 生效");
   doc.body.dataset.route = "runs";
-  assert.equal(syncTheme(), "classic", "离开 debug 页 → 回落 classic");
+  assert.equal(syncTheme(), "moe", "runs 页:moe 全站同样生效(T1.1)");
 }
 
 /* ══ 3. localStorage 回落与默认值 ═══════════════════════════════ */
@@ -180,7 +180,7 @@ const {
   locationStub.hash = "#/runs";
   storageMap.set(THEME_STORAGE_KEY, "moe");
   initTheme();
-  assert.equal(currentThemeId(), "classic", "无 URL:localStorage=moe,runs 页回落 classic");
+  assert.equal(currentThemeId(), "moe", "无 URL:localStorage=moe,runs 页同样生效(T1.1)");
   assert.ok(historyCalls.some((u) => u.includes("theme=moe")), "?theme= 同步进 hash");
 
   storageMap.clear();
@@ -313,6 +313,32 @@ const {
   assert.match(bar.innerHTML, /已暂停/, "classic:状态徽标现状文案");
   closeDebugView();
   doc.body.dataset.route = "runs";
+}
+
+/* ══ 9. scope 回落机制(§5;合成 scoped 主题——moe 已全站,机制本身仍须覆盖)══ */
+{
+  /* 合成主题 scoped-demo:契约变量复用 classic.css 的声明块,
+     但 sheet 用独立文件名 + 自有选择器(sheetTokens 双重匹配) */
+  const classicCss = readFileSync(path.join(staticDir, "css/themes/classic.css"), "utf8");
+  const decls = classicCss.match(/\[data-theme="classic"\]\s*\{([^}]*)\}/)[1];
+  doc.styleSheets.push({
+    href: "/static/css/themes/scoped-demo.css",
+    cssRules: [{ selectorText: '[data-theme="scoped-demo"]', style: { cssText: decls } }],
+  });
+  const ok = registerTheme({
+    id: "scoped-demo", name: "Scoped Demo", css: "css/themes/scoped-demo.css",
+    copy: {}, motion: {}, mascot: null, scope: ["debug"],
+  });
+  assert.equal(ok, true, "合成 scoped 主题注册(契约变量复用 classic)");
+  doc.body.dataset.route = "runs";
+  applyTheme("scoped-demo");
+  assert.equal(currentThemeId(), "classic", "scoped-demo 未验收 runs → 回落 classic");
+  assert.equal(doc.documentElement.dataset.theme, "classic");
+  doc.body.dataset.route = "debug";
+  assert.equal(syncTheme(), "scoped-demo", "已验收页 → scoped-demo 生效");
+  doc.body.dataset.route = "runs";
+  assert.equal(syncTheme(), "classic", "离开验收页 → 回落 classic");
+  applyTheme("classic"); // 复位持久化/URL
 }
 
 console.warn = realWarn;

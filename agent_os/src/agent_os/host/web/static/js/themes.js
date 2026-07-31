@@ -58,7 +58,7 @@ const REGISTRY = [
     copy: moeCopy,
     motion: { "bp-hit": "subtle", step: "subtle", resume: "subtle", "run-done": "subtle", intervene: "subtle" },
     mascot: "mochi",
-    scope: ["debug"], // T1 只验收调试台;其余页面回落 classic
+    scope: "app-wide", // T1.1 全站开放(组件零分支:全站消费同一语义 token,观感走查随用随修)
   },
 ];
 

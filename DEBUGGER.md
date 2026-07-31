@@ -80,6 +80,12 @@
 - `stop`:`Stop` verdict,run 以 `RunAborted` 收尾(走正常中止路径,
   checkpoint 落盘)。
 
+另有不属于恢复命令的 `pause`(仅 `running` 可发,与恢复命令互反):
+**随时暂停**,GDB 里发 signal 的语义——前端置暂停请求,run 在**下一个
+可仲裁信号**(`pre:step` / `pre:tool.call`,与 stop verdict 同一落地集合)
+挂起,暂停原因 `reason="pause"`;run 正在 LLM 调用/工具执行内部时没有
+信号发出,pause 落在该调用结束后的下一条 pre 信号。
+
 暂停在 `pre:frame.pop` 时该帧已视为弹出,"当前帧"取栈顶父帧。
 
 ## 4. 干预(仅 paused 可发)
@@ -136,7 +142,7 @@ REPL 与 run 跑在**同一事件循环**(调试原语要求);读命令走
 |---|---|
 | `GET /api/debug/sessions/{sid}` | 会话快照:state / pause_point / 断点(含 hits)/ 帧栈 |
 | `POST .../breakpoints` · `DELETE .../breakpoints/{bp_id}` | 断点增删 |
-| `POST .../command` | `{cmd: continue\|step_into\|step_over\|step_out\|stop}` |
+| `POST .../command` | `{cmd: continue\|step_into\|step_over\|step_out\|stop}`(仅 paused);`{cmd: pause}`(仅 running,随时暂停) |
 | `POST .../modify` · `POST .../inject` | 干预(仅 paused) |
 | `GET .../frames/{fid}` | 帧检视(live 内存态:暂停时 checkpoint 尚未落盘) |
 | `GET .../stream` | SSE:`state` → `bp_hit`/`paused`/`resumed` → `run_end` |

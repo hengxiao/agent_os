@@ -421,6 +421,11 @@ function renderBar() {
     `<span class="dbg-conn" data-state="${connState}" title="${connTitle}"` +
     ` aria-label="调试连接状态:${connTitle}"></span>` +
     `<div class="dbg-bar-btns" role="group" aria-label="调试命令">` +
+    // ⏸ Pause(随时暂停,GDB SIGINT 语义):仅 running 可发,与恢复命令互反
+    `<button class="btn dbg-cmd dbg-pause" data-action="dbg-cmd" data-cmd="pause"` +
+    ` data-tip="随时暂停:run 在下一条 pre:step / pre:tool.call 挂起" ` +
+    `title="随时暂停:run 在下一条 pre:step / pre:tool.call 挂起"` +
+    `${dbg.doc?.state === "running" ? "" : " disabled"}>⏸ Pause</button>` +
     COMMANDS.map(
       ([cmd, label, tip]) =>
         `<button class="btn dbg-cmd" data-action="dbg-cmd" data-cmd="${cmd}"` +

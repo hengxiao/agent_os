@@ -36,7 +36,7 @@ from agent_os.api.v1 import (
     ToolPolicy,
 )
 from agent_os.kernel.debug import DebugController
-from agent_os.kernel.errors import RunAborted
+from agent_os.kernel.errors import AgentOSError, RunAborted
 from agent_os.providers.mock import MockProvider
 from tests.helpers.brains import fib_brain
 from tests.helpers.kernels import FIB_SKILLS_YAML, assemble
@@ -398,5 +398,63 @@ def test_detach_releases_blocked_run():
         result = await _finish(task)
         assert result == {"seq": [0, 1, 1]}
         assert bp.hits == 1, "detach 后断点不再命中"
+
+    asyncio.run(drive())
+
+
+# ---------------------------------------------------------------------------
+# 随时暂停(GDB SIGINT 语义)
+# ---------------------------------------------------------------------------
+
+
+def test_pause_suspends_free_run_at_next_step():
+    """pause:无断点自由运行中随时暂停,落在下一条可仲裁信号(pre:step /
+    pre:tool.call),reason="pause";continue 后结果与无调试一致。"""
+
+    async def drive():
+        kernel, controller, _ = _debug_kernel()
+        session = controller.open_session()
+        task = asyncio.create_task(kernel.run("demo.fib", {"n": 3}))
+        # 等会话绑定(RUN_STARTED → running):同循环按拍推进,确定性等待
+        for _ in range(100):
+            if session.state == "running":
+                break
+            await asyncio.sleep(0)
+        assert session.state == "running", "会话应已绑定 run"
+        session.pause()
+
+        point = await _pause_point(session)
+        assert not task.done(), "pause 落地时 run 不应完成"
+        assert point["reason"] == "pause"
+        assert point["signal"] in (PRE_STEP, PRE_TOOL_CALL)
+        assert point["breakpoint_ids"] == [], "pause 不是断点命中"
+
+        session.resume("continue")
+        result = await _finish(task)
+        assert result == {"seq": [0, 1, 1]}, "放行后的结果应与无调试一致"
+        return session
+
+    session = asyncio.run(drive())
+    assert session.state == "detached", "run 结束应自动摘下会话"
+
+
+def test_pause_requires_running():
+    """armed / paused / detached 三态 pause → AgentOSError(仅 running 可发)。"""
+
+    async def drive():
+        kernel, controller, _ = _debug_kernel()
+        session = controller.open_session()
+        with pytest.raises(AgentOSError):  # armed(未绑定 run)
+            session.pause()
+        session.add_breakpoint("step")
+        task = asyncio.create_task(kernel.run("demo.fib", {"n": 3}))
+        await _pause_point(session)
+        with pytest.raises(AgentOSError):  # paused
+            session.pause()
+        session.resume("stop")  # step 断点仍在,continue 会再停;stop 直接收尾
+        with pytest.raises(RunAborted):
+            await _finish(task)
+        with pytest.raises(AgentOSError):  # detached(run 已结束)
+            session.pause()
 
     asyncio.run(drive())

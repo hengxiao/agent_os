@@ -810,6 +810,11 @@ class RunManager:
             raise AgentOSError(f"调试会话 {session_id} 不在 paused 状态,无法 resume")
         await self._in_debug_loop(session, lambda: session.resume(command))
 
+    async def debug_pause(self, session_id: str) -> None:
+        """随时暂停(仅 running;GDB SIGINT 语义):run 在下一个可仲裁信号挂起。"""
+        session = self.debug_session(session_id)
+        await self._in_debug_loop(session, session.pause)  # 非 running → AgentOSError(409)
+
     async def debug_modify(self, session_id: str, patch: dict[str, Any]) -> None:
         """改本次工具调用参数(仅暂停在 pre:tool.call 时有效;改完即放行)。"""
         session = self.debug_session(session_id)

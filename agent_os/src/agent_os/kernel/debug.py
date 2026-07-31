@@ -116,6 +116,9 @@ class DebugSession:
         self._step_frame_id: str | None = None
         #: 非可仲裁信号上收到的 stop:推迟到下一个 pre:step / pre:tool.call 落地
         self._pending_stop: str | None = None
+        #: 随时暂停请求(GDB SIGINT 语义):running 时由前端 pause() 置位,
+        #: run 一侧在下一个可仲裁信号(_STOP_VERDICT_SIGNALS)消费并挂起
+        self._pause_requested: bool = False
         #: 创建参数(host 层回填;live 形态 {skill, input, skill_set, breakpoints}),
         #: 供 rerun 以同参数重开新会话;replay/CLI 会话为 None(不可 rerun)
         self.origin: dict[str, Any] | None = None
@@ -193,9 +196,23 @@ class DebugSession:
             return
         self._step_mode = None
         self._step_frame_id = None
+        self._pause_requested = False
         self._set_state(_STATE_DETACHED)
         if self._resume_event is not None:
             self._resume_event.set()
+
+    def pause(self) -> None:
+        """随时暂停(GDB 里发 signal 的语义):``running`` 时置暂停请求,
+        run 在下一个可仲裁信号(pre:step / pre:tool.call)挂起,暂停原因
+        ``"pause"``。非 running → :class:`AgentOSError`(路由层归 409)。
+
+        注意:run 正在 LLM 调用/工具执行内部时没有信号发出,pause 落在
+        该调用结束后的下一条 pre:step / pre:tool.call——与 GDB"下一个
+        安全点停下"一致。
+        """
+        if self.state != _STATE_RUNNING:
+            raise AgentOSError(f"调试会话 {self.id} 不在 running 状态,无法 pause")
+        self._pause_requested = True
 
     async def wait_paused(self) -> None:
         """等到会话进入 paused(detached 时直接返回,前端轮询/测试的等待点)。"""
@@ -245,6 +262,11 @@ class DebugSession:
         if self._pending_stop is not None and sig.name in _STOP_VERDICT_SIGNALS:
             reason, self._pending_stop = self._pending_stop, None
             return Stop(reason)
+        # 随时暂停(GDB SIGINT 语义):前端 pause() 的请求在下一个可仲裁
+        # 信号落地;用户显式请求的 reason("pause")优先于断点/步进
+        if self._pause_requested and sig.name in _STOP_VERDICT_SIGNALS:
+            self._pause_requested = False
+            return await self._pause(sig, [], None, reason="pause")
         hits = self._match_breakpoints(sig)
         step_mode = self._step_mode  # _step_stop 命中即消费,先记下来作暂停原因
         step_hit = self._step_stop(sig)
@@ -309,10 +331,11 @@ class DebugSession:
         return stop
 
     async def _pause(
-        self, sig: Signal, hits: list[Breakpoint], step_mode: str | None
+        self, sig: Signal, hits: list[Breakpoint], step_mode: str | None,
+        reason: str | None = None,
     ) -> Any:
         """阻塞 emit 直到前端 resume/detach —— run 就地挂起,事件循环空转。"""
-        reason = "breakpoint" if hits else f"step:{step_mode}"
+        reason = reason or ("breakpoint" if hits else f"step:{step_mode}")
         self.pause_point = {
             "signal": sig.name,
             "run_id": sig.run_id,

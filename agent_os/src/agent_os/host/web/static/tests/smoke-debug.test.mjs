@@ -277,10 +277,12 @@ const clickAction = (dataset) => {
   }
   assert.equal(
     (bar.innerHTML.match(/class="btn dbg-cmd"/g) ?? []).length, 5, "五个命令按钮");
-  assert.ok(!/dbg-cmd"[^>]*disabled/.test(bar.innerHTML), "paused 时命令可用");
+  assert.ok(!/class="btn dbg-cmd"[^>]*disabled/.test(bar.innerHTML), "paused 时五个恢复命令可用");
   assert.match(bar.innerHTML, /▶ Continue|⇥ Into|⇢ Over|↥ Out|■ Stop/, "按钮图标语言");
   assert.match(bar.innerHTML, /data-state="poll"|data-state="ok"/, "连接状态点");
   assert.match(bar.innerHTML, /data-action="dbg-rerun"/, "rerunable 会话出「⟳ 重新运行」");
+  assert.match(bar.innerHTML, /data-cmd="pause"/, "⏸ Pause 按钮存在");
+  assert.match(bar.innerHTML, /data-cmd="pause"[^>]*disabled/, "paused:Pause 禁用(仅 running 可发)");
 
   /* 调用栈:栈顶在前,暂停帧高亮 */
   const stack = main.querySelector("#dbgStack");
@@ -363,6 +365,14 @@ const clickAction = (dataset) => {
   assert.equal(
     (bar.innerHTML.match(/dbg-cmd"[^>]*disabled/g) ?? []).length, 5,
     "running:五命令全禁用");
+  assert.doesNotMatch(bar.innerHTML, /data-cmd="pause"[^>]*disabled/,
+    "running:⏸ Pause 可用(随时暂停)");
+  /* 点击 ⏸ Pause → POST command {cmd:"pause"} */
+  requests.length = 0;
+  assert.equal(clickAction({ action: "dbg-cmd", cmd: "pause" }), true, "点击 ⏸ Pause");
+  await flush();
+  assert.deepEqual(
+    requests.find((r) => r.url.endsWith("/command"))?.body, { cmd: "pause" }, "pause 请求体");
   const insp = main.querySelector("#dbgInsp");
   assert.match(insp.innerHTML, /aria-label="工具参数 patch\(JSON\)" disabled>/, "running:Modify 禁用");
   assert.match(insp.innerHTML, /aria-label="注入消息文本" disabled>/, "running:Inject 禁用");

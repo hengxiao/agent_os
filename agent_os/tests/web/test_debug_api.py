@@ -290,6 +290,46 @@ def test_debug_rerun_error_semantics(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# 随时暂停(GDB SIGINT 语义):command pause,仅 running 可发
+# ---------------------------------------------------------------------------
+
+
+def test_debug_pause_suspends_free_run(tmp_path):
+    """无断点自由运行中发 pause:会话在下一条可仲裁信号挂起,reason="pause"。
+
+    竞态说明:run 若在 pause 到达前已跑完(会话 detached),pause 归 409——
+    两个分支都是正确语义(fib 走真实 subprocess,窗口足够,200 为主路径)。
+    """
+    client = _client(tmp_path)
+    sid, run_id = _open_session(client, 3)  # 无断点:自由运行
+    r = client.post(f"/api/debug/sessions/{sid}/command", json={"cmd": "pause"})
+    if r.status_code == 200:
+        point = _wait_pause(client, sid)
+        assert point["reason"] == "pause"
+        assert point["signal"] in ("pre:step", "pre:tool.call")
+        _command(client, sid, "stop")
+        assert wait_status(client, run_id)["status"] == "aborted"
+    else:
+        assert r.status_code == 409, r.text
+        assert wait_status(client, run_id)["status"] == "done"
+
+
+def test_debug_pause_error_semantics(tmp_path):
+    """pause 的状态/存在性约束:paused 会话 409;未知会话 404。"""
+    client = _client(tmp_path)
+    assert (
+        client.post("/api/debug/sessions/dbg-nope/command", json={"cmd": "pause"}).status_code
+        == 404
+    )
+    sid, _run_id = _open_session(client, 3, breakpoints=[{"kind": "step"}])
+    _wait_pause(client, sid)
+    r = client.post(f"/api/debug/sessions/{sid}/command", json={"cmd": "pause"})
+    assert r.status_code == 409, "paused 会话不能再 pause"
+    _command(client, sid, "stop")
+    wait_status(client, _run_id)
+
+
+# ---------------------------------------------------------------------------
 # 错误语义:404 / 400 / 409 / 200+failed
 # ---------------------------------------------------------------------------
 

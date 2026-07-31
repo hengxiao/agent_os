@@ -131,9 +131,14 @@ class DebugSessionBody(BaseModel):
 
 
 class DebugCommandBody(BaseModel):
-    """``POST /api/debug/sessions/{sid}/command`` 请求体:恢复命令(仅 paused 可发)。"""
+    """``POST /api/debug/sessions/{sid}/command`` 请求体。
 
-    cmd: Literal["continue", "step_into", "step_over", "step_out", "stop"]
+    恢复命令(仅 paused 可发):continue/step_into/step_over/step_out/stop;
+    ``pause``(仅 running 可发):随时暂停,run 在下一个可仲裁信号挂起
+    (GDB SIGINT 语义,§5.2)。
+    """
+
+    cmd: Literal["continue", "step_into", "step_over", "step_out", "stop", "pause"]
 
 
 class DebugModifyBody(BaseModel):
@@ -752,9 +757,13 @@ def create_app(
 
     @app.post("/api/debug/sessions/{sid}/command")
     async def post_debug_command(sid: str, body: DebugCommandBody) -> dict[str, Any]:
-        """恢复命令(仅 paused):continue / step_into / step_over / step_out / stop。"""
+        """恢复命令(仅 paused):continue / 三种单步 / stop;``pause``(仅 running):
+        随时暂停,run 在下一个可仲裁信号挂起(GDB SIGINT 语义)。"""
         try:
-            await manager.debug_command(sid, body.cmd)
+            if body.cmd == "pause":
+                await manager.debug_pause(sid)
+            else:
+                await manager.debug_command(sid, body.cmd)
         except KeyError as e:
             raise HTTPException(status_code=404, detail=e.args[0]) from None
         except ValueError as e:

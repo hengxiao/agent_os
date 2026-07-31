@@ -143,7 +143,7 @@ const {
   assert.equal(byId.classic.mascot, null, "classic 无 mascot");
   assert.equal(byId.moe.mascot, "mochi", "moe mascot = mochi");
   assert.deepEqual(
-    themeSwatch("moe"), ["#fdf6f0", "#4a3f45", "#1c68ca"],
+    themeSwatch("moe"), ["#fff5f7", "#5c3d47", "#c2245c"],
     "swatch 三色取自主题 css(基底/文本/主色)");
   assert.deepEqual(
     themeSwatch("classic"), ["#0b0e14", "#e6ebf2", "#3b9eff"], "classic swatch");

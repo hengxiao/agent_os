@@ -440,7 +440,7 @@ function renderBar() {
           dbg.endStatus === "failed" ? "danger" : dbg.endStatus === "aborted" ? "aborted" : "done"
         }" role="status">` +
         `<span class="banner-icon" aria-hidden="true">●</span>` +
-        `<div class="banner-main"><span class="banner-title">run 已结束${
+        `<div class="banner-main"><span class="banner-title">${esc(copy("debug.end.title"))}${
           dbg.endStatus ? `(${esc(dbg.endStatus)})` : ""
         }</span>` +
         `<span class="banner-body">会话已 detached;完整产物见 ` +

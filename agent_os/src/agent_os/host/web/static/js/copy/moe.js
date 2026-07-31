@@ -12,4 +12,9 @@ export const COPY = {
   "intervene.modified": "小纸条塞好啦",
   "intervene.injected": "小纸条塞好啦",
   "session.waiting": "Mochi 准备出发…",
+  "home.submit": "出发调试 ▶",
+  "home.submitting": "🌸 小精灵准备魔法中…",
+  "home.sessions.empty": "✨ 还没有冒险记录呢",
+  "home.sessions.empty.hint": "在上方选择技能与输入,开始第一次冒险吧",
+  "debug.end.title": "🌸 跑完啦~",
 };

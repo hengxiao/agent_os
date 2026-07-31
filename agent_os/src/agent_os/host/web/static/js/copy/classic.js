@@ -17,4 +17,11 @@ export const COPY = {
   "intervene.injected": "已注入消息并放行",
   // 等待就绪(调试台加载态的 aria 提示)
   "session.waiting": "装配中,等待会话就绪…",
+  // 调试首页:提交按钮两态 + 活跃会话空态(标题/引导)
+  "home.submit": "开始调试 ▶",
+  "home.submitting": "启动中…",
+  "home.sessions.empty": "还没有调试会话",
+  "home.sessions.empty.hint": "在上方选择技能与输入,可预填启动前断点,开始第一次调试",
+  // 调试台:run 结束横幅标题(状态原文由组件并列直渲,本 key 不吞)
+  "debug.end.title": "run 已结束",
 };

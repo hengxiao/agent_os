@@ -1,50 +1,53 @@
-/* moe 主题(DEBUG-UI-MOE.md;M1 静态):奶油底 pastel + 圆角加大 + Mochi 精灵。
-   契约变量按 DEBUG-UI-THEMES.md §2.1 全量定义(映射到既有语义 token,组件零改动)。
-   可访问性红线(§3):pastel 语义色/文本色与基底的关键配对对比度 ≥4.5:1——
-   §3 初值实测不达标,已按"色相不动、降明度"逐个下调(实测数值表见
-   tests/themes-contract.test.mjs,改色即时报红)。M1 不做动效(§5 动效归 M2)。 */
+/* moe 主题(DEBUG-UI-MOE.md;M1 静态 + T1.2 sakura pastel 重构):
+   奶油粉底 pastel + 大圆角贴纸化 + Mochi 精灵。
+   契约变量按 DEBUG-UI-THEMES.md §2.1 全量定义(字面 hex——契约测试直接解析
+   css 源做 WCAG 对比度计算,var() 引用无法求值);--moe-* 是内部调色板,
+   只供装饰层(边框/渐变/光晕),不承担文本色职责。
+   可访问性红线(§3):文本/状态色与基底关键配对 ≥4.5:1(弱化层级 ≥3:1),
+   实测表见 tests/themes-contract.test.mjs,改色即时报红。M1 不做动效(§5
+   动效归 M2;breathe/pulse 仅 2 处克制的呼吸,GPU 友好的 opacity/box-shadow)。 */
 
 [data-theme="moe"] {
   color-scheme: light;
 
-  /* 基底:奶油底,不是黑底——萌系暗色容易显脏 */
-  --bg-0: #fdf6f0;   /* 应用底色(奶油) */
-  --bg-1: #fffaf5;   /* 面板 */
-  --bg-2: #ffeff0;   /* 悬浮/选中 */
-  --bg-3: #ffe6ea;   /* 悬停 */
-  --line: #f2d8d5;
-  --line-strong: #dca9a4;
-  /* 文本:fg-1/fg-2 较 §3 初值降明度(#8a7580→#7a6570,#b8a5ae→#9a858f)保对比度 */
-  --fg-0: #4a3f45;
-  --fg-1: #7a6570;
-  --fg-2: #9a858f;
+  /* 基底:樱花奶油粉(T1.2;原 beige 奶油底 #fdf6f0 系退役) */
+  --bg-0: #fff5f7;   /* 应用底色 */
+  --bg-1: #ffffff;   /* 面板/卡片面 */
+  --bg-2: #ffe4e9;   /* 悬浮/选中 */
+  --bg-3: #ffd9e2;   /* 悬停加深 */
+  --line: #f8d7e0;
+  --line-strong: #e8aab8;
+  /* 文本:暖调玫瑰棕(替代纯黑);fg-1/fg-2 降明度保对比度 */
+  --fg-0: #5c3d47;
+  --fg-1: #86586a;
+  --fg-2: #a98090;
 
-  /* 语义色:pastel 化但保住色相锚点(绿=ok/黄=warn/红=danger/紫=aborted/蓝=live);
-     初值(#5ec9a7/#f0b95e/#f27070/#b58ce8/#6db3f8)在奶油底上仅 1.7~2.8:1,
-     逐个降明度至关键配对 ≥4.5:1(bg-0/bg-1/bg-2) */
-  --ok:      #1c7c5c;
+  /* 语义色:pastel 色相锚点不变(绿=ok/黄=warn/红=danger/紫=aborted),
+     live 改锚珊瑚粉(= moe 主色的文本态);明度逐个压到关键配对 ≥4.5:1 */
+  --ok:      #1b7355;
   --warn:    #8a5e0e;
-  --danger:  #cb2f2f;
-  --aborted: #8456cc;
-  --live:    #1c68ca;
+  --danger:  #b83747;
+  --aborted: #7650b8;
+  --live:    #c2245c;
 
-  /* 语义:信号类型(与语义色同锚点;llm/compress 降明度保对比度) */
+  /* 语义:信号类型(与语义色同锚点) */
   --sig-llm:      #3a63c8;
-  --sig-tool:     #1c7c5c;
+  --sig-tool:     #1b7355;
   --sig-sidecar:  #8a5e0e;
   --sig-compress: #6a4fd0;
-  --sig-budget:   #cb2f2f;
-  --sig-frame:    #9a858f;
+  --sig-budget:   #b83747;
+  --sig-frame:    #a98090;
 
   /* 语义:工具权限等级 */
-  --perm-read:  #9a858f;
+  --perm-read:  #a98090;
   --perm-write: #8a5e0e;
   --perm-net:   #3a63c8;
-  --perm-exec:  #cb2f2f;
+  --perm-exec:  #b83747;
 
-  /* 排版:Nunito 圆润但克制,系统回退链(零依赖不内嵌 webfont);
+  /* 排版:圆体优先的显示链(Nunito 圆润但克制,零依赖不内嵌 webfont);
      mono 不换——代码和 JSON 是工作区,不萌化 */
-  --font-ui: "Nunito", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-ui: "Hiragino Maru Gothic ProN", "Varela Round", "Nunito",
+    "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
 
   --text-2xs: 10px;
@@ -56,10 +59,21 @@
 
   --s1: 4px; --s1-5: 6px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
 
-  /* 形状:圆角全面加大(贴纸化) */
-  --r-sm: 8px; --r-conn: 10px; --r-md: 14px; --r-lg: 22px;
+  /* 形状:大圆角贴纸化(sakura 形状语言核心) */
+  --r-sm: 12px; --r-conn: 14px; --r-md: 16px; --r-lg: 24px;
 
-  /* 萌系专属(M1 静态消费:Mochi 腮红/暂停行奶油底;paw/sky 挂点留 M2) */
+  /* 阴影:粉色光晕系(覆盖 tokens.css 全局阴影,装饰层全面生效) */
+  --shadow-sm: 0 2px 8px rgba(255, 143, 163, 0.10);
+  --shadow-md: 0 4px 16px rgba(255, 143, 163, 0.14);
+
+  /* ── 内部调色板(装饰层专用:边框/渐变/光晕/徽章底色,不作文本色)── */
+  --moe-primary:       #ff8fa3;   /* 珊瑚粉主色(装饰) */
+  --moe-primary-hover: #ff6b85;
+  --moe-primary-light: #ffe4e9;
+  --moe-primary-glow:  rgba(255, 143, 163, 0.25);
+  --moe-bg-deep:       #fff0f3;   /* 渐变收边色 */
+  --moe-accent-mint:      #a8e6cf;
+  --moe-accent-lavender:  #dda0dd;
   --moe-blush:   #ffd9e0;   /* 腮红/高亮 */
   --moe-paw:     #f7b8c4;   /* 爪印/断点(M2 gutter) */
   --moe-cream:   #fff3d6;   /* 暂停行底色 */
@@ -67,16 +81,142 @@
   --debug-paused-bg: #fff3d6; /* 暂停行奶油底(= --moe-cream;§4 暂停行高亮) */
 }
 
-/* ── M1 贴纸化组件样式(§4 静态部分;动效 M2)─────────────────────
-   只加 override,不改组件;色彩全部消费 token。 */
+/* ── 贴纸化组件样式(§4 静态部分;只加 override,不改组件)─────────
+   装饰全部消费 token;真实类名挂钩(app.css/dbg-*/dh-*),规格书的
+   .theme-moe 前缀与 :has-text() 等伪类在此适配为 [data-theme="moe"]。 */
 
-/* StatusPill → 贴纸徽章:圆角拉满(文字状态保留,双编码不豁免) */
+/* 卡片:奶油渐变面 + 柔和粉晕阴影(r-lg=24 已由 token 生效) */
+[data-theme="moe"] .card {
+  background: linear-gradient(135deg, var(--bg-1) 0%, var(--moe-bg-deep) 100%);
+  border-color: var(--bg-2);
+}
+
+/* 按钮:全圆角 + 弹性过渡(cubic-bezier 回弹是 sakura 手感核心) */
+[data-theme="moe"] .btn {
+  border-radius: 999px;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 主按钮:珊瑚粉渐变 + 顶部高光 + 粉色光晕;hover 上浮放大,active 压回 */
+[data-theme="moe"] .btn-primary {
+  background: linear-gradient(180deg, #ff9eb0 0%, var(--moe-primary) 100%);
+  border-color: transparent;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow:
+    0 4px 12px rgba(255, 143, 163, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+[data-theme="moe"] .btn-primary:hover {
+  background: linear-gradient(180deg, #ffb0c0 0%, var(--moe-primary-hover) 100%);
+  border-color: transparent;
+  transform: translateY(-2px) scale(1.03);
+  box-shadow:
+    0 6px 20px rgba(255, 143, 163, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+[data-theme="moe"] .btn-primary:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: 0 2px 6px rgba(255, 143, 163, 0.3);
+}
+[data-theme="moe"] .btn-primary[disabled],
+[data-theme="moe"] .btn-primary[disabled]:hover {
+  background: linear-gradient(180deg, #f0c0cc 0%, #e0a8b8 100%);
+  transform: none;
+  box-shadow: none;
+  filter: none;
+}
+
+/* 输入:2px 粉边 + focus 光晕 */
+[data-theme="moe"] .input {
+  border: var(--stroke-strong) solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-1);
+}
+[data-theme="moe"] .input:focus {
+  border-color: var(--moe-primary);
+  box-shadow: 0 0 12px var(--moe-primary-glow);
+  outline: none;
+}
+
+/* 导航:选中项粉色气泡(替代 classic 下划线);hover 浅粉 */
+[data-theme="moe"] .nav-item { border-radius: 999px; }
+[data-theme="moe"] .nav-item:hover { background: var(--moe-primary-light); }
+[data-theme="moe"] .nav-item[aria-current="page"] {
+  background: linear-gradient(180deg, #ff9eb0 0%, var(--moe-primary) 100%);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+[data-theme="moe"] .nav-item[aria-current="page"]::after { content: none; }
+
+/* 顶栏:奶油面 + 粉色虚线下边(手账感) */
+[data-theme="moe"] .app-topbar {
+  background: var(--bg-1);
+  border-bottom: 1px dashed var(--moe-primary-light);
+}
+
+/* StatusPill → 贴纸徽章(文字状态保留,双编码不豁免) */
 [data-theme="moe"] .status-pill { border-radius: 999px; }
+/* running 呼吸(克制:opacity 单通道,不动 layout) */
+[data-theme="moe"] .status-pill[data-status="running"] {
+  animation: moe-breathe 2s ease-in-out infinite;
+}
+@keyframes moe-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.72; }
+}
 
+/* 调试控制条:奶油渐变 + 粉色虚线边(标题卡) */
+[data-theme="moe"] .dbg-bar {
+  background: linear-gradient(135deg, var(--bg-1) 0%, var(--moe-bg-deep) 100%);
+  border: 1px dashed var(--moe-primary-light);
+}
 /* 控制条按钮 → 手柄按键感:厚底边 */
 [data-theme="moe"] .dbg-cmd {
   border-bottom-width: var(--stroke-accent);
   border-bottom-color: var(--line-strong);
+}
+/* SSE 连接点:在线时薄荷绿光晕脉冲 */
+[data-theme="moe"] .dbg-conn[data-state="ok"] {
+  background: var(--moe-accent-mint);
+  animation: moe-pulse 1.6s ease-in-out infinite;
+}
+@keyframes moe-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(168, 230, 207, 0.6); }
+  50%      { box-shadow: 0 0 12px rgba(168, 230, 207, 0.9); }
+}
+
+/* 结束横幅:手账贴纸(虚线边) */
+[data-theme="moe"] .dbg-end { border-style: dashed; }
+
+/* 调用栈帧:hover 右移 + 左缘主色;当前帧腮红包围 */
+[data-theme="moe"] .dbg-frame {
+  border-radius: var(--r-md);
+  border-left: 3px solid transparent;
+  transition: all 0.2s ease;
+}
+[data-theme="moe"] .dbg-frame:hover {
+  background: var(--moe-primary-light);
+  transform: translateX(4px);
+  border-left-color: var(--moe-primary);
+}
+[data-theme="moe"] .dbg-frame[data-current="true"] {
+  background: var(--moe-blush);
+  border-left-color: var(--moe-primary);
+}
+
+/* 主题切换器:主色描边小胶囊 */
+[data-theme="moe"] .theme-picker-btn {
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--moe-primary-light) 0%, var(--moe-bg-deep) 100%);
+  border: var(--stroke-strong) solid var(--moe-primary);
+  color: var(--live);
+}
+[data-theme="moe"] .theme-picker-btn:hover {
+  transform: rotate(3deg) scale(1.05);
+  box-shadow: 0 0 12px var(--moe-primary-glow);
 }
 
 /* Mochi 精灵层(MascotLayer;mascot.html 只出结构,色彩全在此) */

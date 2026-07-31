@@ -10,6 +10,7 @@
    页面骨架走 innerHTML;node 冒烟测试经 dom-stub 驱动。 */
 
 import { getJson, postJson } from "../api.js";
+import { copy } from "../themes.js";
 import { emptyBlock, esc, shortId, shortSkill } from "../util.js";
 import { statusPill } from "./status-pill.js";
 import { BREAKPOINT_KINDS, matchEditable } from "./breakpoint-list.js";
@@ -138,7 +139,7 @@ function buildForm(card) {
   modalError.hidden = true;
 
   const foot = $el("div", "dh-foot");
-  const submit = $el("button", "btn btn-primary", "开始调试 ▶");
+  const submit = $el("button", "btn btn-primary", copy("home.submit"));
   submit.disabled = true;
   foot.appendChild(submit);
 
@@ -314,7 +315,7 @@ async function submitSession() {
   if (errors.length) return;
   dh.busy = true;
   els.submit.disabled = true;
-  els.submit.textContent = "启动中…";
+  els.submit.textContent = copy("home.submitting");
   showModalError("");
   try {
     const breakpoints = collectBreakpoints();
@@ -340,7 +341,7 @@ async function submitSession() {
     // 无条件复位:成功路径已跳转(组件 detach),但 bfcache 回退时旧 DOM 可能重现,
     // 此时按钮不能停在"启动中…";对已 detach 的 els 复位无害。
     els.submit.disabled = false;
-    els.submit.textContent = "开始调试 ▶";
+    els.submit.textContent = copy("home.submit");
     validate();
   }
 }
@@ -381,8 +382,8 @@ async function refreshSessions() {
   if (!known.length) {
     const empty = $el("div", "dh-sess-empty");
     empty.innerHTML = emptyBlock(
-      "还没有调试会话",
-      "在上方选择技能与输入,可预填启动前断点,开始第一次调试",
+      copy("home.sessions.empty"),
+      copy("home.sessions.empty.hint"),
       "terminal");
     card.appendChild(empty);
     return;

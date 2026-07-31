@@ -11,9 +11,12 @@ run 工作目录内操作(§2.2;§W0-1 起 read_paths 只读区可在 workdir �
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import hashlib
 import json
+import os
+import signal
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +40,13 @@ from agent_os.api.v1 import (
     Veto,
 )
 from agent_os.tools.local_registry import _FunctionTool, derive_spec, resolve_work_path
+
+#: shell_exec 在注册表里的硬超时(§8.1 spec.timeout);内层 wait_for 必须钳在它以内,
+#: 否则外层先触发 → CancelledError 绕过内层 except → 子进程成孤儿
+_SHELL_SPEC_TIMEOUT = 30.0
+
+#: 留给内层 kill + 收尸的余量(秒)
+_SHELL_KILL_GRACE = 1.0
 
 #: system.shell.exec 单条流(stdout/stderr)截断上限(§W0-5;截断时 ``truncated=True`` 显式标记)
 _SHELL_STREAM_MAX_CHARS = 100_000
@@ -98,6 +108,8 @@ async def fs_read(
 
     Use when 需要查看工作目录内文件;Do not use when 路径越出帧工作目录(会被拒)。
     文件不存在 → NOT_FOUND;``offset``/``limit`` 从 1 起计,非法 → INVALID_ARGS。
+    窗口没读完时末尾附一行 ``[已显示 a-b 行,共 N 行;续读 system.file.read(offset=b+1)]``
+    (§3.2 契约 2):**截断必须显式**,否则模型会把前 2000 行当全文继续推理。
     """
     target = _resolve_in_workdir(ctx, path)
     if isinstance(target, ToolResult):
@@ -123,8 +135,21 @@ async def fs_read(
             ),
         )
     lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    total = len(lines)
     window = lines[offset - 1 : offset - 1 + limit]
-    return "\n".join(f"{n}\t{line}" for n, line in enumerate(window, start=offset))
+    if not window:
+        # 空窗口不能返回空串:模型分不清"文件是空的"和"offset 翻过头了"
+        return (
+            f"[{path} 共 {total} 行;offset={offset} 已越过末尾,无内容]"
+            if total
+            else f"[{path} 是空文件]"
+        )
+    body = "\n".join(f"{n}\t{line}" for n, line in enumerate(window, start=offset))
+    end = offset + len(window) - 1
+    if end < total:
+        # §3.2 契约 2:截断必须显式告知,否则模型把局部当全文往下推理
+        body += f"\n[已显示 {offset}-{end} 行,共 {total} 行;续读 system.file.read(offset={end + 1})]"
+    return body
 
 
 async def fs_write(
@@ -197,6 +222,28 @@ async def fs_edit(
     return f"已编辑 {path}(替换 1 处)"
 
 
+def _kill(proc: asyncio.subprocess.Process) -> None:
+    """杀掉整个进程组;已退出则是 no-op(竞态下 ProcessLookupError 属正常)。
+
+    只 ``proc.kill()`` 不够:``sh -c`` 未必 exec 掉自己(带管道/多命令时必然 fork),
+    杀 shell 留下的孙子进程仍在跑——实测 ``sleep 60`` 在 shell 被 SIGKILL 后
+    照活不误。子进程建在独立会话里(``start_new_session``),故可整组端掉。
+    """
+    if proc.returncode is not None:
+        return
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+
+
+async def _reap(proc: asyncio.subprocess.Process, comm: asyncio.Future) -> None:
+    """超时收尸:先杀进程,再等 communicate 收管道(顺序不能反,见 shell_exec 注释)。"""
+    _kill(proc)
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(comm, timeout=_SHELL_KILL_GRACE)
+
+
 async def shell_exec(
     command: str, timeout: int = 30, ctx: ToolContext | None = None
 ) -> dict[str, Any] | ToolResult:
@@ -219,21 +266,40 @@ async def shell_exec(
         cwd=ctx.workdir if ctx is not None else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        # 独立会话 = 独立进程组:超时才杀得干净(见 _kill);顺带切断 tty,
+        # 命令拿不到终端也就抢不走宿主的前台/信号
+        start_new_session=True,
     )
+    # 双超时竞态:注册表 spec.timeout 是外层硬闸门,内层再等下去就没意义了——
+    # 模型传 timeout=120 而 spec 是 30 时,外层先到并抛 CancelledError,本函数的
+    # except 走不到,proc 永不被 kill(留孤儿子进程)。故把内层钳到 spec 以内,
+    # 留一点余量给杀进程收尸。
+    effective = min(float(timeout), _SHELL_SPEC_TIMEOUT - _SHELL_KILL_GRACE)
+    # shield:超时**不取消** communicate。直接取消它会让子进程的管道传输永不关闭,
+    # 随后的 proc.wait() 等不到 connection_lost 而死锁(挂起比留孤儿更糟)。
+    # 正确次序是先杀进程 → 管道 EOF → communicate 自然收尾。
+    comm = asyncio.ensure_future(proc.communicate())
     try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        out, err = await asyncio.wait_for(asyncio.shield(comm), timeout=effective)
     except TimeoutError:
-        proc.kill()
-        await proc.wait()
+        await _reap(proc, comm)
         return ToolResult(
             ok=False,
             error=ToolError(
                 kind=ToolErrorKind.TIMEOUT,
-                message=f"命令超过 {timeout}s 未结束,已终止",
+                message=f"命令超过 {effective:g}s 未结束,已终止",
                 retryable=True,
-                hint=f"缩短命令运行时间,或用 timeout 参数放宽上限(当前 {timeout}s)",
+                hint=(
+                    f"缩短命令运行时间;timeout 参数上限受注册表约束"
+                    f"(spec.timeout={_SHELL_SPEC_TIMEOUT:g}s),更长的活儿请拆分或转后台"
+                ),
             ),
         )
+    except asyncio.CancelledError:
+        # 外层(注册表超时 / run 中止)取消:同样不能留孤儿,杀完再把取消传上去
+        _kill(proc)
+        comm.cancel()
+        raise
     stdout = out.decode("utf-8", errors="replace")
     stderr = err.decode("utf-8", errors="replace")
     truncated = len(stdout) > _SHELL_STREAM_MAX_CHARS or len(stderr) > _SHELL_STREAM_MAX_CHARS

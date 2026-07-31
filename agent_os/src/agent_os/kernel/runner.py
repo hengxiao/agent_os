@@ -509,7 +509,8 @@ class Kernel:
         if result.error is not None:
             raise ToolDispatchError(
                 f"code 技能 {manifest.name} 执行失败({result.error.kind.value}):"
-                f" {result.error.message}"
+                f" {result.error.message}",
+                hint=getattr(result.error, "hint", ""),
             )
         if manifest.outputs:
             try:
@@ -863,7 +864,10 @@ class Kernel:
                 "ok": False,
                 "value": None,
                 "error": _error_payload(
-                    ToolErrorKind.INTERNAL, f"子技能 {name} 失败: {type(e).__name__}: {e}"
+                    ToolErrorKind.INTERNAL,
+                    f"子技能 {name} 失败: {type(e).__name__}: {e}",
+                    # 结构化错误的最后一跳:SkillError 的 hint 续传到父帧观察(§W0-3)
+                    hint=getattr(e, "hint", ""),
                 ),
             }
         await self.signals.emit(self._sig(POST_SKILL_INVOKE, frame, {"skill": name, "ok": True}))

@@ -27,6 +27,7 @@ __all__ = [
     "LogicKernel",
     "NetworkPolicy",
     "ResourceLimits",
+    "SkillError",
     "TrustLevel",
 ]
 
@@ -65,11 +66,40 @@ class LogicError(Enum):
 
 @dataclass
 class ExecError:
-    """§9.1 ``error``:``{ kind, message, traceback }``。"""
+    """§9.1 ``error``:``{ kind, message, traceback }``;additive 增 hint/retryable。
+
+    ``hint``/``retryable``(§W0-3 错误契约):code 技能经 :class:`SkillError`
+    抛出的结构化错误在此保真——否则错误跨层传递时被压扁成一句人话,
+    编排脚本无法按 kind 分支、模型也拿不到下一步动作建议。
+    """
 
     kind: LogicError = LogicError.RUNTIME_ERROR
     message: str = ""
     traceback: str = ""
+    hint: str = ""
+    retryable: bool = False
+
+
+class SkillError(Exception):
+    """code 技能抛出的**结构化**错误(§W0-3;STDLIB §8 第 13 条编排友好性)。
+
+    普通 ``ValueError("一句话")`` 会被执行层归一化成 RUNTIME_ERROR 并丢掉
+    全部结构;抛本异常则 ``kind``/``hint``/``retryable`` 一路保真到模型与
+    编排脚本。``hint`` 写**下一步动作**(运行期事实现取),不是错误描述的重复。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: LogicError = LogicError.RUNTIME_ERROR,
+        hint: str = "",
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.hint = hint
+        self.retryable = retryable
 
 
 @dataclass

@@ -29,6 +29,7 @@ from agent_os.api.v1 import (
     ExecResult,
     ExecUsage,
     LogicError,
+    SkillError,
     TrustLevel,
 )
 from agent_os.kernel.errors import MaxDepthExceeded, RunAborted, SkillLoadError
@@ -82,6 +83,20 @@ class InProcessLogicKernel:
             )
         except (RunAborted, MaxDepthExceeded, SkillLoadError):
             raise  # 硬失败/权限仲裁失败不折成 ExecResult,沿调用栈弹到 Run 边界(§3.2)
+        except SkillError as e:
+            # 结构化错误保真(§W0-3):kind/hint/retryable 不被压扁成一句人话
+            return ExecResult(
+                stdout=stdout_io.getvalue(),
+                stderr=stderr_io.getvalue(),
+                error=ExecError(
+                    kind=e.kind,
+                    message=str(e)[:500],
+                    traceback=traceback.format_exc(),
+                    hint=e.hint,
+                    retryable=e.retryable,
+                ),
+                usage=self._usage(wall_start, cpu_start),
+            )
         except Exception:  # noqa: BLE001 — 执行边界故意兜底:任意异常归一化为 RUNTIME_ERROR(§9.7)
             tb = traceback.format_exc()
             return ExecResult(

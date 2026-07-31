@@ -43,4 +43,12 @@ class SkillLoadError(AgentOSError):
 
 
 class ToolDispatchError(AgentOSError):
-    """工具分发流水线结构性错误(§8.1);常规失败走 ToolResult,不抛本异常。"""
+    """工具分发流水线结构性错误(§8.1);常规失败走 ToolResult,不抛本异常。
+
+    ``hint``(§W0-3):code 技能经 ``SkillError`` 抛出的下一步动作建议在此续传,
+    由 ``_invoke_skill`` 折进父帧错误观察——否则跨帧时又被压扁成一句人话。
+    """
+
+    def __init__(self, message: str, *, hint: str = "") -> None:
+        super().__init__(message)
+        self.hint = hint

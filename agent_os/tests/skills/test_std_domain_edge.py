@@ -2,12 +2,12 @@
 
 锚点 tests/skills/test_std_domain.py 钉死主路径;本文件覆盖:
 
-- fetch_page 工具层:正文清洗(script/style/实体)、超长截断 + spill、
-  缺 http_fetch 的结构化错误、http_fetch 失败透传、max_chars 截断;
-- research_iterative 驱动:永不充分时的轮次收敛上限(不死循环)、一轮即充分;
-- memory_consolidate:近重复去重、阈值覆盖、today 注入、畸形/缺省字段;
-- memory_check:同值不冲突、"是/为"锚冲突、无锚忽略、多键混合;
-- verify_before_store:int/float 归一、bool ≠ 1、嵌套键序、fail 差异说明。
+- common.web.fetch_page 工具层:正文清洗(script/style/实体)、超长截断 + spill、
+  缺 system.net.http_fetch 的结构化错误、system.net.http_fetch 失败透传、max_chars 截断;
+- common.research.iterative 驱动:永不充分时的轮次收敛上限(不死循环)、一轮即充分;
+- common.memory.consolidate:近重复去重、阈值覆盖、today 注入、畸形/缺省字段;
+- common.memory.check:同值不冲突、"是/为"锚冲突、无锚忽略、多键混合;
+- common.memory.verify:int/float 归一、bool ≠ 1、嵌套键序、fail 差异说明。
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ sys.path.insert(0, str(STD_DIR))
 
 
 def _register_mock_http(tools, body: str | None = None):
-    @tools.tool(permission=Permission.NET, timeout=5)
+    @tools.tool(name="system.net.http_fetch", permission=Permission.NET, timeout=5)
     async def http_fetch(url: str, max_bytes: int = 100_000) -> dict:
         """抓取 URL(测试 mock)。"""
         content = body if body is not None else f"<html><body>{url} 的正文。</body></html>"
@@ -60,7 +60,7 @@ def _kernel(brain=None, http_body: str | None = None):
         )
         .providers(MockProvider(brain or (lambda req: None)))
         .tools(tools)
-        .skills(LocalFileSkillRegistry(str(STD_DIR / "skills.yaml")))
+        .skills(LocalFileSkillRegistry(str(STD_DIR)))
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
         .build()
     )
@@ -73,14 +73,14 @@ def run(skill: str, input: dict, **kw):
 def _tool_ctx(tmp_path: Path) -> ToolDispatchContext:
     return ToolDispatchContext(
         frame=SkillFrame(frame_id="f1", run_id="r1"),
-        allowed_tools=["fetch_page"],
+        allowed_tools=["common.web.fetch_page"],
         tool_policy=ToolPolicy(max_permission=Permission.EXEC),
         workdir=tmp_path,
     )
 
 
 def _dispatch(reg, args: dict, ctx):
-    return asyncio.run(reg.dispatch(ToolCall(id="fp", name="fetch_page", args=args), ctx))
+    return asyncio.run(reg.dispatch(ToolCall(id="fp", name="common.web.fetch_page", args=args), ctx))
 
 
 # ---------------------------------------------------------------------------
@@ -117,18 +117,18 @@ def test_fetch_page_truncates_and_spills(tmp_path):
 
 
 def test_fetch_page_missing_http_fetch_is_structured_error(tmp_path):
-    reg = LocalPythonToolRegistry()  # 构造器自带 fetch_page,但无 http_fetch
-    assert reg.has("fetch_page")
+    reg = LocalPythonToolRegistry()  # 构造器自带 common.web.fetch_page,但无 system.net.http_fetch
+    assert reg.has("common.web.fetch_page")
     r = _dispatch(reg, {"url": "https://example.com/x"}, _tool_ctx(tmp_path))
     assert not r.ok
     assert r.error is not None and r.error.kind.value == "not_found"
-    assert "http_fetch" in r.error.message
+    assert "system.net.http_fetch" in r.error.message
 
 
 def test_fetch_page_http_failure_is_not_ok(tmp_path):
     reg = LocalPythonToolRegistry.with_builtins()
 
-    @reg.tool(permission=Permission.NET, timeout=5)
+    @reg.tool(name="system.net.http_fetch", permission=Permission.NET, timeout=5)
     async def http_fetch(url: str, max_bytes: int = 100_000) -> dict:
         """抓取 URL(坏掉 mock)。"""
         raise ConnectionError("network down")
@@ -140,7 +140,7 @@ def test_fetch_page_http_failure_is_not_ok(tmp_path):
 def test_fetch_page_skill_failure_raises(tmp_path):
     tools = LocalPythonToolRegistry.with_builtins()
 
-    @tools.tool(permission=Permission.NET, timeout=5)
+    @tools.tool(name="system.net.http_fetch", permission=Permission.NET, timeout=5)
     async def http_fetch(url: str, max_bytes: int = 100_000) -> dict:
         """抓取 URL(坏掉 mock)。"""
         raise ConnectionError("network down")
@@ -149,12 +149,12 @@ def test_fetch_page_skill_failure_raises(tmp_path):
         KernelBuilder(RunConfig(model="mock/x", tool_policy=ToolPolicy(max_permission=Permission.EXEC)))
         .providers(MockProvider())
         .tools(tools)
-        .skills(LocalFileSkillRegistry(str(STD_DIR / "skills.yaml")))
+        .skills(LocalFileSkillRegistry(str(STD_DIR)))
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
         .build()
     )
     with pytest.raises(ToolDispatchError):
-        asyncio.run(kernel.run("fetch_page", {"url": "https://example.com/x"}))
+        asyncio.run(kernel.run("common.web.fetch_page", {"url": "https://example.com/x"}))
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ def _iter_brain(always_insufficient: bool):
             return ChatResponse(
                 message=Message(
                     role=Role.ASSISTANT,
-                    tool_calls=[{"id": "c1", "name": "fetch_page", "args": {"url": "https://example.com/a"}}],
+                    tool_calls=[{"id": "c1", "name": "common.web.fetch_page", "args": {"url": "https://example.com/a"}}],
                 ),
                 finish_reason="tool_calls",
                 usage=ChatUsage(prompt=1, completion=1),
@@ -190,14 +190,14 @@ def _iter_brain(always_insufficient: bool):
 
 
 def test_research_iterative_sufficient_after_one_round():
-    r = run("research_iterative", {"query": "X"}, brain=_iter_brain(always_insufficient=False))
+    r = run("common.research.iterative", {"query": "X"}, brain=_iter_brain(always_insufficient=False))
     assert r["answer"] == "一轮就够"
     assert r["rounds"] == 1
     assert r["sources"] == ["https://example.com/a"]
 
 
 def test_research_iterative_never_sufficient_hits_round_cap():
-    r = run("research_iterative", {"query": "X", "max_rounds": 2}, brain=_iter_brain(always_insufficient=True))
+    r = run("common.research.iterative", {"query": "X", "max_rounds": 2}, brain=_iter_brain(always_insufficient=True))
     assert r["rounds"] == 2, "轮次用尽必须收束,不得死循环"
     assert "未能" in r["answer"]
     assert r["sources"], "兜底 sources 来自实际抓取"
@@ -213,7 +213,7 @@ def test_memory_consolidate_dedup_near_duplicate():
         {"fact": "用户偏好 ISO 日期", "access_count": 5, "created_at": "2026-07-01"},
         {"fact": "用户偏好ISO日期", "access_count": 1, "created_at": "2026-07-01"},
     ]
-    r = run("memory_consolidate", {"entries": entries, "today": "2026-07-26"})
+    r = run("common.memory.consolidate", {"entries": entries, "today": "2026-07-26"})
     kept = [e["fact"] for e in r["entries"]]
     assert kept == ["用户偏好 ISO 日期"], "近重复簇只留高分项"
     assert any("近重复" in p.get("reason", "") for p in r["pruned"])
@@ -221,12 +221,12 @@ def test_memory_consolidate_dedup_near_duplicate():
 
 def test_memory_consolidate_threshold_override_and_bad_fields():
     entries = [{"fact": "A 重要事实", "access_count": 9, "created_at": "2026-07-01"}]
-    r = run("memory_consolidate", {"entries": entries, "today": "2026-07-26", "keep_threshold": 99})
+    r = run("common.memory.consolidate", {"entries": entries, "today": "2026-07-26", "keep_threshold": 99})
     assert r["entries"] == [] and len(r["pruned"]) == 1, "阈值拉高后全部进 pruned"
     # 缺 created_at / 畸形 access_count 不崩溃,按最老处理
-    r2 = run("memory_consolidate", {"entries": [{"fact": "无日期条目"}], "today": "2026-07-26"})
+    r2 = run("common.memory.consolidate", {"entries": [{"fact": "无日期条目"}], "today": "2026-07-26"})
     assert r2["pruned"] and not r2["entries"]
-    r3 = run("memory_consolidate", {"entries": []})
+    r3 = run("common.memory.consolidate", {"entries": []})
     assert r3 == {"entries": [], "pruned": []}
 
 
@@ -236,12 +236,12 @@ def test_memory_consolidate_threshold_override_and_bad_fields():
 
 
 def test_memory_check_same_value_is_ok():
-    r = run("memory_check", {"entries": [{"fact": "护照有效期 2030 年"}, {"fact": "护照有效期 2030 年"}]})
+    r = run("common.memory.check", {"entries": [{"fact": "护照有效期 2030 年"}, {"fact": "护照有效期 2030 年"}]})
     assert r["ok"] is True and r["conflicts"] == []
 
 
 def test_memory_check_be_anchor_conflict_and_mixed():
-    r = run("memory_check", {"entries": [
+    r = run("common.memory.check", {"entries": [
         {"fact": "城市是北京"},
         {"fact": "城市是上海"},
         {"fact": "今天天气不错"},  # 无锚,不参与判定
@@ -257,7 +257,7 @@ def test_memory_check_be_anchor_conflict_and_mixed():
 
 
 def test_verify_before_store_normalization():
-    ok = run("verify_before_store", {
+    ok = run("common.memory.verify", {
         "artifact": {},
         "replay_result": {"total": 45, "items": [1, {"b": 2}]},
         "expected": {"items": [1.0, {"b": 2.0}], "total": 45.0},  # 键序无关 + int/float 归一
@@ -266,7 +266,7 @@ def test_verify_before_store_normalization():
 
 
 def test_verify_before_store_bool_is_not_one():
-    bad = run("verify_before_store", {
+    bad = run("common.memory.verify", {
         "artifact": {},
         "replay_result": {"ok": True},
         "expected": {"ok": 1},  # True 不应等于 1

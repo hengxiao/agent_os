@@ -37,7 +37,7 @@ def test_openai_compatible_success_mapping():
                 "tool_calls": [{
                     "id": "c1",
                     "type": "function",
-                    "function": {"name": "fs_read", "arguments": '{"path": "a.txt"}'},
+                    "function": {"name": "system.file.read", "arguments": '{"path": "a.txt"}'},
                 }],
             },
             "finish_reason": "tool_calls",
@@ -49,10 +49,10 @@ def test_openai_compatible_success_mapping():
     req = ChatRequest(
         model="openai/gpt-x",
         messages=[Message(role=Role.USER, content="hello")],
-        tools=[{"name": "fs_read", "description": "", "parameters": {}}],
+        tools=[{"name": "system.file.read", "description": "", "parameters": {}}],
     )
     resp = asyncio.run(p.chat(req))
-    assert resp.message.tool_calls[0].name == "fs_read"
+    assert resp.message.tool_calls[0].name == "system.file.read"
     assert resp.message.tool_calls[0].args == {"path": "a.txt"}
     assert resp.usage.prompt == 3 and resp.usage.completion == 2
 

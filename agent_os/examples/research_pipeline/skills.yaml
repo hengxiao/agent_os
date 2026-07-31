@@ -1,432 +1,680 @@
-# research_pipeline 调试技能包(tests/test_examples.py 锚点:恰好 20 个技能)。
-#
-# 入口 research_report 的运行时调用树恰好 19 帧、四层深:
-#   research_report(d1)
-#   ├─ plan_topics(d2)
-#   ├─ research_topic(d2)×3
-#   │   ├─ fetch_source(d3)
-#   │   └─ extract_facts(d3)
-#   │       └─ verify_facts(d4)
-#   ├─ merge_summaries(d2)
-#   ├─ draft_report(d2)
-#   │   ├─ style_review(d3)
-#   │   └─ fact_check(d3)
-#   └─ finalize_report(d2)
-# 全程由通用 mock 大脑 brains:ops_brain 驱动(见 brains.py),结果确定性。
-#
-# 约定:prompt 技能模板首行写 "# skill: <name>"(ops_brain 据此识别技能);
-# 模板经 str.format 渲染,正文不得出现裸露的 {} 字面量;
-# description 一律 "Use when …;Do not use when …" 路由规则格式(过 §6.1 lint)。
 skills:
-  # ------------------------------------------------------------------
-  # 编排层(prompt):驱动子技能调用树
-  # ------------------------------------------------------------------
-  - name: research_report
-    version: 1.0.0
-    kind: prompt
-    description: 研究流水线入口,把研究问题变成带引用的报告。Use when 需要端到端研究报告;Do not use when 只要单条事实。
-    inputs:
-      type: object
-      properties: { question: { type: string } }
-      required: [question]
-    outputs:
-      type: object
-      properties:
-        report: { type: string }
-        words: { type: integer }
-        citations: { type: array, items: { type: string } }
-      required: [report, words, citations]
-    permissions:
-      tools: []
-      skills: [plan_topics, research_topic, merge_summaries, draft_report, finalize_report]
-    model: { prefer: ["mock/ops"] }
-    limits: { max_steps: 16, timeout: 60 }
-    prompt: |
-      # skill: research_report
-      你是研究流水线编排器。研究问题:{question}
+- name: project.research_pipeline.research_report
+  version: 1.0.0
+  kind: prompt
+  description: 研究流水线入口,把研究问题变成带引用的报告。Use when 需要端到端研究报告;Do not use when 只要单条事实。
+  inputs:
+    type: object
+    properties:
+      question:
+        type: string
+    required:
+    - question
+  outputs:
+    type: object
+    properties:
+      report:
+        type: string
+      words:
+        type: integer
+      citations:
+        type: array
+        items:
+          type: string
+    required:
+    - report
+    - words
+    - citations
+  permissions:
+    tools: []
+    skills:
+    - project.research_pipeline.plan_topics
+    - project.research_pipeline.research_topic
+    - project.research_pipeline.merge_summaries
+    - project.research_pipeline.draft_report
+    - project.research_pipeline.finalize_report
+  model:
+    prefer:
+    - mock/ops
+  limits:
+    max_steps: 16
+    timeout: 60
+  prompt: '# skill: project.research_pipeline.research_report
 
-      严格按以下顺序执行,每步只发一个调用:
-      1. 调用 skill__plan_topics,参数含 question,得到恰好 3 个主题;
-      2. 对每个主题,依次调用 skill__research_topic,参数含 topic;
-      3. 全部主题完成后,调用 skill__merge_summaries,参数 summaries 为各主题 summary 组成的数组;
-      4. 调用 skill__draft_report,参数含 question 与 merged;
-      5. 调用 skill__finalize_report,参数含 draft 与 citations;
-      6. 把 finalize 的返回值原样作为最终答案 JSON 输出,不要输出其他文字。
-  - name: research_topic
-    version: 1.0.0
-    kind: prompt
-    description: 单主题研究员,取资料、提事实、给摘要。Use when 需要调研一个具体主题;Do not use when 需要跨主题合并。
-    inputs:
-      type: object
-      properties: { topic: { type: string } }
-      required: [topic]
-    outputs:
-      type: object
-      properties:
-        summary: { type: string }
-        facts: { type: array, items: { type: string } }
-      required: [summary, facts]
-    permissions:
-      tools: []
-      skills: [fetch_source, extract_facts, summarize_topic]
-    model: { prefer: ["mock/ops"] }
-    limits: { max_steps: 12, timeout: 60 }
-    prompt: |
-      # skill: research_topic
-      你是主题研究员。主题:{topic}
+    你是研究流水线编排器。研究问题:{question}
 
-      严格按以下顺序执行,每步只发一个调用:
-      1. 调用 skill__fetch_source,参数含 topic,取回该主题的资料文本;
-      2. 调用 skill__extract_facts,参数 text 为上一步的文本,提取并核实事实;
-      3. 基于已核实事实给出最终答案 JSON:summary 为一段中文摘要,facts 为已核实事实数组。
-  - name: extract_facts
-    version: 1.0.0
-    kind: prompt
-    description: 从资料文本提取事实并核实。Use when 手头有原始段落需要结构化事实;Do not use when 文本已是事实清单。
-    inputs:
-      type: object
-      properties: { text: { type: string } }
-      required: [text]
-    outputs:
-      type: object
-      properties:
-        facts: { type: array, items: { type: string } }
-      required: [facts]
-    permissions:
-      tools: []
-      skills: [verify_facts]
-    model: { prefer: ["mock/ops"] }
-    limits: { max_steps: 12, timeout: 60 }
-    prompt: |
-      # skill: extract_facts
-      你是事实提取器。资料文本:{text}
 
-      严格按以下顺序执行:
-      1. 把文本切分为若干条事实短句;
-      2. 调用 skill__verify_facts,参数 facts 为提取的事实数组,完成核实;
-      3. 最终答案 JSON 只含字段 facts,取核实后的数组,不要输出其他文字。
-  - name: draft_report
-    version: 1.0.0
-    kind: prompt
-    description: 按问题与合并素材起草报告,并接受风格与事实两道审查。Use when 素材已齐需要成稿;Do not use when 素材未合并。
-    inputs:
-      type: object
-      properties:
-        question: { type: string }
-        merged: { type: string }
-      required: [question, merged]
-    outputs:
-      type: object
-      properties:
-        draft: { type: string }
-        citations: { type: array, items: { type: string } }
-      required: [draft, citations]
-    permissions:
-      tools: []
-      skills: [style_review, fact_check]
-    model: { prefer: ["mock/ops"] }
-    limits: { max_steps: 12, timeout: 60 }
-    prompt: |
-      # skill: draft_report
-      你是报告起草员。研究问题:{question}
-      已合并的研究素材:{merged}
+    严格按以下顺序执行,每步只发一个调用:
 
-      严格按以下顺序执行,每步只发一个调用:
-      1. 根据问题与素材起草报告正文;
-      2. 调用 skill__style_review,参数 draft 为草稿全文,审阅风格;
-      3. 调用 skill__fact_check,参数 draft 为草稿全文,核查事实;
-      4. 最终答案 JSON 含字段 draft(草稿全文)与 citations(引用数组)。
+    1. 调用 skill.project.research_pipeline.plan_topics,参数含 question,得到恰好 3 个主题;
 
-  # ------------------------------------------------------------------
-  # 叶 prompt 技能:ops_brain 直接给确定性最终答案
-  # ------------------------------------------------------------------
-  - name: summarize_topic
-    version: 1.0.0
-    kind: prompt
-    description: 由已核实事实给主题写摘要。Use when 事实清单已核实需要成段;Do not use when 事实尚未核实。
-    inputs:
-      type: object
-      properties:
-        topic: { type: string }
-        facts: { type: array, items: { type: string } }
-      required: [topic, facts]
-    outputs:
-      type: object
-      properties:
-        summary: { type: string }
-        facts: { type: array, items: { type: string } }
-      required: [summary, facts]
-    permissions: { tools: [], skills: [] }
-    model: { prefer: ["mock/ops"] }
-    limits: { max_steps: 12, timeout: 60 }
-    prompt: |
-      # skill: summarize_topic
-      你是主题总结器。主题:{topic}
-      已核实事实:{facts}
+    2. 对每个主题,依次调用 skill.project.research_pipeline.research_topic,参数含 topic;
 
-      直接给出最终答案 JSON:summary 为一段中文摘要,facts 原样保留输入的事实数组。
-  - name: style_review
-    version: 1.0.0
-    kind: prompt
-    description: 审阅草稿风格并给意见。Use when 草稿已成形需要风格把关;Do not use when 需要核查事实真伪。
-    inputs:
-      type: object
-      properties: { draft: { type: string } }
-      required: [draft]
-    outputs:
-      type: object
-      properties:
-        comments: { type: array, items: { type: string } }
-      required: [comments]
-    permissions: { tools: [], skills: [] }
-    model: { prefer: ["mock/ops"] }
-    limits: { max_steps: 12, timeout: 60 }
-    prompt: |
-      # skill: style_review
-      你是风格审阅员。草稿:{draft}
+    3. 全部主题完成后,调用 skill.project.research_pipeline.merge_summaries,参数 summaries 为各主题
+    summary 组成的数组;
 
-      直接给出最终答案 JSON,字段 comments 为中文审阅意见数组,不要输出其他文字。
-  - name: keyword_extractor
-    version: 1.0.0
-    kind: prompt
-    description: 从文本抽取关键词。Use when 需要给文本打检索标签;Do not use when 需要摘要而非词表。
-    inputs:
-      type: object
-      properties: { text: { type: string } }
-      required: [text]
-    outputs:
-      type: object
-      properties:
-        keywords: { type: array, items: { type: string } }
-      required: [keywords]
-    permissions: { tools: [], skills: [] }
-    model: { prefer: ["mock/ops"] }
-    limits: { max_steps: 12, timeout: 60 }
-    prompt: |
-      # skill: keyword_extractor
-      你是关键词提取器。文本:{text}
+    4. 调用 skill.project.research_pipeline.draft_report,参数含 question 与 merged;
 
-      直接给出最终答案 JSON,字段 keywords 为关键词数组,不要输出其他文字。
-  - name: translate_en
-    version: 1.0.0
-    kind: prompt
-    description: 把中文文本译为英文。Use when 需要英文版本;Do not use when 需要润色中文原文。
-    inputs:
-      type: object
-      properties: { text: { type: string } }
-      required: [text]
-    outputs:
-      type: object
-      properties:
-        translation: { type: string }
-      required: [translation]
-    permissions: { tools: [], skills: [] }
-    model: { prefer: ["mock/ops"] }
-    limits: { max_steps: 12, timeout: 60 }
-    prompt: |
-      # skill: translate_en
-      你是英译器。文本:{text}
+    5. 调用 skill.project.research_pipeline.finalize_report,参数含 draft 与 citations;
 
-      直接给出最终答案 JSON,字段 translation 为英文译文,不要输出其他文字。
-  - name: risk_scan
-    version: 1.0.0
-    kind: prompt
-    description: 扫描文本中的风险表述。Use when 发布前需要合规风险排查;Do not use when 需要事实核查。
-    inputs:
-      type: object
-      properties: { text: { type: string } }
-      required: [text]
-    outputs:
-      type: object
-      properties:
-        risks: { type: array, items: { type: string } }
-      required: [risks]
-    permissions: { tools: [], skills: [] }
-    model: { prefer: ["mock/ops"] }
-    limits: { max_steps: 12, timeout: 60 }
-    prompt: |
-      # skill: risk_scan
-      你是风险扫描器。文本:{text}
+    6. 把 finalize 的返回值原样作为最终答案 JSON 输出,不要输出其他文字。
 
-      直接给出最终答案 JSON,字段 risks 为风险描述数组,无风险则为空数组。
+    '
+- name: project.research_pipeline.research_topic
+  version: 1.0.0
+  kind: prompt
+  description: 单主题研究员,取资料、提事实、给摘要。Use when 需要调研一个具体主题;Do not use when 需要跨主题合并。
+  inputs:
+    type: object
+    properties:
+      topic:
+        type: string
+    required:
+    - topic
+  outputs:
+    type: object
+    properties:
+      summary:
+        type: string
+      facts:
+        type: array
+        items:
+          type: string
+    required:
+    - summary
+    - facts
+  permissions:
+    tools: []
+    skills:
+    - project.research_pipeline.fetch_source
+    - project.research_pipeline.extract_facts
+    - project.research_pipeline.summarize_topic
+  model:
+    prefer:
+    - mock/ops
+  limits:
+    max_steps: 12
+    timeout: 60
+  prompt: '# skill: project.research_pipeline.research_topic
 
-  # ------------------------------------------------------------------
-  # 流水线 code 技能:确定性转换(handlers.py,惰性加载)
-  # ------------------------------------------------------------------
-  - name: plan_topics
-    version: 1.0.0
-    kind: code
-    description: 把研究问题确定性拆成恰好 3 个主题。Use when 流水线开局需要拆题;Do not use when 主题已由用户指定。
-    handler: handlers:plan_topics
-    inputs:
-      type: object
-      properties: { question: { type: string } }
-      required: [question]
-    outputs:
-      type: object
-      properties:
-        topics: { type: array, items: { type: string } }
-      required: [topics]
-    permissions: { tools: [], skills: [] }
-  - name: fetch_source
-    version: 1.0.0
-    kind: code
-    description: 按主题哈希从预制语料确定性取段。Use when 需要为主题取资料文本;Do not use when 需要真实联网检索。
-    handler: handlers:fetch_source
-    inputs:
-      type: object
-      properties: { topic: { type: string } }
-      required: [topic]
-    outputs:
-      type: object
-      properties:
-        text: { type: string }
-      required: [text]
-    permissions: { tools: [http_fetch], skills: [] }
-  - name: verify_facts
-    version: 1.0.0
-    kind: code
-    description: 确定性过滤事实清单(去重、去过短)。Use when 事实来自模型提取需要清洗;Do not use when 事实已人工审定。
-    handler: handlers:verify_facts
-    inputs:
-      type: object
-      properties:
-        facts: { type: array, items: { type: string } }
-      required: [facts]
-    outputs:
-      type: object
-      properties:
-        verified: { type: array, items: { type: string } }
-      required: [verified]
-    permissions: { tools: [], skills: [] }
-  - name: merge_summaries
-    version: 1.0.0
-    kind: code
-    description: 把多份主题摘要按序合并为一份素材。Use when 各主题调研完毕需要汇总;Do not use when 只有单个主题。
-    handler: handlers:merge_summaries
-    inputs:
-      type: object
-      properties:
-        summaries: { type: array, items: { type: string } }
-      required: [summaries]
-    outputs:
-      type: object
-      properties:
-        merged: { type: string }
-      required: [merged]
-    permissions: { tools: [], skills: [] }
-  - name: fact_check
-    version: 1.0.0
-    kind: code
-    description: 确定性核查草稿(非空且含结论段)。Use when 草稿待发布需要机器核查;Do not use when 需要人工事实核对。
-    handler: handlers:fact_check
-    inputs:
-      type: object
-      properties: { draft: { type: string } }
-      required: [draft]
-    outputs:
-      type: object
-      properties:
-        ok: { type: boolean }
-        issues: { type: array, items: { type: string } }
-      required: [ok, issues]
-    permissions: { tools: [], skills: [] }
-  - name: finalize_report
-    version: 1.0.0
-    kind: code
-    description: 草稿加引用拼终稿并统计词数。Use when 草稿通过审查需要定稿;Do not use when 草稿尚未起草。
-    handler: handlers:finalize_report
-    inputs:
-      type: object
-      properties:
-        draft: { type: string }
-        citations: { type: array, items: { type: string } }
-      required: [draft, citations]
-    outputs:
-      type: object
-      properties:
-        report: { type: string }
-        words: { type: integer }
-        citations: { type: array, items: { type: string } }
-      required: [report, words, citations]
-    permissions: { tools: [], skills: [] }
+    你是主题研究员。主题:{topic}
 
-  # ------------------------------------------------------------------
-  # 工具型凑数技能(凑满 20):调试注册表/路由用,不在主调用树内
-  # ------------------------------------------------------------------
-  - name: format_markdown
-    version: 1.0.0
-    kind: code
-    description: 给纯文本包一层 markdown 标题。Use when 需要快速成稿排版;Do not use when 需要富样式模板。
-    handler: handlers:format_markdown
-    inputs:
-      type: object
-      properties: { text: { type: string } }
-      required: [text]
-    outputs:
-      type: object
-      properties:
-        markdown: { type: string }
-      required: [markdown]
-    permissions: { tools: [], skills: [] }
-  - name: count_words
-    version: 1.0.0
-    kind: code
-    description: 按空白分词统计词数。Use when 需要报告篇幅读数;Do not use when 需要按字符或按句统计。
-    handler: handlers:count_words
-    inputs:
-      type: object
-      properties: { text: { type: string } }
-      required: [text]
-    outputs:
-      type: object
-      properties:
-        count: { type: integer }
-      required: [count]
-    permissions: { tools: [], skills: [] }
-  - name: validate_report
-    version: 1.0.0
-    kind: code
-    description: 确定性校验终稿结构(标题与引用节)。Use when 定稿后需要结构体检;Do not use when 需要语义审校。
-    handler: handlers:validate_report
-    inputs:
-      type: object
-      properties: { report: { type: string } }
-      required: [report]
-    outputs:
-      type: object
-      properties:
-        valid: { type: boolean }
-        problems: { type: array, items: { type: string } }
-      required: [valid, problems]
-    permissions: { tools: [fs_read], skills: [] }
-  - name: split_tasks
-    version: 1.0.0
-    kind: code
-    description: 把任务确定性拆成 3 个子任务。Use when 需要演示任务分解;Do not use when 分解粒度需按语义。
-    handler: handlers:split_tasks
-    inputs:
-      type: object
-      properties: { task: { type: string } }
-      required: [task]
-    outputs:
-      type: object
-      properties:
-        subtasks: { type: array, items: { type: string } }
-      required: [subtasks]
-    permissions: { tools: [], skills: [] }
-  - name: citation_builder
-    version: 1.0.0
-    kind: code
-    description: 由来源文本构造确定性引用串。Use when 需要批量生成引用占位;Do not use when 需要真实文献定位。
-    handler: handlers:citation_builder
-    inputs:
-      type: object
-      properties: { source: { type: string } }
-      required: [source]
-    outputs:
-      type: object
-      properties:
-        citation: { type: string }
-      required: [citation]
-    permissions: { tools: [], skills: [] }
+
+    严格按以下顺序执行,每步只发一个调用:
+
+    1. 调用 skill.project.research_pipeline.fetch_source,参数含 topic,取回该主题的资料文本;
+
+    2. 调用 skill.project.research_pipeline.extract_facts,参数 text 为上一步的文本,提取并核实事实;
+
+    3. 基于已核实事实给出最终答案 JSON:summary 为一段中文摘要,facts 为已核实事实数组。
+
+    '
+- name: project.research_pipeline.extract_facts
+  version: 1.0.0
+  kind: prompt
+  description: 从资料文本提取事实并核实。Use when 手头有原始段落需要结构化事实;Do not use when 文本已是事实清单。
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      facts:
+        type: array
+        items:
+          type: string
+    required:
+    - facts
+  permissions:
+    tools: []
+    skills:
+    - project.research_pipeline.verify_facts
+  model:
+    prefer:
+    - mock/ops
+  limits:
+    max_steps: 12
+    timeout: 60
+  prompt: '# skill: project.research_pipeline.extract_facts
+
+    你是事实提取器。资料文本:{text}
+
+
+    严格按以下顺序执行:
+
+    1. 把文本切分为若干条事实短句;
+
+    2. 调用 skill.project.research_pipeline.verify_facts,参数 facts 为提取的事实数组,完成核实;
+
+    3. 最终答案 JSON 只含字段 facts,取核实后的数组,不要输出其他文字。
+
+    '
+- name: project.research_pipeline.draft_report
+  version: 1.0.0
+  kind: prompt
+  description: 按问题与合并素材起草报告,并接受风格与事实两道审查。Use when 素材已齐需要成稿;Do not use when 素材未合并。
+  inputs:
+    type: object
+    properties:
+      question:
+        type: string
+      merged:
+        type: string
+    required:
+    - question
+    - merged
+  outputs:
+    type: object
+    properties:
+      draft:
+        type: string
+      citations:
+        type: array
+        items:
+          type: string
+    required:
+    - draft
+    - citations
+  permissions:
+    tools: []
+    skills:
+    - project.research_pipeline.style_review
+    - project.research_pipeline.fact_check
+  model:
+    prefer:
+    - mock/ops
+  limits:
+    max_steps: 12
+    timeout: 60
+  prompt: '# skill: project.research_pipeline.draft_report
+
+    你是报告起草员。研究问题:{question}
+
+    已合并的研究素材:{merged}
+
+
+    严格按以下顺序执行,每步只发一个调用:
+
+    1. 根据问题与素材起草报告正文;
+
+    2. 调用 skill.project.research_pipeline.style_review,参数 draft 为草稿全文,审阅风格;
+
+    3. 调用 skill.project.research_pipeline.fact_check,参数 draft 为草稿全文,核查事实;
+
+    4. 最终答案 JSON 含字段 draft(草稿全文)与 citations(引用数组)。
+
+    '
+- name: project.research_pipeline.summarize_topic
+  version: 1.0.0
+  kind: prompt
+  description: 由已核实事实给主题写摘要。Use when 事实清单已核实需要成段;Do not use when 事实尚未核实。
+  inputs:
+    type: object
+    properties:
+      topic:
+        type: string
+      facts:
+        type: array
+        items:
+          type: string
+    required:
+    - topic
+    - facts
+  outputs:
+    type: object
+    properties:
+      summary:
+        type: string
+      facts:
+        type: array
+        items:
+          type: string
+    required:
+    - summary
+    - facts
+  permissions:
+    tools: []
+    skills: []
+  model:
+    prefer:
+    - mock/ops
+  limits:
+    max_steps: 12
+    timeout: 60
+  prompt: '# skill: project.research_pipeline.summarize_topic
+
+    你是主题总结器。主题:{topic}
+
+    已核实事实:{facts}
+
+
+    直接给出最终答案 JSON:summary 为一段中文摘要,facts 原样保留输入的事实数组。
+
+    '
+- name: project.research_pipeline.style_review
+  version: 1.0.0
+  kind: prompt
+  description: 审阅草稿风格并给意见。Use when 草稿已成形需要风格把关;Do not use when 需要核查事实真伪。
+  inputs:
+    type: object
+    properties:
+      draft:
+        type: string
+    required:
+    - draft
+  outputs:
+    type: object
+    properties:
+      comments:
+        type: array
+        items:
+          type: string
+    required:
+    - comments
+  permissions:
+    tools: []
+    skills: []
+  model:
+    prefer:
+    - mock/ops
+  limits:
+    max_steps: 12
+    timeout: 60
+  prompt: '# skill: project.research_pipeline.style_review
+
+    你是风格审阅员。草稿:{draft}
+
+
+    直接给出最终答案 JSON,字段 comments 为中文审阅意见数组,不要输出其他文字。
+
+    '
+- name: project.research_pipeline.keyword_extractor
+  version: 1.0.0
+  kind: prompt
+  description: 从文本抽取关键词。Use when 需要给文本打检索标签;Do not use when 需要摘要而非词表。
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      keywords:
+        type: array
+        items:
+          type: string
+    required:
+    - keywords
+  permissions:
+    tools: []
+    skills: []
+  model:
+    prefer:
+    - mock/ops
+  limits:
+    max_steps: 12
+    timeout: 60
+  prompt: '# skill: project.research_pipeline.keyword_extractor
+
+    你是关键词提取器。文本:{text}
+
+
+    直接给出最终答案 JSON,字段 keywords 为关键词数组,不要输出其他文字。
+
+    '
+- name: project.research_pipeline.translate_en
+  version: 1.0.0
+  kind: prompt
+  description: 把中文文本译为英文。Use when 需要英文版本;Do not use when 需要润色中文原文。
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      translation:
+        type: string
+    required:
+    - translation
+  permissions:
+    tools: []
+    skills: []
+  model:
+    prefer:
+    - mock/ops
+  limits:
+    max_steps: 12
+    timeout: 60
+  prompt: '# skill: project.research_pipeline.translate_en
+
+    你是英译器。文本:{text}
+
+
+    直接给出最终答案 JSON,字段 translation 为英文译文,不要输出其他文字。
+
+    '
+- name: project.research_pipeline.risk_scan
+  version: 1.0.0
+  kind: prompt
+  description: 扫描文本中的风险表述。Use when 发布前需要合规风险排查;Do not use when 需要事实核查。
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      risks:
+        type: array
+        items:
+          type: string
+    required:
+    - risks
+  permissions:
+    tools: []
+    skills: []
+  model:
+    prefer:
+    - mock/ops
+  limits:
+    max_steps: 12
+    timeout: 60
+  prompt: '# skill: project.research_pipeline.risk_scan
+
+    你是风险扫描器。文本:{text}
+
+
+    直接给出最终答案 JSON,字段 risks 为风险描述数组,无风险则为空数组。
+
+    '
+- name: project.research_pipeline.plan_topics
+  version: 1.0.0
+  kind: code
+  description: 把研究问题确定性拆成恰好 3 个主题。Use when 流水线开局需要拆题;Do not use when 主题已由用户指定。
+  handler: handlers:plan_topics
+  inputs:
+    type: object
+    properties:
+      question:
+        type: string
+    required:
+    - question
+  outputs:
+    type: object
+    properties:
+      topics:
+        type: array
+        items:
+          type: string
+    required:
+    - topics
+  permissions:
+    tools: []
+    skills: []
+- name: project.research_pipeline.fetch_source
+  version: 1.0.0
+  kind: code
+  description: 按主题哈希从预制语料确定性取段。Use when 需要为主题取资料文本;Do not use when 需要真实联网检索。
+  handler: handlers:fetch_source
+  inputs:
+    type: object
+    properties:
+      topic:
+        type: string
+    required:
+    - topic
+  outputs:
+    type: object
+    properties:
+      text:
+        type: string
+    required:
+    - text
+  permissions:
+    tools:
+    - system.net.http_fetch
+    skills: []
+- name: project.research_pipeline.verify_facts
+  version: 1.0.0
+  kind: code
+  description: 确定性过滤事实清单(去重、去过短)。Use when 事实来自模型提取需要清洗;Do not use when 事实已人工审定。
+  handler: handlers:verify_facts
+  inputs:
+    type: object
+    properties:
+      facts:
+        type: array
+        items:
+          type: string
+    required:
+    - facts
+  outputs:
+    type: object
+    properties:
+      verified:
+        type: array
+        items:
+          type: string
+    required:
+    - verified
+  permissions:
+    tools: []
+    skills: []
+- name: project.research_pipeline.merge_summaries
+  version: 1.0.0
+  kind: code
+  description: 把多份主题摘要按序合并为一份素材。Use when 各主题调研完毕需要汇总;Do not use when 只有单个主题。
+  handler: handlers:merge_summaries
+  inputs:
+    type: object
+    properties:
+      summaries:
+        type: array
+        items:
+          type: string
+    required:
+    - summaries
+  outputs:
+    type: object
+    properties:
+      merged:
+        type: string
+    required:
+    - merged
+  permissions:
+    tools: []
+    skills: []
+- name: project.research_pipeline.fact_check
+  version: 1.0.0
+  kind: code
+  description: 确定性核查草稿(非空且含结论段)。Use when 草稿待发布需要机器核查;Do not use when 需要人工事实核对。
+  handler: handlers:fact_check
+  inputs:
+    type: object
+    properties:
+      draft:
+        type: string
+    required:
+    - draft
+  outputs:
+    type: object
+    properties:
+      ok:
+        type: boolean
+      issues:
+        type: array
+        items:
+          type: string
+    required:
+    - ok
+    - issues
+  permissions:
+    tools: []
+    skills: []
+- name: project.research_pipeline.finalize_report
+  version: 1.0.0
+  kind: code
+  description: 草稿加引用拼终稿并统计词数。Use when 草稿通过审查需要定稿;Do not use when 草稿尚未起草。
+  handler: handlers:finalize_report
+  inputs:
+    type: object
+    properties:
+      draft:
+        type: string
+      citations:
+        type: array
+        items:
+          type: string
+    required:
+    - draft
+    - citations
+  outputs:
+    type: object
+    properties:
+      report:
+        type: string
+      words:
+        type: integer
+      citations:
+        type: array
+        items:
+          type: string
+    required:
+    - report
+    - words
+    - citations
+  permissions:
+    tools: []
+    skills: []
+- name: project.research_pipeline.format_markdown
+  version: 1.0.0
+  kind: code
+  description: 给纯文本包一层 markdown 标题。Use when 需要快速成稿排版;Do not use when 需要富样式模板。
+  handler: handlers:format_markdown
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      markdown:
+        type: string
+    required:
+    - markdown
+  permissions:
+    tools: []
+    skills: []
+- name: project.research_pipeline.count_words
+  version: 1.0.0
+  kind: code
+  description: 按空白分词统计词数。Use when 需要报告篇幅读数;Do not use when 需要按字符或按句统计。
+  handler: handlers:count_words
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      count:
+        type: integer
+    required:
+    - count
+  permissions:
+    tools: []
+    skills: []
+- name: project.research_pipeline.validate_report
+  version: 1.0.0
+  kind: code
+  description: 确定性校验终稿结构(标题与引用节)。Use when 定稿后需要结构体检;Do not use when 需要语义审校。
+  handler: handlers:validate_report
+  inputs:
+    type: object
+    properties:
+      report:
+        type: string
+    required:
+    - report
+  outputs:
+    type: object
+    properties:
+      valid:
+        type: boolean
+      problems:
+        type: array
+        items:
+          type: string
+    required:
+    - valid
+    - problems
+  permissions:
+    tools:
+    - system.file.read
+    skills: []
+- name: project.research_pipeline.split_tasks
+  version: 1.0.0
+  kind: code
+  description: 把任务确定性拆成 3 个子任务。Use when 需要演示任务分解;Do not use when 分解粒度需按语义。
+  handler: handlers:split_tasks
+  inputs:
+    type: object
+    properties:
+      task:
+        type: string
+    required:
+    - task
+  outputs:
+    type: object
+    properties:
+      subtasks:
+        type: array
+        items:
+          type: string
+    required:
+    - subtasks
+  permissions:
+    tools: []
+    skills: []
+- name: project.research_pipeline.citation_builder
+  version: 1.0.0
+  kind: code
+  description: 由来源文本构造确定性引用串。Use when 需要批量生成引用占位;Do not use when 需要真实文献定位。
+  handler: handlers:citation_builder
+  inputs:
+    type: object
+    properties:
+      source:
+        type: string
+    required:
+    - source
+  outputs:
+    type: object
+    properties:
+      citation:
+        type: string
+    required:
+    - citation
+  permissions:
+    tools: []
+    skills: []

@@ -19,7 +19,7 @@ FIB_SKILLS_YAML = PROJECT_ROOT / "skills" / "skills.yaml"
 
 
 def sandbox_tools(*, builtins: bool = False) -> LocalPythonToolRegistry:
-    """注册了 python_exec(子进程沙箱)的工具注册表。"""
+    """注册了 system.python.exec(子进程沙箱)的工具注册表。"""
     reg = LocalPythonToolRegistry.with_builtins() if builtins else LocalPythonToolRegistry()
     reg.register(python_exec_tool(PythonSandboxLogicKernel()))
     return reg
@@ -63,7 +63,7 @@ def fib_kernel(brain=None, *, max_depth: int = 8, telemetry_dir=None):
     config = RunConfig(
         model="mock/fib",
         max_depth=max_depth,
-        tool_policy=ToolPolicy(max_permission=Permission.EXEC),  # python_exec 是 EXEC 级
+        tool_policy=ToolPolicy(max_permission=Permission.EXEC),  # system.python.exec 是 EXEC 级
         compression="off",
     )
     return assemble(config, brain or fib_brain, FIB_SKILLS_YAML, telemetry_dir=telemetry_dir)

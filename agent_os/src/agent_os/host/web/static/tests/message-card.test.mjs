@@ -37,8 +37,8 @@ const units = pairMessages(messages);
 /* ── pairMessages:tool_call_id 缺失时按名兜底 ─────────────────── */
 {
   const msgs = [
-    { role: "assistant", content: "", tool_calls: [{ id: null, name: "fs_read", args: {} }] },
-    { role: "tool", content: "x", tool_call_id: null, name: "fs_read" },
+    { role: "assistant", content: "", tool_calls: [{ id: null, name: "system.file.read", args: {} }] },
+    { role: "tool", content: "x", tool_call_id: null, name: "system.file.read" },
     { role: "tool", content: "y", tool_call_id: null, name: "no_such_tool" },
   ];
   const us = pairMessages(msgs);
@@ -65,20 +65,20 @@ const units = pairMessages(messages);
 {
   const fibMsgs = [
     { role: "user", content: "{}" }, // 0
-    { role: "assistant", content: "", tool_calls: [{ id: "a", name: "python_exec", args: {} }] }, // 1
-    { role: "tool", content: "{}", tool_call_id: "a", name: "python_exec" }, // 2
-    { role: "assistant", content: "", tool_calls: [{ id: "b", name: "fs_read", args: {} }] }, // 3
-    { role: "tool", content: "{}", tool_call_id: "b", name: "fs_read" }, // 4
+    { role: "assistant", content: "", tool_calls: [{ id: "a", name: "system.python.exec", args: {} }] }, // 1
+    { role: "tool", content: "{}", tool_call_id: "a", name: "system.python.exec" }, // 2
+    { role: "assistant", content: "", tool_calls: [{ id: "b", name: "system.file.read", args: {} }] }, // 3
+    { role: "tool", content: "{}", tool_call_id: "b", name: "system.file.read" }, // 4
     { role: "assistant", content: "final" }, // 5
   ];
   assert.equal(focusMessageIndex({ name: "post:llm.response", payload: {} }, 1, fibMsgs), 1);
   assert.equal(focusMessageIndex({ name: "post:llm.response", payload: {} }, 3, fibMsgs), 5,
     "step N → 第 N 条 assistant");
   assert.equal(
-    focusMessageIndex({ name: "post:tool.call", payload: { tool: "fs_read" } }, 2, fibMsgs), 4,
+    focusMessageIndex({ name: "post:tool.call", payload: { tool: "system.file.read" } }, 2, fibMsgs), 4,
     "tool.call → 该步 assistant 之后同名 tool 消息");
   assert.equal(
-    focusMessageIndex({ name: "post:tool.call", payload: { tool: "python_exec" } }, 1, fibMsgs), 2);
+    focusMessageIndex({ name: "post:tool.call", payload: { tool: "system.python.exec" } }, 1, fibMsgs), 2);
   assert.equal(focusMessageIndex({ name: "post:llm.response", payload: {} }, 9, fibMsgs), null,
     "step 越界 → null(不滚动)");
   assert.equal(focusMessageIndex({ name: "post:frame.pop", payload: {} }, null, fibMsgs), 5,

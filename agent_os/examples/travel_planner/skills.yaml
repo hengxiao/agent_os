@@ -1,376 +1,641 @@
-# travel_planner 技能包:现场查互联网的旅游攻略(目的地无关)。
-#
-# 锚点:tests/examples/test_travel_planner.py(mock wiki 工具 + travel_brain 驱动,
-# live smoke 走真实 Wikivoyage API)。设计(STDLIB 文化):
-#
-# - flow 真实:plan_trip → parse_request → research_destination(真实 wiki_search/
-#   wiki_fetch 取回正文)→ plan_route/plan_meals/select_hotel → plan_budget(全算术)→
-#   超预算 ask_supervisor → adjust_for_budget 削减后重排 → review → format;
-# - 数据真实:景点/餐饮/住宿/交通价目全部从 Wikivoyage 正文提取,预算可逐数追溯;
-# - 目的地无关:任何地名走同一条流;模型名不硬编码(走 RunConfig 路由);
-# - prompt 经 str.format 渲染,正文无裸露花括号;description 一律
-#   "Use when …;Do not use when …" 路由规则格式(§6.1 lint)。
 skills:
-  # ------------------------------------------------------------------
-  # 编排层(prompt):自然语言请求 → 逐日攻略 + 预算
-  # ------------------------------------------------------------------
-  - name: plan_trip
-    version: 1.0.0
-    kind: prompt
-    description: 旅游规划入口,把自然语言请求变成逐日攻略与真实预算。Use when 需要端到端旅行规划(路线/餐饮/住宿/预算);Do not use when 只问单个景点或单条价目。
-    inputs:
-      type: object
-      properties: { request: { type: string } }
-      required: [request]
-    outputs:
-      type: object
-      properties:
-        destination: { type: string }
-        days:
-          type: array
-          items:
-            type: object
-            properties:
-              attractions: { type: array, items: { type: string } }
-              meals: { type: array, items: { type: string } }
-            required: [attractions, meals]
-        hotel:
+- name: project.travel_planner.plan_trip
+  version: 1.0.0
+  kind: prompt
+  description: 旅游规划入口,把自然语言请求变成逐日攻略与真实预算。Use when 需要端到端旅行规划(路线/餐饮/住宿/预算);Do not use
+    when 只问单个景点或单条价目。
+  inputs:
+    type: object
+    properties:
+      request:
+        type: string
+    required:
+    - request
+  outputs:
+    type: object
+    properties:
+      destination:
+        type: string
+      days:
+        type: array
+        items:
           type: object
           properties:
-            name: { type: string }
-            price_per_night: { type: number }
-            area: { type: string }
-          required: [name, price_per_night, area]
-        budget:
+            attractions:
+              type: array
+              items:
+                type: string
+            meals:
+              type: array
+              items:
+                type: string
+          required:
+          - attractions
+          - meals
+      hotel:
+        type: object
+        properties:
+          name:
+            type: string
+          price_per_night:
+            type: number
+          area:
+            type: string
+        required:
+        - name
+        - price_per_night
+        - area
+      budget:
+        type: object
+        properties:
+          transport:
+            type: number
+          hotel:
+            type: number
+          tickets:
+            type: number
+          meals:
+            type: number
+          local:
+            type: number
+          total:
+            type: number
+        required:
+        - transport
+        - hotel
+        - tickets
+        - meals
+        - local
+        - total
+      itinerary:
+        type: string
+      booking_notes:
+        type: array
+        items:
+          type: string
+      over_budget_approved:
+        type: boolean
+    required:
+    - destination
+    - days
+    - hotel
+    - budget
+  permissions:
+    tools:
+    - project.travel_planner.wiki_search
+    - project.travel_planner.wiki_fetch
+    - ask_supervisor
+    skills:
+    - project.travel_planner.parse_request
+    - project.travel_planner.research_destination
+    - project.travel_planner.plan_route
+    - project.travel_planner.plan_meals
+    - project.travel_planner.select_hotel
+    - project.travel_planner.plan_budget
+    - project.travel_planner.review_itinerary
+    - project.travel_planner.format_itinerary
+    - project.travel_planner.adjust_for_budget
+  limits:
+    max_steps: 20
+    timeout: 300
+  prompt: "# skill: project.travel_planner.plan_trip\n你是旅行规划编排器。用户请求:{request}\n\n\
+    严格按以下顺序执行,每步只发一个调用:\n1. 调用 skill.project.travel_planner.parse_request,参数含 request,解析出目的地/天数/预算/同行人/偏好;\n\
+    2. 调用 skill.project.travel_planner.research_destination,参数含 destination,现场查 Wikivoyage\
+    \ 并提取事实;\n3. 调用 skill.project.travel_planner.plan_route,参数含 attractions 与 days,按区域聚类分天(同一远郊区域必须同日);\n\
+    4. 调用 skill.project.travel_planner.plan_meals,参数含 food 与 days,为每天安排餐饮;\n5. 调用\
+    \ skill.project.travel_planner.select_hotel,参数含 sleep 与 nights,按预算与同行人选住宿;\n6.\
+    \ 调用 skill.project.travel_planner.plan_budget,把各项真实价目汇总成分项与总计;\n7. 若总计超出请求中的预算:调用\
+    \ ask_supervisor 请求上级裁决(approve 或 trim);\n   裁决为 trim 时调用 skill.project.travel_planner.adjust_for_budget\
+    \ 取削减方案,并按方案重走第 3-6 步;\n8. 调用 skill.project.travel_planner.review_itinerary,审查完整计划;\n\
+    9. 调用 skill.project.travel_planner.format_itinerary,生成 markdown 攻略;\n10. 最终答案\
+    \ JSON 含 destination/days/hotel/budget/itinerary/booking_notes,不要输出其他文字。\n\n铁律:行程中的景点、价格、区域、交通事实必须来自\
+    \ research_destination 的提取结果,不得臆造。\n"
+- name: project.travel_planner.parse_request
+  version: 1.0.0
+  kind: prompt
+  description: 把自然语言旅行请求解析为结构化参数。Use when 规划开始前需要理解用户请求;Do not use when 参数已是结构化形态。
+  inputs:
+    type: object
+    properties:
+      request:
+        type: string
+    required:
+    - request
+  outputs:
+    type: object
+    properties:
+      destination:
+        type: string
+      origin:
+        type: string
+      days:
+        type: integer
+      budget:
+        type: number
+      travelers:
+        type: array
+        items:
+          type: string
+      preferences:
+        type: array
+        items:
+          type: string
+    required:
+    - destination
+    - days
+    - travelers
+    - preferences
+  permissions:
+    tools: []
+    skills: []
+  limits:
+    max_steps: 4
+    timeout: 60
+  prompt: '# skill: project.travel_planner.parse_request
+
+    你是请求解析器。用户请求:{request}
+
+
+    从请求中提取:destination(目的地)、origin(出发地,可缺省)、days(旅行天数,整数)、
+
+    budget(预算金额,数字,可缺省)、travelers(同行人特征数组,如老人/孩子)、
+
+    preferences(偏好数组,如节奏舒缓)。最终答案 JSON 只含这些字段,不要输出其他文字。
+
+    '
+- name: project.travel_planner.research_destination
+  version: 1.0.0
+  kind: prompt
+  description: 现场查 Wikivoyage 并从正文提取目的地事实。Use when 需要某目的地的一手攻略资料(景点/餐饮/住宿/交通价目);Do
+    not use when 手头已有该目的地的结构化资料。
+  inputs:
+    type: object
+    properties:
+      destination:
+        type: string
+    required:
+    - destination
+  outputs:
+    type: object
+    properties:
+      attractions:
+        type: array
+        items:
           type: object
           properties:
-            transport: { type: number }
-            hotel: { type: number }
-            tickets: { type: number }
-            meals: { type: number }
-            local: { type: number }
-            total: { type: number }
-          required: [transport, hotel, tickets, meals, local, total]
-        itinerary: { type: string }
-        booking_notes: { type: array, items: { type: string } }
-        over_budget_approved: { type: boolean }
-      required: [destination, days, hotel, budget]
-    permissions:
-      tools: [wiki_search, wiki_fetch, ask_supervisor]
-      skills: [parse_request, research_destination, plan_route, plan_meals, select_hotel, plan_budget, review_itinerary, format_itinerary, adjust_for_budget]
-    limits: { max_steps: 20, timeout: 300 }
-    prompt: |
-      # skill: plan_trip
-      你是旅行规划编排器。用户请求:{request}
-
-      严格按以下顺序执行,每步只发一个调用:
-      1. 调用 skill__parse_request,参数含 request,解析出目的地/天数/预算/同行人/偏好;
-      2. 调用 skill__research_destination,参数含 destination,现场查 Wikivoyage 并提取事实;
-      3. 调用 skill__plan_route,参数含 attractions 与 days,按区域聚类分天(同一远郊区域必须同日);
-      4. 调用 skill__plan_meals,参数含 food 与 days,为每天安排餐饮;
-      5. 调用 skill__select_hotel,参数含 sleep 与 nights,按预算与同行人选住宿;
-      6. 调用 skill__plan_budget,把各项真实价目汇总成分项与总计;
-      7. 若总计超出请求中的预算:调用 ask_supervisor 请求上级裁决(approve 或 trim);
-         裁决为 trim 时调用 skill__adjust_for_budget 取削减方案,并按方案重走第 3-6 步;
-      8. 调用 skill__review_itinerary,审查完整计划;
-      9. 调用 skill__format_itinerary,生成 markdown 攻略;
-      10. 最终答案 JSON 含 destination/days/hotel/budget/itinerary/booking_notes,不要输出其他文字。
-
-      铁律:行程中的景点、价格、区域、交通事实必须来自 research_destination 的提取结果,不得臆造。
-
-  # ------------------------------------------------------------------
-  # 解析与研究(prompt)
-  # ------------------------------------------------------------------
-  - name: parse_request
-    version: 1.0.0
-    kind: prompt
-    description: 把自然语言旅行请求解析为结构化参数。Use when 规划开始前需要理解用户请求;Do not use when 参数已是结构化形态。
-    inputs:
-      type: object
-      properties: { request: { type: string } }
-      required: [request]
-    outputs:
-      type: object
-      properties:
-        destination: { type: string }
-        origin: { type: string }
-        days: { type: integer }
-        budget: { type: number }
-        travelers: { type: array, items: { type: string } }
-        preferences: { type: array, items: { type: string } }
-      required: [destination, days, travelers, preferences]
-    permissions: { tools: [], skills: [] }
-    limits: { max_steps: 4, timeout: 60 }
-    prompt: |
-      # skill: parse_request
-      你是请求解析器。用户请求:{request}
-
-      从请求中提取:destination(目的地)、origin(出发地,可缺省)、days(旅行天数,整数)、
-      budget(预算金额,数字,可缺省)、travelers(同行人特征数组,如老人/孩子)、
-      preferences(偏好数组,如节奏舒缓)。最终答案 JSON 只含这些字段,不要输出其他文字。
-  - name: research_destination
-    version: 1.0.0
-    kind: prompt
-    description: 现场查 Wikivoyage 并从正文提取目的地事实。Use when 需要某目的地的一手攻略资料(景点/餐饮/住宿/交通价目);Do not use when 手头已有该目的地的结构化资料。
-    inputs:
-      type: object
-      properties: { destination: { type: string } }
-      required: [destination]
-    outputs:
-      type: object
-      properties:
-        attractions:
+            name:
+              type: string
+            price:
+              type: number
+            hours:
+              type: integer
+            area:
+              type: string
+            note:
+              type: string
+          required:
+          - name
+          - price
+          - hours
+      food:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            price:
+              type: number
+          required:
+          - name
+          - price
+      sleep:
+        type: array
+        items:
+          type: object
+          properties:
+            area:
+              type: string
+            price_range:
+              type: string
+          required:
+          - area
+          - price_range
+      transport_in:
+        type: string
+      transport_price:
+        type: number
+      taxi_price:
+        type: number
+      local_tips:
+        type: array
+        items:
+          type: string
+    required:
+    - attractions
+    - food
+    - sleep
+    - transport_in
+    - transport_price
+    - local_tips
+  permissions:
+    tools:
+    - project.travel_planner.wiki_search
+    - project.travel_planner.wiki_fetch
+    skills: []
+  limits:
+    max_steps: 8
+    timeout: 120
+  prompt: "# skill: project.travel_planner.research_destination\n你是目的地研究员。目的地:{destination}\n\
+    \n严格按以下顺序执行,每步只发一个调用:\n1. 调用 project.travel_planner.wiki_search,query 为目的地名(中文目的地用其英文条目标题,如\
+    \ 西安 → Xi'an),取候选标题;\n2. 调用 project.travel_planner.wiki_fetch,title 为首个候选标题,取回正文;\n\
+    3. 只从正文提取事实,不得臆造正文没有的内容:\n   - See 段景点:name(名称)、price(门票 ¥ 数字,免费记 0)、hours(建议游览小时数,\n\
+    \     未注明记 2)、area(正文注明的所在区域,如 Lintong;未注明则省略)、\n     note(闭馆日/需预约等注意事项);\n  \
+    \ - Eat 段餐饮:name 与 price(人均 ¥ 数字);\n   - Sleep 段住宿:area(区域名)与 price_range(每晚 ¥\
+    \ 区间原文);\n   - Get in 段大交通:transport_in(方式概述)与 transport_price(单程 ¥ 数字);\n   -\
+    \ Get around 段当地交通写入 local_tips,打车单程价记入 taxi_price。\n最终答案 JSON 只含 attractions/food/sleep/transport_in/transport_price/taxi_price/local_tips。\n"
+- name: project.travel_planner.plan_route
+  version: 1.0.0
+  kind: code
+  description: 把景点按区域聚类分到各天(同一远郊区域同日,城区按资料顺序均分)。Use when 景点清单已定需要排日程;Do not use when
+    需要门票之外的预订动作。
+  handler: travel_handlers:plan_route
+  inputs:
+    type: object
+    properties:
+      attractions:
+        type: array
+        items:
+          type: object
+      days:
+        type: integer
+    required:
+    - attractions
+    - days
+  outputs:
+    type: object
+    properties:
+      days:
+        type: array
+        items:
+          type: object
+          properties:
+            attractions:
+              type: array
+              items:
+                type: string
+          required:
+          - attractions
+    required:
+    - days
+  permissions:
+    tools: []
+    skills: []
+- name: project.travel_planner.plan_meals
+  version: 1.0.0
+  kind: prompt
+  description: 用资料中的餐饮项为每天安排餐饮。Use when 路线已定需要逐日餐饮安排;Do not use when 需要推荐资料之外的餐厅。
+  inputs:
+    type: object
+    properties:
+      food:
+        type: array
+        items:
+          type: object
+      days:
+        type: integer
+      per_day:
+        type: integer
+      cheapest_only:
+        type: boolean
+    required:
+    - food
+    - days
+  outputs:
+    type: object
+    properties:
+      meals:
+        type: array
+        items:
           type: array
           items:
-            type: object
-            properties:
-              name: { type: string }
-              price: { type: number }
-              hours: { type: integer }
-              area: { type: string }
-              note: { type: string }
-            required: [name, price, hours]
-        food:
-          type: array
-          items:
-            type: object
-            properties:
-              name: { type: string }
-              price: { type: number }
-            required: [name, price]
-        sleep:
-          type: array
-          items:
-            type: object
-            properties:
-              area: { type: string }
-              price_range: { type: string }
-            required: [area, price_range]
-        transport_in: { type: string }
-        transport_price: { type: number }
-        taxi_price: { type: number }
-        local_tips: { type: array, items: { type: string } }
-      required: [attractions, food, sleep, transport_in, transport_price, local_tips]
-    permissions:
-      tools: [wiki_search, wiki_fetch]
-      skills: []
-    limits: { max_steps: 8, timeout: 120 }
-    prompt: |
-      # skill: research_destination
-      你是目的地研究员。目的地:{destination}
+            type: string
+    required:
+    - meals
+  permissions:
+    tools: []
+    skills: []
+  limits:
+    max_steps: 4
+    timeout: 60
+  prompt: '# skill: project.travel_planner.plan_meals
 
-      严格按以下顺序执行,每步只发一个调用:
-      1. 调用 wiki_search,query 为目的地名(中文目的地用其英文条目标题,如 西安 → Xi'an),取候选标题;
-      2. 调用 wiki_fetch,title 为首个候选标题,取回正文;
-      3. 只从正文提取事实,不得臆造正文没有的内容:
-         - See 段景点:name(名称)、price(门票 ¥ 数字,免费记 0)、hours(建议游览小时数,
-           未注明记 2)、area(正文注明的所在区域,如 Lintong;未注明则省略)、
-           note(闭馆日/需预约等注意事项);
-         - Eat 段餐饮:name 与 price(人均 ¥ 数字);
-         - Sleep 段住宿:area(区域名)与 price_range(每晚 ¥ 区间原文);
-         - Get in 段大交通:transport_in(方式概述)与 transport_price(单程 ¥ 数字);
-         - Get around 段当地交通写入 local_tips,打车单程价记入 taxi_price。
-      最终答案 JSON 只含 attractions/food/sleep/transport_in/transport_price/taxi_price/local_tips。
+    你是餐饮安排员。资料中的餐饮项:{food};旅行天数:{days}
 
-  # ------------------------------------------------------------------
-  # 规划(prompt + code):路线聚类 / 餐饮 / 住宿 / 预算算术
-  # ------------------------------------------------------------------
-  - name: plan_route
-    version: 1.0.0
-    kind: code
-    description: 把景点按区域聚类分到各天(同一远郊区域同日,城区按资料顺序均分)。Use when 景点清单已定需要排日程;Do not use when 需要门票之外的预订动作。
-    handler: travel_handlers:plan_route
-    inputs:
-      type: object
-      properties:
-        attractions: { type: array, items: { type: object } }
-        days: { type: integer }
-      required: [attractions, days]
-    outputs:
-      type: object
-      properties:
-        days:
-          type: array
-          items:
-            type: object
-            properties:
-              attractions: { type: array, items: { type: string } }
-            required: [attractions]
-      required: [days]
-    permissions: { tools: [], skills: [] }
-  - name: plan_meals
-    version: 1.0.0
-    kind: prompt
-    description: 用资料中的餐饮项为每天安排餐饮。Use when 路线已定需要逐日餐饮安排;Do not use when 需要推荐资料之外的餐厅。
-    inputs:
-      type: object
-      properties:
-        food: { type: array, items: { type: object } }
-        days: { type: integer }
-        per_day: { type: integer }
-        cheapest_only: { type: boolean }
-      required: [food, days]
-    outputs:
-      type: object
-      properties:
-        meals:
-          type: array
-          items: { type: array, items: { type: string } }
-      required: [meals]
-    permissions: { tools: [], skills: [] }
-    limits: { max_steps: 4, timeout: 60 }
-    prompt: |
-      # skill: plan_meals
-      你是餐饮安排员。资料中的餐饮项:{food};旅行天数:{days}
 
-      只用输入中的餐饮项(不得臆造)为每天安排餐饮:默认每天尽量覆盖全部项并按天轮换顺序;
-      输入含 per_day 时每天至多 per_day 项;输入 cheapest_only 为真时每天只选最便宜的一项。
-      最终答案 JSON 只含 meals:数组的第 i 项是第 i+1 天的餐饮名称数组,天数与输入一致。
-  - name: select_hotel
-    version: 1.0.0
-    kind: prompt
-    description: 按资料中的住宿区域与价格区间选住宿。Use when 需要按预算选定住宿区域与每晚价;Do not use when 需要查询具体酒店实时房态。
-    inputs:
-      type: object
-      properties:
-        sleep: { type: array, items: { type: object } }
-        nights: { type: integer }
-        max_price: { type: number }
-      required: [sleep]
-    outputs:
-      type: object
-      properties:
-        name: { type: string }
-        price_per_night: { type: number }
-        area: { type: string }
-      required: [name, price_per_night, area]
-    permissions: { tools: [], skills: [] }
-    limits: { max_steps: 4, timeout: 60 }
-    prompt: |
-      # skill: select_hotel
-      你是住宿选择员。资料中的住宿区域:{sleep}
+    只用输入中的餐饮项(不得臆造)为每天安排餐饮:默认每天尽量覆盖全部项并按天轮换顺序;
 
-      只从输入数据中选择(不得臆造):按 price_range 下限取最便宜的区域;
-      输入含 max_price 时只考虑下限不超过它的区域。name 由区域名派生,
-      price_per_night 取区间下限,area 为区域名。最终答案 JSON 只含 name/price_per_night/area。
-  - name: plan_budget
-    version: 1.0.0
-    kind: code
-    description: 预算纯算术,把各项真实价目汇总成分项与总计。Use when 各项价目已齐需要汇总核算;Do not use when 价目还需从资料中提取。
-    handler: travel_handlers:plan_budget
-    inputs:
-      type: object
-      properties:
-        transport_price: { type: number }
-        legs: { type: integer }
-        hotel_per_night: { type: number }
-        nights: { type: integer }
-        tickets: { type: array, items: { type: number } }
-        meals_daily: { type: array, items: { type: number } }
-        local: { type: array, items: { type: number } }
-      required: [transport_price, hotel_per_night, nights, tickets, meals_daily, local]
-    outputs:
-      type: object
-      properties:
-        transport: { type: number }
-        hotel: { type: number }
-        tickets: { type: number }
-        meals: { type: number }
-        local: { type: number }
-        total: { type: number }
-      required: [transport, hotel, tickets, meals, local, total]
-    permissions: { tools: [], skills: [] }
+    输入含 per_day 时每天至多 per_day 项;输入 cheapest_only 为真时每天只选最便宜的一项。
 
-  # ------------------------------------------------------------------
-  # 审查与成稿(prompt + code)
-  # ------------------------------------------------------------------
-  - name: review_itinerary
-    version: 1.0.0
-    kind: prompt
-    description: 审查完整旅行计划的结构完整性与预算合规。Use when 计划已成形需要把关;Do not use when 需要修改计划本身(回编排层重排)。
-    inputs:
-      type: object
-      properties:
-        destination: { type: string }
-        days: { type: array, items: { type: object } }
-        hotel: { type: object }
-        budget: { type: object }
-        cap: { type: number }
-        over_budget_approved: { type: boolean }
-      required: [destination, days, hotel, budget]
-    outputs:
-      type: object
-      properties:
-        ok: { type: boolean }
-        issues: { type: array, items: { type: string } }
-      required: [ok, issues]
-    permissions: { tools: [], skills: [] }
-    limits: { max_steps: 4, timeout: 60 }
-    prompt: |
-      # skill: review_itinerary
-      你是行程审查员。目的地:{destination}
+    最终答案 JSON 只含 meals:数组的第 i 项是第 i+1 天的餐饮名称数组,天数与输入一致。
 
-      输入含 days/hotel/budget 与可选 cap。逐项检查:每天既有景点也有餐饮;
-      hotel.price_per_night 为正;budget 各分项之和等于 total;
-      有 cap 时 total 不超过 cap(已获上级批准超支的除外)。
-      最终答案 JSON:ok 为布尔,issues 为问题描述数组(无问题则为空数组)。
-  - name: format_itinerary
-    version: 1.0.0
-    kind: code
-    description: 把结构化计划渲染成 markdown 攻略(逐日景点/餐饮,附住宿/预算/贴士)。Use when 计划已通过审查需要成稿;Do not use when 还需要改动计划内容。
-    handler: travel_handlers:format_itinerary
-    inputs:
-      type: object
-      properties:
-        destination: { type: string }
-        origin: { type: string }
-        days: { type: array, items: { type: object } }
-        hotel: { type: object }
-        budget: { type: object }
-        local_tips: { type: array, items: { type: string } }
-        booking_notes: { type: array, items: { type: string } }
-      required: [destination, days, hotel, budget]
-    outputs:
-      type: object
-      properties:
-        itinerary: { type: string }
-      required: [itinerary]
-    permissions: { tools: [], skills: [] }
-  - name: adjust_for_budget
-    version: 1.0.0
-    kind: prompt
-    description: 预算超支时给确定性削减方案(降住宿档/砍高价门票/餐饮与当地交通降档)。Use when 上级裁决削减预算需要落地;Do not use when 预算未超支。
-    inputs:
-      type: object
-      properties:
-        cap: { type: number }
-        days: { type: integer }
-        budget: { type: object }
-        hotel_per_night: { type: number }
-        nights: { type: integer }
-        attractions: { type: array, items: { type: object } }
-        food: { type: array, items: { type: object } }
-        sleep: { type: array, items: { type: object } }
-        taxi_cost: { type: number }
-      required: [cap, days, budget, hotel_per_night, nights, attractions, food, sleep]
-    outputs:
-      type: object
-      properties:
-        keep_attractions: { type: array, items: { type: string } }
-        drop_attractions: { type: array, items: { type: string } }
-        meals_cheapest_only: { type: boolean }
-        use_taxi: { type: boolean }
-        hotel_max: { type: number }
-        note: { type: string }
-      required: [keep_attractions, drop_attractions, meals_cheapest_only, use_taxi, hotel_max, note]
-    permissions: { tools: [], skills: [] }
-    limits: { max_steps: 4, timeout: 60 }
-    prompt: |
-      # skill: adjust_for_budget
-      你是预算削减顾问。预算上限:{cap};旅行天数:{days}
+    '
+- name: project.travel_planner.select_hotel
+  version: 1.0.0
+  kind: prompt
+  description: 按资料中的住宿区域与价格区间选住宿。Use when 需要按预算选定住宿区域与每晚价;Do not use when 需要查询具体酒店实时房态。
+  inputs:
+    type: object
+    properties:
+      sleep:
+        type: array
+        items:
+          type: object
+      nights:
+        type: integer
+      max_price:
+        type: number
+    required:
+    - sleep
+  outputs:
+    type: object
+    properties:
+      name:
+        type: string
+      price_per_night:
+        type: number
+      area:
+        type: string
+    required:
+    - name
+    - price_per_night
+    - area
+  permissions:
+    tools: []
+    skills: []
+  limits:
+    max_steps: 4
+    timeout: 60
+  prompt: '# skill: project.travel_planner.select_hotel
 
-      输入含当前 budget/hotel_per_night/nights/attractions/food/sleep。
-      按顺序动用削减杠杆,直到预算达标:1) 住宿换 price_range 下限最低的区域;
-      2) 餐饮每天只留最便宜项;3) 当地交通去掉出租车;4) 门票从贵到贱砍,
-      保留的景点总数不少于旅行天数(免费景点优先保留)。
-      最终答案 JSON 含 keep_attractions/drop_attractions/meals_cheapest_only/use_taxi/hotel_max/note。
+    你是住宿选择员。资料中的住宿区域:{sleep}
+
+
+    只从输入数据中选择(不得臆造):按 price_range 下限取最便宜的区域;
+
+    输入含 max_price 时只考虑下限不超过它的区域。name 由区域名派生,
+
+    price_per_night 取区间下限,area 为区域名。最终答案 JSON 只含 name/price_per_night/area。
+
+    '
+- name: project.travel_planner.plan_budget
+  version: 1.0.0
+  kind: code
+  description: 预算纯算术,把各项真实价目汇总成分项与总计。Use when 各项价目已齐需要汇总核算;Do not use when 价目还需从资料中提取。
+  handler: travel_handlers:plan_budget
+  inputs:
+    type: object
+    properties:
+      transport_price:
+        type: number
+      legs:
+        type: integer
+      hotel_per_night:
+        type: number
+      nights:
+        type: integer
+      tickets:
+        type: array
+        items:
+          type: number
+      meals_daily:
+        type: array
+        items:
+          type: number
+      local:
+        type: array
+        items:
+          type: number
+    required:
+    - transport_price
+    - hotel_per_night
+    - nights
+    - tickets
+    - meals_daily
+    - local
+  outputs:
+    type: object
+    properties:
+      transport:
+        type: number
+      hotel:
+        type: number
+      tickets:
+        type: number
+      meals:
+        type: number
+      local:
+        type: number
+      total:
+        type: number
+    required:
+    - transport
+    - hotel
+    - tickets
+    - meals
+    - local
+    - total
+  permissions:
+    tools: []
+    skills: []
+- name: project.travel_planner.review_itinerary
+  version: 1.0.0
+  kind: prompt
+  description: 审查完整旅行计划的结构完整性与预算合规。Use when 计划已成形需要把关;Do not use when 需要修改计划本身(回编排层重排)。
+  inputs:
+    type: object
+    properties:
+      destination:
+        type: string
+      days:
+        type: array
+        items:
+          type: object
+      hotel:
+        type: object
+      budget:
+        type: object
+      cap:
+        type: number
+      over_budget_approved:
+        type: boolean
+    required:
+    - destination
+    - days
+    - hotel
+    - budget
+  outputs:
+    type: object
+    properties:
+      ok:
+        type: boolean
+      issues:
+        type: array
+        items:
+          type: string
+    required:
+    - ok
+    - issues
+  permissions:
+    tools: []
+    skills: []
+  limits:
+    max_steps: 4
+    timeout: 60
+  prompt: '# skill: project.travel_planner.review_itinerary
+
+    你是行程审查员。目的地:{destination}
+
+
+    输入含 days/hotel/budget 与可选 cap。逐项检查:每天既有景点也有餐饮;
+
+    hotel.price_per_night 为正;budget 各分项之和等于 total;
+
+    有 cap 时 total 不超过 cap(已获上级批准超支的除外)。
+
+    最终答案 JSON:ok 为布尔,issues 为问题描述数组(无问题则为空数组)。
+
+    '
+- name: project.travel_planner.format_itinerary
+  version: 1.0.0
+  kind: code
+  description: 把结构化计划渲染成 markdown 攻略(逐日景点/餐饮,附住宿/预算/贴士)。Use when 计划已通过审查需要成稿;Do not
+    use when 还需要改动计划内容。
+  handler: travel_handlers:format_itinerary
+  inputs:
+    type: object
+    properties:
+      destination:
+        type: string
+      origin:
+        type: string
+      days:
+        type: array
+        items:
+          type: object
+      hotel:
+        type: object
+      budget:
+        type: object
+      local_tips:
+        type: array
+        items:
+          type: string
+      booking_notes:
+        type: array
+        items:
+          type: string
+    required:
+    - destination
+    - days
+    - hotel
+    - budget
+  outputs:
+    type: object
+    properties:
+      itinerary:
+        type: string
+    required:
+    - itinerary
+  permissions:
+    tools: []
+    skills: []
+- name: project.travel_planner.adjust_for_budget
+  version: 1.0.0
+  kind: prompt
+  description: 预算超支时给确定性削减方案(降住宿档/砍高价门票/餐饮与当地交通降档)。Use when 上级裁决削减预算需要落地;Do not use
+    when 预算未超支。
+  inputs:
+    type: object
+    properties:
+      cap:
+        type: number
+      days:
+        type: integer
+      budget:
+        type: object
+      hotel_per_night:
+        type: number
+      nights:
+        type: integer
+      attractions:
+        type: array
+        items:
+          type: object
+      food:
+        type: array
+        items:
+          type: object
+      sleep:
+        type: array
+        items:
+          type: object
+      taxi_cost:
+        type: number
+    required:
+    - cap
+    - days
+    - budget
+    - hotel_per_night
+    - nights
+    - attractions
+    - food
+    - sleep
+  outputs:
+    type: object
+    properties:
+      keep_attractions:
+        type: array
+        items:
+          type: string
+      drop_attractions:
+        type: array
+        items:
+          type: string
+      meals_cheapest_only:
+        type: boolean
+      use_taxi:
+        type: boolean
+      hotel_max:
+        type: number
+      note:
+        type: string
+    required:
+    - keep_attractions
+    - drop_attractions
+    - meals_cheapest_only
+    - use_taxi
+    - hotel_max
+    - note
+  permissions:
+    tools: []
+    skills: []
+  limits:
+    max_steps: 4
+    timeout: 60
+  prompt: '# skill: project.travel_planner.adjust_for_budget
+
+    你是预算削减顾问。预算上限:{cap};旅行天数:{days}
+
+
+    输入含当前 budget/hotel_per_night/nights/attractions/food/sleep。
+
+    按顺序动用削减杠杆,直到预算达标:1) 住宿换 price_range 下限最低的区域;
+
+    2) 餐饮每天只留最便宜项;3) 当地交通去掉出租车;4) 门票从贵到贱砍,
+
+    保留的景点总数不少于旅行天数(免费景点优先保留)。
+
+    最终答案 JSON 含 keep_attractions/drop_attractions/meals_cheapest_only/use_taxi/hotel_max/note。
+
+    '

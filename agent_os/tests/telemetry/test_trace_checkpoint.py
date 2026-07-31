@@ -48,7 +48,7 @@ def test_jsonl_trace_has_version_header_and_lifecycle(tmp_path):
     tdir = tmp_path / "traces"
     kernel = _build(fib_brain, telemetry_dir=tdir)
     started = _run_id_of(kernel)
-    result = asyncio.run(kernel.run("fib", {"n": 3}))
+    result = asyncio.run(kernel.run("demo.fib", {"n": 3}))
     assert result == {"seq": [0, 1, 1]}
     assert started, "未捕获 run.started"
     run_id = started[0].run_id
@@ -72,7 +72,7 @@ def test_checkpoint_resume_after_power_cut(tmp_path):
     kernel1 = _build(power_cut_brain(cut_at=6))
     started = _run_id_of(kernel1)
     with pytest.raises(PowerCut):
-        asyncio.run(kernel1.run("fib", {"n": 5}))
+        asyncio.run(kernel1.run("demo.fib", {"n": 5}))
     run_id = started[0].run_id
 
     ckpt = tmp_path / "ckpt.json"
@@ -92,7 +92,7 @@ def test_checkpoint_file_contains_frames_and_usage(tmp_path):
     kernel1 = _build(power_cut_brain(cut_at=4))
     started = _run_id_of(kernel1)
     with pytest.raises(PowerCut):
-        asyncio.run(kernel1.run("fib", {"n": 5}))
+        asyncio.run(kernel1.run("demo.fib", {"n": 5}))
     run_id = started[0].run_id
 
     ckpt = tmp_path / "ckpt.json"

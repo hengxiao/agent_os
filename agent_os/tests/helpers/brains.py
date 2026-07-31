@@ -37,8 +37,8 @@ def _calls(tc: ToolCall) -> ChatResponse:
 def fib_brain(req: ChatRequest) -> ChatResponse:
     """模拟一个完美遵循 fib 技能指令的模型。
 
-    决策顺序:无调用 → base case 或 invoke 自己;有子技能结果 → 调 python_exec;
-    有 python_exec 结果 → 给出最终答案。
+    决策顺序:无调用 → base case 或 invoke 自己;有子技能结果 → 调 system.python.exec;
+    有 system.python.exec 结果 → 给出最终答案。
     """
     n = None
     for m in req.messages:
@@ -56,20 +56,20 @@ def fib_brain(req: ChatRequest) -> ChatResponse:
         elif m.role is Role.TOOL and m.tool_call_id:
             results[m.tool_call_id] = json.loads(m.content)
 
-    fib_calls = [cid for cid, name in call_names.items() if name == "skill__fib"]
+    fib_calls = [cid for cid, name in call_names.items() if name == "skill.demo.fib"]
     if not fib_calls:
         if n <= 2:
             return _final({"seq": [0] if n == 1 else [0, 1]})
-        return _calls(ToolCall(id=f"call-fib-{n}", name="skill__fib", args={"n": n - 1}))
+        return _calls(ToolCall(id=f"call-fib-{n}", name="skill.demo.fib", args={"n": n - 1}))
 
     fib_result = results[fib_calls[-1]]
     assert fib_result["ok"], fib_result
     seq = fib_result["value"]["seq"]
 
-    py_calls = [cid for cid, name in call_names.items() if name == "python_exec"]
+    py_calls = [cid for cid, name in call_names.items() if name == "system.python.exec"]
     if not py_calls:
         code = f"result = {seq[-2]} + {seq[-1]}\nprint(result)"
-        return _calls(ToolCall(id=f"call-py-{n}", name="python_exec", args={"code": code}))
+        return _calls(ToolCall(id=f"call-py-{n}", name="system.python.exec", args={"code": code}))
 
     total = results[py_calls[-1]]["value"]["result"]
     return _final({"seq": seq + [total]})
@@ -104,13 +104,13 @@ def power_cut_brain(cut_at: int):
 def danger_brain(req: ChatRequest) -> ChatResponse:
     """先尝试危险命令(被 ToolGuard veto),再给出最终答案。"""
     if not any(m.role is Role.TOOL for m in req.messages):
-        return _calls(ToolCall(id="c1", name="shell_exec", args={"command": "rm -rf /"}))
+        return _calls(ToolCall(id="c1", name="system.shell.exec", args={"command": "rm -rf /"}))
     return _final({"done": True})
 
 
 def loop_brain(req: ChatRequest) -> ChatResponse:
     """无限循环调用(用于 stop / 循环检测测试)。"""
-    return _calls(ToolCall(id="c1", name="python_exec", args={"code": "print(1)"}))
+    return _calls(ToolCall(id="c1", name="system.python.exec", args={"code": "print(1)"}))
 
 
 _cut_state = {"calls": 0}

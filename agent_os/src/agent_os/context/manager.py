@@ -185,7 +185,7 @@ class ContextManager:
             text = ""
         caps = {
             "text": text,
-            "hidden": [f"skill__{e['name']}" for e in entries],
+            "hidden": [f"skill.{e['name']}" for e in entries],
             "skills": [
                 {"name": e["name"], "version": e["version"], "chars": len(e["prompt"])}
                 for e in entries
@@ -224,9 +224,15 @@ class ContextManager:
         )
 
     def _todo_status(self, frame: SkillFrame) -> str | None:
-        """§W1-4 todo 摘要行:``todo: 1/3 done · doing: 写报告``;本 run 无清单 → None(状态行不变)。
+        """§W1-4 todo 状态摘要:包含进度、当前 doing、前后任务,帮助模型定位队列位置。
 
         数据只来自内核记账(registry 的 run 级状态),不来自工具内容(模型无条件信任状态栏,§7.3)。
+        格式示例::
+
+            todo: 1/3 done
+            doing: 写报告
+            prev: [done] 收集资料
+            next: [pending] 审校, [pending] 归档
         """
         run_states = getattr(self._tools, "run_states", None)  # 同下方 _blob 的 getattr 先例
         if not run_states:
@@ -235,11 +241,28 @@ class ContextManager:
         if not todos:
             return None
         done = sum(1 for t in todos if t.get("status") == "done")
-        line = f"todo: {done}/{len(todos)} done"
-        doing = next((t for t in todos if t.get("status") == "doing"), None)
-        if doing is not None:
-            line = f"{line} · doing: {doing.get('text', '')}"
-        return line
+        lines: list[str] = [f"todo: {done}/{len(todos)} done"]
+        doing_index: int | None = None
+        for i, t in enumerate(todos):
+            if t.get("status") == "doing":
+                doing_index = i
+                lines.append(f"doing: {t.get('text', '')}")
+                break
+        # 前后各展示最多 2 条任务,让模型感知自己在队列中的位置
+        if doing_index is not None:
+            prev_tasks = todos[max(0, doing_index - 2) : doing_index]
+            next_tasks = todos[doing_index + 1 : doing_index + 3]
+            if prev_tasks:
+                prev_str = ", ".join(
+                    f"[{t.get('status', '')}] {t.get('text', '')}" for t in prev_tasks
+                )
+                lines.append(f"prev: {prev_str}")
+            if next_tasks:
+                next_str = ", ".join(
+                    f"[{t.get('status', '')}] {t.get('text', '')}" for t in next_tasks
+                )
+                lines.append(f"next: {next_str}")
+        return "\n".join(lines)
 
     async def maintain(self, frame: SkillFrame) -> None:
         manifest = self._skills.get(frame.skill).manifest
@@ -325,7 +348,7 @@ class MinimalContextManager:
     """``agent_os.api.v1.ContextManager`` 协议的纵向切片最小实现(M0)。
 
     只做组装:SYSTEM(技能指令体经 ``str.format(**frame.input)`` 渲染)+ 帧上下文
-    + 帧白名单内工具 schema + 白名单内子技能伪工具 schema(``skill__<name>``);
+    + 帧白名单内工具 schema + 白名单内子技能伪工具 schema(``skill.<name>``);
     model/temperature 取技能 ``model.prefer[0]``/``model.temperature``,缺省回落
     RunConfig。**不做**状态注入与压缩(M3),``maintain`` 为 no-op。
     """

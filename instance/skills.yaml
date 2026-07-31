@@ -1,33 +1,40 @@
-# 实例技能包:递归菲波拉契(演示)
-# 语义:base case 直接返回;否则 invoke 自己(n-1),再用 python_exec 加出新值追加。
 skills:
-  - name: fib
-    version: 1.0.0
-    kind: prompt
-    description: 生成前 n 个菲波拉契数。Use when 需要菲波拉契数列;Do not use when 需要大 n 高效计算(递归技能示例)。
-    inputs:
-      type: object
-      properties: { n: { type: integer, minimum: 1 } }
-      required: [n]
-    outputs:
-      type: object
-      properties:
-        seq: { type: array, items: { type: integer } }
-      required: [seq]
-    permissions:
-      tools: [python_exec]
-      skills: [fib]
-    model: { prefer: ["mock/fib"] }
-    context_policy: { max_tokens: 32000, compress: off }
-    limits: { max_steps: 8, timeout: 60 }
-    prompt: |
-      你是菲波拉契数列生成器。输入是 JSON,字段 n 为整数,表示要生成前 n 个菲波拉契数。
-
-      规则:
-      - base case:若 n 等于 1,直接返回答案,数列为 [0];若 n 等于 2,数列为 [0, 1]。
-      - 否则严格按顺序执行:
-        第一步,调用工具 skill__fib,参数中的 n 取 n-1,得到前 n-1 个菲波拉契数组成的数列;
-        第二步,调用工具 python_exec,用代码计算该数列最后两个元素之和。
-      - 把求和结果追加到数列末尾,即得到前 n 个菲波拉契数。
-
-      最终答案只输出一个 JSON 对象,唯一字段为 seq,值是整数数组,不要输出其他文字。
+- name: demo.fib
+  version: 1.0.0
+  kind: prompt
+  description: 生成前 n 个菲波拉契数。Use when 需要菲波拉契数列;Do not use when 需要大 n 高效计算(递归技能示例)。
+  inputs:
+    type: object
+    properties:
+      n:
+        type: integer
+        minimum: 1
+    required:
+    - n
+  outputs:
+    type: object
+    properties:
+      seq:
+        type: array
+        items:
+          type: integer
+    required:
+    - seq
+  permissions:
+    tools:
+    - system.python.exec
+    skills:
+    - demo.fib
+  model:
+    prefer:
+    - mock/fib
+  context_policy:
+    max_tokens: 32000
+    compress: false
+  limits:
+    max_steps: 8
+    timeout: 60
+  prompt: "你是菲波拉契数列生成器。输入是 JSON,字段 n 为整数,表示要生成前 n 个菲波拉契数。\n\n规则:\n- base case:若 n\
+    \ 等于 1,直接返回答案,数列为 [0];若 n 等于 2,数列为 [0, 1]。\n- 否则严格按顺序执行:\n  第一步,调用工具 skill.demo.fib,参数中的\
+    \ n 取 n-1,得到前 n-1 个菲波拉契数组成的数列;\n  第二步,调用工具 system.python.exec,用代码计算该数列最后两个元素之和。\n\
+    - 把求和结果追加到数列末尾,即得到前 n 个菲波拉契数。\n\n最终答案只输出一个 JSON 对象,唯一字段为 seq,值是整数数组,不要输出其他文字。\n"

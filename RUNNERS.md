@@ -49,7 +49,7 @@ compression = "hierarchical"        # off = 消融档
 # api_key_env = "OPENAI_API_KEY"
 
 [tools]
-builtins = true                     # fs_read/fs_write/fs_edit/shell_exec/http_fetch
+builtins = true                     # system.file.read/system.file.write/system.file.edit/system.shell.exec/system.net.http_fetch
 python_exec = "docker"              # docker | subprocess | off
 
 [skills]
@@ -185,7 +185,7 @@ agent-os skills list|validate <path.yaml>
 - trace 的 `pre:llm.request`/`post:llm.response` 载荷含模型与消息摘要;replay 按**顺序匹配**构建 MockProvider 脚本(与 fib 测试同一机制),重放整棵帧树;
 - 用途 A(回归):改了技能实现后 replay,`diff` 与原始 run 的信号序列;
 - 用途 B(复现):线上失败的 run 拿回本地 replay,在 checkpoint 上 `inspect` 逐帧检查;
-- 边界:replay 只能覆盖 LLM 调用面;工具副作用(fs/shell/docker)按真实环境执行,`--sandbox` 档可把 shell_exec/python_exec 强制切到 docker 后端。
+- 边界:replay 只能覆盖 LLM 调用面;工具副作用(fs/shell/docker)按真实环境执行,`--sandbox` 档可把 system.shell.exec/python_exec 强制切到 docker 后端。
 
 ### 3.5 实现要点
 

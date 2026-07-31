@@ -42,16 +42,16 @@ from tests.helpers.kernels import assemble, record_all, sandbox_tools
 
 SKILLS_YAML = """
 skills:
-  - name: driver
+  - name: test.driver
     version: 1.0.0
     kind: prompt
     inputs: { type: object, properties: {} }
     outputs: { type: object }
-    permissions: { tools: [python_orchestrate, fs_read, fs_write], skills: [echo] }
+    permissions: { tools: [python_orchestrate, system.file.read, system.file.write], skills: [test.echo] }
     model: { prefer: ["mock/x"] }
     limits: { max_steps: 10, max_tool_calls: 20 }
     prompt: DRIVER
-  - name: echo
+  - name: test.echo
     version: 1.0.0
     kind: prompt
     inputs:
@@ -123,7 +123,7 @@ def _kernel(tmp_path, script: str, *, orchestrate: bool = True, sidecars=(), bod
 
 
 def _run(kernel):
-    return asyncio.run(kernel.run("driver", {}))
+    return asyncio.run(kernel.run("test.driver", {}))
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +134,9 @@ def _run(kernel):
 def test_script_calls_tool_via_syscall(tmp_path):
     """脚本经 ctx.call_tool 调白名单工具,结果回脚本;只有 result 回上下文。"""
     script = """
-w = ctx.call_tool("fs_write", {"path": "a.txt", "content": "hello syscall"})
+w = ctx.call_tool("system.file.write", {"path": "a.txt", "content": "hello syscall"})
 assert w["ok"], w
-r = ctx.call_tool("fs_read", {"path": "a.txt"})
+r = ctx.call_tool("system.file.read", {"path": "a.txt"})
 result = {"ok": r["ok"], "has": "syscall" in r["value"]}
 """
     kernel = _kernel(tmp_path, script)
@@ -148,7 +148,7 @@ result = {"ok": r["ok"], "has": "syscall" in r["value"]}
 def test_script_invokes_subskill(tmp_path):
     """脚本经 ctx.invoke 压子帧(白名单内),子帧结果回脚本。"""
     script = """
-out = ctx.invoke("echo", {"text": "abc"})
+out = ctx.invoke("test.echo", {"text": "abc"})
 result = {"echoed": out["echoed"]}
 """
     kernel = _kernel(tmp_path, script)
@@ -160,8 +160,8 @@ def test_loop_keeps_intermediates_out_of_context(tmp_path):
     script = """
 total = 0
 for i in range(5):
-    ctx.call_tool("fs_write", {"path": "f%d.txt" % i, "content": "x" * (i + 1)})
-    r = ctx.call_tool("fs_read", {"path": "f%d.txt" % i})
+    ctx.call_tool("system.file.write", {"path": "f%d.txt" % i, "content": "x" * (i + 1)})
+    r = ctx.call_tool("system.file.read", {"path": "f%d.txt" % i})
     total += r["value"].count("x")
 result = {"total": total}
 """
@@ -187,13 +187,13 @@ result = {"total": total}
 def test_out_of_whitelist_tool_denied_into_script(tmp_path):
     """白名单外工具 → PERMISSION_DENIED 返回脚本,脚本可自行处理,不崩编排。"""
     script = """
-r = ctx.call_tool("shell_exec", {"command": "echo pwned"})
+r = ctx.call_tool("system.shell.exec", {"command": "echo pwned"})
 result = {"ok": r["ok"], "kind": r["error"]["kind"]}
 """
     kernel = _kernel(tmp_path, script)
     out = _run(kernel)["value"]
     assert out["result"] == {"ok": False, "kind": "permission_denied"}
-    assert out["failed"] == [{"name": "shell_exec", "error": "permission_denied"}]
+    assert out["failed"] == [{"name": "system.shell.exec", "error": "permission_denied"}]
 
 
 def test_orchestrate_disabled_by_default(tmp_path):
@@ -207,10 +207,10 @@ def test_orchestrate_disabled_by_default(tmp_path):
 def test_tool_guard_vetoes_syscall(tmp_path):
     """ToolGuard 对 syscall 生效:veto 理由回到脚本(§2.3 同一闸门)。"""
     script = """
-r = ctx.call_tool("fs_write", {"path": "secret.env", "content": "x"})
+r = ctx.call_tool("system.file.write", {"path": "secret.env", "content": "x"})
 result = {"ok": r["ok"], "kind": r["error"]["kind"], "msg": r["error"]["message"]}
 """
-    guard = ToolGuard(rules=[("fs_write", r"secret", "禁止写 secret 文件")])
+    guard = ToolGuard(rules=[("system.file.write", r"secret", "禁止写 secret 文件")])
     kernel = _kernel(tmp_path, script, sidecars=(guard,))
     out = _run(kernel)["value"]["result"]
     assert out["ok"] is False and out["kind"] == "vetoed"
@@ -237,7 +237,7 @@ def test_max_tool_calls_limit(tmp_path):
     script = """
 last = None
 for i in range(50):
-    r = ctx.call_tool("fs_write", {"path": "x.txt", "content": str(i)})
+    r = ctx.call_tool("system.file.write", {"path": "x.txt", "content": str(i)})
     if not r["ok"]:
         last = r["error"]["message"]
 result = {"last_error": last}
@@ -254,7 +254,7 @@ result = {"last_error": last}
 def test_script_runtime_error_reports_executed_calls(tmp_path):
     """脚本崩溃:已执行副作用已发生,回报清单供模型决定补偿(§4.3)。"""
     script = """
-ctx.call_tool("fs_write", {"path": "done.txt", "content": "side effect"})
+ctx.call_tool("system.file.write", {"path": "done.txt", "content": "side effect"})
 raise ValueError("脚本炸了")
 """
     kernel = _kernel(tmp_path, script)
@@ -277,7 +277,7 @@ def test_empty_code_rejected(tmp_path):
 
 def _visible_tools(kernel) -> set[str]:
     """帧首次 build 时模型可见的工具名集合。"""
-    frame = SkillFrame(frame_id="f1", run_id="r1", skill=SkillRef(name="driver"), input={})
+    frame = SkillFrame(frame_id="f1", run_id="r1", skill=SkillRef(name="test.driver"), input={})
     req = asyncio.run(kernel.context.build(frame))
     return {t["name"] for t in req.tools}
 
@@ -291,12 +291,12 @@ def test_schema_visible_only_when_enabled(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# python_exec 回归:纯计算档行为不变
+# system.python.exec 回归:纯计算档行为不变
 # ---------------------------------------------------------------------------
 
 
 def test_python_exec_unchanged_no_ctx(tmp_path):
-    """python_exec 仍是纯计算:脚本里没有 ctx(NameError → RUNTIME_ERROR)。"""
+    """system.python.exec 仍是纯计算:脚本里没有 ctx(NameError → RUNTIME_ERROR)。"""
     from agent_os.api.v1 import ExecRequest
     from agent_os.logic.python_sandbox import PythonSandboxLogicKernel
 
@@ -314,7 +314,7 @@ def test_python_exec_unchanged_no_ctx(tmp_path):
 
 SANDBOX_SKILL_YAML = """
 skills:
-  - name: driver
+  - name: test.driver
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:double_it
@@ -327,7 +327,7 @@ skills:
       type: object
       properties: { doubled: { type: integer } }
       required: [doubled]
-    permissions: { tools: [python_exec], skills: [] }
+    permissions: { tools: [system.python.exec], skills: [] }
 """
 
 
@@ -347,7 +347,7 @@ def test_sandbox_code_skill_gets_ctx(tmp_path):
         _yaml(tmp_path, SANDBOX_SKILL_YAML),
         tools=sandbox_tools(),
     )
-    assert asyncio.run(kernel.run("driver", {"x": 21})) == {"doubled": 42}
+    assert asyncio.run(kernel.run("test.driver", {"x": 21})) == {"doubled": 42}
 
 
 @pytest.mark.parametrize("force", [False, True])
@@ -363,7 +363,7 @@ def test_trusted_and_sandbox_equivalent(tmp_path, force):
     kernel = assemble(
         config, orchestrating_brain("result = 1"), _yaml(tmp_path, body), tools=sandbox_tools()
     )
-    assert asyncio.run(kernel.run("driver", {"x": 5})) == {"doubled": 10}
+    assert asyncio.run(kernel.run("test.driver", {"x": 5})) == {"doubled": 10}
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +383,7 @@ def test_replay_run_with_orchestration(tmp_path, capsys):
         orchestrate=True,
     )
     artifacts = str(tmp_path / "runs")
-    rc, out = run_cli(capsys, "run", "driver", "--input", "{}",
+    rc, out = run_cli(capsys, "run", "test.driver", "--input", "{}",
                       "--config", str(cfg), "--artifacts", artifacts, "--json")
     assert rc == 0, out
     rc, rep = run_cli(capsys, "replay", out["run_id"],
@@ -396,5 +396,5 @@ def test_replay_run_with_orchestration(tmp_path, capsys):
 
 #: replay 测试用的模块级 brain(dotted path 需可 import)
 replay_brain = orchestrating_brain(
-    'r = ctx.call_tool("fs_write", {"path": "o.txt", "content": "x"})\nresult = r["ok"]'
+    'r = ctx.call_tool("system.file.write", {"path": "o.txt", "content": "x"})\nresult = r["ok"]'
 )

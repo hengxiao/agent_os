@@ -958,7 +958,7 @@ body[data-route="tools"] .sidebar { display: none; }
 .tr-kw[data-k="inline"] { color: var(--fg-2); font-style: italic; }
 .tr-name { font-weight: 600; color: var(--fg-0); }
 .tr-params {
-  margin-left: calc(-1 * var(--s1)); /* 参数括号贴住调用名:skill__fib({...}) */
+  margin-left: calc(-1 * var(--s1)); /* 参数括号贴住调用名:skill.fib({...}) */
   color: var(--fg-1);
   overflow: hidden;
   text-overflow: ellipsis;

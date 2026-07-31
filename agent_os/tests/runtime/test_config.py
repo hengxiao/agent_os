@@ -75,7 +75,7 @@ def test_unknown_sidecar_rejected():
 
 def test_bad_tool_guard_rule_shape_rejected():
     with pytest.raises(ConfigError, match="tool_guard_rules"):
-        build_kernel(_base_cfg(sidecars={"tool_guard_rules": [["shell_exec", "rm"]]}))
+        build_kernel(_base_cfg(sidecars={"tool_guard_rules": [["system.shell.exec", "rm"]]}))
 
 
 def test_unknown_python_exec_backend_rejected():
@@ -108,7 +108,7 @@ def test_non_callable_dotted_path_rejected():
 def test_python_exec_elevates_permission_to_exec():
     kernel = build_kernel(_base_cfg())
     assert kernel.config.tool_policy.max_permission is Permission.EXEC
-    result = asyncio.run(kernel.run("fib", {"n": 3}))
+    result = asyncio.run(kernel.run("demo.fib", {"n": 3}))
     assert result == {"seq": [0, 1, 1]}
 
 

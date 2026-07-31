@@ -55,28 +55,28 @@ def _now() -> str:
 def register(registry: Any) -> None:
     """把七个场景工具注册进 ``registry``(配置扩展点 / 测试的直接入口)。"""
 
-    @registry.tool(permission=Permission.READ)
+    @registry.tool(permission=Permission.READ, name="project.support_desk.get_ticket")
     def get_ticket(ticket_id: str) -> dict:
         """按工单号取工单详情(用户/订单/正文/创建时间)。"""
         return _find(_load("tickets.json", "tickets"), "ticket_id", ticket_id, "工单")
 
-    @registry.tool(permission=Permission.READ)
+    @registry.tool(permission=Permission.READ, name="project.support_desk.get_order")
     def get_order(order_id: str) -> dict:
         """按订单号取订单详情(金额/状态/创建与签收时间/商品行)。"""
         return _find(_load("orders.json", "orders"), "order_id", order_id, "订单")
 
-    @registry.tool(permission=Permission.READ)
+    @registry.tool(permission=Permission.READ, name="project.support_desk.get_user")
     def get_user(user_id: str) -> dict:
         """按用户号取用户资料(姓名/邮箱/会员等级)。"""
         return _find(_load("users.json", "users"), "user_id", user_id, "用户")
 
-    @registry.tool(permission=Permission.READ)
+    @registry.tool(permission=Permission.READ, name="project.support_desk.search_policy")
     def search_policy(query: str) -> dict:
         """检索退款政策文档;返回当前生效版本全文(窗口/上限/升级队列)。"""
         policies = json.loads((DATA_DIR / "policies.json").read_text(encoding="utf-8"))
         return {"query": query, "policies": policies}
 
-    @registry.tool(permission=Permission.WRITE)
+    @registry.tool(permission=Permission.WRITE, name="project.support_desk.escalate_to_human")
     def escalate_to_human(ticket_id: str, reason: str, priority: str) -> dict:
         """把工单升级人工专项组,登记升级单(写 escalations.jsonl)。"""
         record = {
@@ -91,7 +91,7 @@ def register(registry: Any) -> None:
         _append_jsonl("escalations.jsonl", record)
         return {"escalation_id": record["escalation_id"], "queue": record["queue"]}
 
-    @registry.tool(permission=Permission.NET)
+    @registry.tool(permission=Permission.NET, name="project.support_desk.send_notification")
     def send_notification(user_id: str, channel: str, message: str) -> dict:
         """给客户发通知(mock:不触网,写 notifications.jsonl 留痕)。"""
         record = {
@@ -104,7 +104,7 @@ def register(registry: Any) -> None:
         _append_jsonl("notifications.jsonl", record)
         return {"notification_id": record["notification_id"], "delivered": True}
 
-    @registry.tool(permission=Permission.EXEC)
+    @registry.tool(permission=Permission.EXEC, name="project.support_desk.issue_refund")
     def issue_refund(ticket_id: str, order_id: str, amount_cents: int, reason: str) -> dict:
         """执行退款入账(写 refunds.jsonl;幂等键 = 工单 + 订单)。"""
         record = {
@@ -146,9 +146,9 @@ async def _call(ctx: Any, tool: str, args: dict[str, Any]) -> Any:
 
 async def gather_context(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """聚合工单+订单+用户,并算出审批要用的时效事实(以工单创建时刻为"现在")。"""
-    ticket = await _call(ctx, "get_ticket", {"ticket_id": input["ticket_id"]})
-    order = await _call(ctx, "get_order", {"order_id": ticket["order_id"]})
-    user = await _call(ctx, "get_user", {"user_id": ticket["user_id"]})
+    ticket = await _call(ctx, "project.support_desk.get_ticket", {"ticket_id": input["ticket_id"]})
+    order = await _call(ctx, "project.support_desk.get_order", {"order_id": ticket["order_id"]})
+    user = await _call(ctx, "project.support_desk.get_user", {"user_id": ticket["user_id"]})
     delivered = order["delivered_at"] is not None
     hours_created = _hours(order["created_at"], ticket["created_at"])
     hours_delivered = _hours(order["delivered_at"], ticket["created_at"]) if delivered else None
@@ -167,7 +167,7 @@ async def gather_context(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 async def check_policy(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """按政策文档计算退款资格;reasons 引用真实数字(窗口/天数/小时)。"""
-    res = await _call(ctx, "search_policy", {"query": "refund windows"})
+    res = await _call(ctx, "project.support_desk.search_policy", {"query": "refund windows"})
     windows = res["policies"]["refund_windows"]
     category = input["category"]
     facts = input["facts"]
@@ -227,10 +227,10 @@ async def estimate_priority(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 async def process_refund(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """先经 compute_refund 算金额,再调 issue_refund 工具入账。"""
-    amount = (await ctx.invoke("compute_refund", {"order": input["order"]}))["amount_cents"]
+    amount = (await ctx.invoke("project.support_desk.compute_refund", {"order": input["order"]}))["amount_cents"]
     value = await _call(
         ctx,
-        "issue_refund",
+        "project.support_desk.issue_refund",
         {
             "ticket_id": input["ticket_id"],
             "order_id": input["order"]["order_id"],
@@ -245,7 +245,7 @@ async def notify_customer(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """把处理结果经 send_notification 送达客户(mock 留痕)。"""
     value = await _call(
         ctx,
-        "send_notification",
+        "project.support_desk.send_notification",
         {"user_id": input["user_id"], "channel": "email", "message": input["message"]},
     )
     return {"sent": True, "notification_id": value["notification_id"]}
@@ -255,7 +255,7 @@ async def escalate_ticket(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """调 escalate_to_human 工具把工单升级人工专项组。"""
     value = await _call(
         ctx,
-        "escalate_to_human",
+        "project.support_desk.escalate_to_human",
         {
             "ticket_id": input["ticket_id"],
             "reason": input["reason"],
@@ -272,10 +272,10 @@ async def write_case_summary(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
         f"决策 {input['decision']},退款 {input['refund_cents']} 分,"
         f"优先级 {input['priority']}。客户:{input['user']['name']} <{input['user']['email']}>"
     )
-    redacted = (await ctx.invoke("redact_pii", {"text": zh}))["text"]
+    redacted = (await ctx.invoke("project.support_desk.redact_pii", {"text": zh}))["text"]
     audit = (
         await ctx.invoke(
-            "build_audit_log",
+            "project.support_desk.build_audit_log",
             {
                 "ticket_id": input["ticket_id"],
                 "decision": input["decision"],
@@ -283,7 +283,7 @@ async def write_case_summary(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
             },
         )
     )["audit"]
-    en = (await ctx.invoke("translate_en", {"text": redacted}))["translation"]
+    en = (await ctx.invoke("project.support_desk.translate_en", {"text": redacted}))["translation"]
     return {"summary": f"{redacted}\nEN: {en}\n审计编号: {audit}"}
 
 

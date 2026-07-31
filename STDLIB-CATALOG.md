@@ -5,8 +5,11 @@
 > 形态判定见 STDLIB §1 六条规则;引擎既有机制见 §2(不重复造)。
 >
 > 每条格式:`名字` — 一句话(形态,权限档)/ 签名 / 为什么 / 决策 / 坑。
-> 现状已有 8 个工具:`fs_read` `fs_write` `fs_edit` `shell_exec` `http_fetch`
-> `blob_get` `python_exec` `python_orchestrate`(伪工具)。
+> 现状已有 16 个工具:`system.file.read` `system.file.write` `system.file.edit`
+> `system.file.list` `system.file.search` `system.shell.exec` `system.net.http_fetch`
+> `system.time.now` `system.task.todo_write` `system.task.todo_update` `system.task.todo_read`
+> `system.skill.search` `common.web.fetch_page` `blob_get` `python_exec`
+> `python_orchestrate`(伪工具)。
 
 ---
 
@@ -27,8 +30,8 @@
   `scratch`(每帧私有临时,默认现行为)。fs 工具按前缀判定档位:
   只读区拒绝 WRITE 档操作,越界仍是 `INVALID_ARGS`(现有路径逃逸检查保留)。
 - **坑**:①默认必须保持现状(临时目录),否则所有现存配置的安全边界被静默放宽;
-  ②`shell_exec` 的 `cwd` 与 fs 工具必须用同一个解析器,否则出现
-  "脚本里 `ls` 和 `fs_read` 看到不同世界"的错位(实机已踩过一次);
+  ②`system.shell.exec` 的 `cwd` 与 fs 工具必须用同一个解析器,否则出现
+  "脚本里 `ls` 和 `system.file.read` 看到不同世界"的错位(实机已踩过一次);
   ③多帧并发写同一 workspace → 需要 W0-4 的乐观锁配套。
 
 #### W0-2 工具契约四字段 — ToolSpec 增列(机制)
@@ -51,11 +54,11 @@
   实机也验证过反向案例:编排脚本的 `BrokenPipeError` 无法自纠,而 SyntaxError
   带 traceback 一轮就改对。
 - **决策**:hint 是**给模型的下一步动作建议**,不是错误描述的重复。
-  模板:`FileNotFound → "检查工作目录(当前 X);或用 fs_list 确认路径"`;
+  模板:`FileNotFound → "检查工作目录(当前 X);或用 system.file.list 确认路径"`;
   `PermissionDenied → "该工具不在本技能白名单;可用的有 A/B/C"`。
 - **坑**:hint 里带的路径/白名单是运行期事实,必须现取,不能硬编码进静态描述。
 
-#### W0-4 `fs_write`/`fs_edit` 的 `if_match` — 乐观锁(改造)
+#### W0-4 `system.file.write`/`system.file.edit` 的 `if_match` — 乐观锁(改造)
 
 参数加 `if_match: str`(mtime 或内容 hash),不匹配则拒写并返回当前版本标识。
 
@@ -65,7 +68,7 @@
 - **坑**:mtime 在粗粒度文件系统上分辨率不足(测试里已见过需要 `os.utime` 拨快 2 秒),
   正式实现用内容 hash 更稳。
 
-#### W0-5 `shell_exec` 结构化返回 — 编排友好(改造)
+#### W0-5 `system.shell.exec` 结构化返回 — 编排友好(改造)
 
 返回值从拼接字符串改为 `{stdout, stderr, exit_code, truncated}`。
 
@@ -89,20 +92,20 @@
 
 ## 第 1 波:核心工具(P0,做完覆盖四类主力场景)
 
-#### W1-1 `fs_list` — 目录列举(tool, READ)
+#### W1-1 `system.file.list` — 目录列举(tool, READ)
 
 `{path?, pattern?, max_entries?, cursor?}` → `{entries: [{path, size, mtime, is_dir}], total, next_cursor?}`
 
 - **为什么**:探索文件系统是几乎所有文件任务的第一步。实机已确认缺失——
-  编排脚本只能退而用 `shell_exec "ls"` 再解析字符串。
+  编排脚本只能退而用 `system.shell.exec "ls"` 再解析字符串。
 - **决策**:①**默认尊重 `.gitignore` + 跳过 `.git/`、`node_modules/`、`.venv/`**
   (`include_ignored: true` 可关)——不做这件事,任何真实仓库的第一次列举就淹没在
   依赖目录里;②`total` 与 `next_cursor` 是契约的一部分(书:静默截断是危险的);
-  ③`mtime` 字段与 `now` 组合即可实现卡死检测,不必另造工具。
+  ③`mtime` 字段与 `system.time.now` 组合即可实现卡死检测,不必另造工具。
 - **坑**:glob 递归 `**` 在大仓库上很慢,`max_entries` 必须有默认上限(建议 200)
   且截断时 `total` 如实报告。
 
-#### W1-2 `fs_search` — 内容检索(tool, READ)
+#### W1-2 `system.file.search` — 内容检索(tool, READ)
 
 `{pattern, path?, glob?, context_lines?, max_hits?, cursor?}` → `{hits: [{path, line, text, before[], after[]}], total, next_cursor?, spill_ref?}`
 
@@ -114,7 +117,7 @@
   ③大结果自动 spill 到 blob 并返回 `spill_ref`,上下文只留前 N 条。
 - **坑**:正则灾难性回溯要设超时;二进制文件要跳过(按 NUL 字节探测)。
 
-#### W1-3 `now` — 服务端时钟(tool, READ)
+#### W1-3 `system.time.now` — 服务端时钟(tool, READ)
 
 `{tz?}` → `{iso, epoch, tz}`
 
@@ -122,26 +125,30 @@
   时间若由模型自报,一个假值就能绕过"退款窗口是否过期"这类守门校验——
   **它是安全边界,不只是便利**。
 - **决策**:必须**可回放**——trace 记录返回值,replay 模式注入原值,否则任何
-  含 `now` 的 run 都无法确定性复现。这引出一个通用机制(见坑)。
-- **坑**:与其为 `now` 做特例,不如做成通用的 **`replayable` 工具标记**:
+  含 `system.time.now` 的 run 都无法确定性复现。这引出一个通用机制(见坑)。
+- **坑**:与其为 `system.time.now` 做特例,不如做成通用的 **`replayable` 工具标记**:
   工具声明 `replayable=True` → 内核把结果记进 trace → replay 按调用序返回记录值。
-  未来 `web_search`、`http_fetch` 都能复用。建议连同 W1-3 一起做成机制。
+  未来 `web_search`、`system.net.http_fetch` 都能复用。建议连同 W1-3 一起做成机制。
 
-#### W1-4 `todo_write` / `todo_update` — 任务规划(tool, WRITE·run 级状态)
+#### W1-4 `system.task.todo_write` / `system.task.todo_update` — 任务规划(tool, WRITE·run 级状态)
 
-`todo_write{items: [{id, text, status}]}` → `{count}`;
-`todo_update{id, status, note?}` → `{item}`
+`system.task.todo_write{items: [{id, text, status}]}` → `{count}`;
+`system.task.todo_update{id, status, note?}` → `{item}`
+
+配套的 `system.task.todo_read` 已落地(READ 档):`{status?}` → `{todos, count}`,
+读取本 run 完整任务清单,`status` 可选过滤。
 
 - **为什么**:书里数据最硬的单点之一(带 TODO 15 轮 vs 不带 21 轮,且显著减少
   漏做子任务)。当前 std 连"任务规划"这个概念都没有。
 - **决策**:①**两个工具而非一个**——`write` 用于(重新)规划,`update` 用于
-  推进,后者极便宜且高频;②状态存 **run 级**而非文件系统(跨帧存活、随
+  推进,后者极便宜且高频;读侧由 `system.task.todo_read` 承担,与状态栏注入的
+  摘要互补(摘要不够时取完整清单);②状态存 **run 级**而非文件系统(跨帧存活、随
   checkpoint 落盘);③清单摘要注入**状态栏**(引擎已有的 §7.3 机制),
   不占常规消息位。
 - **坑**:状态栏是 ephemeral 的,TODO 必须是内核记账的一部分才不会漂移;
   别让 LLM 自己维护 TODO 文本(书的三条教训之一:状态必须由代码维护)。
 
-#### W1-5 `skill_search` — 技能/工具发现(tool, READ)
+#### W1-5 `system.skill.search` — 技能/工具发现(tool, READ)
 
 `{query, kind?: "skill"|"tool"|"all", limit?}` → `{results: [{name, kind, description, permissions}]}`
 
@@ -198,9 +205,9 @@
 `{query, docs: [{id, text}], k?}` → `{ranked: [{id, score}]}`
 - **为什么**:STDLIB §7 划线修正的核心——sparse 进 std、dense 出 std。
   纯 Python 可实现,零依赖,正好落在 std 边界内;没有它 `memory_search`
-  与 `skill_search` 都没有默认实现。
+  与 `system.skill.search` 都没有默认实现。
 - **决策**:**无状态打分器**,不做索引持久化(索引是调用方的事)。语料大时
-  由调用方先用 `fs_search` 粗筛。
+  由调用方先用 `system.file.search` 粗筛。
 
 #### W2-10 `rrf_merge` — 多路检索融合
 `{lists: [[id...]], k?}` → `{ranked: [id...]}`
@@ -261,7 +268,7 @@
 
 - **为什么只剩三条**:原五条被四个章节从四个角度否定——`json_discipline`
   与内核 outputs 校验重叠(删)、`date_style`/`citation_style` 可代码强制(下沉)、
-  `zh_typography` 是参数保真度雷(降级为 lint 报告,**禁止用于 fs_edit 的
+  `zh_typography` 是参数保真度雷(降级为 lint 报告,**禁止用于 system.file.edit 的
   old_string 构造场景**)。
 - **坑**:每条 ≤500 字符(膨胀 lint),单调用方 ≤3 条(SYSTEM 常驻,每步都付)。
 
@@ -301,7 +308,7 @@ outputs 给 per-dimension 分数 + `veto_triggered`。
 行号/分页已是工具契约,不在此)、`apply_patch`、`summarize_tree`。
 
 - `progress_track` 优先:书的第 8/9/10 三章从不同场景独立要求了同一个原语,
-  一份实现三处受益;配 `fs_list` 的 mtime + `now` 即可白拿卡死检测。
+  一份实现三处受益;配 `system.file.list` 的 mtime + `system.time.now` 即可白拿卡死检测。
 - `run_tests` 是 `retry_until` 的**默认验证器**——它比 judge 重要得多。
 
 #### W4-2 `std/memory` 文件版(不等 M6)
@@ -316,7 +323,7 @@ ADD/UPDATE/DELETE/NOOP)/ `memory_consolidate`(周期重构)/ `memory_check`(code
 
 #### W4-3 `std/web`
 
-`fetch_page`(http_fetch + 正文抽取 + 超长 spill;**outputs 强制 `source` 字段,
+`common.web.fetch_page`(system.net.http_fetch + 正文抽取 + 超长 spill;**outputs 强制 `source` 字段,
 正文以 `<external_content source=...>` 包裹**)、`research_one`、
 `research_iterative`(检索 → 判充分 → 精化 → 再检索)。
 
@@ -353,11 +360,11 @@ ADD/UPDATE/DELETE/NOOP)/ `memory_consolidate`(周期重构)/ `memory_check`(code
 ```
 W0 地基(workdir / 契约四字段 / 错误 hint / if_match / shell 结构化)
         │
-        ├─→ W1 核心工具(fs_list · fs_search · now+replayable · todo · skill_search)
+        ├─→ W1 核心工具(system.file.list · system.file.search · system.time.now+replayable · todo · system.skill.search)
         │            │
         │            └─→ W4-1 std/files(progress_track · run_tests)
         │
-        ├─→ W2 transform 纯函数包(可完全并行;bm25_score 反哺 skill_search)
+        ├─→ W2 transform 纯函数包(可完全并行;bm25_score 反哺 system.skill.search)
         │            │
         │            └─→ W4-2 std/memory 文件版
         │
@@ -368,7 +375,7 @@ W0 地基(workdir / 契约四字段 / 错误 hint / if_match / shell 结构化)
 W5 全部阻塞在内核立项(挂起语义 / 级联取消 / 子树记账 / 多模态契约)
 ```
 
-**若只做三件**:W0-1(workdir)、W1-1+W1-2(fs_list/fs_search)、W0-3(错误 hint)。
+**若只做三件**:W0-1(workdir)、W1-1+W1-2(system.file.list/system.file.search)、W0-3(错误 hint)。
 第一件解锁"能碰真实项目",第二件解锁"能找到东西",第三件让失败可自纠——
 这三件之后,配合已落地的编排桥,文件问答与代码审计类场景就跑得起来了。
 
@@ -388,7 +395,7 @@ std 的样板跑通全套质量门槛(§8 的 13 条),把收录流程本身先�
 W0/W1/W2 三波,加 `calibrate_judge`、`memory_check`、`identifier_guard`——
 精确输出比对,毫秒级,零成本。目录里约 26 条落在这层,**它们不需要任何 LLM**。
 
-分页类工具(`fs_list`/`fs_search`)有三条必测不变量:`total ≥ len(entries)`、
+分页类工具(`system.file.list`/`system.file.search`)有三条必测不变量:`total ≥ len(entries)`、
 cursor 走完覆盖全集且**不重不漏**、截断时 `truncated`/`total` 显式可见
 (静默截断是被点名的危险)。
 
@@ -474,4 +481,4 @@ WRITE/EXEC/NET 显式声明 idempotent、`cost_hint` 非空)。新增条目漏�
 - `read_document`(PDF/Word 抽取):二进制依赖,走 entry point;若要收,
   必须是"统一工具 + file_type 参数"而非一类一个;
 - 随机数/UUID 工具:复现性毒药,需要时经 `RunConfig.seed` 管控的内核原语另议;
-- `fs_delete`:`shell_exec` + ToolGuard 规则已覆盖,单独给一个高危工具名不划算。
+- `fs_delete`:`system.shell.exec` + ToolGuard 规则已覆盖,单独给一个高危工具名不划算。

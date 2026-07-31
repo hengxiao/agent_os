@@ -1,5 +1,26 @@
 # std — 标准技能包
 
+## 结构
+
+技能按域分包,每域一个 YAML(顶层 `skills:` 列表;`LocalFileSkillRegistry`
+指向本目录时按文件名排序合并加载全部 `*.yaml`,跨文件去重/依赖校验与单文件
+同一逻辑):
+
+- `text.yaml` → `common.text.*` + `common.hash.*` + `common.table.*`
+- `retrieval.yaml` → `common.retrieval.*`
+- `security.yaml` → `common.security.*` / `task.yaml` → `common.task.*`
+- `style.yaml` → `common.style.*` / `eval.yaml` → `common.eval.*`
+- `dev.yaml` → `common.dev.*` / `web.yaml` → `common.web.*`
+- `research.yaml` → `common.research.*` / `memory.yaml` → `common.memory.*`
+- `learn.yaml` → `common.learn.*`
+
+**不做 `common.web.search`**:搜索需要 provider 配置(API key/引擎选择),
+属于 `external.*` 范畴,不进零依赖的 std;调研技能以显式 URL(fetch_page)
+驱动。
+
+以下是各波次交付记录(当时均追加在单文件 `skills.yaml`,拆包后按域归置,
+条目内容未改):
+
 STDLIB 第 2 波(STDLIB-CATALOG §W2;STDLIB §4.1):20 个 code 技能,全部零 LLM、
 零外部依赖(仅标准库)、确定性,permissions 全空——纯转换,不触网、不读状态
 (`hash_digest` 的 `ref` 形参除外,它按调用方显式给的路径读文件取指纹)。
@@ -38,7 +59,7 @@ STDLIB 第 4 波续(STDLIB-CATALOG §W4-2~W4-4;STDLIB §4.6/§4.7),同一
 
 - `std/web`:`fetch_page`(code,同名工具的 run() 薄适配——工具面在
   `LocalPythonToolRegistry` **构造器**注册:三个 web 技能 permissions.tools
-  都声明 `[fetch_page]`,而既有锚点用空工具表加载本文件,§6.1 闸门要求声明
+  都声明 `[fetch_page]`,而既有锚点用空工具表加载本目录,§6.1 闸门要求声明
   对每个注册表可见;http_fetch 依赖在调用时按名查找,可同名覆盖 mock)/
   `research_one`(prompt,单轮检索调研)/ `research_iterative`(code,
   经 `ctx.chat` 自驾驶"检索→自评→精化→再检索"协议——帧循环把无
@@ -56,10 +77,12 @@ STDLIB 第 4 波续(STDLIB-CATALOG §W4-2~W4-4;STDLIB §4.6/§4.7),同一
 
 handler 为 `<模块>:<fn>` dotted path(W2 是 `transform`,W3 eval 是
 `eval_handlers`,W4-1 是 `files_handlers`;均在本目录),装配方需把本目录放上 `sys.path`
-(LocalFileSkillRegistry 不做注入):测试侧由仓库根 `conftest.py`
-钉入;宿主/CLI 侧把本目录作为一个 skill set 经 `--skillsets <其父目录>` 加载
-(`load_skillsets` 约定:`<root>/<set>/skills.yaml`,set 目录在装配时自动注入
-`sys.path`,见 runtime/config.py 与 host/web/run_manager.py)。
+(LocalFileSkillRegistry 不做注入;handler 经 importlib 按 dotted path 解析,
+与 YAML 文件位置无关):测试侧由仓库根 `conftest.py` 钉入;registry 直接
+指向本目录(`LocalFileSkillRegistry("<本目录>")` 或配置 `[skills].path`
+为目录路径),按文件名排序合并全部域文件。skillsets 的 `<root>/<set>/skills.yaml`
+发现约定(load_skillsets / run_manager)仍服务单文件 set;std 是目录包,
+不走该约定。
 
 ```bash
 .venv/bin/pytest -q tests/skills/test_std_transform.py   # W2 锚点

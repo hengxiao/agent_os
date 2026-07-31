@@ -140,7 +140,7 @@ import { makeSignals } from "./fixtures.mjs";
   const html = renderTrace(view, { selection: sel });
   assert.match(html, /tr-gutter" aria-hidden="true">0001</, "行号 0001 起");
   assert.match(html, /class="tr-g" data-d="0"/, "彩虹轨按层着色");
-  assert.match(html, /→<\/span><span class="tr-kw">call<\/span><span class="tr-name">skill__fib/, "call 指令");
+  assert.match(html, /→<\/span><span class="tr-kw">call<\/span><span class="tr-name">skill\.fib/, "call 指令");
   assert.match(html, /←<\/span><span class="tr-kw">ret<\/span>/, "ret 指令");
   assert.match(html, /class="tl-row" data-signal-index="24"[^>]*aria-selected="true"/, "选中联动");
   assert.match(html, /data-vetoed="true"/, "vetoed 行标记");

@@ -73,8 +73,8 @@ def test_research_pipeline_loads_twenty_skills():
     manifests = reg.manifests()
     assert len(manifests) == 20
     kinds = {m.name: m.kind.value for m in manifests}
-    assert kinds["research_report"] == "prompt"
-    assert kinds["plan_topics"] == "code"
+    assert kinds["project.research_pipeline.research_report"] == "prompt"
+    assert kinds["project.research_pipeline.plan_topics"] == "code"
 
 
 def test_research_pipeline_runs_end_to_end():
@@ -87,7 +87,7 @@ def test_research_pipeline_runs_end_to_end():
             seen.append(sig)
 
         kernel.signals.subscribe("*", rec)
-        result = asyncio.run(kernel.run("research_report", {"question": "菲波拉契数列的性质"}))
+        result = asyncio.run(kernel.run("project.research_pipeline.research_report", {"question": "菲波拉契数列的性质"}))
     finally:
         sys.path.remove(str(RESEARCH_DIR))
 
@@ -123,7 +123,7 @@ def test_skills_100_mega_pipeline_runs():
             seen.append(sig)
 
         kernel.signals.subscribe("*", rec)
-        result = asyncio.run(kernel.run("mega_pipeline", {"seed": 0}))
+        result = asyncio.run(kernel.run("project.skills_100.mega_pipeline", {"seed": 0}))
     finally:
         sys.path.remove(str(S100_DIR))
 

@@ -1,7 +1,7 @@
 """Skill 契约(DESIGN.md §2.1、§6.2;§14.1 冻结清单:manifest verifier 槽位、register() 签名)。
 
 Skill = 统一执行单元,prompt / code 两种形态对内核透明;
-子技能在父帧 LLM 眼里呈现为带类型签名的伪工具 ``skill__<name>``(§3.3)。
+子技能在父帧 LLM 眼里呈现为带类型签名的伪工具 ``skill.<name>``(§3.3)。
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ class Skill:
 
 @dataclass
 class SkillSchema:
-    """伪工具 schema(§3.3):``skill__<name>``,parameters 即该 Skill 的 ``inputs``。"""
+    """伪工具 schema(§3.3):``skill.<name>``,parameters 即该 Skill 的 ``inputs``。"""
 
     name: str = ""
     description: str = ""
@@ -127,7 +127,7 @@ class SkillSchema:
 
 @dataclass
 class SkillCall:
-    """一次子技能调用(内核在分发阶段拦截 ``skill__*`` 转交 Skill 子系统,§3.3)。"""
+    """一次子技能调用(内核在分发阶段拦截 ``skill.*`` 转交 Skill 子系统,§3.3)。"""
 
     name: str = ""
     args: dict[str, Any] = field(default_factory=dict)

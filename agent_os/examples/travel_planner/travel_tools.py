@@ -79,9 +79,9 @@ async def wiki_search(query: str) -> dict[str, Any] | ToolResult:
         ) as client:
             resp = await client.get(API_URL, params=params)
     except httpx.HTTPError as e:
-        return _net_error(e, "wiki_search")
+        return _net_error(e, "project.travel_planner.wiki_search")
     if resp.status_code != 200:
-        return _http_status_error("wiki_search", resp.status_code)
+        return _http_status_error("project.travel_planner.wiki_search", resp.status_code)
     try:
         data = resp.json()
     except ValueError:
@@ -122,9 +122,9 @@ async def wiki_fetch(title: str, chars_limit: int = 6000) -> dict[str, Any] | To
         ) as client:
             resp = await client.get(API_URL, params=params)
     except httpx.HTTPError as e:
-        return _net_error(e, "wiki_fetch")
+        return _net_error(e, "project.travel_planner.wiki_fetch")
     if resp.status_code != 200:
-        return _http_status_error("wiki_fetch", resp.status_code)
+        return _http_status_error("project.travel_planner.wiki_fetch", resp.status_code)
     try:
         data = resp.json()
     except ValueError:
@@ -176,10 +176,12 @@ def register(registry: Any) -> None:
         timeout=20.0,
         untrusted_source=True,
         cost_hint="~1s,取决于网络",
+        name="project.travel_planner.wiki_search",
     )(wiki_search)
     registry.tool(
         permission=Permission.NET,
         timeout=20.0,
         untrusted_source=True,
         cost_hint="~1s,取决于网络与正文长度",
+        name="project.travel_planner.wiki_fetch",
     )(wiki_fetch)

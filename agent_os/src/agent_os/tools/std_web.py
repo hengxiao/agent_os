@@ -1,17 +1,18 @@
 """std/web 工具面(STDLIB-CATALOG §W4-3;STDLIB §4.6):``fetch_page``。
 
-``fetch_page`` = http_fetch + 正文抽取 + 超长 spill;outputs 强制 ``source``
+``fetch_page`` = system.net.http_fetch + 正文抽取 + 超长 spill;outputs 强制 ``source``
 字段,正文以 ``<external_content source="...">`` 包裹——每个感知工具都是注入
 入口,包裹标记是零成本的第一道防线(``citation_style`` 管的是输出侧格式,
 替代不了输入侧隔离)。
 
 **注册点在 ``LocalPythonToolRegistry`` 构造器**(而非 ``with_builtins``):
-std/skills.yaml 中 ``fetch_page`` / ``research_one`` / ``research_iterative``
+std 域文件(std/*.yaml,原 skills.yaml 已按域拆分)中 ``fetch_page`` /
+``research_one`` / ``research_iterative``
 的 ``permissions.tools`` 都声明 ``[fetch_page]``,而 §6.1 装配闸门要求"声明的
 工具对注册表可见"——既有锚点(test_std_transform / test_std_nlp 等)用**空
-工具表**加载同一份 skills.yaml,挂在 with_builtins 会让那些装配红掉。构造器
-注册使每个注册表自带 fetch_page;``http_fetch`` 依赖在**调用时**按名查找
-(测试可同名覆盖 mock;缺 http_fetch 时回结构化 NOT_FOUND,不崩溃)。
+工具表**加载同一批域文件,挂在 with_builtins 会让那些装配红掉。构造器
+注册使每个注册表自带 fetch_page;``system.net.http_fetch`` 依赖在**调用时**按名查找
+(测试可同名覆盖 mock;缺 system.net.http_fetch 时回结构化 NOT_FOUND,不崩溃)。
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ def _extract_text(html: str) -> str:
     return _BLANK_RE.sub(" ", unescape(text)).strip()
 
 
-def fetch_page_tool(registry: LocalPythonToolRegistry) -> Tool:
+def fetch_page_tool(*, name: str = "common.web.fetch_page", registry: LocalPythonToolRegistry) -> Tool:
     """构造 ``fetch_page``(NET 级):闭包持有 registry,调用时按名查找 ``http_fetch``。"""
 
     async def fetch_page(
@@ -58,19 +59,19 @@ def fetch_page_tool(registry: LocalPythonToolRegistry) -> Tool:
 
         Use when 要把网页内容喂给模型:正文已去标签清洗,并以
         <external_content source="..."> 包裹做注入隔离(§W4-3 契约,来源可溯);
-        Do not use when 需要原始 HTML 结构(用 http_fetch)或登录态页面。
+        Do not use when 需要原始 HTML 结构(用 system.net.http_fetch)或登录态页面。
         超长正文截断并显式标注,全文 spill 至 blob(凭 spill_ref 分页取)。
         """
         try:
-            fetcher = registry.get("http_fetch")
+            fetcher = registry.get("system.net.http_fetch")
         except KeyError:
             return ToolResult(
                 ok=False,
                 error=ToolError(
                     kind=ToolErrorKind.NOT_FOUND,
-                    message="fetch_page 依赖 http_fetch,当前工具表未注册它",
+                    message="fetch_page 依赖 system.net.http_fetch,当前工具表未注册它",
                     retryable=False,
-                    hint="用 LocalPythonToolRegistry.with_builtins() 装配,或先注册 http_fetch",
+                    hint="用 LocalPythonToolRegistry.with_builtins() 装配,或先注册 system.net.http_fetch",
                 ),
             )
         result = await fetcher({"url": url, "max_bytes": max(10_000, max_chars * 4)}, ctx)
@@ -101,6 +102,7 @@ def fetch_page_tool(registry: LocalPythonToolRegistry) -> Tool:
         fetch_page,
         derive_spec(
             fetch_page,
+            name=name,
             permission=Permission.NET,
             timeout=45.0,
             untrusted_source=True,

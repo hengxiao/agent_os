@@ -86,11 +86,11 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
 
 ### 3.1 现状(7 个,文档补正)
 
-`fs_read`(READ,**已带行号前缀与 offset/limit**)/ `fs_write` /
-`fs_edit`(WRITE,**已是 old→new 唯一匹配,失败区分未命中与多处命中**)/
-`shell_exec`(EXEC)/ `http_fetch`(NET)/ `blob_get`(READ)/
+`system.file.read`(READ,**已带行号前缀与 offset/limit**)/ `system.file.write` /
+`system.file.edit`(WRITE,**已是 old→new 唯一匹配,失败区分未命中与多处命中**)/
+`system.shell.exec`(EXEC)/ `system.net.http_fetch`(NET)/ `blob_get`(READ)/
 `python_exec`(EXEC,经 Logic Kernel 沙箱)。
-(v1 文档漏写了 fs_read/fs_edit 的既有契约,书 Ch5 恰好把这两条列为
+(v1 文档漏写了 system.file.read/system.file.edit 的既有契约,书 Ch5 恰好把这两条列为
 编辑成功率的决定因素——已实现,补文档即可。)
 
 ### 3.2 工具契约面(v2 新增,全体 std 工具必须声明)
@@ -119,24 +119,24 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
 | 优先 | 工具 | 权限 | 说明 |
 |---|---|---|---|
 | **P0** | **工作目录可配置**(不是新工具,是 fs/shell 工具的 `workdir` 来源) | — | v2.1 实机发现:`_workdir` 给每个 run 分配临时目录,fs/shell 工具锁死在其中,**agent 无法读写真实项目**。需要 `[run] workdir = "..."`(或 per-skill 声明)+ 只读/可写分区(书 Ch10 四区)。没有它,coding-agent、文件问答、代码审计三类主力场景全部落空——优先级高于任何新工具 |
-| **P0** | `fs_list` | READ | 目录列举 + glob(cursor + total + mtime;mtime 与 `now` 组合可白拿卡死检测)。实机确认缺失:编排脚本只能退而用 `shell_exec "ls"` 解析字符串 |
-| **P0** | `fs_search` | READ | 内容检索(正则 + 行号 + 上下文行 + 分页;大结果 spill)。书:"grep 跨平台语法不同,专用工具优于即兴"(Ch4) |
-| **P0** | `now` | READ | 服务端时钟,replay 从 trace 回放。不只是复现性——时间自报可绕过守门校验,是安全边界(Ch5) |
-| **P0** | `todo_write` / `todo_update` | WRITE(run 级状态) | 任务规划双工具;书实测带 TODO 15 轮 vs 不带 21 轮,显著减少漏做(Ch2) |
-| **P1** | `fs_write`/`fs_edit` 加 `if_match` | — | mtime/hash 乐观锁,不匹配拒写并返回当前版本;有 `map_over` 并发就必然需要(Ch10) |
+| **P0** | `system.file.list` | READ | 目录列举 + glob(cursor + total + mtime;mtime 与 `system.time.now` 组合可白拿卡死检测)。实机确认缺失:编排脚本只能退而用 `system.shell.exec "ls"` 解析字符串 |
+| **P0** | `system.file.search` | READ | 内容检索(正则 + 行号 + 上下文行 + 分页;大结果 spill)。书:"grep 跨平台语法不同,专用工具优于即兴"(Ch4) |
+| **P0** | `system.time.now` | READ | 服务端时钟,replay 从 trace 回放。不只是复现性——时间自报可绕过守门校验,是安全边界(Ch5) |
+| **P0** | `system.task.todo_write` / `system.task.todo_update` | WRITE(run 级状态) | 任务规划双工具;书实测带 TODO 15 轮 vs 不带 21 轮,显著减少漏做(Ch2)。配套的 `system.task.todo_read` 已存在:READ 档,读取完整清单,支持 status 过滤 |
+| **P1** | `system.file.write`/`system.file.edit` 加 `if_match` | — | mtime/hash 乐观锁,不匹配拒写并返回当前版本;有 `map_over` 并发就必然需要(Ch10) |
 | **P1** | `http_post` | NET | 与 fetch 分开注册(分级授权);**非幂等,必须 key-based 或 pre-check 两阶段**(Ch4) |
 | **P1** | `json_query` | READ(纯) | jq 式路径查询;"不要让模型在上下文里做聚合"(Ch2) |
 | **P1** | `web_search` | NET | **v1 P2 → P1**:书两处列为基础三件套(Ch4 主动发现 / Ch8 自进化入口);实现保持"无 key 则不注册" |
 | **P1** | `ask_human` | 特殊档 | **v1 P2 → P1**:Constrain 层唯一 std 落地点(失败阈值 + 高风险操作两触发,Ch1);与 `set_timer` 合并立项(共用 checkpoint/resume 通道) |
 | **P1** | `subagent_cancel` / `subagent_status` | 特殊档 | 引擎有 spawn/wait 无 cancel 工具面;"任务失去意义即止损"(Ch4),`race_first` 依赖它 |
-| **P1** | `shell_exec` 会话化 | EXEC | `session_id` 持久会话(保 cd/venv/环境变量)+ 后台执行/`shell_monitor` 形态(Ch5) |
-| **P1** | `skill_search` | READ | 按 description 检索已注册技能/工具;纯读零依赖;技能过百后"选择"变"发现"(Ch4/8) |
+| **P1** | `system.shell.exec` 会话化 | EXEC | `session_id` 持久会话(保 cd/venv/环境变量)+ 后台执行/`shell_monitor` 形态(Ch5) |
+| **P1** | `system.skill.search` | READ | 按 description 检索已注册技能/工具;纯读零依赖;技能过百后"选择"变"发现"(Ch4/8) |
 | **✅ 已落地** | `python_orchestrate` | EXEC(内核拦截式伪工具) | LLM 编排脚本在沙箱执行,脚本内经 syscall 中介调用白名单工具/子技能,中间变量不过上下文;实机验证:13 次工具调用 = 2 个 LLM 步、父帧只多 1 条 229 字节 tool result。见 [CODE-ORCHESTRATION.md](CODE-ORCHESTRATION.md);`python_exec` 保持纯计算不变 |
 | **P2** | `set_timer` | 特殊档 | one-shot + recurring;与 `ask_human` 同通道 |
 | **P2** | `memory_search` / `memory_write` | READ / WRITE | 服务版(M6);文件版记忆不等它,见 §4.7;**memory_write 须过与外部输入同等的信任审查**(Ch8 记忆投毒) |
 | **P2** | `read_document` | READ | PDF/Word 纯文本抽取(统一 file_type 参数);若因二进制依赖不收,在 §7 显式写明 |
 
-**明确不做成 tool**:随机数/UUID(复现性毒药)、fs_delete(shell_exec +
+**明确不做成 tool**:随机数/UUID(复现性毒药)、fs_delete(system.shell.exec +
 ToolGuard 覆盖)、数据库/云 SDK(entry point)。
 
 ---
@@ -145,7 +145,7 @@ ToolGuard 覆盖)、数据库/云 SDK(entry point)。
 
 组织:skillsets 机制(`<root>/std/skills.yaml`)。**渐进披露约定**(v2
 新增,Ch4):catalog 默认只向调用方暴露 `name` + `description`(≤200
-字符),完整 schema 由模型经 `fs_read` 按需读取——std 铺开后技能数
+字符),完整 schema 由模型经 `system.file.read` 按需读取——std 铺开后技能数
 将逼近"过百即选错"门槛,而 P0 的 fs 三件正好零成本实现薄目录。
 
 ### 4.1 `std/transform` —— 纯转换(code,sandbox,零 LLM)
@@ -177,7 +177,7 @@ v1 五条被四章从四个角度否定(保真度/约束优于指导/cache/消�
 | **下沉** | `date_style` → `transform/date_normalize` | inline 版可保留作引导,校验器是保障 |
 | **下沉** | `citation_style` → outputs 强制 `sources[]` + `transform/citation_check` | 同上 |
 | **删除** | `json_discipline` | 与内核 outputs 校验(`_check_output` 连败判帧失败)功能重叠,弱的一方挤占 SYSTEM |
-| **降级** | `zh_typography` → lint 报告形态 | 原 inline 形态会诱导模型在 `fs_edit.old_string` 里"规范化"引号,复现 Ch4 弯引号故障(模型无法自诊断);**禁止用于编辑参数构造场景** |
+| **降级** | `zh_typography` → lint 报告形态 | 原 inline 形态会诱导模型在 `system.file.edit.old_string` 里"规范化"引号,复现 Ch4 弯引号故障(模型无法自诊断);**禁止用于编辑参数构造场景** |
 
 流程约定(v2 新增):style 条目变更须在评测集跑回归(Ch6"prompt 改动
 如代码改动需 CI");消融与冻结快照 SKILL-INLINING v1 已内建,无需重做。
@@ -242,7 +242,7 @@ v1 七件保留:`summarize` `classify` `extract` `translate` `rewrite`
 
 ### 4.6 `std/web`
 
-`fetch_page`(**outputs 强制 `source` 字段,正文以
+`common.web.fetch_page`(**outputs 强制 `source` 字段,正文以
 `<external_content source=...>` 包裹**——每个感知工具都是注入面,Ch2)、
 `research_one`、`research_iterative`(v2 新增:检索 → 判充分 → 精化查询
 → 再检索;`research_one` 对应的 Non-Agentic RAG 在复杂问题上被证明会
@@ -277,7 +277,7 @@ v1 七件保留:`summarize` `classify` `extract` `translate` `rewrite`
 ### 4.9 `std/files`
 
 `progress_track` **孵化区 → P1**(结构化 JSON 进度文件 + resume 摘要;
-Ch8/9/10 三章独立要求同一原语,配 `fs_list` mtime + `now` 白拿卡死检测)、
+Ch8/9/10 三章独立要求同一原语,配 `system.file.list` mtime + `system.time.now` 白拿卡死检测)、
 `run_tests`(EXEC + 结构化解析;"tests pass 才算完成"是核心纪律)、
 `read_file_smart`(**行号/分页已上提为工具契约**,此处只剩 L0/L1/L2
 结构摘要)、`apply_patch`、`summarize_tree`(目录级摘要,对齐文件系统
@@ -289,11 +289,11 @@ Ch8/9/10 三章独立要求同一原语,配 `fs_list` mtime + `now` 白拿卡死
 
 | Python | Agent OS std | 形态 |
 |---|---|---|
-| os / pathlib | fs_list / fs_search / fs_read / fs_write | tool |
-| subprocess | shell_exec(会话化) | tool |
-| urllib / http | http_fetch / http_post / fetch_page | tool + skill |
+| os / pathlib | system.file.list / system.file.search / system.file.read / system.file.write | tool |
+| subprocess | system.shell.exec(会话化) | tool |
+| urllib / http | system.net.http_fetch / http_post / common.web.fetch_page | tool + skill |
 | json / re / textwrap / difflib | std/transform | code skill |
-| datetime | now | tool(内核管控) |
+| datetime | system.time.now | tool(内核管控) |
 | itertools / functools | std/combinators | code skill |
 | unittest / doctest | std/eval + run_tests | skill + tool |
 | logging 约定 / PEP8 | std/style(重构后) | inline + 校验器 |
@@ -304,14 +304,14 @@ Ch8/9/10 三章独立要求同一原语,配 `fs_list` mtime + `now` 白拿卡死
 ## 6. 路线(v2.1 重排)
 
 **P0(没有就干不了大多数事)**:
-**工作目录可配置**(§3.3,实机确认的头号阻塞)→ `fs_list` `fs_search`
-`now` `todo_write/update` → 工具契约面四字段 + 错误 hint 层 →
+**工作目录可配置**(§3.3,实机确认的头号阻塞)→ `system.file.list` `system.file.search`
+`system.time.now` `system.task.todo_write`/`system.task.todo_update` → 工具契约面四字段 + 错误 hint 层 →
 `retry_until` 验证器分层 + `judge` schema 升级 → style 重构(删/降/下沉)
 → `std/transform` 基础件 → `std/nlp` summarize/extract/classify。
 (`map_over` 移出 P0——编排脚本已覆盖,§4.5。)
 
 **P1**:`if_match` 乐观锁、`http_post`、`json_query`、`web_search`、
-`ask_human`、`subagent_cancel/status`、shell 会话化、`skill_search`、
+`ask_human`、`subagent_cancel/status`、shell 会话化、`system.skill.search`、
 来源标注三件(source 字段 + untrusted_content + injection_scan)、
 检索纯函数四件 + `contextualize_chunk`、`std/eval` 三件、组合子 budget +
 race_first/cross_check/reject_sample、`progress_track`、多模态最低限
@@ -373,7 +373,7 @@ std 边界 = 无外部服务依赖(除 http 通用协议)+ 无重型二进制依
 13. **编排友好性**(v2.1):供编排调用的工具,其返回值必须是**脚本可直接
     消费的结构**(不要为"给模型看"而做散文化包装);错误必须是可编程
     分支的 `{kind, retryable, hint}`,而不是只有一句人话。实机教训:
-    `shell_exec` 返回拼接字符串,脚本只能 `split()` 解析——这类工具在
+    `system.shell.exec` 返回拼接字符串,脚本只能 `split()` 解析——这类工具在
     编排场景下应提供结构化字段。
 
 judge 类技能附加门槛:金标准集(100-200 条)+ Cohen's kappa ≥ 0.7,
@@ -399,7 +399,7 @@ judge 类技能附加门槛:金标准集(100-200 条)+ Cohen's kappa ≥ 0.7,
 2. ~~组合子白名单参数化~~ → **已结案**(v2.1):编排桥消解了该问题
    (脚本是调用帧自己的代码,可调集合即本帧白名单),不需要为组合子
    引入通配或参数化白名单(§4.5);
-3. `now` 的 replay 回放 → 泛化为"可回放工具"通用标记(值得做成机制);
+3. `system.time.now` 的 replay 回放 → 泛化为"可回放工具"通用标记(值得做成机制);
 4. 能力别名:fast/cheap/strong 之外增加 **`family` 轴**(judge 异族
    约束的前提)与 **`vision` 轴**(image_ref 路由的前提);
 5. `working["_inline_caps"]` 是否转正为 FrameContext 字段(动冻结结构,

@@ -47,7 +47,7 @@ def _kimi_payload():
                 "tool_calls": [{
                     "id": "call_1",
                     "type": "function",
-                    "function": {"name": "python_exec", "arguments": '{"code": "print(42)"}'},
+                    "function": {"name": "system.python.exec", "arguments": '{"code": "print(42)"}'},
                 }],
             },
             "finish_reason": "tool_calls",
@@ -70,16 +70,16 @@ def test_kimi_chat_request_and_response_mapping():
     req = ChatRequest(
         model="kimi/kimi-k2-thinking",
         messages=[Message(role=Role.USER, content="四十加二?")],
-        tools=[{"name": "python_exec", "description": "执行代码", "parameters": {}}],
+        tools=[{"name": "system.python.exec", "description": "执行代码", "parameters": {}}],
     )
     resp = asyncio.run(p.chat(req))
 
     assert seen["url"] == f"{DEFAULT_BASE_URL}/chat/completions"
     assert seen["auth"] == "Bearer test-key"
     assert seen["body"]["model"] == "kimi-k2-thinking"
-    assert seen["body"]["tools"][0]["function"]["name"] == "python_exec"
+    assert seen["body"]["tools"][0]["function"]["name"] == "system.python.exec"
 
-    assert resp.message.tool_calls[0].name == "python_exec"
+    assert resp.message.tool_calls[0].name == "system.python.exec"
     assert resp.message.tool_calls[0].args == {"code": "print(42)"}
     assert resp.message.reasoning == "用户问了一个问题,需要推理……"
     assert resp.usage.prompt == 11 and resp.usage.completion == 7

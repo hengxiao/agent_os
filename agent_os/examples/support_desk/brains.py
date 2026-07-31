@@ -120,8 +120,8 @@ def _classify_text(text: str) -> tuple[str, float]:
 
 
 def _classify_ticket(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatResponse:
-    steps = [("get_ticket", {"ticket_id": inp["ticket_id"]})]
-    nxt = _next("classify_ticket", steps, results)
+    steps = [("project.support_desk.get_ticket", {"ticket_id": inp["ticket_id"]})]
+    nxt = _next("project.support_desk.classify_ticket", steps, results)
     if nxt is not None:
         return nxt
     ticket = results[0]["value"]
@@ -136,13 +136,13 @@ def _classify_ticket(inp: dict[str, Any], results: list[dict[str, Any]]) -> Chat
 
 def _assess_refund(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatResponse:
     steps: list[tuple[str, dict[str, Any]]] = [
-        ("skill__check_policy", {"category": inp["category"], "facts": inp["facts"]})
+        ("skill.project.support_desk.check_policy", {"category": inp["category"], "facts": inp["facts"]})
     ]
     if results and results[0]["value"]["eligible"]:
-        steps.append(("skill__compute_refund", {"order": inp["order"]}))
+        steps.append(("skill.project.support_desk.compute_refund", {"order": inp["order"]}))
         if len(results) >= 2:
-            steps.append(("search_policy", {"query": "auto approve limit"}))
-    nxt = _next("assess_refund", steps, results)
+            steps.append(("project.support_desk.search_policy", {"query": "auto approve limit"}))
+    nxt = _next("project.support_desk.assess_refund", steps, results)
     if nxt is not None:
         return nxt
     check = results[0]["value"]
@@ -208,11 +208,11 @@ def _draft_response(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatR
     needs_format = inp["amount_cents"] > 0
     steps: list[tuple[str, dict[str, Any]]] = []
     if needs_format:
-        steps.append(("skill__format_currency", {"amount_cents": inp["amount_cents"]}))
+        steps.append(("skill.project.support_desk.format_currency", {"amount_cents": inp["amount_cents"]}))
     if len(results) >= len(steps):
         amount_text = results[0]["value"]["text"] if needs_format else None
-        steps.append(("skill__review_response", {"response": _compose_response(inp, amount_text)}))
-    nxt = _next("draft_response", steps, results)
+        steps.append(("skill.project.support_desk.review_response", {"response": _compose_response(inp, amount_text)}))
+    nxt = _next("project.support_desk.draft_response", steps, results)
     if nxt is not None:
         return nxt
     amount_text = results[0]["value"]["text"] if needs_format else None
@@ -248,13 +248,13 @@ def _summary_args(
 
 def _handle_ticket(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatResponse:
     ticket_id = inp["ticket_id"]
-    steps: list[tuple[str, dict[str, Any]]] = [("skill__classify_ticket", {"ticket_id": ticket_id})]
+    steps: list[tuple[str, dict[str, Any]]] = [("skill.project.support_desk.classify_ticket", {"ticket_id": ticket_id})]
     if len(results) >= 1:
-        steps.append(("skill__gather_context", {"ticket_id": ticket_id}))
+        steps.append(("skill.project.support_desk.gather_context", {"ticket_id": ticket_id}))
     if len(results) >= 2:
         cat = results[0]["value"]["category"]
         steps.append(
-            ("skill__estimate_priority", {"category": cat, "facts": results[1]["value"]["facts"]})
+            ("skill.project.support_desk.estimate_priority", {"category": cat, "facts": results[1]["value"]["facts"]})
         )
     if len(results) >= 3:
         cat = results[0]["value"]["category"]
@@ -263,7 +263,7 @@ def _handle_ticket(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatRe
         if cat in _REFUNDISH:
             steps.append(
                 (
-                    "skill__assess_refund",
+                    "skill.project.support_desk.assess_refund",
                     {"category": cat, "facts": ctx["facts"], "order": ctx["order"]},
                 )
             )
@@ -280,59 +280,59 @@ def _handle_ticket(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatRe
                 if decision == "approve":
                     steps.append(
                         (
-                            "skill__process_refund",
+                            "skill.project.support_desk.process_refund",
                             {"ticket_id": ticket_id, "order": ctx["order"], "user": ctx["user"]},
                         )
                     )
                     if len(results) >= 5:
                         amount = results[4]["value"]["amount_cents"]
-                        steps.append(("skill__draft_response", {**draft, "amount_cents": amount}))
+                        steps.append(("skill.project.support_desk.draft_response", {**draft, "amount_cents": amount}))
                         if len(results) >= 6:
                             response = results[5]["value"]["response"]
                             steps.append(
-                                ("skill__notify_customer", _notify_args(ticket_id, ctx, response))
+                                ("skill.project.support_desk.notify_customer", _notify_args(ticket_id, ctx, response))
                             )
                             if len(results) >= 7:
                                 steps.append(
                                     (
-                                        "skill__write_case_summary",
+                                        "skill.project.support_desk.write_case_summary",
                                         _summary_args(
                                             ticket_id, cat, decision, amount, priority, ctx
                                         ),
                                     )
                                 )
                 elif decision == "reject":
-                    steps.append(("skill__draft_response", {**draft, "amount_cents": 0}))
+                    steps.append(("skill.project.support_desk.draft_response", {**draft, "amount_cents": 0}))
                     if len(results) >= 5:
                         response = results[4]["value"]["response"]
                         steps.append(
-                            ("skill__notify_customer", _notify_args(ticket_id, ctx, response))
+                            ("skill.project.support_desk.notify_customer", _notify_args(ticket_id, ctx, response))
                         )
                         if len(results) >= 6:
                             steps.append(
                                 (
-                                    "skill__write_case_summary",
+                                    "skill.project.support_desk.write_case_summary",
                                     _summary_args(ticket_id, cat, decision, 0, priority, ctx),
                                 )
                             )
                 else:  # escalate
                     steps.append(
                         (
-                            "skill__escalate_ticket",
+                            "skill.project.support_desk.escalate_ticket",
                             {"ticket_id": ticket_id, "reason": reasoning, "priority": priority},
                         )
                     )
                     if len(results) >= 5:
                         steps.append(
                             (
-                                "skill__write_case_summary",
+                                "skill.project.support_desk.write_case_summary",
                                 _summary_args(ticket_id, cat, decision, 0, priority, ctx),
                             )
                         )
         else:
             steps.append(
                 (
-                    "skill__draft_response",
+                    "skill.project.support_desk.draft_response",
                     {
                         "category": cat,
                         "decision": "none",
@@ -345,8 +345,8 @@ def _handle_ticket(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatRe
             )
             if len(results) >= 4:
                 response = results[3]["value"]["response"]
-                steps.append(("skill__notify_customer", _notify_args(ticket_id, ctx, response)))
-    nxt = _next("handle_ticket", steps, results)
+                steps.append(("skill.project.support_desk.notify_customer", _notify_args(ticket_id, ctx, response)))
+    nxt = _next("project.support_desk.handle_ticket", steps, results)
     if nxt is not None:
         return nxt
     return _finalize_ticket(ticket_id, results)
@@ -412,15 +412,15 @@ def _leaf_translate_en(inp: dict[str, Any]) -> dict[str, Any]:
 
 
 _ORCHESTRATORS = {
-    "handle_ticket": _handle_ticket,
-    "classify_ticket": _classify_ticket,
-    "assess_refund": _assess_refund,
-    "draft_response": _draft_response,
+    "project.support_desk.handle_ticket": _handle_ticket,
+    "project.support_desk.classify_ticket": _classify_ticket,
+    "project.support_desk.assess_refund": _assess_refund,
+    "project.support_desk.draft_response": _draft_response,
 }
 
 _LEAF_FINALS = {
-    "review_response": _leaf_review_response,
-    "translate_en": _leaf_translate_en,
+    "project.support_desk.review_response": _leaf_review_response,
+    "project.support_desk.translate_en": _leaf_translate_en,
 }
 
 

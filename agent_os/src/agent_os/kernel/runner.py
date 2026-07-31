@@ -5,7 +5,7 @@ S1 ask_supervisor 拦截/就地挂起/回答注入与 resume 重问,SUPERVISOR.m
 agent loop 顺序:safe point(run 中止标志)→ pre:step 检查点(verdict 仲裁,§5.2)
 → 强制压缩检查 → context.maintain/build → providers.chat →
 终止判断(outputs 校验 + verifier)→ 分发(pre:tool.call 可 Veto/Modify/Stop;
-工具走 Tool Registry,``skill__*`` 压栈)→ post:step(调用签名列表)→
+工具走 Tool Registry,``skill.*`` 压栈)→ post:step(调用签名列表)→
 记账与预算检查。弹栈前 ``pre:frame.pop`` 同步可否决(§3.1 pop())。
 
 硬失败传播边界(§3.2):MaxDepthExceeded / RunAborted(含 BudgetExceeded)不可被
@@ -499,7 +499,7 @@ class Kernel:
     async def _dispatch_call(
         self, call: ToolCall, frame: SkillFrame, manifest: SkillManifest
     ) -> dict[str, Any]:
-        if call.name.startswith("skill__"):
+        if call.name.startswith("skill.") or call.name.startswith("skill__"):
             return await self._invoke_skill(call, frame, manifest)
         if call.name == ORCHESTRATE_TOOL:
             return await self._run_orchestration(call, frame, manifest)
@@ -653,7 +653,7 @@ class Kernel:
                     ),
                 }
             counter["calls"] += 1
-            target = f"skill__{name}" if kind == "skill" else name
+            target = f"skill.{name}" if kind == "skill" else name
             payload = await self._dispatch_call(
                 ToolCall(id=f"{frame.frame_id[:8]}#{counter['calls']}", name=target, args=dict(args)),
                 frame,
@@ -791,7 +791,12 @@ class Kernel:
     async def _invoke_skill(
         self, call: ToolCall, frame: SkillFrame, manifest: SkillManifest
     ) -> dict[str, Any]:
-        name = call.name[len("skill__"):]
+        if call.name.startswith("skill."):
+            name = call.name[len("skill."):]
+        elif call.name.startswith("skill__"):
+            name = call.name[len("skill__"):]
+        else:
+            name = call.name
         if name not in manifest.permissions.skills:
             return {
                 "ok": False,

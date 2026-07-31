@@ -14,6 +14,10 @@
   上下文精确匹配,失败可整组回退——全部在内存应用成功后才统一落盘)。
 - ``summarize_tree``:目录树摘要,遍历复用 §W1 工具层同一棵 walker
   (默认尊重 .gitignore、跳过 .git/node_modules/.venv)。
+- ``lint_diff``:unified diff 常见问题快检(行尾空白/冲突标记/tab-space
+  缩进混用/EOF 缺换行),纯文本不触文件系统。
+- ``find_definition``:正则级符号定义搜索(def/class/赋值),文件单扫、
+  目录复用 §W1 walker 遍历 .py。
 
 **TRUSTED 档与空 permissions 的决策**:本包技能要读真实 workdir、起子进程,
 只能跑 TRUSTED(ctx 为 ``KernelLogicContext``)。manifest 不声明
@@ -641,3 +645,141 @@ async def summarize_tree(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
         "file_count": file_count,
         "dir_count": dir_count,
     }
+
+
+# ---------------------------------------------------------------------------
+# lint_diff —— unified diff 常见问题快检(纯文本扫描,不触文件系统)
+# ---------------------------------------------------------------------------
+
+#: 合并冲突标记(<<<<<<< / ======= / >>>>>>> 行首)
+_CONFLICT_MARKER_RE = re.compile(r"^(<{7}|={7}|>{7})")
+
+
+async def lint_diff(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """``{diff}`` → ``{issues: [{kind, file, line, message}]}``(行号为新文件侧)。
+
+    逐新增行检查行尾空白与冲突标记;按文件检查新增行 tab/空格缩进混用;
+    ``\\ No newline at end of file`` 落在新增/上下文行后记 missing_eof_newline。
+    宽松扫描:畸形行不报错,只报能确认的问题(语义审查留调用方)。
+    """
+    diff = input.get("diff")
+    if not isinstance(diff, str) or not diff.strip():
+        raise ValueError("diff 必填(unified diff 文本)")
+    issues: list[dict[str, Any]] = []
+    current_file: str | None = None
+    new_line = 0  # 新文件侧下一行行号(@@ 头给起点,+ 与 context 行推进)
+    prev_op = ""
+    tab_lines: list[int] = []
+    space_lines: list[int] = []
+
+    def flush_indent() -> None:
+        nonlocal tab_lines, space_lines
+        if tab_lines and space_lines and current_file is not None:
+            issues.append({
+                "kind": "mixed_indent",
+                "file": current_file,
+                "line": min(tab_lines[0], space_lines[0]),
+                "message": f"新增行 tab 与空格缩进混用(tab 首见 {tab_lines[0]},空格首见 {space_lines[0]})",
+            })
+        tab_lines, space_lines = [], []
+
+    for raw in diff.split("\n"):
+        if raw.startswith("+++ "):
+            flush_indent()
+            current_file = _strip_prefix(raw[4:])
+            prev_op = "+++"
+            continue
+        m = _HUNK_RE.match(raw)
+        if m:
+            new_line = int(m.group(3))
+            prev_op = "@@"
+            continue
+        op = raw[:1]
+        if op == "\\":
+            # "\ No newline at end of file":前一行属新增/上下文侧 → 新文件缺 EOF 换行
+            if prev_op in ("+", " ") and current_file is not None:
+                issues.append({
+                    "kind": "missing_eof_newline",
+                    "file": current_file,
+                    "line": new_line - 1,
+                    "message": "新文件末尾缺少换行符",
+                })
+            prev_op = op
+            continue
+        if op == "+":
+            text = raw[1:]
+            if text != text.rstrip(" \t"):
+                issues.append({
+                    "kind": "trailing_whitespace", "file": current_file,
+                    "line": new_line, "message": "新增行含行尾空白",
+                })
+            if _CONFLICT_MARKER_RE.match(text):
+                issues.append({
+                    "kind": "conflict_marker", "file": current_file,
+                    "line": new_line, "message": "新增行含合并冲突标记",
+                })
+            if text.startswith("\t"):
+                tab_lines.append(new_line)
+            elif text.startswith(" "):
+                space_lines.append(new_line)
+            new_line += 1
+        elif op == " ":
+            new_line += 1
+        prev_op = op
+    flush_indent()
+    return {"issues": issues}
+
+
+# ---------------------------------------------------------------------------
+# find_definition —— 正则级符号定义搜索(def/class/赋值)
+# ---------------------------------------------------------------------------
+
+
+def _definition_res(symbol: str) -> list[tuple[str, re.Pattern[str]]]:
+    esc = re.escape(symbol)
+    return [
+        ("def", re.compile(rf"^\s*(?:async\s+)?def\s+{esc}\b")),
+        ("class", re.compile(rf"^\s*class\s+{esc}\b")),
+        ("assign", re.compile(rf"^\s*{esc}\s*(?::[^=\n]+)?=(?!=)")),
+    ]
+
+
+async def find_definition(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """``{path, symbol}`` → ``{locations: [{file, line, kind, text}]}``(kind ∈ def/class/assign)。
+
+    path 为文件时只扫它;为目录时遍历其中全部 .py(复用 §W1 walker,
+    尊重 .gitignore、跳过 .git/node_modules/.venv)。line 从 1 起。
+    """
+    path = input.get("path")
+    symbol = input.get("symbol")
+    if not isinstance(path, str) or not path:
+        raise ValueError("path 必填(文件或目录,相对 workdir)")
+    if not isinstance(symbol, str) or not symbol.isidentifier():
+        raise ValueError(f"symbol 须为合法标识符(收到 {symbol!r})")
+    target = _resolve(ctx, path)
+    if not target.exists():
+        raise FileNotFoundError(f"NOT_FOUND: 路径不存在: {path}(用 fs_list 确认结构)")
+    if target.is_dir():
+        files = [
+            target / rel
+            for _abs, rel, is_dir in _walk_tree(target, include_ignored=False)
+            if not is_dir and rel.endswith(".py")
+        ]
+    else:
+        files = [target]
+    patterns = _definition_res(symbol)
+    locations: list[dict[str, Any]] = []
+    for file in sorted(files):
+        for n, line in enumerate(
+            file.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        ):
+            for kind, pattern in patterns:
+                if pattern.match(line):
+                    locations.append({
+                        "file": _display(ctx, file),
+                        "line": n,
+                        "kind": kind,
+                        "text": line.strip(),
+                    })
+                    break
+    return {"locations": locations}

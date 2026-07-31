@@ -11,14 +11,14 @@ from typing import Any
 
 async def fib_pair(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """编排者(§9.3):确定性控制流 + 按需调 LLM 技能。拼接 fib(a) 与 fib(b)。"""
-    a = await ctx.invoke("fib", {"n": input["a"]})
-    b = await ctx.invoke("fib", {"n": input["b"]})
+    a = await ctx.invoke("demo.fib", {"n": input["a"]})
+    b = await ctx.invoke("demo.fib", {"n": input["b"]})
     return {"combined": a["seq"] + b["seq"]}
 
 
 async def double_it(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    """经 ctx.call_tool 调 python_exec(Logic Kernel 沙箱)计算。"""
-    r = await ctx.call_tool("python_exec", {"code": f"result = {input['x']} * 2\nprint(result)"})
+    """经 ctx.call_tool 调 system.python.exec(Logic Kernel 沙箱)计算。"""
+    r = await ctx.call_tool("system.python.exec", {"code": f"result = {input['x']} * 2\nprint(result)"})
     assert r["ok"], r
     return {"doubled": r["value"]["result"]}
 
@@ -30,7 +30,7 @@ async def pure_add(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 async def naughty(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """调用白名单外的子技能(用于权限拒绝测试)。"""
-    await ctx.invoke("fib", {"n": 3})
+    await ctx.invoke("demo.fib", {"n": 3})
     return {"never": True}
 
 
@@ -41,8 +41,8 @@ async def bad_output(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 async def spawn_pair(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """后台帧编排(§3.4 spawn):父帧不挂起,两个子帧后台跑,wait 读终态。"""
-    f1 = await ctx.spawn("fib", {"n": input["a"]})
-    f2 = await ctx.spawn("fib", {"n": input["b"]})
+    f1 = await ctx.spawn("demo.fib", {"n": input["a"]})
+    f2 = await ctx.spawn("demo.fib", {"n": input["b"]})
     ra = await ctx.wait(f1)
     rb = await ctx.wait(f2)
     return {"combined": ra["seq"] + rb["seq"]}
@@ -50,7 +50,7 @@ async def spawn_pair(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 async def spawn_naughty(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """spawn 白名单外的子技能(用于权限拒绝测试)。"""
-    await ctx.spawn("fib", {"n": 2})
+    await ctx.spawn("demo.fib", {"n": 2})
     return {"never": True}
 
 

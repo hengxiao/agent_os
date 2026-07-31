@@ -3,16 +3,16 @@
 技能语义(见 ``skills/skills.yaml`` 的 ``fib`` 技能):
 
 - base case:n == 1 → ``[0]``;n == 2 → ``[0, 1]``;
-- 否则先 invoke 自己(伪工具 ``skill__fib``,n-1)拿到前 n-1 个数,
-  再调 ``python_exec``(Logic Kernel 沙箱)计算最后两数之和,追加到数列末尾。
+- 否则先 invoke 自己(伪工具 ``skill.demo.fib``,n-1)拿到前 n-1 个数,
+  再调 ``system.python.exec``(Logic Kernel 沙箱)计算最后两数之和,追加到数列末尾。
 
 本文件同时固定以下运行时约定(纵向切片实现必须满足):
 
 - 帧输入以首条 USER 消息进入帧上下文,``content == json.dumps(input)``;
-- 子技能伪工具名 = ``skill__<name>``,parameters 即该技能 ``inputs``;
+- 子技能伪工具名 = ``skill.<name>``,parameters 即该技能 ``inputs``;
 - 工具结果消息 ``role == TOOL``、``tool_call_id`` 与调用配对,
   ``content == json.dumps({"ok": ..., "value": ..., "error": ...})``;
-- ``python_exec`` 的结果 ``value`` 形状 = ``{"stdout": str, "stderr": str, "result": Any}``,
+- ``system.python.exec`` 的结果 ``value`` 形状 = ``{"stdout": str, "stderr": str, "result": Any}``,
   其中 ``result`` 为 stdout 最后一个非空行的 JSON 解析(不可解析则为 None);
 - assistant 最终答案 ``content == json.dumps(outputs 对象)``,无 ``tool_calls``;
 - 深度超限(``RunConfig.max_depth``)与输出校验连败属于硬失败,向调用方抛异常。
@@ -57,15 +57,15 @@ def run(kernel, skill: str, input: dict):
 def test_fib_5_returns_full_sequence():
     """端到端:递归 4 帧 + 每帧沙箱加法,数列正确。"""
     kernel = fib_kernel()
-    result = run(kernel, "fib", {"n": 5})
+    result = run(kernel, "demo.fib", {"n": 5})
     assert result == {"seq": [0, 1, 1, 2, 3]}
 
 
 def test_recursion_frame_tree_and_accounting():
-    """帧树形状:fib(5) 压 4 帧(5/4/3/2);python_exec 恰好 3 次;LLM 调用 10 次。"""
+    """帧树形状:fib(5) 压 4 帧(5/4/3/2);system.python.exec 恰好 3 次;LLM 调用 10 次。"""
     kernel = fib_kernel()
     seen = record_all(kernel)
-    result = run(kernel, "fib", {"n": 5})
+    result = run(kernel, "demo.fib", {"n": 5})
     assert result == {"seq": [0, 1, 1, 2, 3]}
 
     pushes = [s for s in seen if s.name == POST_FRAME_PUSH]
@@ -74,7 +74,7 @@ def test_recursion_frame_tree_and_accounting():
     depths = sorted(s.payload["depth"] for s in pushes)
     assert depths == [1, 2, 3, 4]
 
-    py_calls = [s for s in seen if s.name == POST_TOOL_CALL and s.payload.get("tool") == "python_exec"]
+    py_calls = [s for s in seen if s.name == POST_TOOL_CALL and s.payload.get("tool") == "system.python.exec"]
     assert len(py_calls) == 3
     logic_execs = [s for s in seen if s.name == POST_LOGIC_EXEC]
     assert len(logic_execs) == 3  # 沙箱真实执行(经 tool 的 bind 信号)
@@ -92,13 +92,13 @@ def test_context_isolation_between_frames():
         compression="off",
     )
     kernel = assemble(config, mock, FIB_SKILLS_YAML)
-    run(kernel, "fib", {"n": 5})
+    run(kernel, "demo.fib", {"n": 5})
 
     def n_of(req: ChatRequest) -> int:
         return json.loads(req.messages[1].content)["n"]
 
     reqs_5 = [r for r in mock.recorded if n_of(r) == 5]
-    assert len(reqs_5) == 3  # invoke 自己 → python_exec → 最终答案
+    assert len(reqs_5) == 3  # invoke 自己 → system.python.exec → 最终答案
 
     second = reqs_5[1]
     # 第二次请求时,帧(5)上下文只有:SYSTEM 指令 + USER 输入 + assistant 调用 + 一条工具结果
@@ -119,11 +119,11 @@ def test_depth_limit_aborts_run():
     """递归深度兜底:fib(4) 需要 3 层递归,max_depth=2 → 硬失败上抛。"""
     kernel = fib_kernel(max_depth=2)
     with pytest.raises(MaxDepthExceeded):
-        run(kernel, "fib", {"n": 4})
+        run(kernel, "demo.fib", {"n": 4})
 
 
 def test_output_validation_failure_aborts_run():
     """outputs schema 校验:连败 N 次(=2)后判帧失败,根帧上抛。"""
     kernel = fib_kernel(bad_brain)
     with pytest.raises(OutputValidationError):
-        run(kernel, "fib", {"n": 1})
+        run(kernel, "demo.fib", {"n": 1})

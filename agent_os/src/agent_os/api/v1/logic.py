@@ -1,6 +1,6 @@
 """Logic Kernel 契约(DESIGN.md §9.1/§9.3):逻辑代码的唯一执行点(类比 CPU/ALU)。
 
-两类代码都从这个咽喉点过:code 技能(§2.1)与 LLM 动态代码(``python_exec``,§9.4)。
+两类代码都从这个咽喉点过:code 技能(§2.1)与 LLM 动态代码(``system.python.exec``,§9.4)。
 动态代码永远走 SANDBOX,无配置项可关闭(§9.2)。
 """
 
@@ -82,7 +82,7 @@ class ExecUsage:
 
 
 #: 编排伪工具名(CODE-ORCHESTRATION.md §2.1):分发阶段被内核拦截,不进 Tool Registry
-#: ——syscall 仲裁需绑定调用帧与调用方 manifest,权限敏感的分发留在内核(同 ``skill__*``)
+#: ——syscall 仲裁需绑定调用帧与调用方 manifest,权限敏感的分发留在内核(同 ``skill.*``)
 ORCHESTRATE_TOOL = "python_orchestrate"
 
 #: 编排伪工具对 LLM 的呈现(ContextManager 在 manifest 声明且消融开关为 on 时追加)
@@ -91,7 +91,7 @@ ORCHESTRATE_SCHEMA: dict[str, Any] = {
     "description": (
         "在沙箱中执行编排脚本,脚本内可经 ctx 调用本技能白名单内的工具与子技能。"
         "Use when 需要循环/分支/批量调用工具(中间结果不占上下文,显著省 token);"
-        "Do not use when 只需一两次调用(直接调工具更简单)或纯计算(用 python_exec)。"
+        "Do not use when 只需一两次调用(直接调工具更简单)或纯计算(用 system.python.exec)。"
         "脚本约定:同步直线代码;"
         "``ctx.call_tool(name, args) -> {'ok','value','error'}``、"
         "``ctx.invoke(skill, input) -> 结果``(失败抛异常);"
@@ -123,7 +123,7 @@ class ExecRequest:
     ``dispatch_fn``(CODE-ORCHESTRATION.md):SANDBOX 档的**工具系统调用**回调——
     非 None 时沙箱进入服务循环,脚本内 ``ctx.call_tool``/``ctx.invoke`` 经管道
     陷入内核,由本回调代为分发(白名单/veto/信号/记账全部沿用 ``_dispatch_call``)。
-    None 则为纯计算档(``python_exec`` 与 v1 code 技能行为不变)。
+    None 则为纯计算档(``system.python.exec`` 与 v1 code 技能行为不变)。
     """
 
     source: str = ""  # 源码文本,或已加载 code 技能的入口引用

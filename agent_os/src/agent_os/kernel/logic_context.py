@@ -1,7 +1,7 @@
 """KernelLogicContext(DESIGN.md §9.3;M2):TRUSTED 模式注入 code 技能的 LogicContext。
 
 ``invoke`` / ``call_tool`` 全部回到内核分发路径(runner ``_dispatch_call``):
-白名单、信号、记账与 prompt 技能的 ``skill__*``/工具调用完全一致。差别只在形态:
+白名单、信号、记账与 prompt 技能的 ``skill.*``/工具调用完全一致。差别只在形态:
 ``invoke`` 直接返回子帧结果值(失败抛 AgentOSError 子类),``call_tool`` 返回
 ``{"ok", "value", "error"}`` 字典(与工具结果消息同构,权限拒绝折叠为字典不抛)。
 ``spawn`` / ``wait`` 为 §3.4 后台帧原语(委托 kernel.spawn_frame/wait_frame);
@@ -91,7 +91,7 @@ class KernelLogicContext:
                 f"子技能 {skill} 不在技能 {self._manifest.name} 的 skills 白名单"
             )
         payload = await self._kernel._dispatch_call(
-            ToolCall(id=uuid.uuid4().hex, name=f"skill__{skill}", args=dict(input)),
+            ToolCall(id=uuid.uuid4().hex, name=f"skill.{skill}", args=dict(input)),
             self._frame,
             self._manifest,
         )

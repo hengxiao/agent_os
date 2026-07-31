@@ -37,7 +37,7 @@ from tests.helpers.brains import fib_brain
 from tests.helpers.kernels import assemble
 
 SPAWN_YAML = """
-  - name: spawn_pair
+  - name: test.spawn_pair
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:spawn_pair
@@ -49,8 +49,8 @@ SPAWN_YAML = """
       type: object
       properties: { combined: { type: array, items: { type: integer } } }
       required: [combined]
-    permissions: { tools: [], skills: [fib], blackboard: [status] }
-  - name: spawn_naughty
+    permissions: { tools: [], skills: [demo.fib], blackboard: [status] }
+  - name: test.spawn_naughty
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:spawn_naughty
@@ -62,7 +62,7 @@ SPAWN_YAML = """
 """
 
 FIB_PART = """
-  - name: fib
+  - name: demo.fib
     version: 1.0.0
     kind: prompt
     description: 生成前 n 个菲波拉契数。
@@ -76,8 +76,8 @@ FIB_PART = """
         seq: { type: array, items: { type: integer } }
       required: [seq]
     permissions:
-      tools: [python_exec]
-      skills: [fib]
+      tools: [system.python.exec]
+      skills: [demo.fib]
     model: { prefer: ["mock/fib"] }
     limits: { max_steps: 8, timeout: 60 }
     prompt: |
@@ -182,7 +182,7 @@ def test_blackboard_write_signal():
 def test_spawn_and_wait_returns_results(tmp_path):
     """spawn 两个 fib 后台帧,wait 读终态,结果正确(§3.4)。"""
     kernel = _build(tmp_path)
-    result = asyncio.run(kernel.run("spawn_pair", {"a": 4, "b": 3}))
+    result = asyncio.run(kernel.run("test.spawn_pair", {"a": 4, "b": 3}))
     assert result == {"combined": [0, 1, 1, 2, 0, 1, 1]}
 
 
@@ -195,7 +195,7 @@ def test_spawn_children_frame_tree_and_status_channel(tmp_path):
         seen.append(sig)
 
     kernel.signals.subscribe("*", rec)
-    asyncio.run(kernel.run("spawn_pair", {"a": 4, "b": 3}))
+    asyncio.run(kernel.run("test.spawn_pair", {"a": 4, "b": 3}))
 
     pushes = [s for s in seen if s.name == POST_FRAME_PUSH]
     child_ids = [s.payload["frame_id"] for s in pushes if s.payload["depth"] == 2]
@@ -213,11 +213,11 @@ def test_spawn_permission_denied(tmp_path):
     """spawn 白名单外子技能 → SkillLoadError(§9.3 回调回内核分发路径)。"""
     kernel = _build(tmp_path)
     with pytest.raises(SkillLoadError, match="白名单"):
-        asyncio.run(kernel.run("spawn_naughty", {}))
+        asyncio.run(kernel.run("test.spawn_naughty", {}))
 
 
 def test_spawn_depth_limit(tmp_path):
     """spawn 的深度检查与 invoke 一致(§2.4 max_depth 兜底)。"""
     kernel = _build(tmp_path, max_depth=1)
     with pytest.raises(MaxDepthExceeded):
-        asyncio.run(kernel.run("spawn_pair", {"a": 2, "b": 2}))
+        asyncio.run(kernel.run("test.spawn_pair", {"a": 2, "b": 2}))

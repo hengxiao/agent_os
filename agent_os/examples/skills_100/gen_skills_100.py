@@ -25,6 +25,9 @@ import yaml
 
 OUT = Path(__file__).with_name("skills.yaml")
 
+#: 技能命名空间
+PREFIX = "project.skills_100"
+
 #: prompt 技能聚类(共 88 个):簇名 → 数量
 PROMPT_CLUSTERS: list[tuple[str, int]] = [
     ("ingest", 10),
@@ -40,15 +43,15 @@ PROMPT_CLUSTERS: list[tuple[str, int]] = [
 
 #: 各 prompt 簇声明的工具面(均为注册表内置工具,过 §6.1 权限闸门)
 CLUSTER_TOOLS: dict[str, list[str]] = {
-    "ingest": ["http_fetch"],
-    "clean": ["python_exec"],
-    "extract": ["fs_read"],
-    "analyze": ["python_exec"],
-    "report": ["fs_read"],
-    "qa": ["python_exec"],
-    "io": ["fs_read", "shell_exec"],
-    "notify": ["http_fetch"],
-    "audit": ["fs_read"],
+    "ingest": ["system.net.http_fetch"],
+    "clean": ["system.python.exec"],
+    "extract": ["system.file.read"],
+    "analyze": ["system.python.exec"],
+    "report": ["system.file.read"],
+    "qa": ["system.python.exec"],
+    "io": ["system.file.read", "system.shell.exec"],
+    "notify": ["system.net.http_fetch"],
+    "audit": ["system.file.read"],
 }
 
 #: 簇内链之外的额外依赖(跨簇边与菱形;全部指向已生成技能,方向保持无环)
@@ -73,9 +76,13 @@ _HEADER = """\
 """
 
 
+def _dotted(name: str) -> str:
+    return f"{PREFIX}.{name}"
+
+
 def _prompt_entry(name: str, cluster: str, index: int, deps: list[str]) -> dict[str, Any]:
     return {
-        "name": name,
+        "name": _dotted(name),
         "version": "1.0.0",
         "kind": "prompt",
         "description": (
@@ -87,7 +94,7 @@ def _prompt_entry(name: str, cluster: str, index: int, deps: list[str]) -> dict[
         "permissions": {"tools": CLUSTER_TOOLS[cluster], "skills": deps},
         "model": {"prefer": ["mock/ops"]},
         "limits": {"max_steps": 12, "timeout": 60},
-        "prompt": f"# skill: {name}\n处理输入 JSON,给出本步骤结果。\n",
+        "prompt": f"# skill: {_dotted(name)}\n处理输入 JSON,给出本步骤结果。\n",
     }
 
 
@@ -98,11 +105,11 @@ def _code_entry(
     outputs: dict[str, Any],
 ) -> dict[str, Any]:
     return {
-        "name": name,
+        "name": _dotted(name),
         "version": "1.0.0",
         "kind": "code",
         "description": (
-            f"深链环节 {name}。Use when 调试 mega_pipeline 纯 code 深链;"
+            f"深链环节 {_dotted(name)}。Use when 调试 mega_pipeline 纯 code 深链;"
             "Do not use when 需要 LLM 推理。"
         ),
         "handler": f"skills100_handlers:{name}",
@@ -117,11 +124,11 @@ def build_entries() -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for cluster, count in PROMPT_CLUSTERS:
         for i in range(count):
-            name = f"{cluster}_{i:02d}"
-            deps = ([f"{cluster}_{i + 1:02d}"] if i + 1 < count else []) + list(
-                EXTRA_EDGES.get(name, [])
-            )
-            entries.append(_prompt_entry(name, cluster, i, deps))
+            base = f"{cluster}_{i:02d}"
+            deps = ([_dotted(f"{cluster}_{i + 1:02d}")] if i + 1 < count else []) + [
+                _dotted(d) for d in EXTRA_EDGES.get(base, [])
+            ]
+            entries.append(_prompt_entry(base, cluster, i, deps))
     acc_in = {
         "type": "object",
         "properties": {"acc": {"type": "integer"}},
@@ -135,7 +142,7 @@ def build_entries() -> list[dict[str, Any]]:
     entries.append(
         _code_entry(
             "mega_pipeline",
-            ["chain_00"],
+            [_dotted("chain_00")],
             {
                 "type": "object",
                 "properties": {"seed": {"type": "integer"}},
@@ -145,7 +152,7 @@ def build_entries() -> list[dict[str, Any]]:
         )
     )
     for i in range(10):
-        nxt = f"chain_{i + 1:02d}" if i < 9 else "hub_agg"
+        nxt = _dotted(f"chain_{i + 1:02d}") if i < 9 else _dotted("hub_agg")
         entries.append(_code_entry(f"chain_{i:02d}", [nxt], acc_in, total_out))
     entries.append(_code_entry("hub_agg", [], acc_in, total_out))
     return entries

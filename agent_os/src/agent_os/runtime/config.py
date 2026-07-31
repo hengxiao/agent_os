@@ -10,7 +10,7 @@
                    python_orchestrate = true|false(编排伪工具,缺省 false)
     [tools.custom] → module = "pkg.mod:func":宿主自定义工具注册钩子,
                    importlib 加载后调用 ``func(registry)``(加载/注册失败抛 ConfigError);
-                   声明即授权,RunConfig 权限上限同步提到 EXEC(同 python_exec)
+                   声明即授权,RunConfig 权限上限同步提到 EXEC(同 system.python.exec)
     [skills]     → LocalFileSkillRegistry
     [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加)
     [supervisor] → timeout_s / on_timeout / default_answer(SUPERVISOR.md §6;TOML
@@ -149,18 +149,20 @@ def _providers(cfg: dict[str, Any]) -> list[Any]:
 
 
 def _sandbox_kernel(mode: str) -> Any | None:
-    """``tools.python_exec`` 后端(§2.1);docker 不可用回退 subprocess 并记 warning。"""
+    """``tools.python_exec`` 后端(§2.1);docker 不可用回退 subprocess 并记 warning。
+
+    注意:配置键仍为 ``python_exec``,但注册到工具表时 canonical 名为 ``system.python.exec``。"""
     if mode == "docker":
         try:
             return DockerPythonSandboxLogicKernel()
         except DockerUnavailableError as e:
-            _log.warning("docker 不可用,python_exec 回退 subprocess 沙箱: %s", e)
+            _log.warning("docker 不可用,system.python.exec 回退 subprocess 沙箱: %s", e)
             return PythonSandboxLogicKernel()
     if mode == "subprocess":
         return PythonSandboxLogicKernel()
     if mode == "off":
         return None
-    raise ConfigError(f"未知的 tools.python_exec 后端: {mode!r}(docker|subprocess|off)")
+    raise ConfigError(f"未知的 tools.python_exec 后端: {mode!r}(docker|subprocess|off);对应工具 canonical 名为 system.python.exec")
 
 
 def _sidecars(cfg: dict[str, Any]) -> list[Any]:
@@ -207,7 +209,8 @@ def build_kernel(
 
     缺省:无 ``[run]`` 用 RunConfig 默认;无 ``[providers]`` → 空 Manager
     (运行时才报"provider 前缀未注册");无 ``[skills]``/``[telemetry]``/``[sidecars]``
-    对应子系统不接线。启用 ``python_exec`` 即把 RunConfig 全局权限上限提到 EXEC
+    对应子系统不接线。启用 ``python_exec``(配置键)即把 RunConfig 全局权限上限提到 EXEC
+    (实际工具名 ``system.python.exec``)。
     (§8.2:工具自报 EXEC 级,不提上限必被分发层拒绝,配置即授权)。
 
     ``extra_sidecars``:配置文件之外由宿主追加的 sidecar(Web runner 的 stop
@@ -250,7 +253,7 @@ def build_kernel(
         except Exception as e:  # 宿主工具注册失败归配置装配错误(退出码 4)
             raise ConfigError(f"[tools.custom] 注册钩子执行失败: {e}") from e
         if run_cfg.tool_policy.max_permission < Permission.EXEC:
-            # 与 python_exec 同理(§8.2 配置即授权):宿主显式装配自定义工具,
+            # 与 system.python.exec 同理(§8.2 配置即授权):宿主显式装配自定义工具,
             # 工具自报等级可能达 EXEC,不提上限必被分发层拒绝
             run_cfg.tool_policy = ToolPolicy(max_permission=Permission.EXEC)
 

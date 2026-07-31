@@ -2,11 +2,11 @@
 
 固定约定:
 
-- memory 文件版四件:extract(会话→候选)/reconcile(候选×既有→ADD/UPDATE/DELETE/NOOP)/
-  consolidate(code,评分聚类剪枝)/check(code,约束交叉校验);
-- fetch_page:outputs 强制 `source` 字段,正文以 `<external_content source=...>` 包裹;
-- research_iterative:检索 → 判充分 → 精化查询 → 再检索(充分即停);
-- learn 三件:distill_experience/reflect_on_failure/verify_before_store(入库闸门)。
+- memory 文件版四件:common.memory.extract(会话→候选)/common.memory.reconcile(候选×既有→ADD/UPDATE/DELETE/NOOP)/
+  common.memory.consolidate(code,评分聚类剪枝)/common.memory.check(code,约束交叉校验);
+- common.web.fetch_page:outputs 强制 `source` 字段,正文以 `<external_content source=...>` 包裹;
+- common.research.iterative:检索 → 判充分 → 精化查询 → 再检索(充分即停);
+- learn 三件:common.learn.distill_experience/reflect_on_failure/common.memory.verify(入库闸门)。
 """
 
 from __future__ import annotations
@@ -70,21 +70,21 @@ def domain_brain(req: ChatRequest) -> ChatResponse:
         return respond({"negative_rules": ["不要在没有证据时声称完成"]})
     if "研究" in system:
         if calls == 0:
-            return call("fetch_page", {"url": "https://example.com/a"})
+            return call("common.web.fetch_page", {"url": "https://example.com/a"})
         if calls == 1:
             return respond({"sufficient": False, "refined_query": "更精确的问题"})
         if calls == 2:
-            return call("fetch_page", {"url": "https://example.com/b"})
+            return call("common.web.fetch_page", {"url": "https://example.com/b"})
         return respond({"answer": "综合答案", "sources": ["https://example.com/a", "https://example.com/b"]})
     if "调研" in system:
         if calls == 0:
-            return call("fetch_page", {"url": "https://example.com/a"})
+            return call("common.web.fetch_page", {"url": "https://example.com/a"})
         return respond({"answer": "单轮答案", "sources": ["https://example.com/a"]})
     return respond({"ok": True})
 
 
 def _register_mock_http(tools):
-    @tools.tool(permission=Permission.NET, timeout=5)
+    @tools.tool(name="system.net.http_fetch", permission=Permission.NET, timeout=5)
     async def http_fetch(url: str, max_bytes: int = 100_000) -> dict:
         """抓取 URL(测试 mock)。"""
         return {"status": 200, "content": f"<html><body>{url} 的正文内容,包含研究所需事实。</body></html>",
@@ -99,7 +99,7 @@ def _kernel(brain=domain_brain):
         KernelBuilder(RunConfig(model="mock/x", tool_policy=ToolPolicy(max_permission=Permission.EXEC), compression="off"))
         .providers(MockProvider(brain))
         .tools(tools)
-        .skills(LocalFileSkillRegistry(str(STD_DIR / "skills.yaml")))
+        .skills(LocalFileSkillRegistry(str(STD_DIR)))
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
         .build()
     )
@@ -115,12 +115,12 @@ def run(skill: str, input: dict):
 
 
 def test_memory_extract():
-    r = run("memory_extract", {"session": "用户说:以后日期都用 ISO。"})
+    r = run("common.memory.extract", {"session": "用户说:以后日期都用 ISO。"})
     assert r["candidates"] and r["candidates"][0]["fact"]
 
 
 def test_memory_reconcile_four_actions():
-    r = run("memory_reconcile", {
+    r = run("common.memory.reconcile", {
         "candidates": [{"fact": "用户偏好 ISO 日期"}],
         "existing": [{"fact": "用户偏好美式日期"}],
     })
@@ -134,12 +134,12 @@ def test_memory_consolidate_and_check():
         {"fact": "A 重要事实", "access_count": 9, "created_at": "2026-07-01"},
         {"fact": "B 陈旧琐事", "access_count": 0, "created_at": "2025-01-01"},
     ]
-    r = run("memory_consolidate", {"entries": entries})
+    r = run("common.memory.consolidate", {"entries": entries})
     facts = [e["fact"] for e in r["entries"]]
     assert "A 重要事实" in facts
     assert r.get("pruned"), "低价值条目应被标记剪枝"
 
-    bad = run("memory_check", {"entries": [
+    bad = run("common.memory.check", {"entries": [
         {"fact": "护照有效期 2030 年"},
         {"fact": "护照有效期 2020 年,已过期"},
     ]})
@@ -152,20 +152,20 @@ def test_memory_consolidate_and_check():
 
 
 def test_fetch_page_has_source_and_wrapping():
-    r = run("fetch_page", {"url": "https://example.com/a"})
+    r = run("common.web.fetch_page", {"url": "https://example.com/a"})
     assert r["source"] == "https://example.com/a"
     assert "<external_content" in r["content"] and "source=" in r["content"]
     assert "研究所需事实" in r["content"]
 
 
 def test_research_one():
-    r = run("research_one", {"query": "什么是 X"})
+    r = run("common.research.one", {"query": "什么是 X"})
     assert r["answer"]
     assert r["sources"] == ["https://example.com/a"]
 
 
 def test_research_iterative_refines_until_sufficient():
-    r = run("research_iterative", {"query": "X 的最新进展"})
+    r = run("common.research.iterative", {"query": "X 的最新进展"})
     assert r["answer"] == "综合答案"
     assert r["rounds"] >= 2, "不充分时必须精化再检索"
     assert r["sources"] == ["https://example.com/a", "https://example.com/b"]
@@ -177,23 +177,23 @@ def test_research_iterative_refines_until_sufficient():
 
 
 def test_distill_experience():
-    r = run("distill_experience", {"trajectory": "一次成功的调试过程……"})
+    r = run("common.learn.distill_experience", {"trajectory": "一次成功的调试过程……"})
     assert r["experience"] and r["experience"][0]["pattern"]
 
 
 def test_reflect_on_failure():
-    r = run("reflect_on_failure", {"failure": "声称完成但测试没跑"})
+    r = run("common.learn.reflect_on_failure", {"failure": "声称完成但测试没跑"})
     assert r["negative_rules"]
 
 
 def test_verify_before_store_gate():
-    ok = run("verify_before_store", {
+    ok = run("common.memory.verify", {
         "artifact": {"kind": "code_skill", "name": "x"},
         "replay_result": {"total": 45},
         "expected": {"total": 45},
     })
     assert ok["verdict"] == "pass"
-    bad = run("verify_before_store", {
+    bad = run("common.memory.verify", {
         "artifact": {"kind": "code_skill", "name": "x"},
         "replay_result": {"total": 44},
         "expected": {"total": 45},

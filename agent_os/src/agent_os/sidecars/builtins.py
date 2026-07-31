@@ -177,7 +177,7 @@ class ToolGuard:
     rules = ``list[(tool_name, arg_regex, reason)]``:``payload["tool"]`` 命中工具名
     且 ``arg_regex`` 在参数 JSON 中搜索命中 → ``Veto(reason)``,否则 ``Allow``。
 
-    能力上限声明:正则/关键字对 shell 组合爆炸无效,``shell_exec`` 的防护主体是
+    能力上限声明:正则/关键字对 shell 组合爆炸无效,``system.shell.exec`` 的防护主体是
     沙箱(§9.2)+ 权限(§8.2);语义解析器作为后续替换实现预留。
     """
 

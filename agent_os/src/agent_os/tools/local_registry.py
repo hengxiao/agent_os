@@ -6,7 +6,7 @@ sync 函数包 ``asyncio.to_thread``;§8.1 分发流水线全量实现(契约本
 
 §W0-1:``ToolDispatchContext.workdir``/``read_paths`` 把"每 run 临时目录"升级为可配置
 三分区(read_paths 只读 / workdir 读写 / 缺省临时目录);``resolve_work_path`` 是
-fs_read/fs_write/fs_edit/shell_exec 共用的统一路径解析器(三段判定,逃逸检查保留)。
+system.file.read/system.file.write/system.file.edit/system.shell.exec 共用的统一路径解析器(三段判定,逃逸检查保留)。
 
 §W1-3 replayable 回放:``ToolDispatchContext.replay_records`` 有记录时,``spec.replayable``
 工具按调用序弹出记录值返回而不执行(host replay 的接线留后续里程碑);§W1-4:
@@ -55,10 +55,16 @@ class _FunctionTool:
     函数返回 ``ToolResult`` 时直接透传(工具自行构造结构化错误),否则包成 ``ok=True``。
     """
 
-    def __init__(self, func: Callable, spec: ToolSpec) -> None:
+    def __init__(self, func: Callable, spec: ToolSpec, aliases: Iterable[str] | None = None) -> None:
         self.spec = spec
         self._func = func
         self._wants_ctx = "ctx" in inspect.signature(func).parameters
+        self.aliases = tuple(aliases or ())
+
+    def with_alias(self, alias: str) -> _FunctionTool:
+        """Return a copy of this tool registered under a different name."""
+        from dataclasses import replace
+        return _FunctionTool(self._func, replace(self.spec, name=alias), self.aliases)
 
     async def __call__(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         kwargs = {**args, "ctx": ctx} if self._wants_ctx else dict(args)
@@ -86,10 +92,11 @@ class LocalPythonToolRegistry:
         # 见 tools/std_web.py 模块 docstring 的 §6.1 闸门联动说明)
         from agent_os.tools.std_web import fetch_page_tool
 
-        self.register(fetch_page_tool(self))
+        self.register(fetch_page_tool(registry=self))
+        self.register_alias("fetch_page", "common.web.fetch_page")
 
     def tool(
-        self, *, permission: Permission = Permission.READ, timeout: float = 30.0, **spec_kw: Any
+        self, *, name: str | None = None, permission: Permission = Permission.READ, timeout: float = 30.0, **spec_kw: Any
     ) -> Callable:
         """§8.4 decorator:``@registry.tool(permission=Permission.NET, timeout=30)``。
 
@@ -97,7 +104,7 @@ class LocalPythonToolRegistry:
         """
 
         def decorator(func: Callable) -> Callable:
-            spec = derive_spec(func, permission=permission, timeout=timeout, **spec_kw)
+            spec = derive_spec(func, name=name, permission=permission, timeout=timeout, **spec_kw)
             self.register(_FunctionTool(func, spec))
             return func
 
@@ -105,6 +112,22 @@ class LocalPythonToolRegistry:
 
     def register(self, tool: Tool) -> None:
         self._tools[tool.spec.name] = tool
+        for alias in getattr(tool, "aliases", ()):
+            self._tools[alias] = tool.with_alias(alias)
+
+    def register_alias(self, alias: str, canonical: str) -> None:
+        """Register ``alias`` as an alternate name for an already-registered tool.
+
+        Used during the hierarchical naming migration to keep flat legacy names
+        working while emitting deprecation warnings.
+        """
+        target = self._tools.get(canonical)
+        if target is None:
+            raise KeyError(f"Cannot alias {alias!r}: canonical tool {canonical!r} not registered")
+        if isinstance(target, _FunctionTool):
+            self._tools[alias] = target.with_alias(alias)
+        else:
+            self._tools[alias] = target
 
     def has(self, name: str) -> bool:
         return name in self._tools
@@ -137,7 +160,7 @@ class LocalPythonToolRegistry:
         return self._run_states
 
     def bind_signals(self, bus: Any) -> None:
-        """KernelBuilder 装配钩子:给提供 ``bind()`` 的工具(如 python_exec)接信号总线。"""
+        """KernelBuilder 装配钩子:给提供 ``bind()`` 的工具(如 system.python.exec)接信号总线。"""
         for tool in self._tools.values():
             bind = getattr(tool, "bind", None)
             if callable(bind):
@@ -259,37 +282,46 @@ class LocalPythonToolRegistry:
     def with_builtins(
         cls, http_transport: httpx.AsyncBaseTransport | None = None
     ) -> LocalPythonToolRegistry:
-        """§14.2 组装示例入口:注册 §8.3 内置工具(fs_read/fs_write/fs_edit/shell_exec/http_fetch)
-        与 §W1 核心工具(fs_list/fs_search/now/todo_write/todo_update/skill_search)。
+        """§14.2 组装示例入口:注册 §8.3 内置工具(system.file.read/system.file.write/system.file.edit/system.shell.exec/system.net.http_fetch)
+        与 §W1 核心工具(system.file.list/system.file.search/system.time.now/system.task.todo_write/system.task.todo_update/system.skill.search)。
 
         何时用:单技能 agent 起步与测试的默认工具面;边界:fs 工具限定 run 工作目录(§2.2;
-        §W0-1 起可配 workdir/read_paths 分区),shell_exec 为一次性子进程(持久会话形态
-        后续里程碑),http_fetch 结果标记 ``untrusted_source``(§2.2 来源标记,注入防御);
+        §W0-1 起可配 workdir/read_paths 分区),system.shell.exec 为一次性子进程(持久会话形态
+        后续里程碑),system.net.http_fetch 结果标记 ``untrusted_source``(§2.2 来源标记,注入防御);
         ``http_transport`` 供测试注入 httpx MockTransport,不碰真实网络。
-        §W0-2:READ 档 fs_read 声明 idempotent/cacheable/concurrent_safe(两个拼写一并置位),
+        §W0-2:READ 档 system.file.read 声明 idempotent/cacheable/concurrent_safe(两个拼写一并置位),
         各工具 cost_hint 写量级(声明不强制)。
-        §W1(STDLIB-CATALOG):now 声明 ``replayable``(replay 语义见 dispatch);todo 双工具
-        持 run 级状态(``run_states``);skill_search 的 skills 数据源由 KernelBuilder
+        §W1(STDLIB-CATALOG):system.time.now 声明 ``replayable``(replay 语义见 dispatch);system.task.todo_* 双工具
+        持 run 级状态(``run_states``);system.skill.search 的 skills 数据源由 KernelBuilder
         经 ``bind_skills`` 注入(未装配时只检索工具面)。
+        Phase 3(library-design-plan §4.2/§4.4):system.file.stat(读/写决策前探查)/system.file.delete
+        (高危,confirm=True,仅文件与空目录)/system.file.mkdir(parents/exist_ok,幂等)/
+        system.net.http_request(非 GET 通用 HTTP,与 http_fetch 共用执行体);新工具无旧名,不设别名。
         """
         from agent_os.tools.builtins import (
             fs_edit,
             fs_read,
             fs_write,
             http_fetch_tool,
+            http_request_tool,
             shell_exec,
         )
         from agent_os.tools.std import (
+            fs_delete,
             fs_list,
+            fs_mkdir,
             fs_search,
+            fs_stat,
             now,
             skill_search_tool,
+            todo_read_tool,
             todo_update_tool,
             todo_write_tool,
         )
 
         reg = cls()
         reg.tool(
+            name="system.file.read",
             permission=Permission.READ,
             idempotent=True,
             cacheable=True,
@@ -297,12 +329,31 @@ class LocalPythonToolRegistry:
             concurrency_safe=True,
             cost_hint="~10ms",
         )(fs_read)
-        reg.tool(permission=Permission.WRITE, cost_hint="~10ms")(fs_write)
-        reg.tool(permission=Permission.WRITE, timeout=10.0, cost_hint="~10ms")(fs_edit)
-        reg.tool(permission=Permission.EXEC, cost_hint="~100ms 起,取决于命令")(shell_exec)
-        reg.register(http_fetch_tool(transport=http_transport))
+        reg.register_alias("fs_read", "system.file.read")
+        reg.tool(
+            name="system.file.write",
+            permission=Permission.WRITE,
+            cost_hint="~10ms",
+        )(fs_write)
+        reg.register_alias("fs_write", "system.file.write")
+        reg.tool(
+            name="system.file.edit",
+            permission=Permission.WRITE,
+            timeout=10.0,
+            cost_hint="~10ms",
+        )(fs_edit)
+        reg.register_alias("fs_edit", "system.file.edit")
+        reg.tool(
+            name="system.shell.exec",
+            permission=Permission.EXEC,
+            cost_hint="~100ms 起,取决于命令",
+        )(shell_exec)
+        reg.register_alias("shell_exec", "system.shell.exec")
+        reg.register(http_fetch_tool(name="system.net.http_fetch", transport=http_transport))
+        reg.register_alias("http_fetch", "system.net.http_fetch")
         # —— §W1 核心工具(契约字段同 READ 档统一声明,门槛见 tests/test_std_gate.py)——
         reg.tool(
+            name="system.file.list",
             permission=Permission.READ,
             idempotent=True,
             cacheable=True,
@@ -310,7 +361,9 @@ class LocalPythonToolRegistry:
             concurrency_safe=True,
             cost_hint="~20ms,取决于目录规模",
         )(fs_list)
+        reg.register_alias("fs_list", "system.file.list")
         reg.tool(
+            name="system.file.search",
             permission=Permission.READ,
             idempotent=True,
             cacheable=True,
@@ -319,8 +372,10 @@ class LocalPythonToolRegistry:
             timeout=60.0,  # 大目录树 + 单文件 2s 正则超时兜底,默认 30s 可能偏紧
             cost_hint="~50ms 起,取决于树规模与正则",
         )(fs_search)
+        reg.register_alias("fs_search", "system.file.search")
         # now 的 cacheable 是门槛统一声明(READ⇒cacheable);复现机制是 replayable,不是缓存
         reg.tool(
+            name="system.time.now",
             permission=Permission.READ,
             replayable=True,
             cacheable=True,
@@ -328,9 +383,40 @@ class LocalPythonToolRegistry:
             concurrency_safe=True,
             cost_hint="~1ms",
         )(now)
-        reg.register(todo_write_tool(reg.run_states))
-        reg.register(todo_update_tool(reg.run_states))
-        reg.register(skill_search_tool(reg))
+        reg.register_alias("now", "system.time.now")
+        reg.register(todo_write_tool(name="system.task.todo_write", run_states=reg.run_states))
+        reg.register_alias("todo_write", "system.task.todo_write")
+        reg.register(todo_update_tool(name="system.task.todo_update", run_states=reg.run_states))
+        reg.register_alias("todo_update", "system.task.todo_update")
+        reg.register(todo_read_tool(name="system.task.todo_read", run_states=reg.run_states))
+        reg.register_alias("todo_read", "system.task.todo_read")
+        reg.register(skill_search_tool(name="system.skill.search", registry=reg))
+        reg.register_alias("skill_search", "system.skill.search")
+        # —— Phase 3 补齐(library-design-plan §4.2/§4.4;新工具无旧名,不设别名)——
+        reg.tool(
+            name="system.file.stat",
+            permission=Permission.READ,
+            idempotent=True,
+            cacheable=True,
+            concurrent_safe=True,
+            concurrency_safe=True,
+            cost_hint="~5ms",
+        )(fs_stat)
+        # 高危删除:声明 confirm(两阶段语义),WRITE 档受帧白名单约束
+        reg.tool(
+            name="system.file.delete",
+            permission=Permission.WRITE,
+            confirm=True,
+            cost_hint="~5ms",
+        )(fs_delete)
+        # exist_ok 语义天然幂等
+        reg.tool(
+            name="system.file.mkdir",
+            permission=Permission.WRITE,
+            idempotent=True,
+            cost_hint="~5ms",
+        )(fs_mkdir)
+        reg.register(http_request_tool(name="system.net.http_request", transport=http_transport))
         return reg
 
 
@@ -344,7 +430,7 @@ def resolve_work_path(
     *,
     write: bool = False,
 ) -> Path | ToolResult:
-    """§W0-1 统一路径解析器(fs_read/fs_write/fs_edit/shell_exec 共用),三段判定:
+    """§W0-1 统一路径解析器(system.file.read/system.file.write/system.file.edit/system.shell.exec 共用),三段判定:
 
     ①路径在任一 read_path 下 → 只读区:读允许(**可在 workdir 之外**),
     ``write=True`` 拒绝(INVALID_ARGS);②路径在 workdir 下 → 读写;
@@ -401,7 +487,7 @@ def _json_schema(annotation: Any) -> dict[str, Any]:
     return {}
 
 
-def derive_spec(func: Callable, *, permission: Permission, timeout: float, **spec_kw: Any) -> ToolSpec:
+def derive_spec(func: Callable, *, name: str | None = None, permission: Permission, timeout: float, **spec_kw: Any) -> ToolSpec:
     """从函数签名推导 ToolSpec(§8.4 推导规则)。
 
     约定:名为 ``ctx`` 的参数视为 ``ToolContext`` 注入点,不进 schema(见 ``_FunctionTool``)。
@@ -409,19 +495,19 @@ def derive_spec(func: Callable, *, permission: Permission, timeout: float, **spe
     hints = typing.get_type_hints(func)
     properties: dict[str, Any] = {}
     required: list[str] = []
-    for name, param in inspect.signature(func).parameters.items():
-        if name == "ctx":
+    for param_name, param in inspect.signature(func).parameters.items():
+        if param_name == "ctx":
             continue
-        properties[name] = _json_schema(hints.get(name, str))
+        properties[param_name] = _json_schema(hints.get(param_name, str))
         if param.default is inspect.Parameter.empty:
-            required.append(name)
+            required.append(param_name)
     # 整段 docstring → description(§8.4/§8.1):首段是"做什么",而 "Use when /
     # Do not use when" 与错误语义写在后续段落——只取首段会把路由指引丢掉,
     # 模型据以选工具的正是后者(书 Ch4:选错工具时先查工具描述)。
     # 描述进静态前缀,长一点不破 KV cache(§7.4 不变量 5)。
     description = inspect.getdoc(func) or ""
     return ToolSpec(
-        name=func.__name__,
+        name=name or func.__name__,
         description=description,
         parameters={"type": "object", "properties": properties, "required": required},
         permission=permission,

@@ -23,7 +23,7 @@ pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
 SKILLS_YAML = """
 skills:
-  - name: date_style
+  - name: test.date_style
     version: 1.0.0
     kind: prompt
     inline: true
@@ -40,7 +40,7 @@ skills:
     model: { prefer: ["mock/x"] }
     prompt: |
       输出中出现日期时,一律规范为 ISO 8601(YYYY-MM-DD)。
-  - name: report_writer
+  - name: test.report_writer
     version: 1.0.0
     kind: prompt
     description: 写简报。Use when 需要产出带日期的简报。
@@ -52,7 +52,7 @@ skills:
       type: object
       properties: { report: { type: string } }
       required: [report]
-    permissions: { tools: [], skills: [date_style] }
+    permissions: { tools: [], skills: [test.date_style] }
     model: { prefer: ["mock/x"] }
     limits: { max_steps: 6 }
     prompt: |
@@ -91,13 +91,13 @@ def writer_brain(req):
             finish_reason="stop", usage=ChatUsage(prompt=1, completion=1))
     tools = {t["name"] for t in req.tools}
     called = any(
-        tc.name == "skill__date_style"
+        tc.name == "skill.test.date_style"
         for m in req.messages if m.role is Role.ASSISTANT for tc in m.tool_calls
     )
-    if not called and "skill__date_style" in tools:
+    if not called and "skill.test.date_style" in tools:
         return ChatResponse(
             message=Message(role=Role.ASSISTANT,
-                            tool_calls=[ToolCall(id="c1", name="skill__date_style", args={"text": "x"})]),
+                            tool_calls=[ToolCall(id="c1", name="skill.test.date_style", args={"text": "x"})]),
             finish_reason="tool_calls", usage=ChatUsage(prompt=1, completion=1))
     return ChatResponse(
         message=Message(role=Role.ASSISTANT, content=json.dumps({"report": "ok"})),
@@ -118,10 +118,10 @@ def _client(tmp_path: Path) -> TestClient:
 
 def test_skill_detail_and_summary_expose_inline(tmp_path):
     client = _client(tmp_path)
-    detail = client.get("/api/skills/date_style").json()
+    detail = client.get("/api/skills/test.date_style").json()
     assert detail["inline"] is True
     summary = client.get("/api/skills").json()
-    assert next(s for s in summary if s["name"] == "date_style")["inline"] is True
+    assert next(s for s in summary if s["name"] == "test.date_style")["inline"] is True
 
 
 def test_overrides_inline_on_off_ablation(tmp_path):
@@ -130,7 +130,7 @@ def test_overrides_inline_on_off_ablation(tmp_path):
 
     r_on = client.post(
         "/api/runs",
-        json={"skill": "report_writer", "input": {"topic": "t"}, "wait": True},
+        json={"skill": "test.report_writer", "input": {"topic": "t"}, "wait": True},
     )
     assert r_on.json()["status"] == "done"
     frames_on = client.get(f"/api/runs/{r_on.json()['run_id']}").json()["frames"]
@@ -138,7 +138,7 @@ def test_overrides_inline_on_off_ablation(tmp_path):
 
     r_off = client.post(
         "/api/runs",
-        json={"skill": "report_writer", "input": {"topic": "t"},
+        json={"skill": "test.report_writer", "input": {"topic": "t"},
               "wait": True, "overrides": {"inline": "off"}},
     )
     assert r_off.json()["status"] == "done"

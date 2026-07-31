@@ -1,0 +1,175 @@
+skills:
+- name: common.research.one
+  version: 1.0.0
+  kind: prompt
+  description: '单轮检索调研:抓一页最相关的网页,据其正文回答问题并给出来源。 Use when 问题一次检索即可答(事实型/定义型),如 {"query":
+    "什么是 X"} → {"answer": "……", "sources": ["https://example.com/a"]}; Do not use
+    when 问题复杂、单页大概率答不全(用 research_iterative—— 单轮检索在复杂问题上被证明会漏关键信息)或不需要来源。sources 逐项
+    来自工具结果的 source 字段,不凭空编造。'
+  inputs:
+    type: object
+    properties:
+      query:
+        type: string
+        description: 调研问题,如 '什么是 X'
+    required:
+    - query
+  outputs:
+    type: object
+    properties:
+      answer:
+        type: string
+        description: 基于抓取正文的回答
+      sources:
+        type: array
+        items:
+          type: string
+        description: 实际抓取的页面 URL(逐项来自 source 字段)
+    required:
+    - answer
+    - sources
+  permissions:
+    tools:
+    - common.web.fetch_page
+  prompt: '你是单轮调研助手。输入 JSON 在第一条用户消息:字段 query 为一个问题。
+
+    流程:调用一次 common.web.fetch_page 抓取与问题最相关的一页,据其正文给出回答;以抓取到的材料为准,不凭空作答。
+
+    只输出最终答案 JSON:字符串字段 answer(基于正文的回答)与字符串数组字段 sources(实际抓取的页面 URL,逐项来自工具结果的 source
+    字段)。
+
+    '
+- name: common.research.iterative
+  version: 1.0.0
+  kind: code
+  description: '迭代式研究:检索 → 自评(sufficient/refined_query)→ 精化 → 再检索, 充分即停(默认 ≤3 轮)。Use
+    when 复杂问题单页答不全、需要多轮检索综合, 如 {"query": "X 的最新进展"} → {"answer": "综合答案", "sources":
+    [...], "rounds": 2}; Do not use when 一次检索即可答(用 research_one 更便宜)或不需要来源。 code 形态经
+    ctx.chat 自驾驶协议(模型管判断,驱动方管推进与轮次记账); 返回 {answer, sources, rounds}。'
+  inputs:
+    type: object
+    properties:
+      query:
+        type: string
+        description: 研究问题,如 'X 的最新进展'
+      max_rounds:
+        type: integer
+        description: 检索轮次上限(>= 1,缺省 3)
+    required:
+    - query
+  outputs:
+    type: object
+    properties:
+      answer:
+        type: string
+        description: 综合回答(未收敛时为说明文本)
+      sources:
+        type: array
+        items:
+          type: string
+        description: 实际采用的页面 URL
+      rounds:
+        type: integer
+        description: 实际执行的检索(fetch_page)次数
+    required:
+    - answer
+    - sources
+    - rounds
+  permissions:
+    tools:
+    - common.web.fetch_page
+  limits:
+    timeout: 300
+  handler: web_handlers:research_iterative
+- name: common.research.source_rank
+  version: 1.0.0
+  kind: code
+  description: '按与 query 的关键词重叠(BM25,与 common.retrieval.bm25_score 同一口径)给
+    来源排序。Use when 抓取了一批候选页面/文档要挑最相关的先读,如 sources=[{''url'':
+    ''https://ex.com/a'',''text'':''...''}] + query=''X 的最新进展'' → ranked 降序;Do
+    not use when 需要 dense/语义检索(向量检索出 std 边界)。来源条目 id 缺省回落 url、
+    text 缺省回落 title。返回 {"ranked": [{"id", "score"}]} 降序,同分按 id 字典序。'
+  inputs:
+    type: object
+    properties:
+      sources:
+        type: array
+        items:
+          type: object
+          properties:
+            id:
+              description: 来源标识(缺省回落 url)
+            url:
+              description: 来源 URL(id 缺省时充当标识)
+            text:
+              type: string
+              description: 来源正文(缺省回落 title)
+            title:
+              type: string
+              description: 来源标题(text 缺省时充当文本)
+        description: 候选来源 [{id|url, text|title}]
+      query:
+        type: string
+        description: 排序基准查询,如 'X 的最新进展'
+      k:
+        type: integer
+        description: 只返回前 k 名(可选)
+    required:
+    - sources
+    - query
+  outputs:
+    type: object
+    properties:
+      ranked:
+        type: array
+        items:
+          type: object
+          properties:
+            id:
+              description: 来源标识
+            score:
+              type: number
+              description: BM25 得分
+  permissions: {}
+  handler: web_handlers:source_rank
+- name: common.research.report
+  version: 1.0.0
+  kind: prompt
+  description: '组装最终研究报告:按大纲组织已收集的发现,标注来源。Use when 调研收尾要把
+    outline + findings 合成结构化报告,如 {"outline": "1. 背景\n2. 结论", "findings":
+    [{"fact": "...", "source": "https://ex.com/a"}]} → {"report": "markdown 报告"};Do
+    not use when 还要补检索(先用 research_one/research_iterative 收齐材料,本技能不
+    抓新页面)。报告只依据给定 findings,不新增无来源断言。'
+  inputs:
+    type: object
+    properties:
+      outline:
+        type: string
+        description: 报告大纲(章节清单,纯文本)
+      findings:
+        type: array
+        items:
+          type: object
+        description: 已收集发现 [{fact, source?}](source 逐项来自工具结果的 source 字段)
+    required:
+    - outline
+    - findings
+  outputs:
+    type: object
+    properties:
+      report:
+        type: string
+        description: 按大纲组织的 markdown 报告(断言带来源标注)
+    required:
+    - report
+  permissions: {}
+  prompt: '你是研究报告撰写助手。输入 JSON 在第一条用户消息:字段 outline 为报告大纲(章节清单),
+    findings 为已收集的发现列表(每项含 fact,可能含 source URL)。
+
+    按 outline 的章节组织 findings 写成 markdown 报告:每个断言标注来源(给出对应 source
+    URL);findings 覆盖不到的章节如实标注"未收集到相关材料";不新增 findings 之外的
+    无来源断言。
+
+    只输出最终答案 JSON:字符串字段 report(markdown 报告全文)。
+
+    '

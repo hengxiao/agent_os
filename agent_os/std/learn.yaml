@@ -1,0 +1,78 @@
+skills:
+- name: common.learn.distill_experience
+  version: 1.0.0
+  kind: prompt
+  description: '从任务轨迹蒸馏可迁移经验:找反复出现、跨任务可复用的模式,舍弃一次性 细节与运气成分。Use when 一次任务跑完(尤其成功的)要沉淀方法论,如
+    {"trajectory": "一次成功的调试过程……"} → {"experience": [{"pattern": "先验证再写入", "transferability":
+    "high"}]}; Do not use when 要从失败中提取禁令(用 reflect_on_failure)或要逐字 保留轨迹(那是 trace/记忆的事)。返回
+    {experience: [{pattern, transferability}]}。'
+  inputs:
+    type: object
+    properties:
+      trajectory:
+        type: string
+        description: 一次任务的执行轨迹(步骤/决策的叙述)
+    required:
+    - trajectory
+  outputs:
+    type: object
+    properties:
+      experience:
+        type: array
+        items:
+          type: object
+          properties:
+            pattern:
+              type: string
+              description: 可复用模式一句话
+            transferability:
+              type: string
+              enum:
+              - high
+              - medium
+              - low
+              description: 可迁移度
+        description: 蒸馏出的经验条目
+    required:
+    - experience
+  permissions: {}
+  prompt: '你是经验蒸馏器。输入 JSON 在第一条用户消息:字段 trajectory 为一次任务的执行轨迹。
+
+    把轨迹蒸馏成可迁移经验:找出反复出现、跨任务可复用的模式,舍弃一次性细节与运气成分;每条模式都要能指导下一次任务。
+
+    只输出最终答案 JSON:对象数组字段 experience,每项含 pattern(模式一句话)与 transferability(可迁移度:high /
+    medium / low)。
+
+    '
+- name: common.learn.reflect_on_failure
+  version: 1.0.0
+  kind: prompt
+  description: '失败反思:挖根因并沉淀为负向规则(以后不得再犯的具体禁令),每条可执行、 可检查,不写空泛口号。Use when 一次任务失败/被打回后要防止再犯,如
+    {"failure": "声称完成但测试没跑"} → {"negative_rules": ["不要在没有证据时声称完成"]}; Do not use when
+    要从成功轨迹提炼模式(用 distill_experience)或要修复 失败本身(本技能只产规则,不改代码)。返回 {negative_rules: [str]}。'
+  inputs:
+    type: object
+    properties:
+      failure:
+        type: string
+        description: 失败经过的描述
+    required:
+    - failure
+  outputs:
+    type: object
+    properties:
+      negative_rules:
+        type: array
+        items:
+          type: string
+        description: 负向规则(禁令)数组
+    required:
+    - negative_rules
+  permissions: {}
+  prompt: '你是失败反思器。输入 JSON 在第一条用户消息:字段 failure 为一次失败的经过描述。
+
+    反思失败的根因(不是表面现象),沉淀为负向规则——以后不得再犯的具体禁令;每条规则要可执行、可检查,不写"以后要细心"这类空泛口号。
+
+    只输出最终答案 JSON:字符串数组字段 negative_rules。
+
+    '

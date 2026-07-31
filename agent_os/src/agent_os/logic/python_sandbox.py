@@ -299,5 +299,5 @@ class PythonSandboxLogicKernel:
         if module_mode or orchestrate_mode:
             value, body = _parse_driver_stdout(stdout)
             return ExecResult(value=value, stdout=body, stderr=stderr, usage=usage)
-        # result 解析(stdout 最后一行 JSON)由 python_exec 工具层做(§9.4)
+        # result 解析(stdout 最后一行 JSON)由 system.python.exec 工具层做(§9.4)
         return ExecResult(value=stdout, stdout=stdout, stderr=stderr, usage=usage)

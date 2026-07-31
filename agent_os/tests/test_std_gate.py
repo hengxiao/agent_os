@@ -122,11 +122,11 @@ def _std_manifests():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1] / "skills" / "std"
-    if not (root / "skills.yaml").is_file():
+    if not root.is_dir() or not any(root.glob("*.yaml")):
         return None
     from agent_os.skills.local_file import LocalFileSkillRegistry
 
-    return LocalFileSkillRegistry(str(root / "skills.yaml")).manifests()
+    return LocalFileSkillRegistry(str(root)).manifests()
 
 
 def test_std_skills_conform_to_gate() -> None:

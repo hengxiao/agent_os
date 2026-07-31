@@ -1,0 +1,114 @@
+skills:
+- name: common.web.fetch_page
+  version: 1.0.0
+  kind: code
+  description: '抓取网页并提取正文(注入隔离版):正文去标签清洗后以 <external_content source="..."> 包裹,outputs
+    强制 source 字段可溯。 Use when 要把网页内容喂给模型做摘要/问答/调研,如 {"url": "https://ex.com/a"} → {"source":
+    "https://ex.com/a", "content": "<external_content ...>", "status": 200}; Do not
+    use when 需要原始 HTML 结构(用 http_fetch)或登录态页面。超长正文 截断并显式标注,全文 spill 至 blob(spill_ref)。技能面是同名工具的薄适配
+    (逻辑在工具层一份),NET 级,permissions.tools [fetch_page]。'
+  inputs:
+    type: object
+    properties:
+      url:
+        type: string
+        description: 目标页面 URL,如 'https://example.com/a'
+      max_chars:
+        type: integer
+        description: 正文保留上限(字符),超出截断并 spill;缺省 20000
+    required:
+    - url
+  outputs:
+    type: object
+    properties:
+      source:
+        type: string
+        description: 原始 URL(契约强制,来源可溯)
+      content:
+        type: string
+        description: 以 <external_content source=...> 包裹的正文
+      truncated:
+        type: boolean
+        description: 是否发生截断(http 层或正文层)
+      status:
+        type: integer
+        description: HTTP 状态码
+      spill_ref:
+        type: string
+        description: 正文超长时全文的 blob 引用
+    required:
+    - source
+    - content
+    - truncated
+    - status
+  permissions:
+    tools:
+    - common.web.fetch_page
+  handler: web_handlers:fetch_page
+- name: common.web.parse_html
+  version: 1.0.0
+  kind: code
+  description: '纯本地 HTML 解析:正文清洗(与 common.web.fetch_page 同一口径)、链接抽取、
+    标题提取。Use when 已有 HTML 文本(抓回的页面/测试夹具)要取正文或结构,如 {"html":
+    "<title>t</title><a href=''/a''>x</a>"} → {"text": ..., "links": ["/a"], "title":
+    "t"};Do not use when 还没抓到 HTML(先 fetch_page)或需要完整 DOM 查询(CSS
+    选择器超出本技能,正则级解析)。返回 {"text", "links", "title"}。'
+  inputs:
+    type: object
+    properties:
+      html:
+        type: string
+        description: HTML 文本
+    required:
+    - html
+  outputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 去 script/style 与标签、实体反转义、折叠空白后的正文
+      links:
+        type: array
+        items:
+          type: string
+        description: 全部 <a href> 值(去重保序,保持原始形态)
+      title:
+        type: string
+        description: <title> 文本(无则空串)
+    required:
+    - text
+    - links
+    - title
+  permissions: {}
+  handler: web_handlers:parse_html
+- name: common.web.extract_links
+  version: 1.0.0
+  kind: code
+  description: '从 HTML 抽取链接并把相对链接转绝对(urljoin)。Use when 要在抓取流程里发现
+    下一跳 URL,如 html 含 <a href=''/docs''> + base_url=''https://ex.com/a'' → links 含
+    ''https://ex.com/docs'';Do not use when 还要正文/标题(用 parse_html)或需要按
+    锚文本过滤(本技能只回 URL)。链接去重保序。返回 {"links": [...]}。'
+  inputs:
+    type: object
+    properties:
+      html:
+        type: string
+        description: HTML 文本
+      base_url:
+        type: string
+        description: 相对链接的解析基准 URL
+    required:
+    - html
+    - base_url
+  outputs:
+    type: object
+    properties:
+      links:
+        type: array
+        items:
+          type: string
+        description: 绝对化后的链接(去重保序)
+    required:
+    - links
+  permissions: {}
+  handler: web_handlers:extract_links

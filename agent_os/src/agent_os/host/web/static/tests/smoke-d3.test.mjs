@@ -19,7 +19,7 @@ const FIB_SUMMARY = {
   version: "1.0.0",
   kind: "prompt",
   description: "生成前 n 个菲波拉契数。Use when 需要菲波拉契数列。",
-  permissions: { tools: ["python_exec"], skills: ["fib"], blackboard: [] },
+  permissions: { tools: ["system.python.exec"], skills: ["fib"], blackboard: [] },
 };
 const FIB_DETAIL = {
   ...FIB_SUMMARY,

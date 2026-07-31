@@ -56,15 +56,15 @@ from agent_os.tools.local_registry import LocalPythonToolRegistry
 
 LOOPER_YAML = """
 skills:
-  - name: looper
+  - name: test.looper
     version: 1.0.0
     kind: prompt
     inputs: { type: object, properties: {} }
     outputs: { type: object }
-    permissions: { tools: [python_exec, shell_exec], skills: [] }
+    permissions: { tools: [system.python.exec, system.shell.exec], skills: [] }
     model: { prefer: ["mock/loop"] }
     limits: { max_steps: 50 }
-    prompt: 测试用 looper 技能。
+    prompt: 测试用 test.looper 技能。
 """
 
 
@@ -75,7 +75,7 @@ def _yaml(tmp_path) -> str:
 
 
 def _tools() -> LocalPythonToolRegistry:
-    """注册 looper 声明的全部工具(§6.1 装配期权限闸门要求声明即存在)。"""
+    """注册 test.looper 声明的全部工具(§6.1 装配期权限闸门要求声明即存在)。"""
     tools = LocalPythonToolRegistry.with_builtins()
     tools.register(python_exec_tool(PythonSandboxLogicKernel()))
     return tools
@@ -101,7 +101,7 @@ def _build(tmp_path, *sidecars, brain, cost: float = 0.0):
 
 
 def run(kernel):
-    return asyncio.run(kernel.run("looper", {}))
+    return asyncio.run(kernel.run("test.looper", {}))
 
 
 # ---------------------------------------------------------------------------
@@ -110,13 +110,13 @@ def run(kernel):
 
 
 def loop_brain(cost: float = 0.0):
-    """永远以相同参数重复调 python_exec,永不给出最终答案。"""
+    """永远以相同参数重复调 system.python.exec,永不给出最终答案。"""
 
     def brain(req: ChatRequest) -> ChatResponse:
         return ChatResponse(
             message=Message(
                 role=Role.ASSISTANT,
-                tool_calls=[ToolCall(id="c1", name="python_exec", args={"code": "print(1)"})],
+                tool_calls=[ToolCall(id="c1", name="system.python.exec", args={"code": "print(1)"})],
             ),
             finish_reason="tool_calls",
             usage=ChatUsage(prompt=1, completion=1, cost=cost),
@@ -132,7 +132,7 @@ def shell_then_final_brain(req: ChatRequest) -> ChatResponse:
         return ChatResponse(
             message=Message(
                 role=Role.ASSISTANT,
-                tool_calls=[ToolCall(id="c1", name="shell_exec", args={"command": "rm -rf /"})],
+                tool_calls=[ToolCall(id="c1", name="system.shell.exec", args={"command": "rm -rf /"})],
             ),
             finish_reason="tool_calls",
             usage=ChatUsage(prompt=1, completion=1),
@@ -202,7 +202,7 @@ def test_loop_detector_injection_reaches_context(tmp_path):
 
 def test_tool_guard_veto_reason_written_back(tmp_path):
     """ToolGuard veto:跳过分发,理由作为错误观察(kind=vetoed)回写帧上下文(§5.2)。"""
-    guard = ToolGuard(rules=[("shell_exec", r"rm\s+-rf", "禁止危险命令 rm -rf")])
+    guard = ToolGuard(rules=[("system.shell.exec", r"rm\s+-rf", "禁止危险命令 rm -rf")])
     kernel = _build(tmp_path, guard, brain=shell_then_final_brain)
     result = run(kernel)
     assert result == {"done": True}
@@ -229,11 +229,11 @@ def test_tool_guard_veto_skips_dispatch(tmp_path):
     async def rec(sig: Signal) -> None:
         seen.append(sig)
 
-    guard = ToolGuard(rules=[("shell_exec", r"rm\s+-rf", "禁止")])
+    guard = ToolGuard(rules=[("system.shell.exec", r"rm\s+-rf", "禁止")])
     kernel = _build(tmp_path, guard, brain=shell_then_final_brain)
     kernel.signals.subscribe("*", rec)
     run(kernel)
-    dispatched = [s for s in seen if s.name == POST_TOOL_CALL and s.payload.get("tool") == "shell_exec"]
+    dispatched = [s for s in seen if s.name == POST_TOOL_CALL and s.payload.get("tool") == "system.shell.exec"]
     assert dispatched == []
 
 

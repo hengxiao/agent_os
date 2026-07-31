@@ -42,7 +42,7 @@ const RCA_FAIL = {
     kind: "vetoed",
     frame_id: "f2",
     skill: "local:fib@1.0.0",
-    call: { name: "shell_exec", args: { command: "rm -rf /" } },
+    call: { name: "system.shell.exec", args: { command: "rm -rf /" } },
     message: "ToolGuard: 禁止危险命令 rm -rf",
   },
 };

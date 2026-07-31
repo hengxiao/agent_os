@@ -35,7 +35,7 @@ from tests.helpers.kernels import assemble
 
 # fib 技能(与 skills/skills.yaml 中一致;code 技能测试的依赖项)
 FIB_SKILL = """
-  - name: fib
+  - name: demo.fib
     version: 1.0.0
     kind: prompt
     description: 生成前 n 个菲波拉契数。
@@ -49,8 +49,8 @@ FIB_SKILL = """
         seq: { type: array, items: { type: integer } }
       required: [seq]
     permissions:
-      tools: [python_exec]
-      skills: [fib]
+      tools: [system.python.exec]
+      skills: [demo.fib]
     model: { prefer: ["mock/fib"] }
     limits: { max_steps: 8, timeout: 60 }
     prompt: |
@@ -58,7 +58,7 @@ FIB_SKILL = """
 """
 
 CODE_SKILLS = """
-  - name: fib_pair
+  - name: test.fib_pair
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:fib_pair
@@ -70,8 +70,8 @@ CODE_SKILLS = """
       type: object
       properties: { combined: { type: array, items: { type: integer } } }
       required: [combined]
-    permissions: { tools: [], skills: [fib] }
-  - name: double_it
+    permissions: { tools: [], skills: [demo.fib] }
+  - name: test.double_it
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:double_it
@@ -83,8 +83,8 @@ CODE_SKILLS = """
       type: object
       properties: { doubled: { type: integer } }
       required: [doubled]
-    permissions: { tools: [python_exec], skills: [] }
-  - name: pure_add
+    permissions: { tools: [system.python.exec], skills: [] }
+  - name: test.pure_add
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:pure_add
@@ -97,7 +97,7 @@ CODE_SKILLS = """
       properties: { sum: { type: integer } }
       required: [sum]
     permissions: { tools: [], skills: [] }
-  - name: naughty
+  - name: test.naughty
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:naughty
@@ -106,7 +106,7 @@ CODE_SKILLS = """
       type: object
       properties: { never: { type: boolean } }
     permissions: { tools: [], skills: [] }
-  - name: bad_output
+  - name: test.bad_output
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:bad_output
@@ -138,14 +138,14 @@ def _build(skills_yaml: str, *, force_sandbox: bool = False):
 def test_code_skill_orchestrates_prompt_skills(tmp_path):
     """code 技能经 ctx.invoke 编排两个 LLM 技能帧(§9.3 编排者)。"""
     kernel = _build(_write_yaml(tmp_path, FIB_SKILL + CODE_SKILLS))
-    result = asyncio.run(kernel.run("fib_pair", {"a": 3, "b": 2}))
+    result = asyncio.run(kernel.run("test.fib_pair", {"a": 3, "b": 2}))
     assert result == {"combined": [0, 1, 1, 0, 1]}
 
 
 def test_code_skill_calls_tool(tmp_path):
-    """code 技能经 ctx.call_tool 调 python_exec(沙箱)计算。"""
+    """code 技能经 ctx.call_tool 调 system.python.exec(沙箱)计算。"""
     kernel = _build(_write_yaml(tmp_path, FIB_SKILL + CODE_SKILLS))
-    result = asyncio.run(kernel.run("double_it", {"x": 21}))
+    result = asyncio.run(kernel.run("test.double_it", {"x": 21}))
     assert result == {"doubled": 42}
 
 
@@ -158,7 +158,7 @@ def test_logic_exec_signals_carry_trust(tmp_path):
         seen.append(sig)
 
     kernel.signals.subscribe("*", rec)
-    asyncio.run(kernel.run("pure_add", {"a": 1, "b": 2}))
+    asyncio.run(kernel.run("test.pure_add", {"a": 1, "b": 2}))
     trusts = [s.payload.get("trust") for s in seen if s.name == POST_LOGIC_EXEC]
     assert "trusted" in trusts
 
@@ -167,14 +167,14 @@ def test_invoke_permission_denied(tmp_path):
     """code 技能调用白名单外子技能 → 失败上抛(权限拒绝)。"""
     kernel = _build(_write_yaml(tmp_path, FIB_SKILL + CODE_SKILLS))
     with pytest.raises(AgentOSError, match="白名单"):
-        asyncio.run(kernel.run("naughty", {}))
+        asyncio.run(kernel.run("test.naughty", {}))
 
 
 def test_code_skill_output_validation(tmp_path):
     """code 技能返回值不合 outputs schema → OutputValidationError。"""
     kernel = _build(_write_yaml(tmp_path, FIB_SKILL + CODE_SKILLS))
     with pytest.raises(OutputValidationError):
-        asyncio.run(kernel.run("bad_output", {}))
+        asyncio.run(kernel.run("test.bad_output", {}))
 
 
 def test_force_sandbox_routes_pure_code_skill(tmp_path):
@@ -186,7 +186,7 @@ def test_force_sandbox_routes_pure_code_skill(tmp_path):
         seen.append(sig)
 
     kernel.signals.subscribe("*", rec)
-    result = asyncio.run(kernel.run("pure_add", {"a": 40, "b": 2}))
+    result = asyncio.run(kernel.run("test.pure_add", {"a": 40, "b": 2}))
     assert result == {"sum": 42}
     trusts = [s.payload.get("trust") for s in seen if s.name == POST_LOGIC_EXEC]
     assert "sandbox" in trusts
@@ -195,17 +195,17 @@ def test_force_sandbox_routes_pure_code_skill(tmp_path):
 def test_circular_dependency_rejected_at_load(tmp_path):
     """加载期:依赖图成环 → SkillLoadError(§6.1)。"""
     circular = """
-      - name: a
+      - name: test.a
         version: 1.0.0
         kind: prompt
         inputs: { type: object, properties: {} }
-        permissions: { tools: [], skills: [b] }
+        permissions: { tools: [], skills: [test.b] }
         prompt: a
-      - name: b
+      - name: test.b
         version: 1.0.0
         kind: prompt
         inputs: { type: object, properties: {} }
-        permissions: { tools: [], skills: [a] }
+        permissions: { tools: [], skills: [test.a] }
         prompt: b
     """
     with pytest.raises(SkillLoadError):
@@ -215,7 +215,7 @@ def test_circular_dependency_rejected_at_load(tmp_path):
 def test_reload_picks_up_new_version(tmp_path):
     """热重载:手动 reload()(mtime 检查)后新帧用新版(§6.1/§6.3)。"""
     v1 = """
-      - name: greeter
+      - name: test.greeter
         version: 1.0.0
         kind: prompt
         inputs: { type: object, properties: {} }
@@ -224,7 +224,7 @@ def test_reload_picks_up_new_version(tmp_path):
     """
     path = _write_yaml(tmp_path, v1)
     reg = LocalFileSkillRegistry(path)
-    assert reg.get_by_name("greeter").manifest.version == "1.0.0"
+    assert reg.get_by_name("test.greeter").manifest.version == "1.0.0"
 
     v2 = v1.replace('version: 1.0.0', 'version: 1.1.0').replace("你好 v1", "你好 v2")
     with open(path, "w", encoding="utf-8") as f:
@@ -232,6 +232,6 @@ def test_reload_picks_up_new_version(tmp_path):
     os.utime(path, (os.path.getmtime(path) + 2, os.path.getmtime(path) + 2))
 
     assert reg.reload() is True
-    assert reg.get_by_name("greeter").manifest.version == "1.1.0"
-    assert reg.get_by_name("greeter").prompt is not None
-    assert "你好 v2" in reg.get_by_name("greeter").prompt
+    assert reg.get_by_name("test.greeter").manifest.version == "1.1.0"
+    assert reg.get_by_name("test.greeter").prompt is not None
+    assert "你好 v2" in reg.get_by_name("test.greeter").prompt

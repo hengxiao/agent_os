@@ -4,7 +4,7 @@
 
 - ``CodeScanner(patterns=None)``:SYNC,``pre:logic.exec``,对源码做静态模式扫描
   (默认危险集:``import os``/``os.system``/``ctypes``/``subprocess``/``socket``),
-  命中 → Veto;python_exec 工具尊重 pre:logic.exec 的否决(veto → kind=vetoed,不执行)。
+  命中 → Veto;system.python.exec 工具尊重 pre:logic.exec 的否决(veto → kind=vetoed,不执行)。
 """
 
 from __future__ import annotations
@@ -31,15 +31,15 @@ from tests.helpers.kernels import assemble
 
 LOOPER_YAML = """
 skills:
-  - name: looper
+  - name: test.looper
     version: 1.0.0
     kind: prompt
     inputs: { type: object, properties: {} }
     outputs: { type: object }
-    permissions: { tools: [python_exec], skills: [] }
+    permissions: { tools: [system.python.exec], skills: [] }
     model: { prefer: ["mock/loop"] }
     limits: { max_steps: 10 }
-    prompt: 测试用 looper 技能。
+    prompt: 测试用 test.looper 技能。
 """
 
 
@@ -58,7 +58,7 @@ def dangerous_brain(req: ChatRequest) -> ChatResponse:
         return ChatResponse(
             message=Message(
                 role=Role.ASSISTANT,
-                tool_calls=[ToolCall(id="c1", name="python_exec",
+                tool_calls=[ToolCall(id="c1", name="system.python.exec",
                                      args={"code": "import os\nos.system('echo pwned')"})],
             ),
             finish_reason="tool_calls",
@@ -80,7 +80,7 @@ def test_code_scanner_vetoes_dangerous_code(tmp_path):
         seen.append(sig)
 
     kernel.signals.subscribe("*", rec)
-    result = asyncio.run(kernel.run("looper", {}))
+    result = asyncio.run(kernel.run("test.looper", {}))
     assert result == {"done": True}
 
     mock = kernel.providers.providers["mock"]
@@ -103,7 +103,7 @@ def test_code_scanner_allows_clean_code(tmp_path):
             return ChatResponse(
                 message=Message(
                     role=Role.ASSISTANT,
-                    tool_calls=[ToolCall(id="c1", name="python_exec", args={"code": "print(1+1)"})],
+                    tool_calls=[ToolCall(id="c1", name="system.python.exec", args={"code": "print(1+1)"})],
                 ),
                 finish_reason="tool_calls",
                 usage=ChatUsage(prompt=1, completion=1),
@@ -115,7 +115,7 @@ def test_code_scanner_allows_clean_code(tmp_path):
         )
 
     kernel = _scanner_kernel(tmp_path, clean_brain, CodeScanner())
-    result = asyncio.run(kernel.run("looper", {}))
+    result = asyncio.run(kernel.run("test.looper", {}))
     assert result == {"done": True}
     mock = kernel.providers.providers["mock"]
     tool_msgs = [

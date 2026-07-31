@@ -88,8 +88,8 @@ async def pairwise_compare(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     轮数恒为 2。位置偏见防控是本技能定义的一部分,不是可选后处理(§W3-5)。
     """
     a, b, question = input.get("a"), input.get("b"), input.get("question")
-    first = await ctx.invoke("pairwise_judge_once", {"a": a, "b": b, "question": question})
-    second = await ctx.invoke("pairwise_judge_once", {"a": b, "b": a, "question": question})
+    first = await ctx.invoke("common.eval.pairwise_judge_once", {"a": a, "b": b, "question": question})
+    second = await ctx.invoke("common.eval.pairwise_judge_once", {"a": b, "b": a, "question": question})
     w1 = _winner_label(first.get("winner") if isinstance(first, dict) else None)
     w2 = _winner_label(second.get("winner") if isinstance(second, dict) else None)
     if w1 is not None and w2 is not None and w1 != w2:

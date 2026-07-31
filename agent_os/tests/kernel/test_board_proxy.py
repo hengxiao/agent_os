@@ -23,7 +23,7 @@ from tests.helpers.kernels import assemble
 
 BOARD_YAML = """
 skills:
-  - name: board_put_get
+  - name: test.board_put_get
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:board_put_get
@@ -39,14 +39,14 @@ skills:
         put_version: { type: integer }
       required: [value, version, put_version]
     permissions: { tools: [], skills: [], blackboard: [shared] }
-  - name: board_naughty
+  - name: test.board_naughty
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:board_naughty
     inputs: { type: object, properties: {} }
     outputs: { type: object }
     permissions: { tools: [], skills: [], blackboard: [shared] }
-  - name: board_publish
+  - name: test.board_publish
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:board_publish
@@ -78,7 +78,7 @@ def _build(tmp_path, *, blackboard=True):
 def test_board_put_get_via_proxy(tmp_path):
     """白名单命名空间的 KV 读写经代理透传,版本号一致(§12)。"""
     kernel = _build(tmp_path)
-    result = asyncio.run(kernel.run("board_put_get", {"v": 42}))
+    result = asyncio.run(kernel.run("test.board_put_get", {"v": 42}))
     assert result["value"] == 42
     assert result["version"] == result["put_version"]
 
@@ -86,7 +86,7 @@ def test_board_put_get_via_proxy(tmp_path):
 def test_board_write_visible_on_kernel_blackboard(tmp_path):
     """代理写入落到内核黑板本体(同一命名空间可读回)。"""
     kernel = _build(tmp_path)
-    asyncio.run(kernel.run("board_put_get", {"v": 7}))
+    asyncio.run(kernel.run("test.board_put_get", {"v": 7}))
     value, _version = asyncio.run(kernel.blackboard.get("shared", "answer"))
     assert value == 7
 
@@ -95,7 +95,7 @@ def test_board_namespace_whitelist_rejected(tmp_path):
     """白名单外命名空间硬拒绝:帧失败上抛(§12 内核中介仲裁)。"""
     kernel = _build(tmp_path)
     with pytest.raises(AgentOSError, match="secret"):
-        asyncio.run(kernel.run("board_naughty", {}))
+        asyncio.run(kernel.run("test.board_naughty", {}))
 
 
 def test_board_publish_via_proxy(tmp_path):
@@ -112,7 +112,7 @@ def test_board_publish_via_proxy(tmp_path):
 
         task = asyncio.create_task(consume())
         await asyncio.sleep(0)  # 让订阅生效
-        result = await kernel.run("board_publish", {"pct": 80})
+        result = await kernel.run("test.board_publish", {"pct": 80})
         await asyncio.wait_for(task, timeout=2)
         return result, received
 

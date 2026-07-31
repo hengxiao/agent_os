@@ -1,5 +1,5 @@
-"""内置工具(DESIGN.md §8.3;M1 四个基础件已实现,M5 补 fs_edit/python_exec 等;
-STDLIB-CATALOG §W0:统一路径解析器/错误 hint/if_match 乐观锁/shell_exec 结构化返回)。
+"""内置工具(DESIGN.md §8.3;M1 四个基础件已实现,M5 补 system.file.edit/system.python.exec 等;
+STDLIB-CATALOG §W0:统一路径解析器/错误 hint/if_match 乐观锁/system.shell.exec 结构化返回)。
 
 docstring 倡导"何时用/边界/负例"(§8.4);签名即 schema 推导来源。fs/shell 工具经
 约定参数 ``ctx`` 取 ``ToolContext``(见 ``local_registry._FunctionTool``),限定在
@@ -11,6 +11,7 @@ run 工作目录内操作(§2.2;§W0-1 起 read_paths 只读区可在 workdir �
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -37,7 +38,7 @@ from agent_os.api.v1 import (
 )
 from agent_os.tools.local_registry import _FunctionTool, derive_spec, resolve_work_path
 
-#: shell_exec 单条流(stdout/stderr)截断上限(§W0-5;截断时 ``truncated=True`` 显式标记)
+#: system.shell.exec 单条流(stdout/stderr)截断上限(§W0-5;截断时 ``truncated=True`` 显式标记)
 _SHELL_STREAM_MAX_CHARS = 100_000
 
 
@@ -118,7 +119,7 @@ async def fs_read(
                 kind=ToolErrorKind.NOT_FOUND,
                 message=f"文件不存在: {path}",
                 retryable=False,
-                hint=f"检查工作目录(当前 {target.parent});或用 fs_list 确认路径",
+                hint=f"检查工作目录(当前 {target.parent});或用 system.file.list 确认路径",
             ),
         )
     lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -131,7 +132,7 @@ async def fs_write(
 ) -> str | ToolResult:
     """写文件(整体覆盖,自动建父目录,§8.3;``if_match`` 乐观锁见 §W0-4)。
 
-    Use when 需要创建或整体覆盖文件;Do not use when 只需局部修改(用 fs_edit)。
+    Use when 需要创建或整体覆盖文件;Do not use when 只需局部修改(用 system.file.edit)。
     ``if_match`` 为期望的当前内容(或其 sha256 十六进制):不匹配拒写,不传不检查。
     """
     target = _resolve_in_workdir(ctx, path, write=True)
@@ -150,9 +151,9 @@ async def fs_edit(
 ) -> str | ToolResult:
     """局部编辑(old_string→new_string **唯一匹配**才替换,§8.3;``if_match`` 乐观锁见 §W0-4)。
 
-    Use when 只需局部修改文件;Do not use when 整体覆盖(用 fs_write)。
+    Use when 只需局部修改文件;Do not use when 整体覆盖(用 system.file.write)。
     未找到 / 多处匹配 → INVALID_ARGS(多处时请带更多上下文使匹配唯一);
-    文件不存在 → NOT_FOUND;路径越出帧工作目录 → INVALID_ARGS(同 fs_read)。
+    文件不存在 → NOT_FOUND;路径越出帧工作目录 → INVALID_ARGS(同 system.file.read)。
     """
     target = _resolve_in_workdir(ctx, path, write=True)
     if isinstance(target, ToolResult):
@@ -164,7 +165,7 @@ async def fs_edit(
                 kind=ToolErrorKind.NOT_FOUND,
                 message=f"文件不存在: {path}",
                 retryable=False,
-                hint=f"检查工作目录(当前 {target.parent});或用 fs_list 确认路径",
+                hint=f"检查工作目录(当前 {target.parent});或用 system.file.list 确认路径",
             ),
         )
     conflict = _check_if_match(target, path, if_match)
@@ -179,7 +180,7 @@ async def fs_edit(
                 kind=ToolErrorKind.INVALID_ARGS,
                 message=f"未找到 old_string: {old_string[:80]!r}(文件 {path})",
                 retryable=False,
-                hint="先用 fs_read 核对文件内容;old_string 须与文件完全一致(含空白与换行)",
+                hint="先用 system.file.read 核对文件内容;old_string 须与文件完全一致(含空白与换行)",
             ),
         )
     if count > 1:
@@ -189,7 +190,7 @@ async def fs_edit(
                 kind=ToolErrorKind.INVALID_ARGS,
                 message=f"old_string 不唯一,多处匹配(×{count}):请提供更多上下文使匹配唯一",
                 retryable=False,
-                hint="扩大 old_string 上下文(前后各带几行)使匹配唯一,或用 fs_write 整体覆盖",
+                hint="扩大 old_string 上下文(前后各带几行)使匹配唯一,或用 system.file.write 整体覆盖",
             ),
         )
     target.write_text(content.replace(old_string, new_string), encoding="utf-8")
@@ -202,7 +203,7 @@ async def shell_exec(
     """执行 shell 命令(EXEC 级;一次性子进程,在帧工作目录内运行,捕获 stdout/stderr)。
 
     Use when 需要跑构建/测试/git 等外部命令;Do not use when 只是读写文件
-    (用 fs_read/fs_write,权限更低且返回结构化)或做纯计算(用 python_exec)。
+    (用 system.file.read/system.file.write,权限更低且返回结构化)或做纯计算(用 system.python.exec)。
     每次调用是**独立子进程**:``cd``、venv 激活、环境变量都不跨调用保留。
 
     返回 ``{"stdout", "stderr", "exit_code", "truncated", "text"}``(§W0-5):
@@ -255,8 +256,29 @@ async def shell_exec(
     }
 
 
-def http_fetch_tool(transport: httpx.AsyncBaseTransport | None = None) -> Tool:
-    """构造 ``http_fetch`` 内置工具(NET 级,§8.3);``transport`` 供测试注入 MockTransport。
+async def _http_request(
+    transport: httpx.AsyncBaseTransport | None,
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    body: str = "",
+    max_bytes: int = 100_000,
+) -> dict[str, Any]:
+    """system.net.http_fetch / system.net.http_request 共用执行体:发请求、按 max_bytes
+    截断、统一返回 {status, content, truncated}(不静默截断,同 §W0-5)。"""
+    async with httpx.AsyncClient(
+        transport=transport, follow_redirects=True, timeout=30.0
+    ) as client:
+        resp = await client.request(method, url, headers=headers, content=body or None)
+        raw = await resp.aread()
+    truncated = len(raw) > max_bytes
+    content = raw[:max_bytes].decode(resp.encoding or "utf-8", errors="replace")
+    return {"status": resp.status_code, "content": content, "truncated": truncated}
+
+
+def http_fetch_tool(*, name: str = "system.net.http_fetch", transport: httpx.AsyncBaseTransport | None = None) -> Tool:
+    """构造 ``system.net.http_fetch`` 内置工具(NET 级,§8.3);``transport`` 供测试注入 MockTransport。
 
     HTTP 错误状态(4xx/5xx)不算工具错误,照常返回 ``status``;结果标记
     ``untrusted_source``(§2.2,归一化时包裹来源标记,注入防御)。
@@ -265,25 +287,70 @@ def http_fetch_tool(transport: httpx.AsyncBaseTransport | None = None) -> Tool:
     async def http_fetch(url: str, max_bytes: int = 100_000) -> dict[str, Any]:
         """抓取 URL,返回 ``{"status", "content", "truncated"}``(content 超 max_bytes 截断)。
 
-        Use when 需要读取公开网页;Do not use when 需要登录态。
+        Use when 需要读取公开网页;Do not use when 需要登录态,或需要非 GET 方法
+        /自定义 headers/body(用 system.net.http_request)。
         """
-        async with httpx.AsyncClient(
-            transport=transport, follow_redirects=True, timeout=30.0
-        ) as client:
-            resp = await client.get(url)
-            raw = await resp.aread()
-        truncated = len(raw) > max_bytes
-        content = raw[:max_bytes].decode(resp.encoding or "utf-8", errors="replace")
-        return {"status": resp.status_code, "content": content, "truncated": truncated}
+        return await _http_request(transport, "GET", url, max_bytes=max_bytes)
 
     spec = derive_spec(
         http_fetch,
+        name=name,
         permission=Permission.NET,
         timeout=30.0,
         untrusted_source=True,
         cost_hint="~1s,取决于网络与页面大小",
     )
     return _FunctionTool(http_fetch, spec)
+
+
+#: system.net.http_request 允许的方法集合(白名单,大小写不敏感)
+_HTTP_REQUEST_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+
+
+def http_request_tool(*, name: str = "system.net.http_request", transport: httpx.AsyncBaseTransport | None = None) -> Tool:
+    """构造 ``system.net.http_request`` 内置工具(NET 级;Phase 3 通用 HTTP,library-design-plan §4.4)。
+
+    执行体与 ``system.net.http_fetch`` 共用 ``_http_request``;错误语义一致
+    (HTTP 错误状态照常返回 ``status``;``untrusted_source`` 标记注入防御)。
+    """
+
+    async def http_request(
+        method: str,
+        url: str,
+        headers: dict[str, str] | None = None,
+        body: str = "",
+        max_bytes: int = 100_000,
+    ) -> dict[str, Any] | ToolResult:
+        """通用 HTTP 请求,返回 ``{"status", "content", "truncated"}``(content 超 max_bytes 截断)。
+
+        Use when 需要 POST/PUT/PATCH/DELETE 等非 GET 方法,或自定义 headers/body
+        (调 REST API、提交表单);Do not use when 只是读取公开网页
+        (用 system.net.http_fetch,GET 便捷形态,参数更少)。method 大小写不敏感,
+        白名单 GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS,其他 → INVALID_ARGS;
+        HTTP 错误状态(4xx/5xx)不算工具错误,照常返回 ``status``。
+        """
+        verb = method.strip().upper()
+        if verb not in _HTTP_REQUEST_METHODS:
+            return ToolResult(
+                ok=False,
+                error=ToolError(
+                    kind=ToolErrorKind.INVALID_ARGS,
+                    message=f"不支持的 HTTP 方法: {method!r}",
+                    retryable=False,
+                    hint=f"method 取值为 {'/'.join(sorted(_HTTP_REQUEST_METHODS))}(大小写不敏感)",
+                ),
+            )
+        return await _http_request(transport, verb, url, headers=headers, body=body, max_bytes=max_bytes)
+
+    spec = derive_spec(
+        http_request,
+        name=name,
+        permission=Permission.NET,
+        timeout=30.0,
+        untrusted_source=True,
+        cost_hint="~1s,取决于网络与页面大小",
+    )
+    return _FunctionTool(http_request, spec)
 
 
 async def blob_get(ref: str, offset: int = 0, limit: int | None = None) -> str:
@@ -321,7 +388,7 @@ def _parse_result(stdout: str) -> Any:
 
 
 def python_exec_tool(kernel: LogicKernel) -> Tool:
-    """构造 ``python_exec`` 内置工具(§9.4):薄壳,委托传入的 SANDBOX Logic Kernel。
+    """构造 ``system.python.exec`` 内置工具(§9.4):薄壳,委托传入的 SANDBOX Logic Kernel。
 
     value 形状 ``{"stdout", "stderr", "result"}``;执行错误 → TIMEOUT(LIMIT_EXCEEDED)
     或 INTERNAL,hint 带 stderr 尾部。提供可选 ``bind(signals)``:KernelBuilder 装配时
@@ -332,7 +399,7 @@ def python_exec_tool(kernel: LogicKernel) -> Tool:
 
     class PythonExecTool:
         spec = ToolSpec(
-            name="python_exec",
+            name="system.python.exec",
             description=(
                 "在沙箱子进程中执行 Python 代码。Use when 需要确定性计算或数据处理;"
                 "Do not use when 需要网络、文件系统或长驻状态(沙箱极简,见 §9.2)。"
@@ -346,6 +413,7 @@ def python_exec_tool(kernel: LogicKernel) -> Tool:
             permission=Permission.EXEC,
             timeout=10.0,
         )
+        aliases = ("python_exec",)
 
         def __init__(self, logic_kernel: LogicKernel) -> None:
             self._kernel = logic_kernel
@@ -354,6 +422,14 @@ def python_exec_tool(kernel: LogicKernel) -> Tool:
         def bind(self, signals: Any) -> None:
             """KernelBuilder 装配钩子:注入信号总线(§9.5 监督信号)。"""
             self._signals = signals
+
+        def with_alias(self, alias: str) -> "PythonExecTool":
+            """Return a copy registered under a different name (legacy alias support)."""
+            from dataclasses import replace
+
+            new = copy.copy(self)
+            new.spec = replace(self.spec, name=alias)
+            return new
 
         async def _emit(
             self, name: str, ctx: ToolContext, payload: dict[str, Any]
@@ -372,7 +448,7 @@ def python_exec_tool(kernel: LogicKernel) -> Tool:
             verdicts = await self._emit(
                 PRE_LOGIC_EXEC,
                 ctx,
-                {"tool": "python_exec", "source": args["code"], "language": "python"},
+                {"tool": "system.python.exec", "source": args["code"], "language": "python"},
             )
             for verdict in verdicts:
                 if isinstance(verdict, Veto):
@@ -386,7 +462,7 @@ def python_exec_tool(kernel: LogicKernel) -> Tool:
                         ),
                     )
             res = await self._kernel.execute(req)
-            await self._emit(POST_LOGIC_EXEC, ctx, {"tool": "python_exec", "ok": res.error is None})
+            await self._emit(POST_LOGIC_EXEC, ctx, {"tool": "system.python.exec", "ok": res.error is None})
             if res.error is not None:
                 kind = (
                     ToolErrorKind.TIMEOUT

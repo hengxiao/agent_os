@@ -5,6 +5,11 @@
   注入隔离包裹,见 agent_os.tools.std_web),技能是经白名单的薄适配。
 - ``research_iterative``(code):迭代式研究——检索 → 自评(sufficient /
   refined_query)→ 精化 → 再检索(充分即停,默认 ≤3 轮)。
+- ``parse_html`` / ``extract_links``(code):纯本地 HTML 解析——正文清洗
+  复用工具层 ``agent_os.tools.std_web._extract_text``(同一口径一份),
+  href 抽取去重保序;extract_links 经 urljoin 把相对链接转绝对。
+- ``source_rank``(code):按 query 给来源排序,打分复用
+  ``transform.bm25_score`` 的零依赖 BM25 口径。
 
 research_iterative 为什么是 code 而不是 prompt:内核帧循环把"无 tool_calls
 的响应"判为最终答案(§3.1 步骤 5),而自评回合(输出中间 JSON 后继续检索)
@@ -18,15 +23,19 @@ tool_call 都对应一次真实工具执行,结果如实回贴)。
 from __future__ import annotations
 
 import json
+import re
+from html import unescape
 from typing import Any
+from urllib.parse import urljoin
 
 from agent_os.api.v1 import Message, Role, Source, ToolCall
+from agent_os.tools.std_web import _extract_text
 
 #: 迭代协议总步数兜底(检索/自评/收束都算;防模型不配合时跑飞,预算另有 max_steps 闸)
 _MAX_STEPS = 8
 
 _SYSTEM = """你是迭代式研究助手。严格按协议工作:
-1. 收到问题后,先调用 fetch_page 抓取最相关页面。
+1. 收到问题后,先调用 common.web.fetch_page 抓取最相关页面。
 2. 每轮抓取后先输出自评 JSON:sufficient 表示信息是否充分;不充分时给 refined_query(精化后的检索目标)。先输出自评,再行动。
 3. 信息充分时,只输出最终答案 JSON:answer 为综合回答,sources 为实际采用的页面 URL 数组。"""
 
@@ -36,7 +45,7 @@ async def fetch_page(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     tool_args: dict[str, Any] = {"url": args["url"]}
     if args.get("max_chars") is not None:
         tool_args["max_chars"] = args["max_chars"]
-    payload = await ctx.call_tool("fetch_page", tool_args)
+    payload = await ctx.call_tool("common.web.fetch_page", tool_args)
     if not payload.get("ok"):
         error = payload.get("error") or {}
         raise ValueError(
@@ -66,9 +75,9 @@ async def research_iterative(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     async def _dispatch(call: ToolCall) -> None:
         """执行一次抓取并回贴 tool_result;非 fetch_page 的调用回错误观察(保配对)。"""
         nonlocal fetches
-        if call.name == "fetch_page":
+        if call.name == "common.web.fetch_page":
             fetches += 1
-            payload = await ctx.call_tool("fetch_page", dict(call.args))
+            payload = await ctx.call_tool("common.web.fetch_page", dict(call.args))
             value = payload.get("value") if payload.get("ok") else None
             if isinstance(value, dict) and value.get("source") and value["source"] not in sources:
                 sources.append(value["source"])
@@ -78,7 +87,7 @@ async def research_iterative(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
                 "value": None,
                 "error": {
                     "kind": "invalid_args",
-                    "message": f"研究协议只支持 fetch_page,收到 {call.name}",
+                    "message": f"研究协议只支持 common.web.fetch_page,收到 {call.name}",
                     "retryable": False,
                     "hint": "",
                 },
@@ -112,7 +121,7 @@ async def research_iterative(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         if isinstance(data, dict) and data.get("sufficient") is False and fetches < max_rounds:
             # 自评不充分:驱动方按 refined_query 执行精化检索(理由见模块 docstring)
             refined = str(data.get("refined_query") or query)
-            call = ToolCall(id=f"refine-{step}", name="fetch_page", args={"url": refined})
+            call = ToolCall(id=f"refine-{step}", name="common.web.fetch_page", args={"url": refined})
             messages.append(
                 Message(role=Role.ASSISTANT, tool_calls=[call], source=Source.SYSTEM)
             )
@@ -135,3 +144,75 @@ async def research_iterative(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     if not isinstance(result_sources, list) or not result_sources:
         result_sources = sources
     return {"answer": answer, "sources": [str(s) for s in result_sources], "rounds": fetches}
+
+
+# ---------------------------------------------------------------------------
+# parse_html / extract_links —— 纯本地 HTML 解析(不触网)
+# ---------------------------------------------------------------------------
+
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_HREF_RE = re.compile(
+    r"<a\b[^>]*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))", re.IGNORECASE
+)
+_BLANK_RUN_RE = re.compile(r"\s+")
+
+
+def _hrefs(html: str) -> list[str]:
+    """抽取全部 <a href> 值,去重保序(双引号/单引号/裸值三种形态)。"""
+    seen: set[str] = set()
+    links: list[str] = []
+    for m in _HREF_RE.finditer(html):
+        url = next(g for g in m.groups() if g is not None)
+        if url not in seen:
+            seen.add(url)
+            links.append(url)
+    return links
+
+
+async def parse_html(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """``{html}`` → ``{text, links, title}``;正文清洗复用工具层 ``_extract_text`` 口径。"""
+    html = args.get("html")
+    if not isinstance(html, str) or not html.strip():
+        raise ValueError("html 必填(HTML 文本)")
+    m = _TITLE_RE.search(html)
+    title = _BLANK_RUN_RE.sub(" ", unescape(m.group(1))).strip() if m else ""
+    return {"text": _extract_text(html), "links": _hrefs(html), "title": title}
+
+
+async def extract_links(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """``{html, base_url}`` → ``{links}``:href 去重保序,相对链接经 urljoin 转绝对。"""
+    html = args.get("html")
+    base_url = args.get("base_url")
+    if not isinstance(html, str):
+        raise TypeError("html 必须是字符串")
+    if not isinstance(base_url, str) or not base_url:
+        raise ValueError("base_url 必填(相对链接的解析基准 URL)")
+    return {"links": [urljoin(base_url, href) for href in _hrefs(html)]}
+
+
+# ---------------------------------------------------------------------------
+# source_rank —— 来源排序(复用 transform.bm25_score 的零依赖 BM25 口径)
+# ---------------------------------------------------------------------------
+
+
+async def source_rank(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """``{sources, query, k?}`` → ``{ranked: [{id, score}]}`` 降序(同分按 id 字典序)。
+
+    来源条目 ``{id|url, text|title}``:id 缺省回落 url,text 缺省回落 title。
+    """
+    sources = args.get("sources")
+    query = args.get("query")
+    if not isinstance(sources, list) or any(not isinstance(s, dict) for s in sources):
+        raise TypeError("sources 必须是 object 数组")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query 必填(非空字符串)")
+    docs = [
+        {
+            "id": str(s.get("id") or s.get("url") or ""),
+            "text": str(s.get("text") or s.get("title") or ""),
+        }
+        for s in sources
+    ]
+    from transform import bm25_score
+
+    return await bm25_score({"query": query, "docs": docs, "k": args.get("k")}, ctx)

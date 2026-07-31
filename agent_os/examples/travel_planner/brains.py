@@ -277,13 +277,13 @@ def _research_destination(
         results.append(payload)
     destination = inp["destination"]
     if not results:
-        return _issue("research_destination", seq, "wiki_search", {"query": destination})
+        return _issue("project.travel_planner.research_destination", seq, "project.travel_planner.wiki_search", {"query": destination})
     if len(results) == 1:
         titles = results[0]["value"].get("titles") or []
         # chars_limit 拉满:真实正文数万字符,See/Eat/Sleep 等目标节远在 6000 之后;
         # canned 正文仅千余字符,mock 形态不受此值影响(锚点钉死不变)
         return _issue(
-            "research_destination", seq, "wiki_fetch",
+            "project.travel_planner.research_destination", seq, "project.travel_planner.wiki_fetch",
             {"title": titles[0] if titles else destination, "chars_limit": 120000},
         )
     return _final(_extract_facts(results[1]["value"]["text"]))
@@ -427,24 +427,24 @@ def _leaf_adjust_for_budget(inp: dict[str, Any]) -> dict[str, Any]:
 def _plan_trip(inp: dict[str, Any], seq: list[tuple[str, dict[str, Any]]]) -> ChatResponse:
     request = inp["request"]
     # 1. 解析请求
-    parsed_v = _values(seq, "skill__parse_request")
+    parsed_v = _values(seq, "skill.project.travel_planner.parse_request")
     if not parsed_v:
-        return _issue_skill("plan_trip", seq, "skill__parse_request", {"request": request})
+        return _issue_skill("project.travel_planner.plan_trip", seq, "skill.project.travel_planner.parse_request", {"request": request})
     parsed = parsed_v[-1]
     destination = parsed["destination"]
     days = int(parsed["days"])
     nights = max(1, days - 1)
     cap = parsed.get("budget")
     # 2. 研究目的地(wiki_search + wiki_fetch + 正文抽取,在子帧内完成)
-    research_v = _values(seq, "skill__research_destination")
+    research_v = _values(seq, "skill.project.travel_planner.research_destination")
     if not research_v:
-        return _issue_skill("plan_trip", seq, "skill__research_destination", {"destination": destination})
+        return _issue_skill("project.travel_planner.plan_trip", seq, "skill.project.travel_planner.research_destination", {"destination": destination})
     research = research_v[-1]
     attractions = research["attractions"]
     foods = research["food"]
     sleep = research["sleep"]
     # 削减方案(第二轮重排时存在):过滤景点/餐饮降档/去出租/住宿上限
-    adj_v = _values(seq, "skill__adjust_for_budget")
+    adj_v = _values(seq, "skill.project.travel_planner.adjust_for_budget")
     adj = adj_v[-1] if adj_v else None
     if adj is not None:
         keep = set(adj["keep_attractions"])
@@ -459,35 +459,35 @@ def _plan_trip(inp: dict[str, Any], seq: list[tuple[str, dict[str, Any]]]) -> Ch
         hotel_max = None
     rounds = 2 if adj is not None else 1
     # 3. 路线(按区域聚类分天)
-    route_v = _values(seq, "skill__plan_route")
+    route_v = _values(seq, "skill.project.travel_planner.plan_route")
     if len(route_v) < rounds:
-        return _issue_skill("plan_trip", seq, "skill__plan_route", {"attractions": active, "days": days})
+        return _issue_skill("project.travel_planner.plan_trip", seq, "skill.project.travel_planner.plan_route", {"attractions": active, "days": days})
     route = route_v[-1]
     # 4. 餐饮
-    meals_v = _values(seq, "skill__plan_meals")
+    meals_v = _values(seq, "skill.project.travel_planner.plan_meals")
     if len(meals_v) < rounds:
         args: dict[str, Any] = {"food": foods, "days": days}
         if cheapest_only:
             args.update(per_day=1, cheapest_only=True)
-        return _issue_skill("plan_trip", seq, "skill__plan_meals", args)
+        return _issue_skill("project.travel_planner.plan_trip", seq, "skill.project.travel_planner.plan_meals", args)
     meals = meals_v[-1]["meals"]
     # 5. 住宿
-    hotel_v = _values(seq, "skill__select_hotel")
+    hotel_v = _values(seq, "skill.project.travel_planner.select_hotel")
     if len(hotel_v) < rounds:
         args = {"sleep": sleep, "nights": nights}
         if hotel_max is not None:
             args["max_price"] = hotel_max
-        return _issue_skill("plan_trip", seq, "skill__select_hotel", args)
+        return _issue_skill("project.travel_planner.plan_trip", seq, "skill.project.travel_planner.select_hotel", args)
     hotel = hotel_v[-1]
     # 6. 预算(价目全部来自抽取结果;大交通按资料单程价计入)
-    budget_v = _values(seq, "skill__plan_budget")
+    budget_v = _values(seq, "skill.project.travel_planner.plan_budget")
     if len(budget_v) < rounds:
         price_of = {a["name"]: a["price"] for a in attractions}
         routed = [n for d in route["days"] for n in d["attractions"]]
         food_price = {f["name"]: f["price"] for f in foods}
         has_suburb = any(a.get("area") for a in attractions if a["name"] in set(routed))
         return _issue_skill(
-            "plan_trip", seq, "skill__plan_budget",
+            "project.travel_planner.plan_trip", seq, "skill.project.travel_planner.plan_budget",
             {
                 "transport_price": research["transport_price"],
                 "legs": 1,
@@ -505,7 +505,7 @@ def _plan_trip(inp: dict[str, Any], seq: list[tuple[str, dict[str, Any]]]) -> Ch
         asks = [p for n, p in seq if n == "ask_supervisor"]
         if not asks:
             return _issue(
-                "plan_trip", seq, "ask_supervisor",
+                "project.travel_planner.plan_trip", seq, "ask_supervisor",
                 {
                     "question": f"预算 ¥{budget['total']} 超出 ¥{cap},批准超支还是削减?",
                     "context": {"destination": destination, "total": budget["total"], "cap": cap},
@@ -520,7 +520,7 @@ def _plan_trip(inp: dict[str, Any], seq: list[tuple[str, dict[str, Any]]]) -> Ch
         else:
             routed_names = {n for d in route["days"] for n in d["attractions"]}
             return _issue_skill(
-                "plan_trip", seq, "skill__adjust_for_budget",
+                "project.travel_planner.plan_trip", seq, "skill.project.travel_planner.adjust_for_budget",
                 {
                     "cap": cap,
                     "days": days,
@@ -542,14 +542,14 @@ def _plan_trip(inp: dict[str, Any], seq: list[tuple[str, dict[str, Any]]]) -> Ch
         for i, d in enumerate(route["days"])
     ]
     # 8. 审查
-    review_v = _values(seq, "skill__review_itinerary")
+    review_v = _values(seq, "skill.project.travel_planner.review_itinerary")
     if not review_v:
         args = {"destination": destination, "days": days_final, "hotel": hotel, "budget": budget}
         if cap is not None:
             args["cap"] = cap
         if over_approved:
             args["over_budget_approved"] = True
-        return _issue_skill("plan_trip", seq, "skill__review_itinerary", args)
+        return _issue_skill("project.travel_planner.plan_trip", seq, "skill.project.travel_planner.review_itinerary", args)
     # 预订事项(来自抽取的预约/闭馆事实与裁决记录)
     notes = [
         f"{a['name']}:需提前预约"
@@ -561,7 +561,7 @@ def _plan_trip(inp: dict[str, Any], seq: list[tuple[str, dict[str, Any]]]) -> Ch
     if over_approved:
         notes.append(f"预算 ¥{budget['total']} 超出 ¥{cap},已获上级批准")
     # 9. 成稿
-    fmt_v = _values(seq, "skill__format_itinerary")
+    fmt_v = _values(seq, "skill.project.travel_planner.format_itinerary")
     if not fmt_v:
         args = {
             "destination": destination,
@@ -573,7 +573,7 @@ def _plan_trip(inp: dict[str, Any], seq: list[tuple[str, dict[str, Any]]]) -> Ch
         }
         if parsed.get("origin"):
             args["origin"] = parsed["origin"]
-        return _issue_skill("plan_trip", seq, "skill__format_itinerary", args)
+        return _issue_skill("project.travel_planner.plan_trip", seq, "skill.project.travel_planner.format_itinerary", args)
     result: dict[str, Any] = {
         "destination": destination,
         "days": days_final,
@@ -593,16 +593,16 @@ def _plan_trip(inp: dict[str, Any], seq: list[tuple[str, dict[str, Any]]]) -> Ch
 
 
 _LEAF_FINALS = {
-    "parse_request": lambda inp: _parse_request_text(inp["request"]),
-    "plan_meals": _leaf_plan_meals,
-    "select_hotel": _leaf_select_hotel,
-    "review_itinerary": _leaf_review_itinerary,
-    "adjust_for_budget": _leaf_adjust_for_budget,
+    "project.travel_planner.parse_request": lambda inp: _parse_request_text(inp["request"]),
+    "project.travel_planner.plan_meals": _leaf_plan_meals,
+    "project.travel_planner.select_hotel": _leaf_select_hotel,
+    "project.travel_planner.review_itinerary": _leaf_review_itinerary,
+    "project.travel_planner.adjust_for_budget": _leaf_adjust_for_budget,
 }
 
 _ORCHESTRATORS = {
-    "plan_trip": _plan_trip,
-    "research_destination": _research_destination,
+    "project.travel_planner.plan_trip": _plan_trip,
+    "project.travel_planner.research_destination": _research_destination,
 }
 
 

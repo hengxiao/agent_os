@@ -66,8 +66,13 @@ def test_support_desk_loads_skills():
     manifests = reg.manifests()
     assert len(manifests) == 17
     assert {m.name for m in manifests} >= {
-        "handle_ticket", "classify_ticket", "gather_context", "assess_refund",
-        "process_refund", "draft_response", "escalate_ticket",
+        "project.support_desk.handle_ticket",
+        "project.support_desk.classify_ticket",
+        "project.support_desk.gather_context",
+        "project.support_desk.assess_refund",
+        "project.support_desk.process_refund",
+        "project.support_desk.draft_response",
+        "project.support_desk.escalate_ticket",
     }
 
 
@@ -80,13 +85,13 @@ def test_happy_path_refund_issued():
         seen.append(sig)
 
     kernel.signals.subscribe("*", rec)
-    result = asyncio.run(kernel.run("handle_ticket", {"ticket_id": "T-1001"}))
+    result = asyncio.run(kernel.run("project.support_desk.handle_ticket", {"ticket_id": "T-1001"}))
 
     assert result["status"] == "resolved_refunded"
     assert result["refund_cents"] == 8900
     tools_called = [s.payload["tool"] for s in seen if s.name == POST_TOOL_CALL]
-    assert tools_called.count("issue_refund") == 1
-    assert tools_called.count("send_notification") == 1
+    assert tools_called.count("project.support_desk.issue_refund") == 1
+    assert tools_called.count("project.support_desk.send_notification") == 1
     frames = [s for s in seen if s.name == "post:frame.push"]
     assert len(frames) >= 8
 
@@ -100,12 +105,12 @@ def test_reject_path_policy_denies():
         seen.append(sig)
 
     kernel.signals.subscribe("*", rec)
-    result = asyncio.run(kernel.run("handle_ticket", {"ticket_id": "T-1002"}))
+    result = asyncio.run(kernel.run("project.support_desk.handle_ticket", {"ticket_id": "T-1002"}))
 
     assert result["status"] == "resolved_rejected"
     tools_called = [s.payload["tool"] for s in seen if s.name == POST_TOOL_CALL]
-    assert "issue_refund" not in tools_called
-    assert tools_called.count("send_notification") == 1
+    assert "project.support_desk.issue_refund" not in tools_called
+    assert tools_called.count("project.support_desk.send_notification") == 1
 
 
 def test_escalate_path_high_amount():
@@ -117,15 +122,15 @@ def test_escalate_path_high_amount():
         seen.append(sig)
 
     kernel.signals.subscribe("*", rec)
-    result = asyncio.run(kernel.run("handle_ticket", {"ticket_id": "T-1003"}))
+    result = asyncio.run(kernel.run("project.support_desk.handle_ticket", {"ticket_id": "T-1003"}))
 
     assert result["status"] == "escalated"
     tools_called = [s.payload["tool"] for s in seen if s.name == POST_TOOL_CALL]
-    assert "issue_refund" not in tools_called
+    assert "project.support_desk.issue_refund" not in tools_called
 
 
 def test_deterministic_across_runs():
     """数据驱动的 flow 是确定性的:同输入同输出(调试可复现)。"""
-    r1 = asyncio.run(_build(_load_brain()).run("handle_ticket", {"ticket_id": "T-1001"}))
-    r2 = asyncio.run(_build(_load_brain()).run("handle_ticket", {"ticket_id": "T-1001"}))
+    r1 = asyncio.run(_build(_load_brain()).run("project.support_desk.handle_ticket", {"ticket_id": "T-1001"}))
+    r2 = asyncio.run(_build(_load_brain()).run("project.support_desk.handle_ticket", {"ticket_id": "T-1001"}))
     assert r1 == r2

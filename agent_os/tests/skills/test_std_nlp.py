@@ -2,16 +2,16 @@
 
 固定约定:
 
-- nlp 七件(summarize/classify/extract/translate/rewrite/qa_over_text/compress_context):
+- nlp 七件(common.text.summarize/classify/extract/translate/rewrite/qa_over_text/compress_context):
   prompt 技能,只做一件事,inputs 显式给全部材料,outputs 结构化可校验,
   **不硬编码模型名**(RunConfig 缺省);
-- `extract` 的 inputs 收一个 JSON Schema 驱动抽取;
-- style 三件(tone_neutral/untrusted_content/knowledge_linking):inline: true,
+- `common.text.extract` 的 inputs 收一个 JSON Schema 驱动抽取;
+- style 三件(common.style.tone_neutral/common.security.untrusted_content/common.memory.knowledge_linking):inline: true,
   过纯度闸门,prompt ≤ 500 字符;
-- judge:rubric schema 化(dimensions[].weight ∈ essential|important|optional|veto,
+- common.eval.judge:rubric schema 化(dimensions[].weight ∈ essential|important|optional|veto,
   scoring 4..1 档),输出 per-dimension 分数 + veto_triggered;
-- calibrate_judge:code,纯计算,输出 {agreement, kappa, passes};
-- pairwise_compare:内建交换顺序两评,不一致判平。
+- common.eval.calibrate_judge:code,纯计算,输出 {agreement, kappa, passes};
+- common.eval.pairwise_compare:内建交换顺序两评,不一致判平。
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def _kernel(brain=nlp_brain, config=None):
         KernelBuilder(config)
         .providers(MockProvider(brain))
         .tools(LocalPythonToolRegistry())
-        .skills(LocalFileSkillRegistry(str(STD_DIR / "skills.yaml")))
+        .skills(LocalFileSkillRegistry(str(STD_DIR)))
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
         .build()
     )
@@ -114,18 +114,18 @@ def run(skill: str, input: dict, **kw):
 
 
 def test_summarize():
-    r = run("summarize", {"text": "长文……" * 100})
+    r = run("common.text.summarize", {"text": "长文……" * 100})
     assert isinstance(r["summary"], str) and r["summary"]
 
 
 def test_classify():
-    r = run("classify", {"text": "我要退款", "categories": ["refund", "complaint"]})
+    r = run("common.text.classify", {"text": "我要退款", "categories": ["refund", "complaint"]})
     assert r["category"] in ("refund", "complaint")
     assert 0 <= r["confidence"] <= 1
 
 
 def test_extract_schema_driven():
-    r = run("extract", {
+    r = run("common.text.extract", {
         "text": "订单 o1 金额 8900 分",
         "schema": {"type": "object",
                    "properties": {"order_id": {"type": "string"}, "amount": {"type": "integer"}},
@@ -135,13 +135,13 @@ def test_extract_schema_driven():
 
 
 def test_translate_rewrite_qa():
-    assert run("translate", {"text": "菲波拉契数列", "target_lang": "en"})["translation"]
-    assert run("rewrite", {"text": "句子"})["rewritten"]
-    assert run("qa_over_text", {"text": "6乘7是42。", "question": "6乘7是多少?"})["answer"]
+    assert run("common.text.translate", {"text": "菲波拉契数列", "target_lang": "en"})["translation"]
+    assert run("common.text.rewrite", {"text": "句子"})["rewritten"]
+    assert run("common.text.qa_over_text", {"text": "6乘7是42。", "question": "6乘7是多少?"})["answer"]
 
 
 def test_compress_context_is_query_aware():
-    r = run("compress_context", {
+    r = run("common.text.compress_context", {
         "text": "大量无关内容……" * 50,
         "query": "预算是多少",
         "preserve": ["预算 $2", "结论 A"],
@@ -156,8 +156,8 @@ def test_compress_context_is_query_aware():
 
 
 def test_style_skills_are_valid_inline_merge():
-    reg = LocalFileSkillRegistry(str(STD_DIR / "skills.yaml"))
-    for name in ("tone_neutral", "untrusted_content", "knowledge_linking"):
+    reg = LocalFileSkillRegistry(str(STD_DIR))
+    for name in ("common.style.tone_neutral", "common.security.untrusted_content", "common.memory.knowledge_linking"):
         m = next(mm for mm in reg.manifests() if mm.name == name)
         assert m.inline is True, f"{name} 必须是 inline: true"
         assert m.kind.value == "prompt"
@@ -171,7 +171,7 @@ def test_style_skills_are_valid_inline_merge():
 
 
 def test_judge_rubric_schema_and_veto():
-    r = run("judge", {
+    r = run("common.eval.judge", {
         "subject": "某份报告……",
         "rubric": {
             "dimensions": [
@@ -188,7 +188,7 @@ def test_judge_rubric_schema_and_veto():
 
 
 def test_calibrate_judge_kappa():
-    r = run("calibrate_judge", {
+    r = run("common.eval.calibrate_judge", {
         "gold": [{"item": "a", "human_score": 1}, {"item": "b", "human_score": 0},
                  {"item": "c", "human_score": 1}, {"item": "d", "human_score": 0}],
         "judge_scores": [1, 0, 1, 0],
@@ -225,7 +225,7 @@ def test_pairwise_compare_ties_on_position_bias():
 
     r = asyncio.run(
         _kernel(brain=brain).run(
-            "pairwise_compare", {"a": "方案甲", "b": "方案乙", "question": "哪个更简洁"}
+            "common.eval.pairwise_compare", {"a": "方案甲", "b": "方案乙", "question": "哪个更简洁"}
         )
     )
     assert calls["n"] == 2, "必须内建交换顺序两评"
@@ -243,7 +243,7 @@ def test_pairwise_compare_picks_content_consistent_winner():
 
     r = asyncio.run(
         _kernel(brain=brain).run(
-            "pairwise_compare", {"a": "方案甲", "b": "方案乙", "question": "哪个更简洁"}
+            "common.eval.pairwise_compare", {"a": "方案甲", "b": "方案乙", "question": "哪个更简洁"}
         )
     )
     assert calls["n"] == 2

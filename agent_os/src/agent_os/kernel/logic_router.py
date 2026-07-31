@@ -2,7 +2,7 @@
 
 选路规则(§9.2):``manifest.logic.mode == "sandbox"`` 或
 ``RunConfig.logic_policy.force_sandbox`` → SANDBOX;否则 TRUSTED(code 技能默认可信)。
-动态代码不经本路由——``python_exec`` 工具直接持有 SANDBOX 实例(§9.4,强制无配置项)。
+动态代码不经本路由——``system.python.exec`` 工具直接持有 SANDBOX 实例(§9.4,强制无配置项)。
 """
 
 from __future__ import annotations

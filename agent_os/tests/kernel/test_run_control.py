@@ -82,7 +82,7 @@ def test_pause_aborts_with_prefixed_reason():
     probe = _Probe("post:llm.response", act)
     kernel, _ = _kernel_with(probe)
     with pytest.raises(RunAborted, match="paused: 人工暂停排查"):
-        asyncio.run(kernel.run("fib", {"n": 3}))
+        asyncio.run(kernel.run("demo.fib", {"n": 3}))
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ def test_inject_message_wraps_and_reaches_context():
 
     probe = _Probe("post:llm.response", act)
     kernel, mock = _kernel_with(probe)
-    result = asyncio.run(kernel.run("fib", {"n": 3}))
+    result = asyncio.run(kernel.run("demo.fib", {"n": 3}))
     assert result == {"seq": [0, 1, 1]}
 
     injected = [
@@ -120,7 +120,7 @@ def test_inject_message_missing_frame_dropped():
 
     probe = _Probe("post:llm.response", act)
     kernel, mock = _kernel_with(probe)
-    result = asyncio.run(kernel.run("fib", {"n": 2}))
+    result = asyncio.run(kernel.run("demo.fib", {"n": 2}))
     assert result == {"seq": [0, 1]}
     assert not any(
         m.content == "应被丢弃" for req in mock.recorded for m in req.messages
@@ -142,7 +142,7 @@ def test_force_compress_sets_frame_flag():
 
     probe = _Probe("post:llm.response", act)
     kernel, _ = _kernel_with(probe)
-    result = asyncio.run(kernel.run("fib", {"n": 2}))
+    result = asyncio.run(kernel.run("demo.fib", {"n": 2}))
     assert result == {"seq": [0, 1]}
     assert probe.notes == [True], "标志未写入帧工作内存"
 
@@ -153,7 +153,7 @@ def test_force_compress_missing_frame_dropped():
 
     probe = _Probe("post:llm.response", act)
     kernel, _ = _kernel_with(probe)
-    result = asyncio.run(kernel.run("fib", {"n": 2}))
+    result = asyncio.run(kernel.run("demo.fib", {"n": 2}))
     assert result == {"seq": [0, 1]}
 
 
@@ -171,13 +171,13 @@ def test_frame_tree_nested_shape():
 
     probe = _Probe("post:frame.push", act, once=False)
     kernel, _ = _kernel_with(probe)
-    asyncio.run(kernel.run("fib", {"n": 3}))
+    asyncio.run(kernel.run("demo.fib", {"n": 3}))
 
     assert probe.notes, "未捕获深度 2 的帧树快照"
     tree = probe.notes[0]
     assert len(tree) == 1, "根节点应只有一个(fib 根帧)"
     root = tree[0]
-    assert root["depth"] == 1 and "fib" in root["skill"]
+    assert root["depth"] == 1 and "demo.fib" in root["skill"]
     assert root["status"] == "running"
     assert len(root["children"]) == 1
     child = root["children"][0]
@@ -190,5 +190,5 @@ def test_get_usage_snapshot():
 
     probe = _Probe("post:llm.response", act)
     kernel, _ = _kernel_with(probe)
-    asyncio.run(kernel.run("fib", {"n": 2}))
+    asyncio.run(kernel.run("demo.fib", {"n": 2}))
     assert probe.notes and probe.notes[0].steps >= 1

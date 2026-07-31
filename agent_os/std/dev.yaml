@@ -1,0 +1,253 @@
+skills:
+- name: common.dev.run_tests
+  version: 1.0.0
+  kind: code
+  description: '在 workdir 内跑 pytest 并**结构化解析**(EXEC 级:起子进程;retry_until 的 默认验证器,"tests
+    pass 才算完成")。Use when 需要"改动是否破坏测试"的确定性 外部反馈,如 {"path": "."} → {"passed": 2, "failed":
+    0, "ok": true}; Do not use when 需要覆盖率/基准等非通过性指标(本技能只解析 passed/failed/ errors 计数与失败行)或要读原始输出(刻意不回传原文,失败行在
+    failures)。 执行 ''sys.executable -m pytest -q --tb=no -p no:cacheprovider'',120s
+    超时 杀进程记 errors=1;ok = failed==0 and errors==0 且退出码 0;退出码 5 (no tests collected)记
+    ok=false 并注明,绝不当静默绿灯。'
+  inputs:
+    type: object
+    properties:
+      path:
+        type: string
+        description: 测试文件/目录(相对 workdir),如 '.' 或 'tests/test_x.py';缺省 '.'
+  outputs:
+    type: object
+    properties:
+      passed:
+        type: integer
+        description: 通过用例数
+      failed:
+        type: integer
+        description: 失败用例数
+      errors:
+        type: integer
+        description: 错误数(收集错误/超时/异常退出)
+      failures:
+        type: array
+        items:
+          type: string
+        description: 含失败用例名的行(pytest 摘要的 FAILED/ERROR 行,至多 50 条)
+      ok:
+        type: boolean
+        description: failed==0 且 errors==0 且退出码 0
+      exit_code:
+        type: integer
+        description: pytest 进程退出码(超时为 null)
+      note:
+        type: string
+        description: 异常情形说明(no tests/超时/异常退出)
+  permissions: {}
+  limits:
+    timeout: 150
+  handler: files_handlers:run_tests
+- name: common.dev.read_file_smart
+  version: 1.0.0
+  kind: code
+  description: '文件三级阅读:L0 概要(行数/字节/顶级 def-class 前 N 个)、L1 结构 (def/class/标题行清单)、L2
+    带行号分页(格式同 fs_read 工具契约 "{n}\t{line}",offset/limit 从 1 起)。Use when 先摸文件轮廓再决定读哪段
+    (大文件别直接 L2 全读),如 {"path":"big.py","level":"L1"} → {"structure": [{"kind":"def","name":"f0","line":2}...]};
+    Do not use when 已知行号只要原文(L2 与 fs_read 等价,直接用 fs_read 也行) 或读目录(用 summarize_tree/fs_list)。文件不存在
+    → NOT_FOUND 帧失败。'
+  inputs:
+    type: object
+    properties:
+      path:
+        type: string
+        description: 文件路径(相对 workdir)
+      level:
+        type: string
+        enum:
+        - L0
+        - L1
+        - L2
+        description: L0=概要;L1=结构;L2=带行号分页
+      offset:
+        type: integer
+        description: L2 起始行(从 1 起,缺省 1)
+      limit:
+        type: integer
+        description: L2 行数上限(缺省 2000)
+    required:
+    - path
+    - level
+  outputs:
+    type: object
+    properties:
+      summary:
+        type: string
+        description: L0/L1 的概要文本
+      structure:
+        type: array
+        items:
+          type: object
+          properties:
+            kind:
+              type: string
+              description: def|class|heading
+            name:
+              type: string
+              description: 名称/标题文本
+            line:
+              type: integer
+              description: 1 起行号
+        description: L1 的结构清单
+      text:
+        type: string
+        description: L2 带行号文本
+      total_lines:
+        type: integer
+        description: L2 的文件总行数(翻页用)
+  permissions: {}
+  handler: files_handlers:read_file_smart
+- name: common.dev.apply_patch
+  version: 1.0.0
+  kind: code
+  description: '把 unified diff 应用到 workdir 内文件(单/多文件、多 hunk、新建与删除; 全部文件内存应用成功后才统一落盘,任一冲突整组不写)。Use
+    when 要把模型 产出的补丁确定性落盘,如 ''--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-x\n+y\n'' → {"applied":
+    true, "files": ["a.txt"]};Do not use when 只有单点替换 (用 fs_edit 更简单)或补丁非 unified diff
+    格式(```diff 栅栏需先剥掉)。 上下文不匹配/多义定位 → {"applied": false, reason, file}(可自纠重试, 不是帧失败);patch
+    畸形/路径越界 → 结构化帧失败;hunk 先按声明行号精确 匹配,失败则全文找唯一匹配,多处匹配拒绝。"\ No newline" 严格校验。'
+  inputs:
+    type: object
+    properties:
+      patch:
+        type: string
+        description: unified diff 文本('--- a/x'/'+++ b/x'/'@@' hunk 结构)
+    required:
+    - patch
+  outputs:
+    type: object
+    properties:
+      applied:
+        type: boolean
+        description: 是否全部应用并落盘
+      files:
+        type: array
+        items:
+          type: string
+        description: 成功时改动的文件(相对 workdir;含被删除者)
+      file:
+        type: string
+        description: 失败时冲突发生的文件
+      reason:
+        type: string
+        description: 失败原因(上下文不匹配/文件不存在/多义定位等)
+  permissions: {}
+  handler: files_handlers:apply_patch
+- name: common.dev.summarize_tree
+  version: 1.0.0
+  kind: code
+  description: '目录级结构摘要:缩进目录树 + 文件/目录计数 + 关键文件(README/pyproject 等),默认深度 3,尊重 .gitignore
+    并跳过 .git/node_modules/.venv(与 fs_list 同一棵遍历器)。Use when 初到陌生项目要先看形状(文件任务第一步的 目录侧,比裸
+    fs_list 全量更省 token),如 {"path": "."} → {"file_count": 3, "dir_count": 1, "summary":
+    "...README.md..."}; Do not use when 要找具体内容(用 fs_search)或需要逐文件大小/mtime (用 fs_list,本技能刻意只给形状)。树超
+    200 行截断并如实标注,计数为全量。'
+  inputs:
+    type: object
+    properties:
+      path:
+        type: string
+        description: 目录路径(相对 workdir),缺省 '.'
+      depth:
+        type: integer
+        description: 遍历深度(>= 1,缺省 3)
+  outputs:
+    type: object
+    properties:
+      summary:
+        type: string
+        description: 目录树缩进文本 + 计数 + 关键文件
+      file_count:
+        type: integer
+        description: 深度内文件数(全量,不受显示截断影响)
+      dir_count:
+        type: integer
+        description: 深度内目录数
+  permissions: {}
+  handler: files_handlers:summarize_tree
+- name: common.dev.lint_diff
+  version: 1.0.0
+  kind: code
+  description: 'unified diff 常见问题快检:行尾空白、合并冲突标记、tab/空格缩进混用、EOF
+    缺换行。Use when 应用补丁前先静态筛一遍模型产出的 diff,如含 ''+x = 1 ''(行尾空格)
+    → issues 报 trailing_whitespace;Do not use when 要做语义审查或验证上下文能否匹配
+    (那是 apply_patch 的职责,本技能纯文本扫描、不读文件)。行号为新文件侧行号。返回
+    {"issues": [{"kind", "file", "line", "message"}]}。'
+  inputs:
+    type: object
+    properties:
+      diff:
+        type: string
+        description: unified diff 文本
+    required:
+    - diff
+  outputs:
+    type: object
+    properties:
+      issues:
+        type: array
+        items:
+          type: object
+          properties:
+            kind:
+              type: string
+              description: trailing_whitespace/conflict_marker/mixed_indent/missing_eof_newline
+            file:
+              type: string
+              description: 所在文件(去 a//b/ 前缀)
+            line:
+              type: integer
+              description: 新文件侧行号(从 1 起)
+            message:
+              type: string
+              description: 人读说明
+        description: 发现的问题列表(按 diff 中出现序)
+  permissions: {}
+  handler: files_handlers:lint_diff
+- name: common.dev.find_definition
+  version: 1.0.0
+  kind: code
+  description: '正则级符号定义搜索:def/class/赋值三种形态。Use when 要在文件或目录里快速定位
+    符号定义,如 path=''src/'' + symbol=''run'' → locations 列出 def run/class run/run =
+    的位置;Do not use when 需要精确语义解析(导入追踪/作用域判断超出本技能,正则不
+    排除注释与字符串)。path 为目录时只扫 .py(尊重 .gitignore)。返回 {"locations":
+    [{"file", "line", "kind", "text"}]},kind ∈ def/class/assign。'
+  inputs:
+    type: object
+    properties:
+      path:
+        type: string
+        description: 搜索起点(文件或目录,相对 workdir)
+      symbol:
+        type: string
+        description: 目标符号名(合法标识符)
+    required:
+    - path
+    - symbol
+  outputs:
+    type: object
+    properties:
+      locations:
+        type: array
+        items:
+          type: object
+          properties:
+            file:
+              type: string
+              description: 相对 workdir 的文件路径
+            line:
+              type: integer
+              description: 行号(从 1 起)
+            kind:
+              type: string
+              description: def/class/assign
+            text:
+              type: string
+              description: 该行内容(去首尾空白)
+        description: 命中位置(按文件名字典序、行号升序)
+  permissions: {}
+  handler: files_handlers:find_definition

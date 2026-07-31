@@ -32,14 +32,14 @@ export function makeSignals() {
     sig("pre:step", "f1", { step: 1 }), // 3(组头,不占行)
     sig("pre:llm.request", "f1", { model: "mock/fib" }), // 4
     sig("post:llm.response", "f1", { model: "mock/fib", usage: { prompt: 1, completion: 1, cost: 0 } }), // 5
-    sig("pre:tool.call", "f1", { tool: "python_exec", args: { code: "print(1)" } }), // 6
-    sig("post:tool.call", "f1", { tool: "python_exec", ok: true }), // 7
-    sig("post:step", "f1", { step: 1, calls: [{ name: "python_exec" }] }), // 8
+    sig("pre:tool.call", "f1", { tool: "system.python.exec", args: { code: "print(1)" } }), // 6
+    sig("post:tool.call", "f1", { tool: "system.python.exec", ok: true }), // 7
+    sig("post:step", "f1", { step: 1, calls: [{ name: "system.python.exec" }] }), // 8
     sig("pre:step", "f1", { step: 2 }), // 9
     sig("pre:llm.request", "f1", { model: "mock/fib" }), // 10
     sig("post:llm.response", "f1", { model: "mock/fib", usage: { prompt: 1, completion: 1, cost: 0 } }), // 11
-    sig("pre:tool.call", "f1", { tool: "shell_exec", args: { cmd: "ls" } }), // 12
-    sig("post:tool.call", "f1", { tool: "shell_exec", ok: false }), // 13 ← ok:false
+    sig("pre:tool.call", "f1", { tool: "system.shell.exec", args: { cmd: "ls" } }), // 12
+    sig("post:tool.call", "f1", { tool: "system.shell.exec", ok: false }), // 13 ← ok:false
     sig("post:step", "f1", { step: 2, calls: [] }), // 14
     sig("pre:step", "f1", { step: 3 }), // 15
     sig("pre:llm.request", "f1", { model: "mock/fib" }), // 16
@@ -50,7 +50,7 @@ export function makeSignals() {
     sig("pre:step", "f2", { step: 1 }), // 21
     sig("pre:llm.request", "f2", { model: "mock/fib" }), // 22
     sig("post:llm.response", "f2", { model: "mock/fib", usage: { prompt: 1, completion: 1, cost: 0 } }), // 23
-    sig("pre:tool.call", "f2", { tool: "python_exec", args: { code: "rm -rf /" } }), // 24 ← vetoed
+    sig("pre:tool.call", "f2", { tool: "system.python.exec", args: { code: "rm -rf /" } }), // 24 ← vetoed
     sig("post:step", "f2", { step: 1, calls: [] }), // 25
     sig("pre:step", "f2", { step: 2 }), // 26
     sig("pre:llm.request", "f2", { model: "mock/fib" }), // 27
@@ -99,29 +99,29 @@ export function makeMessages() {
   return [
     msg("user", { content: '{"n": 6}', source: "parent_input" }), // 0
     msg("assistant", { // 1
-      tool_calls: [{ id: "c1", name: "python_exec", args: { code: "print(5)" } }],
+      tool_calls: [{ id: "c1", name: "system.python.exec", args: { code: "print(5)" } }],
     }),
     msg("tool", { // 2(与 1 成对)
       tool_call_id: "c1",
-      name: "python_exec",
+      name: "system.python.exec",
       content: '{"ok": true, "value": {"stdout": "5\\n"}, "error": null}',
       source: "tool_result",
     }),
     msg("assistant", { // 3(双 call)
       tool_calls: [
-        { id: "c2", name: "shell_exec", args: { cmd: "rm -rf /" } },
-        { id: "c3", name: "fs_read", args: { path: "/tmp/a" } },
+        { id: "c2", name: "system.shell.exec", args: { cmd: "rm -rf /" } },
+        { id: "c3", name: "system.file.read", args: { path: "/tmp/a" } },
       ],
     }),
     msg("tool", { // 4(veto 结果)
       tool_call_id: "c2",
-      name: "shell_exec",
+      name: "system.shell.exec",
       content: '{"ok": false, "value": null, "error": {"kind": "vetoed", "message": "ToolGuard: 禁止危险命令"}}',
       source: "tool_result",
     }),
     msg("tool", { // 5
       tool_call_id: "c3",
-      name: "fs_read",
+      name: "system.file.read",
       content: '{"ok": true, "value": "hello", "error": null}',
       source: "tool_result",
     }),
@@ -131,7 +131,7 @@ export function makeMessages() {
     }),
     msg("tool", { // 7(孤儿:无配对 assistant)
       tool_call_id: "ghost",
-      name: "python_exec",
+      name: "system.python.exec",
       content: '{"ok": true, "value": 1, "error": null}',
       source: "tool_result",
     }),

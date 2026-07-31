@@ -24,7 +24,7 @@ pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
 
 def _run_fib(client: TestClient, n: int = 3) -> str:
-    return run_and_wait(client, "fib", {"n": n})
+    return run_and_wait(client, "demo.fib", {"n": n})
 
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ def test_post_run_wait_and_get_detail(tmp_path):
 def test_post_run_async_mode(tmp_path):
     """wait=false(缺省)时立即返回 run_id,run 在后台推进;轮询直到 done。"""
     client = _client(tmp_path)
-    r = client.post("/api/runs", json={"skill": "fib", "input": {"n": 2}})
+    r = client.post("/api/runs", json={"skill": "demo.fib", "input": {"n": 2}})
     assert r.status_code == 200
     run_id = r.json()["run_id"]
     for _ in range(200):
@@ -58,7 +58,7 @@ def test_post_run_async_mode(tmp_path):
 
 def test_post_run_validation_error(tmp_path):
     client = _client(tmp_path)
-    r = client.post("/api/runs", json={"skill": "fib", "input": {"n": "x"}, "wait": True})
+    r = client.post("/api/runs", json={"skill": "demo.fib", "input": {"n": "x"}, "wait": True})
     assert r.status_code == 422 or (r.status_code == 200 and r.json().get("status") == "failed")
 
 

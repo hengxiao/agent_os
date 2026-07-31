@@ -1,0 +1,259 @@
+skills:
+- name: common.memory.knowledge_linking
+  version: 1.0.0
+  kind: prompt
+  inline: true
+  description: 知识互联说明书。Use when 写入新知识条目时需维护与既有条目的双向链接(知识库 写作场景);Do not use when 条目库本身无检索能力(先建检索,否则约定落空)。
+    inline merge。
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 待写入的知识条目(merge 无离散输入,仅作文档)
+  outputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 带双向链接的条目(merge 档不校验,仅作文档)
+  permissions: {}
+  prompt: '写入新知识条目前必须先检索既有条目:命中相关条目时,在新条目中显式链接它们,并在每个被链接条目处补一条指向新条目的反向链接;未命中也要在条目内记录已检索、无相关。禁止凭记忆跳过检索。
+
+    '
+- name: common.memory.extract
+  version: 1.0.0
+  kind: prompt
+  description: '记忆管线第一段:从会话中抽取候选事实(偏好/身份/决定/约定)。 Use when 一段对话结束、要把值得长期记住的内容变成结构化候选,如
+    {"session": "用户说:以后日期都用 ISO。"} → {"candidates": [{"fact": "用户偏好 ISO 日期", "kind":
+    "preference"}]}; Do not use when 要直接写入记忆库(候选必须先经 memory_reconcile 调和—— 裸写必然产生矛盾记录并存)。只抽事实,不评对错;无可抽取内容给空数组。'
+  inputs:
+    type: object
+    properties:
+      session:
+        type: string
+        description: 会话文本(若干轮对话的拼接)
+    required:
+    - session
+  outputs:
+    type: object
+    properties:
+      candidates:
+        type: array
+        items:
+          type: object
+          properties:
+            fact:
+              type: string
+              description: 一句话事实陈述
+            kind:
+              type: string
+              description: 类别,如 preference / identity / decision / fact
+        description: 候选事实数组(可为空数组)
+    required:
+    - candidates
+  permissions: {}
+  prompt: '你是记忆抽取器。输入 JSON 在第一条用户消息:字段 session 为一段会话文本。
+
+    从会话中抽取值得长期记住的候选事实:用户偏好、身份信息、做过的决定、立下的约定;忽略寒暄、一次性上下文与已过时信息。
+
+    只输出最终答案 JSON:对象数组字段 candidates,每项含 fact(一句话事实陈述)与 kind(类别,如 preference / identity
+    / decision / fact);没有可抽取内容时给空数组。
+
+    '
+- name: common.memory.reconcile
+  version: 1.0.0
+  kind: prompt
+  description: 记忆管线第二段:候选 × 既有 → 四决策调和(ADD/UPDATE/DELETE/NOOP)。 Use when memory_extract
+    的候选要入库前,必须与既有记忆逐条裁定,如 候选"用户偏好 ISO 日期" × 既有"用户偏好美式日期" → 后者 DELETE; Do not use when
+    想绕过调和直接写入(矛盾记录并存正是本技能存在的理由)。 铁律:相互矛盾的事实不得并存——凡矛盾必给 DELETE,不得两边都留。
+  inputs:
+    type: object
+    properties:
+      candidates:
+        type: array
+        items:
+          type: object
+          description: 候选事实(至少含 fact 字段)
+        description: memory_extract 的产出
+      existing:
+        type: array
+        items:
+          type: object
+          description: 既有记忆条目(至少含 fact 字段)
+        description: 当前记忆库内容(可为空数组)
+    required:
+    - candidates
+    - existing
+  outputs:
+    type: object
+    properties:
+      decisions:
+        type: array
+        items:
+          type: object
+          properties:
+            fact:
+              type: string
+              description: 被裁定的事实
+            action:
+              type: string
+              enum:
+              - ADD
+              - UPDATE
+              - DELETE
+              - NOOP
+              description: 四种动作之一
+            reason:
+              type: string
+              description: 一句理由
+        description: 逐条裁定结果
+    required:
+    - decisions
+  permissions: {}
+  prompt: '你是记忆调和器。输入 JSON 在第一条用户消息:candidates 为候选事实数组,existing 为既有记忆数组。
+
+    对每条候选与既有记忆逐条裁定,动作四选一:ADD(全新事实,直接收入)、UPDATE(与既有相容但更准或更新,替换旧值)、DELETE(与既有矛盾,删除矛盾方)、NOOP(与既有等价,无需动作)。
+
+    铁律:相互矛盾的事实绝不得并存——凡矛盾必给 DELETE,不得两边都留。
+
+    只输出最终答案 JSON:对象数组字段 decisions,每项含 fact(被裁定的事实)、action(ADD / UPDATE / DELETE /
+    NOOP 之一)、reason(一句理由)。
+
+    '
+- name: common.memory.consolidate
+  version: 1.0.0
+  kind: code
+  description: 记忆周期重构:重要性评分(访问频率对数加权 ×2 + 时间衰减)剪枝 + 近重复去重(词集 Jaccard ≥ 0.8 视为同一事实)。Use
+    when 记忆库胀了要 确定性瘦身,如访问 9 次的新事实保留、零访问的年前琐事进 pruned; Do not use when 要做语义级压缩合并(那是
+    prompt 技能的事,本技能纯规则)。 被剪枝项不静默丢弃:pruned 数组逐项带 reason(低分/近重复);时钟可经 today 形参注入(缺省本机日),测试可钉死。
+  inputs:
+    type: object
+    properties:
+      entries:
+        type: array
+        items:
+          type: object
+          properties:
+            fact:
+              type: string
+              description: 事实文本
+            access_count:
+              type: number
+              description: 访问次数(缺省 0)
+            created_at:
+              type: string
+              description: 创建日期 ISO,如 '2026-07-01'
+        description: 记忆条目数组
+      keep_threshold:
+        type: number
+        description: 保留阈值(缺省 1.0;评分低于它进 pruned)
+      today:
+        type: string
+        description: 判定用日期 ISO(缺省本机日;测试注入用)
+    required:
+    - entries
+  outputs:
+    type: object
+    properties:
+      entries:
+        type: array
+        items:
+          type: object
+          description: 保留项(原字段 + score)
+        description: 保留的记忆条目(按评分降序)
+      pruned:
+        type: array
+        items:
+          type: object
+          description: 被剪枝项(原字段 + score + reason)
+        description: 被剪枝的记忆条目(低分或近重复,带理由)
+    required:
+    - entries
+    - pruned
+  permissions: {}
+  handler: memory_handlers:memory_consolidate
+- name: common.memory.check
+  version: 1.0.0
+  kind: code
+  description: '记忆约束交叉校验:同一实体同一属性记下两个不同值即冲突(如"护照有效期" 两个年份),规则化"主语+属性→值"抽取("X 是/为:
+    Y"与"数字+单位"两种锚)。 Use when 入库后定期体检记忆库、把矛盾项挖出来喂给 memory_reconcile 裁定, 如 ["护照有效期 2030
+    年", "护照有效期 2020 年"] → {"ok": false, "conflicts": [...]}; Do not use when 需要语义级矛盾理解(本技能是纯规则,不保证完美
+    NLP, 抓的是"同键不同值"这一类硬冲突)。'
+  inputs:
+    type: object
+    properties:
+      entries:
+        type: array
+        items:
+          type: object
+          properties:
+            fact:
+              type: string
+              description: 事实文本
+        description: 记忆条目数组
+    required:
+    - entries
+  outputs:
+    type: object
+    properties:
+      ok:
+        type: boolean
+        description: 无冲突为 true
+      conflicts:
+        type: array
+        items:
+          type: object
+          properties:
+            key:
+              type: string
+              description: 冲突键(主语+属性,空白归一)
+            values:
+              type: array
+              items:
+                type: string
+              description: 该键上并存的不同值
+        description: 冲突清单(按键排序)
+    required:
+    - ok
+    - conflicts
+  permissions: {}
+  handler: memory_handlers:memory_check
+- name: common.memory.verify
+  version: 1.0.0
+  kind: code
+  description: '入库闸门:重放结果与期望做结构归一后的深比较,pass 才准入库(没有验证门, 自我改进循环必然腐烂)。Use when 跑通的编排脚本/新技能要进
+    learned/ 前做 验收,如 replay {"total": 45} vs expected {"total": 45} → {"verdict":
+    "pass"}; Do not use when 需要人审或语义级验收(本技能只做确定性深比较:int/float 归一、dict 键序无关、tuple/list
+    等价;bool 不与 1 混)。fail 时 reason 带两侧差异。'
+  inputs:
+    type: object
+    properties:
+      artifact:
+        type: object
+        description: 待入库的产物描述(如 {kind, name};仅记录,不参与判定)
+      replay_result:
+        description: 重置环境重放后的实际结果(任意 JSON 值)
+      expected:
+        description: 期望结果(任意 JSON 值;与 replay_result 结构归一后深比较)
+    required:
+    - artifact
+    - replay_result
+    - expected
+  outputs:
+    type: object
+    properties:
+      verdict:
+        type: string
+        enum:
+        - pass
+        - fail
+        description: pass=准予入库
+      reason:
+        type: string
+        description: 判定理由(fail 时带两侧差异)
+    required:
+    - verdict
+    - reason
+  permissions: {}
+  handler: learn_handlers:verify_before_store

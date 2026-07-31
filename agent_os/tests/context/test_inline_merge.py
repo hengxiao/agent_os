@@ -5,7 +5,7 @@
 - manifest ``inline: true``(§3):硬闸门——仅 prompt 技能、纯度
   (tools/skills/blackboard 全空)、prompt 非空;占位符/超长/无效字段为 lint 告警;
 - 组装(§4):调用方 SYSTEM 尾部追加"内联能力段"(按 permissions.skills
-  声明序),对应伪工具 ``skill__<name>`` 不再生成;非 inline 子技能不受影响;
+  声明序),对应伪工具 ``skill.<name>`` 不再生成;非 inline 子技能不受影响;
 - 帧内冻结(§4.2):内联段在帧首次 build 时快照进
   ``frame.context.working["_inline_caps"]``——SYSTEM 跨步逐字节稳定,
   热重载"在跑帧钉旧版、新帧用新版",resume 重建逐字节一致;
@@ -58,22 +58,22 @@ TIDY_PROMPT = "输出中的日期一律规范为 ISO 8601;含时区语义时用 
 
 SKILLS_YAML = f"""
 skills:
-  - name: caller
+  - name: test.caller
     version: 1.0.0
     kind: prompt
     inputs: {{ type: object, properties: {{}} }}
     outputs: {{ type: object }}
-    permissions: {{ tools: [], skills: [tidy, helper] }}
+    permissions: {{ tools: [], skills: [test.tidy, test.helper] }}
     model: {{ prefer: ["mock/x"] }}
     prompt: CALLER-PROMPT
-  - name: tidy
+  - name: test.tidy
     version: 1.0.0
     kind: prompt
     inline: true
     description: 日期规范能力。Use when 产出含日期;Do not use when 需相对时间推算。
     permissions: {{ tools: [], skills: [] }}
     prompt: {TIDY_PROMPT}
-  - name: helper
+  - name: test.helper
     version: 1.0.0
     kind: prompt
     inputs: {{ type: object, properties: {{}} }}
@@ -115,7 +115,7 @@ def _manager(reg, *, inline: str = "on", bus: _RecordingBus | None = None):
     )
 
 
-def _frame(skill: str = "caller") -> SkillFrame:
+def _frame(skill: str = "test.caller") -> SkillFrame:
     return SkillFrame(
         frame_id="f1",
         run_id="r1",
@@ -157,8 +157,8 @@ def test_inline_code_skill_rejected():
 @pytest.mark.parametrize(
     "perms",
     [
-        {"tools": ["fs_read"], "skills": []},
-        {"tools": [], "skills": ["fib"]},
+        {"tools": ["system.file.read"], "skills": []},
+        {"tools": [], "skills": ["demo.fib"]},
         {"tools": [], "skills": [], "blackboard": ["ns"]},
     ],
 )
@@ -198,12 +198,12 @@ def test_build_merges_inline_section_and_hides_pseudo_tool(tmp_path):
     system = req.messages[0].content
     assert system.startswith("CALLER-PROMPT")
     assert INLINE_SECTION_HEADER in system
-    assert "### tidy@1.0.0" in system
+    assert "### test.tidy@1.0.0" in system
     assert TIDY_PROMPT in system
 
     tool_names = {t["name"] for t in req.tools}
-    assert "skill__helper" in tool_names, "非 inline 子技能伪工具应保留"
-    assert "skill__tidy" not in tool_names, "inline 技能不应生成伪工具"
+    assert "skill.test.helper" in tool_names, "非 inline 子技能伪工具应保留"
+    assert "skill.test.tidy" not in tool_names, "inline 技能不应生成伪工具"
 
 
 def test_ablation_off_degrades_to_plain_skill(tmp_path):
@@ -213,12 +213,12 @@ def test_ablation_off_degrades_to_plain_skill(tmp_path):
     system = req.messages[0].content
     assert INLINE_SECTION_HEADER not in system
     tool_names = {t["name"] for t in req.tools}
-    assert "skill__tidy" in tool_names, "off 档 merge 技能应退化为普通可调用技能"
+    assert "skill.test.tidy" in tool_names, "off 档 merge 技能应退化为普通可调用技能"
 
 
 def test_frame_without_inline_deps_untouched(tmp_path):
     mgr = _manager(_registry(tmp_path))
-    req = _build(mgr, _frame("helper"))
+    req = _build(mgr, _frame("test.helper"))
     assert INLINE_SECTION_HEADER not in req.messages[0].content
 
 
@@ -259,8 +259,8 @@ def test_snapshot_frozen_in_working_and_resume_deterministic(tmp_path):
 
     caps = frame.context.working.get(INLINE_CAPS_KEY)
     assert caps is not None
-    assert caps["hidden"] == ["skill__tidy"]
-    assert caps["skills"] == [{"name": "tidy", "version": "1.0.0", "chars": len(TIDY_PROMPT)}]
+    assert caps["hidden"] == ["skill.test.tidy"]
+    assert caps["skills"] == [{"name": "test.tidy", "version": "1.0.0", "chars": len(TIDY_PROMPT)}]
 
     # 模拟 resume:working 快照随帧入档;恢复时 registry 已是新版,SYSTEM 仍按快照重建
     restored = _frame()
@@ -287,9 +287,9 @@ def test_inline_signal_emitted_once(tmp_path):
 
     inline_sigs = [s for s in bus.seen if s.name == POST_CONTEXT_INLINE]
     assert len(inline_sigs) == 1, "快照只组装一次,信号只发一次"
-    assert inline_sigs[0].payload["skills"][0]["name"] == "tidy"
+    assert inline_sigs[0].payload["skills"][0]["name"] == "test.tidy"
 
-    _build(mgr, _frame("helper"))
+    _build(mgr, _frame("test.helper"))
     assert len([s for s in bus.seen if s.name == POST_CONTEXT_INLINE]) == 1, (
         "无内联依赖的帧不发信号"
     )
@@ -300,20 +300,20 @@ def test_inline_signal_emitted_once(tmp_path):
 # ---------------------------------------------------------------------------
 
 KERNEL_YAML = SKILLS_YAML + """
-  - name: coded
+  - name: test.coded
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:invoke_one
     inputs: { type: object }
     outputs: { type: object }
-    permissions: { tools: [], skills: [tidy] }
-  - name: spawner
+    permissions: { tools: [], skills: [test.tidy] }
+  - name: test.spawner
     version: 1.0.0
     kind: code
     handler: tests.helpers.code_skills:spawn_one
     inputs: { type: object }
     outputs: { type: object }
-    permissions: { tools: [], skills: [tidy] }
+    permissions: { tools: [], skills: [test.tidy] }
 """
 
 
@@ -334,7 +334,7 @@ def _call_tidy() -> ChatResponse:
     return ChatResponse(
         message=Message(
             role=Role.ASSISTANT,
-            tool_calls=[ToolCall(id="c1", name="skill__tidy", args={})],
+            tool_calls=[ToolCall(id="c1", name="skill.test.tidy", args={})],
         ),
         finish_reason="tool_calls",
         usage=ChatUsage(prompt=1, completion=1),
@@ -342,18 +342,18 @@ def _call_tidy() -> ChatResponse:
 
 
 def adaptive_brain(req: ChatRequest) -> ChatResponse:
-    """自适应大脑:调用方看得见 skill__tidy 就调用,看不见就直接答;子帧给终答。"""
+    """自适应大脑:调用方看得见 skill.test.tidy 就调用,看不见就直接答;子帧给终答。"""
     if not _is_caller_frame(req):
         return _final({"done": True})  # tidy 子帧
     if any(m.role is Role.TOOL for m in req.messages):
         return _final({"result": "ok"})
-    if any(t["name"] == "skill__tidy" for t in req.tools):
+    if any(t["name"] == "skill.test.tidy" for t in req.tools):
         return _call_tidy()
     return _final({"result": "ok"})
 
 
 def stubborn_brain(req: ChatRequest) -> ChatResponse:
-    """固执大脑:看不见伪工具也幻觉调用 skill__tidy(降级路径测试)。"""
+    """固执大脑:看不见伪工具也幻觉调用 skill.test.tidy(降级路径测试)。"""
     if not _is_caller_frame(req):
         return _final({"done": True})
     if any(m.role is Role.TOOL for m in req.messages):
@@ -377,22 +377,22 @@ def test_ablation_ab_on_no_frame_off_real_frame(tmp_path):
     """核心 A/B 锚点:on 档模型看不见伪工具直接完成(零子帧);off 档真实压帧调用。"""
     kernel_on = _kernel(tmp_path, adaptive_brain, inline="on")
     seen_on = record_all(kernel_on)
-    assert asyncio.run(kernel_on.run("caller", {})) == {"result": "ok"}
+    assert asyncio.run(kernel_on.run("test.caller", {})) == {"result": "ok"}
     assert len([s for s in seen_on if s.name == POST_FRAME_PUSH]) == 1, "on 档不应有子帧"
 
     kernel_off = _kernel(tmp_path, adaptive_brain, inline="off")
     seen_off = record_all(kernel_off)
-    assert asyncio.run(kernel_off.run("caller", {})) == {"result": "ok"}
+    assert asyncio.run(kernel_off.run("test.caller", {})) == {"result": "ok"}
     pushes = [s for s in seen_off if s.name == POST_FRAME_PUSH]
     assert len(pushes) == 2, "off 档 merge 技能应真实压帧"
     assert any("tidy" in s.payload["skill"] for s in pushes)
 
 
 def test_hallucinated_call_degrades_to_frame(tmp_path):
-    """on 档幻觉调用 skill__tidy → 照常压帧执行,结果正确(§4.4,runner 零特判)。"""
+    """on 档幻觉调用 skill.test.tidy → 照常压帧执行,结果正确(§4.4,runner 零特判)。"""
     kernel = _kernel(tmp_path, stubborn_brain, inline="on")
     seen = record_all(kernel)
-    assert asyncio.run(kernel.run("caller", {})) == {"result": "ok"}
+    assert asyncio.run(kernel.run("test.caller", {})) == {"result": "ok"}
     assert any(
         s.name == POST_FRAME_PUSH and "tidy" in s.payload["skill"] for s in seen
     ), "幻觉调用应降级为真实帧"
@@ -402,7 +402,7 @@ def test_logic_context_invoke_degrades_to_frame(tmp_path):
     """code 技能 ctx.invoke 一个 merge 技能 → 照常压帧(§8:merge 只改 LLM 呈现面)。"""
     kernel = _kernel(tmp_path, adaptive_brain)
     seen = record_all(kernel)
-    result = asyncio.run(kernel.run("coded", {"skill": "tidy"}))
+    result = asyncio.run(kernel.run("test.coded", {"skill": "test.tidy"}))
     assert result == {"value": {"done": True}}
     assert any(
         s.name == POST_FRAME_PUSH and "tidy" in s.payload["skill"] for s in seen
@@ -414,7 +414,7 @@ def test_spawn_inline_skill_still_frames(tmp_path):
     from agent_os.blackboard import LocalBlackboard
 
     kernel = _kernel(tmp_path, adaptive_brain, blackboard=LocalBlackboard())
-    result = asyncio.run(kernel.run("spawner", {"skill": "tidy"}))
+    result = asyncio.run(kernel.run("test.spawner", {"skill": "test.tidy"}))
     assert result["frame_id"]
     assert result["value"] == {"done": True}
 
@@ -433,7 +433,7 @@ def test_replay_run_with_merge_skill(tmp_path, capsys):
         tmp_path, brain="tests.helpers.brains:done_brain", skills=skills
     )
     artifacts = str(tmp_path / "runs")
-    rc, out = run_cli(capsys, "run", "caller", "--input", "{}",
+    rc, out = run_cli(capsys, "run", "test.caller", "--input", "{}",
                       "--config", str(cfg), "--artifacts", artifacts, "--json")
     assert rc == 0, out
     assert out["result"] == {"done": True}

@@ -27,8 +27,8 @@ compression = "hierarchical"          # off = 消融档(裸模型基线)
 # brain = "my_tests.brains:fib_brain"
 
 [tools]
-builtins = true                       # fs_read/fs_write/fs_edit/shell_exec/http_fetch
-python_exec = "docker"                # docker(推荐,需本机 docker)| subprocess | off
+builtins = true                       # system.file.read/system.file.write/system.file.edit/system.shell.exec/system.net.http_fetch
+python_exec = "docker"                # docker(推荐,需本机 docker)| subprocess | off (对应 system.python.exec)
 
 [skills]
 path = "./skills.yaml"
@@ -36,7 +36,7 @@ path = "./skills.yaml"
 [sidecars]
 budget_guard = { max_cost = 2.0 }
 loop_detector = { threshold = 3, max_strikes = 2 }
-# tool_guard_rules = [["shell_exec", "rm\\s+-rf", "禁止危险命令"]]
+# tool_guard_rules = [["system.shell.exec", "rm\\s+-rf", "禁止危险命令"]]
 
 [telemetry]
 dir = ".agent-os/traces"

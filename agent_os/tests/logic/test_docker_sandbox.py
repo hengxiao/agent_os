@@ -117,19 +117,19 @@ def test_runs_code_skill_module_via_driver():
     assert result.value == {"sum": 42}
 
 
-def test_python_exec_tool_works_with_docker_kernel():
-    """python_exec 工具换 Docker 后端:契约不变,端到端分发执行(§9.4)。"""
+def test_system_python_exec_tool_works_with_docker_kernel():
+    """system.python.exec 工具换 Docker 后端:契约不变,端到端分发执行(§9.4)。"""
     tools = LocalPythonToolRegistry()
     tools.register(python_exec_tool(_kernel()))
     ctx = ToolDispatchContext(
         frame=SkillFrame(frame_id="f1", run_id="r1"),
-        allowed_tools=["python_exec"],
+        allowed_tools=["system.python.exec"],
         tool_policy=ToolPolicy(max_permission=Permission.EXEC),
     )
 
     async def main():
         return await tools.dispatch(
-            ToolCall(id="c1", name="python_exec", args={"code": "result = 6 * 7\nprint(result)"}), ctx
+            ToolCall(id="c1", name="system.python.exec", args={"code": "result = 6 * 7\nprint(result)"}), ctx
         )
 
     result = asyncio.run(main())

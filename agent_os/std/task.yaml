@@ -1,0 +1,40 @@
+skills:
+- name: common.task.make_handoff
+  version: 1.0.0
+  kind: code
+  description: '交接包构造:任务描述 + 已确认事实/约束 + 产物路径。Use when 非共享上下文下要把 工作交接给下一个 agent/会话,如
+    task=''继续写报告'' + facts=[''预算上限 $2''] + artifacts=[''out/draft.md''] → {package:
+    {...}};Do not use when 想把完整轨迹/对话 记录塞给对方——schema 层面拒绝(artifacts 只收字符串路径,消息对象直接报错),
+    请把轨迹落盘后传路径。返回 {"package": {schema, task, facts, constraints, artifacts}}。'
+  inputs:
+    type: object
+    properties:
+      task:
+        type: string
+        description: 交接任务描述
+      facts:
+        type: array
+        items:
+          type: string
+        description: 已确认事实清单
+      constraints:
+        type: array
+        items:
+          type: string
+        description: 约束清单
+      artifacts:
+        type: array
+        items:
+          type: string
+          description: 产物路径引用
+        description: 产物路径清单(只收路径,拒绝轨迹对象)
+    required:
+    - task
+  outputs:
+    type: object
+    properties:
+      package:
+        type: object
+        description: 交接包 {schema, task, facts, constraints, artifacts}
+  permissions: {}
+  handler: transform:make_handoff

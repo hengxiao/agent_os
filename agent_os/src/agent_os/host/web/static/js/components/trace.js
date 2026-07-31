@@ -18,11 +18,11 @@
    滚动/事件由 workbench 承担。
 
    行模型规则:
-     call   pre:frame.push(+post)     → "→ call skill__fib({"n": 4})";无配对 ret 标 …(未返回)
+     call   pre:frame.push(+post)     → "→ call skill.fib({"n": 4})";无配对 ret 标 …(未返回)
      ret    pre:frame.pop(+post)      → "← ret {"seq":[0,1,1]}";失败帧红色;孤儿 ret 按当前 depth
      llm    pre:llm.request + 紧随 post:llm.response 合并 → "llm mock/fib → 1/1 tok · 0.4s"
      tool   pre/post:tool.call 合并   → "tool get_ticket({...}) ✓ 0.01s";ok:false / vetoed 红色
-     exec   pre/post:logic.exec 合并  → "exec python_exec · trusted ✓";被 tool.call 全包时
+     exec   pre/post:logic.exec 合并  → "exec system.python.exec · trusted ✓";被 tool.call 全包时
                                         折进 tool 行(trust 标注带上),不重复出行
      obs    budget.* / compress / sidecar / 未知信号一行(黄)
      inline post:context.inline       → "⇥ inline date_style@1.0.0(+1) · 42 chars"
@@ -30,7 +30,7 @@
      run    run.started/finished/aborted(粗体行)
      depth  信号时刻的帧栈深(call 行 = 父 depth,子行 depth+1,ret 行回到父 depth)
      step   pre:step 只更新帧内当前 step(供检视器消息定位),自身不占行;
-     pre/post:skill.invoke 不占行(pre 用于给紧随的 frame.push 起 skill__ 调用名;
+     pre/post:skill.invoke 不占行(pre 用于给紧随的 frame.push 起 skill. 调用名;
      post ok:false 且无配对 push 时补一行失败调用,防静默丢错) */
 
 import { absTs, esc, fmtCost, shortSkill } from "../util.js";
@@ -203,7 +203,7 @@ export function buildTraceRows(signals, frames = []) {
       const args = frameInput.get(fid);
       const row = mkRow({
         kind: "call", depth, status: frameStatus.get(fid) ?? "running",
-        label: invoked ? `skill__${shortSkill(invoked.skill)}` : shortSkill(p.skill),
+        label: invoked ? `skill.${shortSkill(invoked.skill)}` : shortSkill(p.skill),
         detail: args != null ? shortJson(args) : "",
         durMs: null, frameId: fid, parentFrameId: stack.at(-1)?.frameId ?? null,
         sigIndex: i, sigEnd: end,
@@ -232,7 +232,7 @@ export function buildTraceRows(signals, frames = []) {
       if (p.ok === false && pendingInvoke && !pendingInvoke.consumed) {
         mkRow({
           kind: "tool", depth, status: "failed",
-          label: `skill__${shortSkill(p.skill)}`, detail: "调用失败",
+          label: `skill.${shortSkill(p.skill)}`, detail: "调用失败",
           durMs: null, frameId: fid, sigIndex: pendingInvoke.sigIndex, sigEnd: i, step,
           payload: stripCommon(p), ts: sig.ts, names: "pre:skill.invoke → post:skill.invoke",
         });

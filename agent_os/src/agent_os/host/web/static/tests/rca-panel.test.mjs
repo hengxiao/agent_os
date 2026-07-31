@@ -19,7 +19,7 @@ const frames = makeFrames();
       kind: "vetoed",
       frame_id: "f2",
       skill: "local:fib@1.0.0",
-      call: { name: "python_exec", args: { code: "rm -rf /" } },
+      call: { name: "system.python.exec", args: { code: "rm -rf /" } },
       message: "ToolGuard: 禁止危险命令",
     },
   };
@@ -38,15 +38,15 @@ const frames = makeFrames();
     ...signals.slice(0, 25),
     // 第二个 veto(另一工具,同帧 @25 之前插入)
     { v: 1, type: "signal", name: "pre:tool.call", run_id: "r1", frame_id: "f2", ts: 0,
-      payload: { tool: "shell_exec", args: {} } },
+      payload: { tool: "system.shell.exec", args: {} } },
     ...signals.slice(25),
   ];
   const rca = {
     status: "failed",
-    first_error: { kind: "vetoed", frame_id: "f2", call: { name: "shell_exec", args: {} }, message: "m" },
+    first_error: { kind: "vetoed", frame_id: "f2", call: { name: "system.shell.exec", args: {} }, message: "m" },
   };
   const plan = planRcaJump(rca, frames, extra);
-  assert.equal(extra[plan.signalIndex].payload.tool, "shell_exec", "call.name 匹配优先");
+  assert.equal(extra[plan.signalIndex].payload.tool, "system.shell.exec", "call.name 匹配优先");
 }
 
 /* ── planRcaJump:tool_error → 该帧第一个 ok:false 的 post:tool.call(@13)── */
@@ -57,7 +57,7 @@ const frames = makeFrames();
       kind: "tool_error",
       frame_id: "f1",
       skill: "local:fib@1.0.0",
-      call: { name: "shell_exec", args: { cmd: "ls" } },
+      call: { name: "system.shell.exec", args: { cmd: "ls" } },
       message: "exit code 1",
     },
   };
@@ -92,7 +92,7 @@ const frames = makeFrames();
 {
   const rca = {
     status: "failed",
-    first_error: { kind: "tool_error", frame_id: "f2", call: { name: "python_exec", args: {} }, message: "m" },
+    first_error: { kind: "tool_error", frame_id: "f2", call: { name: "system.python.exec", args: {} }, message: "m" },
   };
   const plan = planRcaJump(rca, frames, signals);
   assert.equal(plan.signalIndex, 30, "f2 无 ok:false post(veto 不发 post)→ 回退帧末信号");
@@ -142,13 +142,13 @@ const frames = makeFrames();
   const html = vetoCardHtml({
     kind: "vetoed",
     skill: "local:fib@1.0.0",
-    call: { name: "shell_exec", args: { command: "rm -rf /" } },
+    call: { name: "system.shell.exec", args: { command: "rm -rf /" } },
     message: "ToolGuard: 禁止危险命令 rm -rf",
   });
   assert.match(html, /rca-veto/);
   assert.match(html, /裁决来源:<b class="mono">vetoed<\/b>/, "裁决来源 kind");
   assert.match(html, /ToolGuard: 禁止危险命令 rm -rf/, "理由全文");
-  assert.match(html, /shell_exec/, "被否决调用名");
+  assert.match(html, /system\.shell\.exec/, "被否决调用名");
   assert.match(html, /<details class="json-fold rca-veto-args">/, "参数 JSON 折叠");
   assert.match(html, /&quot;command&quot;: &quot;rm -rf \/&quot;/, "参数 JSON esc 渲染");
   assert.match(html, /data-copy-label="已复制被否决参数 JSON"/, "参数 JSON 一键复制");

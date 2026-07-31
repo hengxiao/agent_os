@@ -1,6 +1,6 @@
 # support_desk 调试配置(客服工单退款处理台;tests/test_support_example.py 锚点同拓扑)
 # 用法(仓库根目录):
-#   PYTHONPATH=examples/support_desk .venv/bin/agent-os run handle_ticket \
+#   PYTHONPATH=examples/support_desk .venv/bin/agent-os run project.support_desk.handle_ticket \
 #     --input '{"ticket_id": "T-1001"}' --config examples/support_desk/agent-os.toml --json
 
 [run]
@@ -11,7 +11,7 @@ max_depth = 10                    # 调用树最深 3 层,留足调试余量
 brain = "brains:support_brain"    # 数据驱动 mock 大脑(需在 PYTHONPATH 上,见上用法)
 
 [tools]
-builtins = true                   # fs_read/fs_write/fs_edit/shell_exec/http_fetch
+builtins = true                   # system.file.read/system.file.write/system.file.edit/system.shell.exec/system.net.http_fetch
 python_exec = "off"               # 本场景不需要 python_exec 沙箱
 
 [tools.custom]

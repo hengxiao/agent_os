@@ -1,6 +1,6 @@
 /* trace.js 纯逻辑单测(WEB-UI.md §4.2 中栏,debug trace 视图):
    mergePairs(llm/tool/exec 配对、veto 未配对、帧隔离)、
-   buildTraceRows(call/ret 配对与行号/depth 缩进/step 跟踪/skill__ 调用名/
+   buildTraceRows(call/ret 配对与行号/depth 缩进/step 跟踪/skill. 调用名/
    帧 input 参数/未配对容错:未返回 call 与孤儿 ret/post:context.inline 内联能力行)、
    collapseTrace(子树折叠/边界)、deriveTraceView(过滤/聚焦/深度默认折叠)。
    运行:node static/tests/trace.test.mjs(无需 DOM、无第三方依赖)。 */
@@ -54,8 +54,8 @@ const signals = makeSignals();
 
   /* exec 配对本身成立(折进 tool 行的 foldedInto 标记在 buildTraceRows 阶段,见下) */
   const wrapped = [
-    { name: "pre:tool.call", frame_id: "f1", ts: 0, payload: { tool: "python_exec" } },
-    { name: "pre:logic.exec", frame_id: "f1", ts: 1, payload: { tool: "python_exec", trust: "sandbox" } },
+    { name: "pre:tool.call", frame_id: "f1", ts: 0, payload: { tool: "system.python.exec" } },
+    { name: "pre:logic.exec", frame_id: "f1", ts: 1, payload: { tool: "system.python.exec", trust: "sandbox" } },
     { name: "post:logic.exec", frame_id: "f1", ts: 2, payload: { ok: true } },
     { name: "post:tool.call", frame_id: "f1", ts: 3, payload: { ok: true } },
   ];
@@ -89,7 +89,7 @@ const signals = makeSignals();
   assert.equal(root.retLine, 13, "根 call 配对该帧 ret 行");
   assert.equal(root.kids, 10, "call 到 ret 之间 10 行子指令");
   const inner = rows[7];
-  assert.equal(inner.label, "skill__fib", "invoke 紧随的 push 起 skill__ 调用名");
+  assert.equal(inner.label, "skill.fib", "invoke 紧随的 push 起 skill. 调用名");
   assert.equal(inner.retLine, 12);
   assert.equal(inner.kids, 3);
   /* ret 行:回到父 depth,配对帧状态 */
@@ -114,7 +114,7 @@ const signals = makeSignals();
   /* label/detail 文本 */
   assert.equal(rows[2].label, "mock/fib");
   assert.match(rows[2].detail, /1\/1 tok/);
-  assert.equal(rows[3].label, "python_exec");
+  assert.equal(rows[3].label, "system.python.exec");
   assert.match(rows[3].detail, /print\(1\)/);
 }
 
@@ -174,15 +174,15 @@ const signals = makeSignals();
     { name: "post:skill.invoke", frame_id: "f1", ts: 1, payload: { skill: "ghost", ok: false } },
   ]);
   assert.equal(noSkill.length, 1);
-  assert.equal(noSkill[0].label, "skill__ghost");
+  assert.equal(noSkill[0].label, "skill.ghost");
   assert.equal(noSkill[0].status, "failed");
 
   /* exec 折进 tool 行:不重复出行,trust 标注带上 */
   const wrapped = buildTraceRows([
     { name: "pre:frame.push", frame_id: "f1", ts: 0, payload: { skill: "local:fib@1.0.0" } },
     { name: "post:frame.push", frame_id: "f1", ts: 0.1, payload: {} },
-    { name: "pre:tool.call", frame_id: "f1", ts: 0.2, payload: { tool: "python_exec", args: { code: "1" } } },
-    { name: "pre:logic.exec", frame_id: "f1", ts: 0.3, payload: { tool: "python_exec", trust: "sandbox" } },
+    { name: "pre:tool.call", frame_id: "f1", ts: 0.2, payload: { tool: "system.python.exec", args: { code: "1" } } },
+    { name: "pre:logic.exec", frame_id: "f1", ts: 0.3, payload: { tool: "system.python.exec", trust: "sandbox" } },
     { name: "post:logic.exec", frame_id: "f1", ts: 0.4, payload: { ok: true } },
     { name: "post:tool.call", frame_id: "f1", ts: 0.5, payload: { ok: true } },
   ]);
@@ -208,19 +208,19 @@ const signals = makeSignals();
 
   /* 未配对 tool 区分:vetoed(后续同帧 tool 信号非 post)vs open(流尾在途) */
   const vetoed = buildTraceRows([
-    { name: "pre:tool.call", frame_id: "f1", ts: 0, payload: { tool: "shell_exec", args: {} } },
+    { name: "pre:tool.call", frame_id: "f1", ts: 0, payload: { tool: "system.shell.exec", args: {} } },
     { name: "post:step", frame_id: "f1", ts: 1, payload: { step: 1, calls: [] } },
   ]);
   assert.equal(vetoed[0].status, "vetoed", "pre 后同帧下一个 tool 类信号非 post → vetoed");
   const inflight = buildTraceRows([
-    { name: "pre:tool.call", frame_id: "f1", ts: 0, payload: { tool: "python_exec", args: {} } },
+    { name: "pre:tool.call", frame_id: "f1", ts: 0, payload: { tool: "system.python.exec", args: {} } },
   ]);
   assert.equal(inflight[0].status, "open", "流尾未配对 = 在途(live 中 post 未到),非 veto");
 
   /* 在途中的 logic.exec(调用内部执行)不构成 veto 证据 */
   const innerSigs = [
-    { name: "pre:tool.call", frame_id: "f1", ts: 0, payload: { tool: "python_exec", args: {} } },
-    { name: "pre:logic.exec", frame_id: "f1", ts: 1, payload: { tool: "python_exec" } },
+    { name: "pre:tool.call", frame_id: "f1", ts: 0, payload: { tool: "system.python.exec", args: {} } },
+    { name: "pre:logic.exec", frame_id: "f1", ts: 1, payload: { tool: "system.python.exec" } },
   ];
   const innerExec = buildTraceRows(innerSigs);
   assert.equal(innerExec[0].status, "open", "exec 已起、post 未到 = 在途");

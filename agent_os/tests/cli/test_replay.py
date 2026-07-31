@@ -24,7 +24,7 @@ from tests.helpers.kernels import FIB_SKILLS_YAML as SKILLS_YAML
 def _completed_run(tmp_path: Path, capsys, n: int) -> str:
     cfg = _write_config(tmp_path)
     rc, out = _run_cli(
-        capsys, "run", "fib", "--input", json.dumps({"n": n}),
+        capsys, "run", "demo.fib", "--input", json.dumps({"n": n}),
         "--config", str(cfg), "--artifacts", str(tmp_path / "runs"), "--json",
     )
     assert rc == 0
@@ -89,24 +89,24 @@ def test_skills_validate_ok(tmp_path, capsys):
     assert rc == 0
     assert out["ok"] is True
     names = [s["name"] for s in out["skills"]]
-    assert "fib" in names
+    assert "demo.fib" in names
 
 
 def test_skills_validate_cycle_fails(tmp_path, capsys):
     bad = tmp_path / "bad.yaml"
     bad.write_text(
         """skills:
-  - name: a
+  - name: test.a
     version: 1.0.0
     kind: prompt
     inputs: { type: object, properties: {} }
-    permissions: { tools: [], skills: [b] }
+    permissions: { tools: [], skills: [test.b] }
     prompt: a
-  - name: b
+  - name: test.b
     version: 1.0.0
     kind: prompt
     inputs: { type: object, properties: {} }
-    permissions: { tools: [], skills: [a] }
+    permissions: { tools: [], skills: [test.a] }
     prompt: b
 """,
         encoding="utf-8",

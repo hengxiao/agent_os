@@ -109,22 +109,22 @@ def _next(
 
 def _research_report(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatResponse:
     question = inp["question"]
-    steps: list[tuple[str, dict[str, Any]]] = [("skill__plan_topics", {"question": question})]
+    steps: list[tuple[str, dict[str, Any]]] = [("skill.project.research_pipeline.plan_topics", {"question": question})]
     if results:
         for topic in results[0]["value"]["topics"]:
-            steps.append(("skill__research_topic", {"topic": topic}))
+            steps.append(("skill.project.research_pipeline.research_topic", {"topic": topic}))
     if len(results) >= 4:
         summaries = [r["value"]["summary"] for r in results[1:4]]
-        steps.append(("skill__merge_summaries", {"summaries": summaries}))
+        steps.append(("skill.project.research_pipeline.merge_summaries", {"summaries": summaries}))
     if len(results) >= 5:
         merged = results[4]["value"]["merged"]
-        steps.append(("skill__draft_report", {"question": question, "merged": merged}))
+        steps.append(("skill.project.research_pipeline.draft_report", {"question": question, "merged": merged}))
     if len(results) >= 6:
         out = results[5]["value"]
         steps.append(
-            ("skill__finalize_report", {"draft": out["draft"], "citations": out["citations"]})
+            ("skill.project.research_pipeline.finalize_report", {"draft": out["draft"], "citations": out["citations"]})
         )
-    nxt = _next("research_report", steps, results)
+    nxt = _next("project.research_pipeline.research_report", steps, results)
     if nxt is not None:
         return nxt
     return _final(results[-1]["value"])  # finalize 的 {report, words, citations} 原样上抛
@@ -132,10 +132,10 @@ def _research_report(inp: dict[str, Any], results: list[dict[str, Any]]) -> Chat
 
 def _research_topic(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatResponse:
     topic = inp["topic"]
-    steps: list[tuple[str, dict[str, Any]]] = [("skill__fetch_source", {"topic": topic})]
+    steps: list[tuple[str, dict[str, Any]]] = [("skill.project.research_pipeline.fetch_source", {"topic": topic})]
     if results:
-        steps.append(("skill__extract_facts", {"text": results[0]["value"]["text"]}))
-    nxt = _next("research_topic", steps, results)
+        steps.append(("skill.project.research_pipeline.extract_facts", {"text": results[0]["value"]["text"]}))
+    nxt = _next("project.research_pipeline.research_topic", steps, results)
     if nxt is not None:
         return nxt
     facts = results[-1]["value"]["facts"]
@@ -145,8 +145,8 @@ def _research_topic(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatR
 
 def _extract_facts(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatResponse:
     facts = _split_facts(inp["text"])
-    steps = [("skill__verify_facts", {"facts": facts})]
-    nxt = _next("extract_facts", steps, results)
+    steps = [("skill.project.research_pipeline.verify_facts", {"facts": facts})]
+    nxt = _next("project.research_pipeline.extract_facts", steps, results)
     if nxt is not None:
         return nxt
     return _final({"facts": results[-1]["value"]["verified"]})
@@ -161,10 +161,10 @@ def _draft_report(inp: dict[str, Any], results: list[dict[str, Any]]) -> ChatRes
         "结论:以上主题覆盖了该问题的主要方面,详见各节。"
     )
     steps = [
-        ("skill__style_review", {"draft": draft}),
-        ("skill__fact_check", {"draft": draft}),
+        ("skill.project.research_pipeline.style_review", {"draft": draft}),
+        ("skill.project.research_pipeline.fact_check", {"draft": draft}),
     ]
-    nxt = _next("draft_report", steps, results)
+    nxt = _next("project.research_pipeline.draft_report", steps, results)
     if nxt is not None:
         return nxt
     citations = [f"内部资料摘要 {i}" for i in range(1, len(merged.splitlines()) + 1)]
@@ -177,10 +177,10 @@ def _split_facts(text: str) -> list[str]:
 
 
 _ORCHESTRATORS = {
-    "research_report": _research_report,
-    "research_topic": _research_topic,
-    "extract_facts": _extract_facts,
-    "draft_report": _draft_report,
+    "project.research_pipeline.research_report": _research_report,
+    "project.research_pipeline.research_topic": _research_topic,
+    "project.research_pipeline.extract_facts": _extract_facts,
+    "project.research_pipeline.draft_report": _draft_report,
 }
 
 
@@ -221,11 +221,11 @@ def _leaf_risk_scan(inp: dict[str, Any]) -> dict[str, Any]:
 
 
 _LEAF_FINALS = {
-    "summarize_topic": _leaf_summarize_topic,
-    "style_review": _leaf_style_review,
-    "keyword_extractor": _leaf_keyword_extractor,
-    "translate_en": _leaf_translate_en,
-    "risk_scan": _leaf_risk_scan,
+    "project.research_pipeline.summarize_topic": _leaf_summarize_topic,
+    "project.research_pipeline.style_review": _leaf_style_review,
+    "project.research_pipeline.keyword_extractor": _leaf_keyword_extractor,
+    "project.research_pipeline.translate_en": _leaf_translate_en,
+    "project.research_pipeline.risk_scan": _leaf_risk_scan,
 }
 
 

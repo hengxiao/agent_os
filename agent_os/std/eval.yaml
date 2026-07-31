@@ -1,0 +1,289 @@
+skills:
+- name: common.eval.judge
+  version: 1.0.0
+  kind: prompt
+  description: 'rubric 化评审:按 dimensions 逐项打分,veto 维度一票否决。Use when 需要带诊断 能力的结构化评审(哪一维坏了、为什么),如
+    rubric 含 weight=veto 的安全性维度 且其得分 ≤1 → veto_triggered=true;Do not use when: 作为唯一验收依据——无外部
+    反馈的自审被反复证伪,须与确定性校验器配套,并用 calibrate_judge 定期校准 (kappa ≥ 0.7 门禁)。返回 {"dimensions":
+    [{name, score, reason}], "veto_triggered": bool}。'
+  inputs:
+    type: object
+    properties:
+      subject:
+        type: string
+        description: 被评对象(报告/答案/代码等文本)
+      rubric:
+        type: object
+        properties:
+          dimensions:
+            type: array
+            minItems: 1
+            items:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: 维度名
+                weight:
+                  type: string
+                  enum:
+                  - essential
+                  - important
+                  - optional
+                  - veto
+                  description: 权重档;veto=一票否决
+                scoring:
+                  type: object
+                  description: 4..1 各档的具体可判行为描述
+              required:
+              - name
+              - weight
+              - scoring
+          edge_cases:
+            type: array
+            items:
+              type: string
+            description: 须逐一检查的边界情形
+        required:
+        - dimensions
+    required:
+    - subject
+    - rubric
+  outputs:
+    type: object
+    properties:
+      dimensions:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            score:
+              type: integer
+              minimum: 1
+              maximum: 4
+            reason:
+              type: string
+          required:
+          - name
+          - score
+          - reason
+      veto_triggered:
+        type: boolean
+        description: 任一 weight=veto 维度 score ≤ 1 → true(由模型按规则输出)
+    required:
+    - dimensions
+    - veto_triggered
+  permissions: {}
+  prompt: '你是评审器。输入 JSON 在第一条用户消息:字段 subject 为被评对象,rubric 为评分细则。
+
+    rubric.dimensions 逐项评审:每项按其 scoring 的定义打 4 到 1 的整数分,并给出一句可判依据;rubric.edge_cases
+    列出的边界情形须逐一检查后再打分。
+
+    veto_triggered 按规则计算,不得凭印象:任何 weight 为 veto 的维度得分小于等于 1 时为 true,否则为 false。
+
+    只输出最终答案 JSON:数组字段 dimensions,每项含 name、score、reason;布尔字段 veto_triggered。
+
+    '
+- name: common.eval.calibrate_judge
+  version: 1.0.0
+  kind: code
+  description: 'judge 校准:金标准人工分 × judge 分 → 一致率 + Cohen''s kappa(纯计算,零 LLM)。 Use when
+    judge 技能/模型/rubric 上线或变更后要验证与人类判断的一致性,如金标准 与 judge 完全一致 → {"agreement": 1.0, "kappa":
+    1.0, "passes": true};Do not use when 两侧评分不来自同一批条目(按下标一一对齐,长度不等直接报错)或类别数极多 样本极少(kappa
+    失真,先补样本)。kappa ≥ 0.7 为通过门禁(passes)。'
+  inputs:
+    type: object
+    properties:
+      gold:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          properties:
+            item:
+              description: 条目标识(任意 JSON 值)
+            human_score:
+              description: 人工评分(类别标签,任意 JSON 标量)
+          required:
+          - human_score
+        description: 金标准 [{item, human_score}]
+      judge_scores:
+        type: array
+        items:
+          type:
+          - string
+          - number
+          - boolean
+          - 'null'
+        description: judge 对每个 gold 条目的评分(类别标签,须为标量),与 gold 按下标一一对齐
+    required:
+    - gold
+    - judge_scores
+  outputs:
+    type: object
+    properties:
+      agreement:
+        type: number
+        description: 完全一致比例 0~1
+      kappa:
+        type: number
+        description: Cohen's kappa(类别口径)
+      passes:
+        type: boolean
+        description: kappa ≥ 0.7 门禁
+    required:
+    - agreement
+    - kappa
+    - passes
+  permissions: {}
+  handler: eval_handlers:calibrate_judge
+- name: common.eval.pairwise_compare
+  version: 1.0.0
+  kind: code
+  description: '成对比较:内建交换顺序两评,两评胜者标签不一致判平(位置偏见防控是技能定义的 一部分,不是可选后处理)。Use when 要在两个候选间按指定标准选优且不能接受单次
+    评审的位置偏见,如两评给出不同胜者 → {"winner": "tie", "rounds": 2};Do not use when 需要多候选总排名(两两组合由调用方编排)或可接受单次评审的偏差。一致时
+    winner 为胜出候选的原始输入值。'
+  inputs:
+    type: object
+    properties:
+      a:
+        description: 候选甲(任意 JSON 值)
+      b:
+        description: 候选乙(任意 JSON 值)
+      question:
+        type: string
+        description: 比较标准
+    required:
+    - a
+    - b
+    - question
+  outputs:
+    type: object
+    properties:
+      winner:
+        description: 两评一致时胜出候选的原始值;不一致为 "tie"
+      rounds:
+        type: integer
+        description: 评审轮数(恒为 2)
+    required:
+    - winner
+    - rounds
+  permissions:
+    skills:
+    - common.eval.pairwise_judge_once
+  handler: eval_handlers:pairwise_compare
+- name: common.eval.pairwise_judge_once
+  version: 1.0.0
+  kind: prompt
+  description: '单次成对比选(pairwise_compare 的私有依赖,一般不直接调用)。Use when 已被编排 进交换顺序两评流程内做单次
+    A/B 判定;Do not use when 想直接拿单次结果当最终结论 (单次比选有位置偏见,请用 pairwise_compare)。返回 {"winner":
+    "A"|"B", "reason": 一句依据},必须二选一,不允许平局。'
+  inputs:
+    type: object
+    properties:
+      a:
+        description: 选项 A 的内容(任意 JSON 值)
+      b:
+        description: 选项 B 的内容(任意 JSON 值)
+      question:
+        type: string
+        description: 比较标准
+    required:
+    - a
+    - b
+    - question
+  outputs:
+    type: object
+    properties:
+      winner:
+        type: string
+        description: 逐字 A 或 B
+      reason:
+        type: string
+        description: 一句依据
+    required:
+    - winner
+  permissions: {}
+  prompt: '你是成对比选器。输入 JSON 在第一条用户消息:字段 a 与 b 为两个候选,question 为比较标准。
+
+    把 a 记为选项 A、b 记为选项 B,只按 question 指定的标准对比两者,不受呈现顺序影响。
+
+    只输出最终答案 JSON:字符串字段 winner,逐字取 A 或 B;字符串字段 reason,一句依据。不允许平局,必须二选一。
+
+    '
+- name: common.eval.progress_track
+  version: 1.0.0
+  kind: code
+  description: 'JSON 进度文件:长任务/多步工作流的断点续跑原语,三个 action——init 建文件 (tasks 全 passes:false,如
+    [{"id":"t1","text":"调研"}])、update 置单条 passes、summary 给 resume 摘要。Use when 任务跨多轮/多会话推进,需要"哪些
+    已完成、从哪继续"的确定性判据(书的 Ch8/9/10 三处独立要求同一原语); Do not use when 单轮内的小清单(用 todo_write/todo_update
+    更便宜)或需要 时间戳(本技能确定性不读钟;卡死检测用 fs_list 的 mtime + now 组合)。 init 不覆盖既有文件;文件不存在/参数非法
+    → 结构化错误(NOT_FOUND/ValueError)。 返回:init/update {"ok", ...};summary {"summary"(人读文本,含全部任务与
+    状态), "remaining": [id...], "complete": bool}。'
+  inputs:
+    type: object
+    properties:
+      action:
+        type: string
+        enum:
+        - init
+        - update
+        - summary
+        description: init=创建进度文件;update=置单条 passes;summary=resume 摘要
+      path:
+        type: string
+        description: 进度文件路径(相对 workdir,或 workdir 内绝对路径),如 'progress.json'
+      tasks:
+        type: array
+        items:
+          type: object
+          properties:
+            id:
+              type: string
+              description: 任务唯一 id
+            text:
+              type: string
+              description: 任务描述
+          required:
+          - id
+          - text
+        description: init 必填,非空 [{id, text}],id 唯一
+      task_id:
+        type: string
+        description: update 必填,目标任务 id
+      passes:
+        type: boolean
+        description: update 必填,true=通过
+    required:
+    - action
+    - path
+  outputs:
+    type: object
+    properties:
+      ok:
+        type: boolean
+        description: init/update 是否成功
+      path:
+        type: string
+        description: init 写出的路径(相对 workdir)
+      count:
+        type: integer
+        description: init 的任务数
+      task:
+        type: object
+        description: update 后的任务条 {id, text, passes}
+      summary:
+        type: string
+        description: 人读进度文本(全部任务与状态)
+      remaining:
+        type: array
+        items:
+          type: string
+        description: 未通过任务的 id 列表
+      complete:
+        type: boolean
+        description: 全部通过
+  permissions: {}
+  handler: files_handlers:progress_track

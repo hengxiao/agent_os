@@ -1,0 +1,208 @@
+skills:
+- name: common.retrieval.bm25_score
+  version: 1.0.0
+  kind: code
+  description: '纯 Python BM25 稀疏检索打分(k1=1.5, b=0.75,无状态)。Use when 需要给候选文档按 查询相关性排序(memory_search
+    / skill_search 的默认实现),如 query=''菲波拉契 递归'' 对相关文档打最高分;Do not use when 需要 dense/语义检索(向量检索出
+    std 边界) 或语料很大(先由调用方用 fs_search 粗筛)。CJK 按字 bigram、ASCII 按整词。返回 {"ranked": [{id,
+    score}]} 降序,同分按 id 字典序。'
+  inputs:
+    type: object
+    properties:
+      query:
+        type: string
+        description: 查询文本,如 '菲波拉契 递归'
+      docs:
+        type: array
+        items:
+          type: object
+          properties:
+            id:
+              description: 文档标识
+            text:
+              type: string
+              description: 文档文本
+        description: 候选文档 [{id, text}]
+      k:
+        type: integer
+        description: 只返回前 k 名(可选)
+    required:
+    - query
+    - docs
+  outputs:
+    type: object
+    properties:
+      ranked:
+        type: array
+        items:
+          type: object
+          properties:
+            id:
+              description: 文档标识
+            score:
+              type: number
+              description: BM25 得分
+  permissions: {}
+  handler: transform:bm25_score
+- name: common.retrieval.rrf_merge
+  version: 1.0.0
+  kind: code
+  description: '多路检索结果按排名融合(RRF,score = Σ 1/(k+rank),rank 1 起,k 默认 60)。 Use when 混合检索要合并多路结果且不想跨路归一化原始分数,如
+    lists=[["a","b","c"], ["b","a","d"]] → ranked 以 a/b 居前;Do not use when 只有单路结果(直接按原分
+    排序)或需要保留原始分数语义。返回 {"ranked": [id...]},同分按首次出现序。'
+  inputs:
+    type: object
+    properties:
+      lists:
+        type: array
+        items:
+          type: array
+          items:
+            type: string
+            description: 条目 id
+        description: 多路排名结果,每路按名次排列
+      k:
+        type: integer
+        description: RRF 平滑常数,默认 60
+    required:
+    - lists
+  outputs:
+    type: object
+    properties:
+      ranked:
+        type: array
+        items:
+          type: string
+          description: 融合后排名的条目 id
+  permissions: {}
+  handler: transform:rrf_merge
+- name: common.retrieval.retrieval_metrics
+  version: 1.0.0
+  kind: code
+  description: 检索链路评测:recall@k / MRR / nDCG(二值相关性,log2 折损)。Use when 要验证检索 链路的任何"改进"是否真改进,如
+    predicted=["a","b","c"] + relevant=["a","c"] + k=3 → recall_at_k=1.0;Do not use
+    when 需要分级相关性增益(本技能是二值口径)或在线 A/B(那是评测基建的事)。返回 {"recall_at_k", "mrr", "ndcg"} 浮点,无
+    relevant 时 全 0。
+  inputs:
+    type: object
+    properties:
+      predicted:
+        type: array
+        items:
+          type: string
+          description: 结果 id
+        description: 系统返回的排名列表
+      relevant:
+        type: array
+        items:
+          type: string
+          description: 相关 id
+        description: 标注的相关集合
+      k:
+        type: integer
+        description: 截断名次,默认 10
+    required:
+    - predicted
+    - relevant
+  outputs:
+    type: object
+    properties:
+      recall_at_k:
+        type: number
+        description: 前 k 命中率
+      mrr:
+        type: number
+        description: 首个相关结果倒数名次
+      ndcg:
+        type: number
+        description: 归一化折损累计增益
+  permissions: {}
+  handler: transform:retrieval_metrics
+- name: common.retrieval.deduplicate
+  version: 1.0.0
+  kind: code
+  description: '确定性保序去重:按 key 字段(缺省按条目本身)精确判重,unique 保留首次出现,
+    duplicates 收后续重复项。Use when 多路检索/抓取结果合并后要删重,如 items=[{''id'':
+    ''a''},{''id'':''a''},{''id'':''b''}] + key=''id'' → unique 两项、duplicates 一项;Do
+    not use when 需要近似/语义去重(本技能只做精确判重)。返回 {"unique": [...], "duplicates":
+    [...]},两侧都保原序。'
+  inputs:
+    type: object
+    properties:
+      items:
+        type: array
+        description: 待去重条目;指定 key 时元素须为 object
+      key:
+        type: string
+        description: 判重字段名(可选;缺省按条目本身判重)
+    required:
+    - items
+  outputs:
+    type: object
+    properties:
+      unique:
+        type: array
+        description: 去重后条目(保首次出现序)
+      duplicates:
+        type: array
+        description: 被判定为重复的条目(保原序)
+  permissions: {}
+  handler: transform:deduplicate
+- name: common.retrieval.sort_by
+  version: 1.0.0
+  kind: code
+  description: '按指定字段对条目数组做稳定排序(同键保原序)。Use when 要按评分/时间/名称等
+    字段重排候选,如 items=[{''id'':''a'',''score'':0.2},{''id'':''b'',''score'':0.9}]
+    + key=''score'' + reverse=true → b 在前;Do not use when 需要按多个字段排序(先
+    group_by/多次调用)或键不可比较(混型键会报错,不做静默猜测)。缺键(None)条目恒排尾。
+    返回 {"items": [...]}。'
+  inputs:
+    type: object
+    properties:
+      items:
+        type: array
+        description: 待排序条目(object 数组)
+      key:
+        type: string
+        description: 排序字段名
+      reverse:
+        type: boolean
+        description: true 降序;默认 false 升序
+    required:
+    - items
+    - key
+  outputs:
+    type: object
+    properties:
+      items:
+        type: array
+        description: 排序后条目(稳定,同键保原序;缺键条目排尾)
+  permissions: {}
+  handler: transform:sort_by
+- name: common.retrieval.group_by
+  version: 1.0.0
+  kind: code
+  description: '按指定字段把条目数组分组。Use when 要按来源/类别/状态聚合候选,如 items=[{''kind'':
+    ''a''},{''kind'':''b''},{''kind'':''a''}] + key=''kind'' → groups 两组且组内保原序;Do
+    not use when 需要层级/多键分组(多次调用组合)。组序 = 键首见序,键值转字符串作 JSON
+    键。返回 {"groups": {"值": [条目...]}}。'
+  inputs:
+    type: object
+    properties:
+      items:
+        type: array
+        description: 待分组条目(object 数组)
+      key:
+        type: string
+        description: 分组字段名
+    required:
+    - items
+    - key
+  outputs:
+    type: object
+    properties:
+      groups:
+        type: object
+        description: '分组结果 {键值(字符串): [条目...]},组序 = 首见序'
+  permissions: {}
+  handler: transform:group_by

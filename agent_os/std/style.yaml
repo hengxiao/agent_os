@@ -1,0 +1,23 @@
+skills:
+- name: common.style.tone_neutral
+  version: 1.0.0
+  kind: prompt
+  inline: true
+  description: 中立语气说明书。Use when 输出要保持陈述性、无情绪渲染(默认常开);Do not use when 场景本身要求强语气(营销文案、动员讲话等)。inline
+    merge:指令并入调用方 SYSTEM,不产生调用帧。
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 待中立化审视的产出(merge 无离散输入,仅作文档)
+  outputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 中立语气产出(merge 档不校验,仅作文档)
+  permissions: {}
+  prompt: '输出一律使用中立、陈述性语气:只陈述事实、依据与推理,不用夸张、营销或情感化措辞,不恭维用户,不自我表扬,不堆叠感叹号;不确定就明说依据与置信度,结论先行,修饰从简。
+
+    '

@@ -26,7 +26,7 @@ const FIB = {
   version: "1.0.0",
   kind: "prompt",
   description: "生成前 n 个菲波拉契数。Use when 需要菲波拉契数列;Do not use when 需要大 n。",
-  permissions: { tools: ["python_exec"], skills: ["fib"], blackboard: ["status"] },
+  permissions: { tools: ["system.python.exec"], skills: ["fib"], blackboard: ["status"] },
 };
 const CYC_A = {
   name: "cyc_a",
@@ -59,7 +59,7 @@ const FIB_DETAIL = {
 };
 const TOOLS = [
   {
-    name: "fs_read",
+    name: "system.file.read",
     description: "读取工作目录内文件。Use when 需要查看文件内容。",
     permission: "READ",
     parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
@@ -70,7 +70,7 @@ const TOOLS = [
     untrusted_source: false,
   },
   {
-    name: "python_exec",
+    name: "system.python.exec",
     description: "执行 Python 代码。Use when 需要计算;Do not use when 仅读写文件。",
     permission: "EXEC",
     parameters: { type: "object", properties: { code: { type: "string" } }, required: ["code"] },
@@ -82,7 +82,7 @@ const TOOLS = [
     examples: [{ code: "print(1 + 1)" }],
   },
   {
-    name: "http_fetch",
+    name: "system.net.http_fetch",
     description: "抓取 URL。Use when 需要外部资料。",
     permission: "NET",
     parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
@@ -170,7 +170,7 @@ const clickFake = (root, { classes = "", dataset = {} }) => {
   assert.match(dh(), /sv-constraints">minimum 1</, "约束灰注");
   assert.match(dh(), /array&lt;integer&gt;/, "Outputs array<integer>(esc 后)");
   assert.match(dh(), /Permissions/, "Permissions 分区");
-  assert.match(dh(), /kind-chip mono">python_exec</, "tools 组 chip");
+  assert.match(dh(), /kind-chip mono">system\.python\.exec</, "tools 组 chip");
   assert.match(dh(), /href="#\/skills\/fib"/, "skills 组可点击跳链");
   assert.match(dh(), /kind-chip mono">status</, "blackboard 组");
   assert.match(dh(), /max_steps<\/span>[\s\S]*?8/, "Model & Limits");
@@ -225,12 +225,12 @@ const clickFake = (root, { classes = "", dataset = {} }) => {
   await flush();
 
   /* 列表就绪:name + PermBadge;未指定选中项时默认选中首项(空屏规避) */
-  assert.match(els.list.innerHTML, /data-name="fs_read"/);
+  assert.match(els.list.innerHTML, /data-name="system\.file\.read"/);
   assert.match(els.list.innerHTML, /perm-badge" data-perm="READ"/, "READ 徽标");
   assert.match(els.list.innerHTML, /perm-badge" data-perm="EXEC"/, "EXEC 徽标");
   assert.match(
     els.list.innerHTML,
-    /data-name="fs_read"[^>]*aria-selected="true"/,
+    /data-name="system\.file\.read"[^>]*aria-selected="true"/,
     "默认选中列表首项",
   );
   assert.match(els.detail.innerHTML, /perm-badge-lg" data-perm="READ"/, "首项详情直接渲染");
@@ -239,22 +239,22 @@ const clickFake = (root, { classes = "", dataset = {} }) => {
   const execChip = els.chips.children[4]; // [全部, READ, WRITE, NET, EXEC]
   root.trigger("click", { target: execChip });
   assert.ok(execChip.classList.contains("is-active"), "chip 选中态");
-  assert.ok(!els.list.innerHTML.includes('data-name="fs_read"'), "EXEC 筛选掉 READ 工具");
-  assert.match(els.list.innerHTML, /data-name="python_exec"/);
+  assert.ok(!els.list.innerHTML.includes('data-name="system.file.read"'), "EXEC 筛选掉 READ 工具");
+  assert.match(els.list.innerHTML, /data-name="system\.python\.exec"/);
   root.trigger("click", { target: els.chips.children[0] }); // 全部
-  assert.match(els.list.innerHTML, /data-name="fs_read"/, "全部恢复");
+  assert.match(els.list.innerHTML, /data-name="system\.file\.read"/, "全部恢复");
 
   /* 搜索过滤 */
   els.search.value = "http";
   root.trigger("input", { target: els.search });
-  assert.match(els.list.innerHTML, /data-name="http_fetch"/);
-  assert.ok(!els.list.innerHTML.includes('data-name="fs_read"'), "搜索过滤");
+  assert.match(els.list.innerHTML, /data-name="system\.net\.http_fetch"/);
+  assert.ok(!els.list.innerHTML.includes('data-name="system.file.read"'), "搜索过滤");
   els.search.value = "";
   root.trigger("input", { target: els.search });
 
-  /* 选中 python_exec:详情分区渲染(EXEC 级首要视觉) */
-  clickFake(root, { classes: "brw-item", dataset: { name: "python_exec" } });
-  assert.equal(locationStub.hash, "#/tools/python_exec", "点击跳 #/tools/<name>");
+  /* 选中 system.python.exec:详情分区渲染(EXEC 级首要视觉) */
+  clickFake(root, { classes: "brw-item", dataset: { name: "system.python.exec" } });
+  assert.equal(locationStub.hash, "#/tools/system.python.exec", "点击跳 #/tools/<name>");
   const dh = () => els.detail.innerHTML;
   assert.match(dh(), /perm-badge perm-badge-lg" data-perm="EXEC"/, "头部大 PermBadge");
   assert.match(dh(), /危险操作,受 sidecar\/人工闸门约束/, "EXEC 提示行");
@@ -268,8 +268,8 @@ const clickFake = (root, { classes = "", dataset = {} }) => {
   assert.match(dh(), /print\(1 \+ 1\)/, "示例内容");
   assert.match(dh(), /builtin/, "来源");
 
-  /* fs_read:READ 级无 EXEC 提示行 */
-  clickFake(root, { classes: "brw-item", dataset: { name: "fs_read" } });
+  /* system.file.read:READ 级无 EXEC 提示行 */
+  clickFake(root, { classes: "brw-item", dataset: { name: "system.file.read" } });
   assert.ok(!dh().includes("危险操作"), "READ 级无 EXEC 提示行");
 
   /* 深链接不存在的工具:空态 */
@@ -285,7 +285,7 @@ const clickFake = (root, { classes = "", dataset = {} }) => {
   http.failTools = false;
   clickFake(view2.root, { classes: "btn", dataset: { tools: "retry" } });
   await flush();
-  assert.match(view2.els.list.innerHTML, /data-name="fs_read"/, "重试恢复");
+  assert.match(view2.els.list.innerHTML, /data-name="system\.file\.read"/, "重试恢复");
   closeToolsView();
 }
 

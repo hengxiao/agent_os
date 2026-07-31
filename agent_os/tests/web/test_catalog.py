@@ -24,11 +24,11 @@ def test_skills_endpoint_lists_manifest_summaries(tmp_path):
     r = client.get("/api/skills")
     assert r.status_code == 200
     skills = r.json()
-    fib = next(s for s in skills if s["name"] == "fib")
+    fib = next(s for s in skills if s["name"] == "demo.fib")
     assert fib["kind"] == "prompt"
     assert fib["version"]
     assert "菲波拉契" in fib["description"]
-    assert "python_exec" in fib["permissions"]["tools"]
+    assert "system.python.exec" in fib["permissions"]["tools"]
 
 
 def test_tools_endpoint_lists_tool_specs(tmp_path):
@@ -36,11 +36,11 @@ def test_tools_endpoint_lists_tool_specs(tmp_path):
     r = client.get("/api/tools")
     assert r.status_code == 200
     tools = {t["name"]: t for t in r.json()}
-    assert "python_exec" in tools
-    assert tools["python_exec"]["permission"] == "EXEC"
-    assert tools["python_exec"]["parameters"]["type"] == "object"
-    assert "fs_read" in tools
-    assert tools["fs_read"]["permission"] == "READ"
+    assert "system.python.exec" in tools
+    assert tools["system.python.exec"]["permission"] == "EXEC"
+    assert tools["system.python.exec"]["parameters"]["type"] == "object"
+    assert "system.file.read" in tools
+    assert tools["system.file.read"]["permission"] == "READ"
 
 
 def test_post_run_overrides_max_steps(tmp_path):
@@ -48,7 +48,7 @@ def test_post_run_overrides_max_steps(tmp_path):
     client = _client(tmp_path)
     r = client.post(
         "/api/runs",
-        json={"skill": "fib", "input": {"n": 3}, "wait": True, "overrides": {"max_steps": 1}},
+        json={"skill": "demo.fib", "input": {"n": 3}, "wait": True, "overrides": {"max_steps": 1}},
     )
     assert r.status_code == 200
     assert r.json()["status"] == "aborted"
@@ -58,8 +58,8 @@ def test_overrides_do_not_leak_into_next_run(tmp_path):
     client = _client(tmp_path)
     r1 = client.post(
         "/api/runs",
-        json={"skill": "fib", "input": {"n": 3}, "wait": True, "overrides": {"max_steps": 1}},
+        json={"skill": "demo.fib", "input": {"n": 3}, "wait": True, "overrides": {"max_steps": 1}},
     )
     assert r1.json()["status"] == "aborted"
-    r2 = client.post("/api/runs", json={"skill": "fib", "input": {"n": 3}, "wait": True})
+    r2 = client.post("/api/runs", json={"skill": "demo.fib", "input": {"n": 3}, "wait": True})
     assert r2.json()["status"] == "done"

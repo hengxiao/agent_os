@@ -671,3 +671,66 @@ async def citation_check(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     missing = [n for n in cited if n < 1 or n > len(sources)]
     uncited = [i + 1 for i in range(len(sources)) if i + 1 not in cited]
     return {"ok": not missing, "missing": missing, "uncited": uncited}
+
+
+# ---------------------------------------------------------------------------
+# common.retrieval.deduplicate / sort_by / group_by — 候选列表归置(确定性)
+# ---------------------------------------------------------------------------
+
+
+def _key_of(item: Any, key: str | None) -> Any:
+    """取判重/排序/分组键:key 缺省用条目本身,指定时要求 dict 条目取其字段。"""
+    if key is None:
+        return item
+    if not isinstance(item, dict):
+        raise TypeError(f"指定 key={key!r} 时 items 元素必须是 object,得到: {type(item).__name__}")
+    return item.get(key)
+
+
+async def deduplicate(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """精确判重保序去重:``{unique, duplicates}``(dup 收非首次出现的条目)。"""
+    items = input.get("items")
+    if not isinstance(items, list):
+        raise TypeError("items 必须是数组")
+    key = input.get("key")
+    if key is not None and not isinstance(key, str):
+        raise TypeError("key 必须是字符串(判重字段名)")
+    seen: set[str] = set()
+    unique: list[Any] = []
+    duplicates: list[Any] = []
+    for item in items:
+        marker = json.dumps(_key_of(item, key), ensure_ascii=False, sort_keys=True, default=str)
+        if marker in seen:
+            duplicates.append(item)
+        else:
+            seen.add(marker)
+            unique.append(item)
+    return {"unique": unique, "duplicates": duplicates}
+
+
+async def sort_by(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """按 key 字段稳定排序:``{items}``;reverse=true 降序;缺键(None)条目恒排尾。"""
+    items = input.get("items")
+    key = input.get("key")
+    if not isinstance(items, list):
+        raise TypeError("items 必须是数组")
+    if not isinstance(key, str) or not key:
+        raise ValueError("key 必填(排序字段名)")
+    present = [item for item in items if _key_of(item, key) is not None]
+    missing = [item for item in items if _key_of(item, key) is None]
+    present.sort(key=lambda item: _key_of(item, key), reverse=bool(input.get("reverse", False)))
+    return {"items": present + missing}
+
+
+async def group_by(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """按 key 字段分组:``{groups: {值: [条目...]}}``(组序 = 首见序,值转字符串作 JSON 键)。"""
+    items = input.get("items")
+    key = input.get("key")
+    if not isinstance(items, list):
+        raise TypeError("items 必须是数组")
+    if not isinstance(key, str) or not key:
+        raise ValueError("key 必填(分组字段名)")
+    groups: dict[str, list[Any]] = {}
+    for item in items:
+        groups.setdefault(str(_key_of(item, key)), []).append(item)
+    return {"groups": groups}

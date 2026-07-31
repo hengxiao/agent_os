@@ -61,12 +61,12 @@ Allow 3 hours.
 
 
 def _register_mock_wiki(tools):
-    @tools.tool(permission=Permission.NET, timeout=5)
+    @tools.tool(permission=Permission.NET, timeout=5, name="project.travel_planner.wiki_search")
     async def wiki_search(query: str) -> dict:
         """搜索 Wikivoyage 条目(mock)。"""
         return {"titles": ["Xi'an"]}
 
-    @tools.tool(permission=Permission.NET, timeout=5)
+    @tools.tool(permission=Permission.NET, timeout=5, name="project.travel_planner.wiki_fetch")
     async def wiki_fetch(title: str, chars_limit: int = 6000) -> dict:
         """取 Wikivoyage 正文(mock,西安)。"""
         return {"title": title, "text": CANNED_XIAN[:chars_limit], "truncated": len(CANNED_XIAN) > chars_limit}
@@ -108,7 +108,7 @@ def test_loads_skills():
 def test_itinerary_facts_come_from_fetched_content():
     """三日攻略:行程事实必须来自 wiki 取回的正文(兵马俑 ¥120、陕历博免费等),
     预算 = 各项真实算术之和且 ≤3000。"""
-    result = asyncio.run(_build(_brain()).run("plan_trip", {"request": REQUEST}))
+    result = asyncio.run(_build(_brain()).run("project.travel_planner.plan_trip", {"request": REQUEST}))
 
     assert result["destination"] == "西安"
     assert len(result["days"]) == 3
@@ -124,7 +124,7 @@ def test_itinerary_facts_come_from_fetched_content():
 
 def test_route_clusters_lintong_together():
     """资料注明兵马俑与华清池同在临潼 → 必须同日。"""
-    result = asyncio.run(_build(_brain()).run("plan_trip", {"request": REQUEST}))
+    result = asyncio.run(_build(_brain()).run("project.travel_planner.plan_trip", {"request": REQUEST}))
     for day in result["days"]:
         spots = " ".join(day["attractions"])
         if "兵马俑" in spots or "Terracotta" in spots:
@@ -139,15 +139,15 @@ def test_over_budget_triggers_supervisor():
         return {"answer": "trim", "decided_by": "test"}
 
     result = asyncio.run(
-        _build(_brain(), handler).run("plan_trip", {"request": "想带老人从上海去西安玩 3 天 2 夜,预算 1500 元"})
+        _build(_brain(), handler).run("project.travel_planner.plan_trip", {"request": "想带老人从上海去西安玩 3 天 2 夜,预算 1500 元"})
     )
     assert seen, "超预算必须请求上级裁决"
     assert result["budget"]["total"] <= 1500 or result.get("over_budget_approved") is True
 
 
 def test_deterministic():
-    r1 = asyncio.run(_build(_brain()).run("plan_trip", {"request": REQUEST}))
-    r2 = asyncio.run(_build(_brain()).run("plan_trip", {"request": REQUEST}))
+    r1 = asyncio.run(_build(_brain()).run("project.travel_planner.plan_trip", {"request": REQUEST}))
+    r2 = asyncio.run(_build(_brain()).run("project.travel_planner.plan_trip", {"request": REQUEST}))
     assert r1 == r2
 
 
@@ -179,10 +179,10 @@ def test_live_wiki_fetch_hits_real_internet():
 
         ctx = ToolDispatchContext(
             frame=SkillFrame(frame_id="f", run_id="r"),
-            allowed_tools=["wiki_fetch"],
+            allowed_tools=["project.travel_planner.wiki_fetch"],
             tool_policy=ToolPolicy(max_permission=Permission.NET),
         )
-        result = asyncio.run(tools.dispatch(ToolCall(id="w", name="wiki_fetch", args={"title": "Xi'an"}), ctx))
+        result = asyncio.run(tools.dispatch(ToolCall(id="w", name="project.travel_planner.wiki_fetch", args={"title": "Xi'an"}), ctx))
     finally:
         sys.path.remove(str(PLANNER_DIR))
     assert result.ok, result.error

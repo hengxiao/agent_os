@@ -1,0 +1,676 @@
+skills:
+- name: common.text.extract_json
+  version: 1.0.0
+  kind: code
+  description: '从杂文本(寒暄 + ```json 栅栏 + 尾逗号)里抠出合法 JSON。Use when 需要把模型输出里 的 JSON 可靠取出,如
+    ''{"a":1}'' 或 ''看看:\n```json\n{"b":2}\n```'';Do not use when 输入保证是干净 JSON(直接 json.loads
+    即可)或需要"智能修复"畸形 JSON(本技能只做 有限兜底,全失败即报错)。返回:单值 {"data": ...},mode="all" 且多个 {"items":
+    [...]}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: '含 JSON 的杂文本,如 ''先说 {"a": 1} 再说 {"b": 2}'''
+      mode:
+        type: string
+        enum:
+        - first
+        - all
+        description: first=取首个(默认);all=取全部,多个时返回 items
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      data:
+        description: 单个合法 JSON 的值(任意 JSON 类型)
+      items:
+        type: array
+        description: mode=all 且抠出多个时的值列表
+  permissions: {}
+  handler: transform:extract_json
+- name: common.text.template_render
+  version: 1.0.0
+  kind: code
+  description: 'str.format 风格的数据驱动模板渲染。Use when 有结构化数据要填进固定模板,如 template=''你好 {name},第
+    {n} 次'' + data={"name":"世界","n":3} → ''你好 世界,第 3 次''; Do not use when 模板来自不可信输入且含任意字段访问(本技能支持
+    a.b / a[0] 取值, 不可信模板请先过 injection_scan)。strict=true 时缺键报错并指明位置;默认缺键 原样保留占位符。返回
+    {"text": "渲染结果"}。'
+  inputs:
+    type: object
+    properties:
+      template:
+        type: string
+        description: 带 {key} 占位的模板,如 '你好 {name}'
+      data:
+        type: object
+        description: '占位取值表,如 {"name": "世界"}'
+      strict:
+        type: boolean
+        description: true 时缺键报错(含位置);默认 false,占位符原样保留
+    required:
+    - template
+    - data
+  outputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 渲染结果
+  permissions: {}
+  handler: transform:template_render
+- name: common.text.diff
+  version: 1.0.0
+  kind: code
+  description: '结构化行级 diff。Use when 需要"改动是否符合预期"的确定性判据(审阅/验证类技能的 输入原语),如 a=''x\ny\n''
+    vs b=''x\nz\n'' → added=1, removed=1;Do not use when 需要 语义级等价判断(那是 LLM 的事)或二进制/超大文件对比。返回
+    {"hunks": [{op, line, text}], "added": int, "removed": int},op ∈ add/remove,line
+    为各自文件 1 起行号。'
+  inputs:
+    type: object
+    properties:
+      a:
+        type: string
+        description: 旧文本
+      b:
+        type: string
+        description: 新文本
+      context:
+        type: integer
+        description: 预留的上下文行数参数(当前版本忽略)
+    required:
+    - a
+    - b
+  outputs:
+    type: object
+    properties:
+      hunks:
+        type: array
+        items:
+          type: object
+          properties:
+            op:
+              type: string
+              description: add|remove
+            line:
+              type: integer
+              description: 1 起行号
+            text:
+              type: string
+              description: 该行内容
+      added:
+        type: integer
+        description: 新增行数
+      removed:
+        type: integer
+        description: 删除行数
+  permissions: {}
+  handler: transform:diff_text
+- name: common.text.word_count
+  version: 1.0.0
+  kind: code
+  description: '文本计量。Use when 需要字符/词/行数做配额或报告,如 ''hello world\nfoo'' → {chars: 15,
+    words: 3, lines: 2};Do not use when 需要 token 口径(用 token_estimate)或语言感知分词(那是 LLM/专用库的事)。返回
+    {"chars", "words", "lines"}:chars 为码点数,words 按任意空白切分,lines 为逻辑行数。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 待计量文本
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      chars:
+        type: integer
+        description: 码点数
+      words:
+        type: integer
+        description: 空白切分词数
+      lines:
+        type: integer
+        description: 逻辑行数
+  permissions: {}
+  handler: transform:word_count
+- name: common.text.token_estimate
+  version: 1.0.0
+  kind: code
+  description: 'token 粗估,复用内核 TokenEstimator 同一口径(char/4,下限 1)。Use when 压缩/预算 决策需要一个与内核
+    Context 子系统一致的 token 数,如 ''abcd''*100 → {tokens: 100}; Do not use when 需要精确 tokenizer
+    计数(需 provider token_counter,§4.2)。返回 {"tokens": int}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 待估算文本
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      tokens:
+        type: integer
+        description: 估算 token 数(>=1)
+  permissions: {}
+  handler: transform:token_estimate
+- name: common.hash.digest
+  version: 1.0.0
+  kind: code
+  description: '内容指纹。Use when 需要去重键、缓存键或 W0-4 乐观锁的 if_match 值,如 text=''abc'' → {hex:
+    ''ba7816bf...'', algo: ''sha256''};Do not use when 需要加密级完整性证明以外 的语义去重(近似重复请用检索技能)。algo
+    可取 hashlib 支持的任意算法(默认 sha256);ref 为文件路径时哈希其字节内容。返回 {"hex": str, "algo": str}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 待哈希文本(与 ref 二选一)
+      ref:
+        type: string
+        description: 文件路径,哈希其字节内容
+      algo:
+        type: string
+        description: 哈希算法,默认 sha256
+  outputs:
+    type: object
+    properties:
+      hex:
+        type: string
+        description: 十六进制摘要
+      algo:
+        type: string
+        description: 实际使用的算法
+  permissions: {}
+  handler: transform:hash_digest
+- name: common.table.csv_to_rows
+  version: 1.0.0
+  kind: code
+  description: '小表 CSV → 行对象数组。Use when 要把模型给的粘贴小表转成结构化行,如 ''name,age\n李雷,30'' → {rows:
+    [{"name":"李雷","age":"30"}]};Do not use when 大表 或需要类型推断/聚合(明确引导到 python_exec,工具面最小化纪律)。返回
+    {"rows": [{列名: 字符串值}]},首行作表头。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: CSV 文本,首行表头
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      rows:
+        type: array
+        items:
+          type: object
+          description: 列名 → 字符串值
+  permissions: {}
+  handler: transform:csv_to_rows
+- name: common.table.rows_to_markdown
+  version: 1.0.0
+  kind: code
+  description: '行对象数组 → Markdown 表格。Use when 要把小表渲成报告/回复里的 Markdown,如 [{"name":"李雷"}]
+    → ''| name |\n| --- |\n| 李雷 |'';Do not use when 大表渲染或需要 对齐美化(超小表范畴)。列序取首行键序,后续行新键追加;单元格
+    | 转义为 \|。 返回 {"text": "markdown 表格"},空 rows 返回空串。'
+  inputs:
+    type: object
+    properties:
+      rows:
+        type: array
+        items:
+          type: object
+          description: 列名 → 值
+        description: 行对象数组
+    required:
+    - rows
+  outputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: Markdown 表格文本
+  permissions: {}
+  handler: transform:rows_to_markdown
+- name: common.text.slugify
+  version: 1.0.0
+  kind: code
+  description: '标题 → 小写 ASCII slug。Use when 需要从标题派生 URL/文件名安全串,如 ''Hello World 你好''
+    → ''hello-world''(非 ASCII 字符 NFKD 后丢弃,非法字符折叠为 单个 -);Do not use when 需要保留中文的 slug(本技能是
+    ASCII 口径)或作为隐式 数据清洗(§8 保真度:只能由调用方显式调用)。返回 {"text": "slug"},全非 ASCII 输入得到空串。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 原始标题
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 小写 ASCII slug
+  permissions: {}
+  handler: transform:slugify
+- name: common.text.normalize_whitespace
+  version: 1.0.0
+  kind: code
+  description: '空白规范化:任意连续空白(含 \t\n)折叠为单个空格,首尾去空白。Use when 需要把 粘贴文本的杂乱空白拍平,如 ''a  b\tc
+    \n d'' → ''a b c d'';Do not use when 换行本身 携带结构(段落/代码块——会丢结构)或被当作隐式清洗套用(§8 保真度:只能显式
+    调用)。返回 {"text": "规范化结果"}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 原始文本
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 空白折叠后的文本
+  permissions: {}
+  handler: transform:normalize_whitespace
+- name: common.text.chunk
+  version: 1.0.0
+  kind: code
+  description: '文本切分。Use when 索引/嵌入前需要把长文切成带偏移的块,如 mode=''fixed'' + size=400 + overlap=50(默认
+    size=512、overlap=15%);mode=''recursive'' 按段落 空行→换行→句末标点边界优先切,避免把一句话劈两半;Do not
+    use when 需要语义 切分(按主题切段是 LLM 的事)或 overlap >= size(报错)。返回 {"chunks": [{text, start,
+    end}]},start/end 为原文偏移。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 待切分长文
+      size:
+        type: integer
+        description: 块长上限(字符),默认 512
+      overlap:
+        type: integer
+        description: fixed 模式重叠字符数,默认 size 的 15%
+      mode:
+        type: string
+        enum:
+        - fixed
+        - recursive
+        description: fixed=定长滑动窗(默认);recursive=边界优先
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      chunks:
+        type: array
+        items:
+          type: object
+          properties:
+            text:
+              type: string
+              description: 块内容
+            start:
+              type: integer
+              description: 原文起始偏移
+            end:
+              type: integer
+              description: 原文结束偏移(不含)
+  permissions: {}
+  handler: transform:chunk_text
+- name: common.text.identifier_guard
+  version: 1.0.0
+  kind: code
+  description: '标识符保真校验:抽取 UUID/hash/URL/文件名/PR号/端口 集合做前后比对。Use when 压缩/改写后要确认关键标识符没被改动,如改写丢了
+    ''PR #12345'' → ok=false 且 missing 含 ''#12345'';Do not use when 需要语义保真度判断(只比对标识符集合)或文本里本
+    就没有标识符(恒 ok)。返回 {"ok": bool, "missing": [...], "added": [...]}, missing/added
+    任一非空即 ok=false。'
+  inputs:
+    type: object
+    properties:
+      before:
+        type: string
+        description: 原文
+      after:
+        type: string
+        description: 改写/压缩后的文本
+    required:
+    - before
+    - after
+  outputs:
+    type: object
+    properties:
+      ok:
+        type: boolean
+        description: 标识符集合完全一致
+      missing:
+        type: array
+        items:
+          type: string
+        description: after 中丢失的标识符
+      added:
+        type: array
+        items:
+          type: string
+        description: after 中新增(疑似捏造)的标识符
+  permissions: {}
+  handler: transform:identifier_guard
+- name: common.text.date_normalize
+  version: 1.0.0
+  kind: code
+  description: '日期归一化为 ISO 8601:中文日期(2026年7月24日)与 MM/DD/YYYY(07/25/2026)。 Use when
+    文本里的日期要统一成机器可比对的口径,如 ''截止 2026年7月24日'' → ''截止 2026-07-24'';Do not use when 需要解析相对日期(''明天''——需要时钟,本技能确定性
+    不读钟)或自然语言日期。不存在的日期(如 2 月 30 日)原样保留,不静默捏造。返回 {"text": 归一化文本, "dates": [替换过的 ISO
+    日期]}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 含日期的文本
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 归一化后的文本
+      dates:
+        type: array
+        items:
+          type: string
+          description: ISO 8601 日期
+        description: 发生过的替换
+  permissions: {}
+  handler: transform:date_normalize
+- name: common.text.citation_check
+  version: 1.0.0
+  kind: code
+  description: '文内 [n] 引用与 sources 列表对齐校验(1 起编号)。Use when 带引用的文本要核对引用 编号是否都有来源,如 text=''见
+    [1] 和 [2]'' + sources 只有 1 条 → ok=false 且 missing=[2];Do not use when 需要核对引用内容是否真的支撑论断(那是
+    LLM/judge 的事,本技能只对齐编号)。返回 {"ok": bool, "missing": [引用但无来源的编号], "uncited": [从未被引用的来源编号]}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 含 [n] 引用的文本
+      sources:
+        type: array
+        items:
+          type: string
+          description: 来源(URL/路径等)
+        description: 来源列表,编号 1 起
+    required:
+    - text
+    - sources
+  outputs:
+    type: object
+    properties:
+      ok:
+        type: boolean
+        description: 全部引用编号都有来源
+      missing:
+        type: array
+        items:
+          type: integer
+        description: 被引用但超出 sources 范围的编号
+      uncited:
+        type: array
+        items:
+          type: integer
+        description: 从未被文本引用的来源编号
+  permissions: {}
+  handler: transform:citation_check
+- name: common.text.summarize
+  version: 1.0.0
+  kind: prompt
+  description: '文本摘要(任务无关)。Use when 需要把长文压成保留核心事实的短摘要,如 text=长报告 → {"summary": "三句话……"};Do
+    not use when 摘要必须服务于特定 任务/查询(那是任务感知压缩 compress_context 的事,两者不可互替)或需要按 结构抽字段(用
+    extract)。返回 {"summary": 三句话以内摘要}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 待摘要原文
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      summary:
+        type: string
+        description: 任务无关摘要
+    required:
+    - summary
+  permissions: {}
+  prompt: '你是摘要器。输入 JSON 在第一条用户消息:字段 text 为原文。
+
+    把原文压缩为任务无关的摘要:保留核心事实、结论与关键数字,丢弃寒暄、铺垫与重复。
+
+    只输出最终答案 JSON:一个字符串字段 summary,值为三句话以内的摘要;不输出任何其他内容。
+
+    '
+- name: common.text.classify
+  version: 1.0.0
+  kind: prompt
+  description: '单标签归类。Use when 要把文本归入给定候选类别之一,如 text=''我要退款'' + categories=[''refund'',''complaint'']
+    → {"category": "refund", "confidence": 0.9}; Do not use when 候选类别本身需要生成(须由调用方给定)或多标签场景(本技能只
+    输出唯一 category)。category 逐字落在 categories 内,confidence ∈ [0,1]。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 待归类文本
+      categories:
+        type: array
+        items:
+          type: string
+        minItems: 1
+        description: 候选类别(输出必须逐字取自其中)
+    required:
+    - text
+    - categories
+  outputs:
+    type: object
+    properties:
+      category:
+        type: string
+        description: 命中类别(逐字取自 categories)
+      confidence:
+        type: number
+        minimum: 0
+        maximum: 1
+        description: 置信度 0~1
+    required:
+    - category
+    - confidence
+  permissions: {}
+  prompt: '你是分类器。输入 JSON 在第一条用户消息:字段 text 为待分类文本,categories 为候选类别数组。
+
+    把 text 分类到 categories 中唯一最贴切的一类,不得自造类别。
+
+    只输出最终答案 JSON:字符串字段 category(逐字取自 categories)与 0 到 1 的数字字段 confidence。
+
+    '
+- name: common.text.extract
+  version: 1.0.0
+  kind: prompt
+  description: 'JSON Schema 驱动的结构化抽取。Use when 要从文本挖出指定结构的字段,如 text=''订单 o1 金额 8900
+    分'' + schema 要求 {order_id, amount} → {"order_id": "o1", "amount": 8900};Do not
+    use when 目标信息不在原文(宁可 报错也不捏造)或字段需主观评判(那是 judge 的事)。输出为抽取结果对象本身。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 原文
+      schema:
+        type: object
+        description: 目标结构的 JSON Schema(输出对象按它组织)
+    required:
+    - text
+    - schema
+  outputs:
+    type: object
+    description: 按输入 schema 组织的抽取结果对象(字段由 schema 决定,故校验从宽)
+  permissions: {}
+  prompt: '你是结构化抽取器。输入 JSON 在第一条用户消息:字段 text 为原文,schema 为目标结构的 JSON Schema。
+
+    严格按 schema 从 text 抽取字段值并组成对象:每个值都要在原文里有依据,找不到依据不得捏造,宁可指出缺失。
+
+    只输出最终答案 JSON:即为抽取结果对象本身,不要包一层额外字段。
+
+    '
+- name: common.text.translate
+  version: 1.0.0
+  kind: prompt
+  description: '文本翻译。Use when 要把文本译成指定语言,如 text=''菲波拉契数列'' + target_lang=''en'' →
+    {"translation": "the Fibonacci sequence"};Do not use when 需要译后润色(另调 rewrite)或文档级排版保留(本技能只管文本内容)。专有名词
+    与标识符保持原样。返回 {"translation": 译文}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 原文
+      target_lang:
+        type: string
+        description: 目标语言代码,如 en/ja/zh
+    required:
+    - text
+    - target_lang
+  outputs:
+    type: object
+    properties:
+      translation:
+        type: string
+        description: 译文
+    required:
+    - translation
+  permissions: {}
+  prompt: '你是翻译器。输入 JSON 在第一条用户消息:字段 text 为原文,target_lang 为目标语言代码。
+
+    把 text 译为 target_lang 指定的语言;专有名词与标识符保持原样,不解释、不评注。
+
+    只输出最终答案 JSON:一个字符串字段 translation,值为译文。
+
+    '
+- name: common.text.rewrite
+  version: 1.0.0
+  kind: prompt
+  description: '文本改写。Use when 要在不改变事实与含义的前提下让文本更通顺简洁,如口语化 段落 → {"rewritten": 书面通顺版};Do
+    not use when 需要压缩篇幅做摘要(用 summarize)或转换语言(用 translate)。不增删信息,不动专有名词与标识符。 返回 {"rewritten":
+    改写后文本}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 原文
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      rewritten:
+        type: string
+        description: 改写后文本
+    required:
+    - rewritten
+  permissions: {}
+  prompt: '你是改写器。输入 JSON 在第一条用户消息:字段 text 为原文。
+
+    在不改变事实与含义的前提下把 text 改写得更通顺、更简洁;不增删信息,不替换专有名词与标识符。
+
+    只输出最终答案 JSON:一个字符串字段 rewritten,值为改写后的文本。
+
+    '
+- name: common.text.qa_over_text
+  version: 1.0.0
+  kind: prompt
+  description: '文内问答。Use when 答案必须严格出自给定文本,如 text=''6乘7是42。'' + question=''6乘7是多少?''
+    → {"answer": "42"};Do not use when 需要外部知识 作答(本技能无检索,文本无依据时如实说明)或答案要跨文档聚合。返回 {"answer":
+    简明答案}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 资料原文
+      question:
+        type: string
+        description: 问题
+    required:
+    - text
+    - question
+  outputs:
+    type: object
+    properties:
+      answer:
+        type: string
+        description: 依据原文的答案
+    required:
+    - answer
+  permissions: {}
+  prompt: '你是文内问答器。输入 JSON 在第一条用户消息:字段 text 为资料原文,question 为问题。
+
+    只依据 text 的内容回答问题;text 里没有依据时如实说明,不得动用外部知识编造。
+
+    只输出最终答案 JSON:一个字符串字段 answer,值为简明答案。
+
+    '
+- name: common.text.compress_context
+  version: 1.0.0
+  kind: prompt
+  description: '任务感知压缩。Use when 长上下文要围绕当前任务压缩且必须保住指定要点,如 query=''预算是多少'' + preserve=[''预算
+    $2''] → compressed 逐字含全部 preserve 项; Do not use when 需要任务无关摘要(用 summarize,两者不可互替)或没有
+    query 的 泛压缩。返回 {"compressed": 压缩结果, "dropped_estimate": 估计丢弃字符数}。'
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+        description: 待压缩上下文
+      query:
+        type: string
+        description: 当前任务/查询
+      preserve:
+        type: array
+        items:
+          type: string
+        description: 必须逐字保留的要点(一项都不能少)
+    required:
+    - text
+    - query
+    - preserve
+  outputs:
+    type: object
+    properties:
+      compressed:
+        type: string
+        description: 压缩结果(逐字含全部 preserve 项)
+      dropped_estimate:
+        type: integer
+        description: 估计丢弃的字符数
+    required:
+    - compressed
+    - dropped_estimate
+  permissions: {}
+  prompt: '你是任务感知压缩器。输入 JSON 在第一条用户消息:字段 text 为待压缩上下文,query 为当前任务,preserve 为必须逐字保留的要点数组。
+
+    围绕 query 压缩 text:与任务无关的内容坚决丢弃;preserve 中每一项都必须逐字出现在结果里,一个都不能少。
+
+    只输出最终答案 JSON:字符串字段 compressed(压缩结果,含全部 preserve 项)与整数字段 dropped_estimate(估计丢弃的字符数)。
+
+    '

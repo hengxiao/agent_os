@@ -85,7 +85,7 @@ def test_request_mapping_system_tools_max_tokens():
             Message(role=Role.SYSTEM, content="你是助手。"),
             Message(role=Role.USER, content="你好"),
         ],
-        tools=[{"name": "fs_read", "description": "读文件", "parameters": {"type": "object"}}],
+        tools=[{"name": "system.file.read", "description": "读文件", "parameters": {"type": "object"}}],
     )
     asyncio.run(p.chat(req))
 
@@ -98,7 +98,7 @@ def test_request_mapping_system_tools_max_tokens():
     assert all(m["role"] != "system" for m in body["messages"])
     assert body["max_tokens"] > 0  # 必填,缺省有默认
     assert body["tools"][0]["input_schema"] == {"type": "object"}
-    assert body["tools"][0]["name"] == "fs_read"
+    assert body["tools"][0]["name"] == "system.file.read"
 
 
 def test_response_mapping_thinking_usage_stop_reason():
@@ -125,8 +125,8 @@ def test_tool_use_response_and_tool_result_round_trip():
     """tool_use → ToolCall;assistant 回传 tool_use 块;连续 TOOL 合并为一条 user(§4 契约)。"""
     blocks = [
         {"type": "text", "text": "调用工具"},
-        {"type": "tool_use", "id": "tu_1", "name": "fs_read", "input": {"path": "a.txt"}},
-        {"type": "tool_use", "id": "tu_2", "name": "fs_read", "input": {"path": "b.txt"}},
+        {"type": "tool_use", "id": "tu_1", "name": "system.file.read", "input": {"path": "a.txt"}},
+        {"type": "tool_use", "id": "tu_2", "name": "system.file.read", "input": {"path": "b.txt"}},
     ]
     bodies: list[dict] = []
 
@@ -141,8 +141,8 @@ def test_tool_use_response_and_tool_result_round_trip():
         history = [
             Message(role=Role.USER, content="q"),
             r1.message,
-            Message(role=Role.TOOL, content='{"ok": true, "value": "A"}', tool_call_id="tu_1", name="fs_read"),
-            Message(role=Role.TOOL, content='{"ok": true, "value": "B"}', tool_call_id="tu_2", name="fs_read"),
+            Message(role=Role.TOOL, content='{"ok": true, "value": "A"}', tool_call_id="tu_1", name="system.file.read"),
+            Message(role=Role.TOOL, content='{"ok": true, "value": "B"}', tool_call_id="tu_2", name="system.file.read"),
         ]
         await p.chat(ChatRequest(model="anthropic/m", messages=history))
 
@@ -151,7 +151,7 @@ def test_tool_use_response_and_tool_result_round_trip():
     second = bodies[1]["messages"]
     assert [m["role"] for m in second] == ["user", "assistant", "user"]
     tool_use_blocks = [b for b in second[1]["content"] if b["type"] == "tool_use"]
-    assert [b["name"] for b in tool_use_blocks] == ["fs_read", "fs_read"]
+    assert [b["name"] for b in tool_use_blocks] == ["system.file.read", "system.file.read"]
     assert tool_use_blocks[0]["input"] == {"path": "a.txt"}
     # 连续 TOOL 消息合并为一条 user 消息,内含两个 tool_result 块
     result_blocks = second[2]["content"]

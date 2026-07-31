@@ -6,7 +6,7 @@
 # 边:簇内链 i→i+1;跨簇 analyze→extract、report→analyze、qa→report;菱形若干。
 # 深链:mega_pipeline → chain_00 → … → chain_09 → hub_agg(12 帧,{"total": 45})。
 skills:
-- name: ingest_00
+- name: project.skills_100.ingest_00
   version: 1.0.0
   kind: prompt
   description: ingest 阶段第 0 步处理器。Use when 流水线进入 ingest 阶段第 0 步;Do not use when 需要其他阶段或其他步骤。
@@ -22,21 +22,21 @@ skills:
         type: string
   permissions:
     tools: &id001
-    - http_fetch
+    - system.net.http_fetch
     skills:
-    - ingest_01
+    - project.skills_100.ingest_01
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: ingest_00
+  prompt: '# skill: project.skills_100.ingest_00
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: ingest_01
+- name: project.skills_100.ingest_01
   version: 1.0.0
   kind: prompt
   description: ingest 阶段第 1 步处理器。Use when 流水线进入 ingest 阶段第 1 步;Do not use when 需要其他阶段或其他步骤。
@@ -53,19 +53,19 @@ skills:
   permissions:
     tools: *id001
     skills:
-    - ingest_02
+    - project.skills_100.ingest_02
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: ingest_01
+  prompt: '# skill: project.skills_100.ingest_01
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: ingest_02
+- name: project.skills_100.ingest_02
   version: 1.0.0
   kind: prompt
   description: ingest 阶段第 2 步处理器。Use when 流水线进入 ingest 阶段第 2 步;Do not use when 需要其他阶段或其他步骤。
@@ -82,19 +82,19 @@ skills:
   permissions:
     tools: *id001
     skills:
-    - ingest_03
+    - project.skills_100.ingest_03
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: ingest_02
+  prompt: '# skill: project.skills_100.ingest_02
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: ingest_03
+- name: project.skills_100.ingest_03
   version: 1.0.0
   kind: prompt
   description: ingest 阶段第 3 步处理器。Use when 流水线进入 ingest 阶段第 3 步;Do not use when 需要其他阶段或其他步骤。
@@ -111,19 +111,19 @@ skills:
   permissions:
     tools: *id001
     skills:
-    - ingest_04
+    - project.skills_100.ingest_04
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: ingest_03
+  prompt: '# skill: project.skills_100.ingest_03
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: ingest_04
+- name: project.skills_100.ingest_04
   version: 1.0.0
   kind: prompt
   description: ingest 阶段第 4 步处理器。Use when 流水线进入 ingest 阶段第 4 步;Do not use when 需要其他阶段或其他步骤。
@@ -140,19 +140,19 @@ skills:
   permissions:
     tools: *id001
     skills:
-    - ingest_05
+    - project.skills_100.ingest_05
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: ingest_04
+  prompt: '# skill: project.skills_100.ingest_04
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: ingest_05
+- name: project.skills_100.ingest_05
   version: 1.0.0
   kind: prompt
   description: ingest 阶段第 5 步处理器。Use when 流水线进入 ingest 阶段第 5 步;Do not use when 需要其他阶段或其他步骤。
@@ -169,19 +169,19 @@ skills:
   permissions:
     tools: *id001
     skills:
-    - ingest_06
+    - project.skills_100.ingest_06
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: ingest_05
+  prompt: '# skill: project.skills_100.ingest_05
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: ingest_06
+- name: project.skills_100.ingest_06
   version: 1.0.0
   kind: prompt
   description: ingest 阶段第 6 步处理器。Use when 流水线进入 ingest 阶段第 6 步;Do not use when 需要其他阶段或其他步骤。
@@ -198,19 +198,19 @@ skills:
   permissions:
     tools: *id001
     skills:
-    - ingest_07
+    - project.skills_100.ingest_07
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: ingest_06
+  prompt: '# skill: project.skills_100.ingest_06
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: ingest_07
+- name: project.skills_100.ingest_07
   version: 1.0.0
   kind: prompt
   description: ingest 阶段第 7 步处理器。Use when 流水线进入 ingest 阶段第 7 步;Do not use when 需要其他阶段或其他步骤。
@@ -227,19 +227,19 @@ skills:
   permissions:
     tools: *id001
     skills:
-    - ingest_08
+    - project.skills_100.ingest_08
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: ingest_07
+  prompt: '# skill: project.skills_100.ingest_07
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: ingest_08
+- name: project.skills_100.ingest_08
   version: 1.0.0
   kind: prompt
   description: ingest 阶段第 8 步处理器。Use when 流水线进入 ingest 阶段第 8 步;Do not use when 需要其他阶段或其他步骤。
@@ -256,19 +256,19 @@ skills:
   permissions:
     tools: *id001
     skills:
-    - ingest_09
+    - project.skills_100.ingest_09
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: ingest_08
+  prompt: '# skill: project.skills_100.ingest_08
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: ingest_09
+- name: project.skills_100.ingest_09
   version: 1.0.0
   kind: prompt
   description: ingest 阶段第 9 步处理器。Use when 流水线进入 ingest 阶段第 9 步;Do not use when 需要其他阶段或其他步骤。
@@ -291,12 +291,12 @@ skills:
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: ingest_09
+  prompt: '# skill: project.skills_100.ingest_09
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: clean_00
+- name: project.skills_100.clean_00
   version: 1.0.0
   kind: prompt
   description: clean 阶段第 0 步处理器。Use when 流水线进入 clean 阶段第 0 步;Do not use when 需要其他阶段或其他步骤。
@@ -312,21 +312,21 @@ skills:
         type: string
   permissions:
     tools: &id002
-    - python_exec
+    - system.python.exec
     skills:
-    - clean_01
+    - project.skills_100.clean_01
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: clean_00
+  prompt: '# skill: project.skills_100.clean_00
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: clean_01
+- name: project.skills_100.clean_01
   version: 1.0.0
   kind: prompt
   description: clean 阶段第 1 步处理器。Use when 流水线进入 clean 阶段第 1 步;Do not use when 需要其他阶段或其他步骤。
@@ -343,19 +343,19 @@ skills:
   permissions:
     tools: *id002
     skills:
-    - clean_02
+    - project.skills_100.clean_02
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: clean_01
+  prompt: '# skill: project.skills_100.clean_01
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: clean_02
+- name: project.skills_100.clean_02
   version: 1.0.0
   kind: prompt
   description: clean 阶段第 2 步处理器。Use when 流水线进入 clean 阶段第 2 步;Do not use when 需要其他阶段或其他步骤。
@@ -372,19 +372,19 @@ skills:
   permissions:
     tools: *id002
     skills:
-    - clean_03
+    - project.skills_100.clean_03
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: clean_02
+  prompt: '# skill: project.skills_100.clean_02
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: clean_03
+- name: project.skills_100.clean_03
   version: 1.0.0
   kind: prompt
   description: clean 阶段第 3 步处理器。Use when 流水线进入 clean 阶段第 3 步;Do not use when 需要其他阶段或其他步骤。
@@ -401,19 +401,19 @@ skills:
   permissions:
     tools: *id002
     skills:
-    - clean_04
+    - project.skills_100.clean_04
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: clean_03
+  prompt: '# skill: project.skills_100.clean_03
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: clean_04
+- name: project.skills_100.clean_04
   version: 1.0.0
   kind: prompt
   description: clean 阶段第 4 步处理器。Use when 流水线进入 clean 阶段第 4 步;Do not use when 需要其他阶段或其他步骤。
@@ -430,19 +430,19 @@ skills:
   permissions:
     tools: *id002
     skills:
-    - clean_05
+    - project.skills_100.clean_05
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: clean_04
+  prompt: '# skill: project.skills_100.clean_04
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: clean_05
+- name: project.skills_100.clean_05
   version: 1.0.0
   kind: prompt
   description: clean 阶段第 5 步处理器。Use when 流水线进入 clean 阶段第 5 步;Do not use when 需要其他阶段或其他步骤。
@@ -459,19 +459,19 @@ skills:
   permissions:
     tools: *id002
     skills:
-    - clean_06
+    - project.skills_100.clean_06
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: clean_05
+  prompt: '# skill: project.skills_100.clean_05
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: clean_06
+- name: project.skills_100.clean_06
   version: 1.0.0
   kind: prompt
   description: clean 阶段第 6 步处理器。Use when 流水线进入 clean 阶段第 6 步;Do not use when 需要其他阶段或其他步骤。
@@ -488,19 +488,19 @@ skills:
   permissions:
     tools: *id002
     skills:
-    - clean_07
+    - project.skills_100.clean_07
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: clean_06
+  prompt: '# skill: project.skills_100.clean_06
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: clean_07
+- name: project.skills_100.clean_07
   version: 1.0.0
   kind: prompt
   description: clean 阶段第 7 步处理器。Use when 流水线进入 clean 阶段第 7 步;Do not use when 需要其他阶段或其他步骤。
@@ -517,19 +517,19 @@ skills:
   permissions:
     tools: *id002
     skills:
-    - clean_08
+    - project.skills_100.clean_08
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: clean_07
+  prompt: '# skill: project.skills_100.clean_07
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: clean_08
+- name: project.skills_100.clean_08
   version: 1.0.0
   kind: prompt
   description: clean 阶段第 8 步处理器。Use when 流水线进入 clean 阶段第 8 步;Do not use when 需要其他阶段或其他步骤。
@@ -546,19 +546,19 @@ skills:
   permissions:
     tools: *id002
     skills:
-    - clean_09
+    - project.skills_100.clean_09
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: clean_08
+  prompt: '# skill: project.skills_100.clean_08
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: clean_09
+- name: project.skills_100.clean_09
   version: 1.0.0
   kind: prompt
   description: clean 阶段第 9 步处理器。Use when 流水线进入 clean 阶段第 9 步;Do not use when 需要其他阶段或其他步骤。
@@ -581,12 +581,12 @@ skills:
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: clean_09
+  prompt: '# skill: project.skills_100.clean_09
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: extract_00
+- name: project.skills_100.extract_00
   version: 1.0.0
   kind: prompt
   description: extract 阶段第 0 步处理器。Use when 流水线进入 extract 阶段第 0 步;Do not use when 需要其他阶段或其他步骤。
@@ -602,21 +602,21 @@ skills:
         type: string
   permissions:
     tools: &id003
-    - fs_read
+    - system.file.read
     skills:
-    - extract_01
+    - project.skills_100.extract_01
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: extract_00
+  prompt: '# skill: project.skills_100.extract_00
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: extract_01
+- name: project.skills_100.extract_01
   version: 1.0.0
   kind: prompt
   description: extract 阶段第 1 步处理器。Use when 流水线进入 extract 阶段第 1 步;Do not use when 需要其他阶段或其他步骤。
@@ -633,19 +633,19 @@ skills:
   permissions:
     tools: *id003
     skills:
-    - extract_02
+    - project.skills_100.extract_02
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: extract_01
+  prompt: '# skill: project.skills_100.extract_01
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: extract_02
+- name: project.skills_100.extract_02
   version: 1.0.0
   kind: prompt
   description: extract 阶段第 2 步处理器。Use when 流水线进入 extract 阶段第 2 步;Do not use when 需要其他阶段或其他步骤。
@@ -662,19 +662,19 @@ skills:
   permissions:
     tools: *id003
     skills:
-    - extract_03
+    - project.skills_100.extract_03
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: extract_02
+  prompt: '# skill: project.skills_100.extract_02
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: extract_03
+- name: project.skills_100.extract_03
   version: 1.0.0
   kind: prompt
   description: extract 阶段第 3 步处理器。Use when 流水线进入 extract 阶段第 3 步;Do not use when 需要其他阶段或其他步骤。
@@ -691,19 +691,19 @@ skills:
   permissions:
     tools: *id003
     skills:
-    - extract_04
+    - project.skills_100.extract_04
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: extract_03
+  prompt: '# skill: project.skills_100.extract_03
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: extract_04
+- name: project.skills_100.extract_04
   version: 1.0.0
   kind: prompt
   description: extract 阶段第 4 步处理器。Use when 流水线进入 extract 阶段第 4 步;Do not use when 需要其他阶段或其他步骤。
@@ -720,19 +720,19 @@ skills:
   permissions:
     tools: *id003
     skills:
-    - extract_05
+    - project.skills_100.extract_05
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: extract_04
+  prompt: '# skill: project.skills_100.extract_04
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: extract_05
+- name: project.skills_100.extract_05
   version: 1.0.0
   kind: prompt
   description: extract 阶段第 5 步处理器。Use when 流水线进入 extract 阶段第 5 步;Do not use when 需要其他阶段或其他步骤。
@@ -749,19 +749,19 @@ skills:
   permissions:
     tools: *id003
     skills:
-    - extract_06
+    - project.skills_100.extract_06
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: extract_05
+  prompt: '# skill: project.skills_100.extract_05
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: extract_06
+- name: project.skills_100.extract_06
   version: 1.0.0
   kind: prompt
   description: extract 阶段第 6 步处理器。Use when 流水线进入 extract 阶段第 6 步;Do not use when 需要其他阶段或其他步骤。
@@ -778,19 +778,19 @@ skills:
   permissions:
     tools: *id003
     skills:
-    - extract_07
+    - project.skills_100.extract_07
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: extract_06
+  prompt: '# skill: project.skills_100.extract_06
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: extract_07
+- name: project.skills_100.extract_07
   version: 1.0.0
   kind: prompt
   description: extract 阶段第 7 步处理器。Use when 流水线进入 extract 阶段第 7 步;Do not use when 需要其他阶段或其他步骤。
@@ -807,19 +807,19 @@ skills:
   permissions:
     tools: *id003
     skills:
-    - extract_08
+    - project.skills_100.extract_08
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: extract_07
+  prompt: '# skill: project.skills_100.extract_07
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: extract_08
+- name: project.skills_100.extract_08
   version: 1.0.0
   kind: prompt
   description: extract 阶段第 8 步处理器。Use when 流水线进入 extract 阶段第 8 步;Do not use when 需要其他阶段或其他步骤。
@@ -836,19 +836,19 @@ skills:
   permissions:
     tools: *id003
     skills:
-    - extract_09
+    - project.skills_100.extract_09
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: extract_08
+  prompt: '# skill: project.skills_100.extract_08
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: extract_09
+- name: project.skills_100.extract_09
   version: 1.0.0
   kind: prompt
   description: extract 阶段第 9 步处理器。Use when 流水线进入 extract 阶段第 9 步;Do not use when 需要其他阶段或其他步骤。
@@ -871,12 +871,12 @@ skills:
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: extract_09
+  prompt: '# skill: project.skills_100.extract_09
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_00
+- name: project.skills_100.analyze_00
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 0 步处理器。Use when 流水线进入 analyze 阶段第 0 步;Do not use when 需要其他阶段或其他步骤。
@@ -892,21 +892,21 @@ skills:
         type: string
   permissions:
     tools: &id004
-    - python_exec
+    - system.python.exec
     skills:
-    - analyze_01
+    - project.skills_100.analyze_01
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_00
+  prompt: '# skill: project.skills_100.analyze_00
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_01
+- name: project.skills_100.analyze_01
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 1 步处理器。Use when 流水线进入 analyze 阶段第 1 步;Do not use when 需要其他阶段或其他步骤。
@@ -923,19 +923,19 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_02
+    - project.skills_100.analyze_02
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_01
+  prompt: '# skill: project.skills_100.analyze_01
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_02
+- name: project.skills_100.analyze_02
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 2 步处理器。Use when 流水线进入 analyze 阶段第 2 步;Do not use when 需要其他阶段或其他步骤。
@@ -952,19 +952,19 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_03
+    - project.skills_100.analyze_03
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_02
+  prompt: '# skill: project.skills_100.analyze_02
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_03
+- name: project.skills_100.analyze_03
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 3 步处理器。Use when 流水线进入 analyze 阶段第 3 步;Do not use when 需要其他阶段或其他步骤。
@@ -981,19 +981,19 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_04
+    - project.skills_100.analyze_04
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_03
+  prompt: '# skill: project.skills_100.analyze_03
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_04
+- name: project.skills_100.analyze_04
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 4 步处理器。Use when 流水线进入 analyze 阶段第 4 步;Do not use when 需要其他阶段或其他步骤。
@@ -1010,19 +1010,19 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_05
+    - project.skills_100.analyze_05
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_04
+  prompt: '# skill: project.skills_100.analyze_04
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_05
+- name: project.skills_100.analyze_05
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 5 步处理器。Use when 流水线进入 analyze 阶段第 5 步;Do not use when 需要其他阶段或其他步骤。
@@ -1039,20 +1039,20 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_06
-    - extract_02
+    - project.skills_100.analyze_06
+    - project.skills_100.extract_02
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_05
+  prompt: '# skill: project.skills_100.analyze_05
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_06
+- name: project.skills_100.analyze_06
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 6 步处理器。Use when 流水线进入 analyze 阶段第 6 步;Do not use when 需要其他阶段或其他步骤。
@@ -1069,19 +1069,19 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_07
+    - project.skills_100.analyze_07
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_06
+  prompt: '# skill: project.skills_100.analyze_06
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_07
+- name: project.skills_100.analyze_07
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 7 步处理器。Use when 流水线进入 analyze 阶段第 7 步;Do not use when 需要其他阶段或其他步骤。
@@ -1098,19 +1098,19 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_08
+    - project.skills_100.analyze_08
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_07
+  prompt: '# skill: project.skills_100.analyze_07
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_08
+- name: project.skills_100.analyze_08
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 8 步处理器。Use when 流水线进入 analyze 阶段第 8 步;Do not use when 需要其他阶段或其他步骤。
@@ -1127,19 +1127,19 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_09
+    - project.skills_100.analyze_09
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_08
+  prompt: '# skill: project.skills_100.analyze_08
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_09
+- name: project.skills_100.analyze_09
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 9 步处理器。Use when 流水线进入 analyze 阶段第 9 步;Do not use when 需要其他阶段或其他步骤。
@@ -1156,20 +1156,20 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_10
-    - extract_05
+    - project.skills_100.analyze_10
+    - project.skills_100.extract_05
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_09
+  prompt: '# skill: project.skills_100.analyze_09
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_10
+- name: project.skills_100.analyze_10
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 10 步处理器。Use when 流水线进入 analyze 阶段第 10 步;Do not use when
@@ -1187,19 +1187,19 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_11
+    - project.skills_100.analyze_11
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_10
+  prompt: '# skill: project.skills_100.analyze_10
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_11
+- name: project.skills_100.analyze_11
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 11 步处理器。Use when 流水线进入 analyze 阶段第 11 步;Do not use when
@@ -1217,19 +1217,19 @@ skills:
   permissions:
     tools: *id004
     skills:
-    - analyze_12
+    - project.skills_100.analyze_12
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_11
+  prompt: '# skill: project.skills_100.analyze_11
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: analyze_12
+- name: project.skills_100.analyze_12
   version: 1.0.0
   kind: prompt
   description: analyze 阶段第 12 步处理器。Use when 流水线进入 analyze 阶段第 12 步;Do not use when
@@ -1253,12 +1253,12 @@ skills:
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: analyze_12
+  prompt: '# skill: project.skills_100.analyze_12
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: report_00
+- name: project.skills_100.report_00
   version: 1.0.0
   kind: prompt
   description: report 阶段第 0 步处理器。Use when 流水线进入 report 阶段第 0 步;Do not use when 需要其他阶段或其他步骤。
@@ -1274,22 +1274,22 @@ skills:
         type: string
   permissions:
     tools: &id005
-    - fs_read
+    - system.file.read
     skills:
-    - report_01
-    - analyze_00
+    - project.skills_100.report_01
+    - project.skills_100.analyze_00
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: report_00
+  prompt: '# skill: project.skills_100.report_00
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: report_01
+- name: project.skills_100.report_01
   version: 1.0.0
   kind: prompt
   description: report 阶段第 1 步处理器。Use when 流水线进入 report 阶段第 1 步;Do not use when 需要其他阶段或其他步骤。
@@ -1306,20 +1306,20 @@ skills:
   permissions:
     tools: *id005
     skills:
-    - report_02
-    - analyze_00
+    - project.skills_100.report_02
+    - project.skills_100.analyze_00
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: report_01
+  prompt: '# skill: project.skills_100.report_01
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: report_02
+- name: project.skills_100.report_02
   version: 1.0.0
   kind: prompt
   description: report 阶段第 2 步处理器。Use when 流水线进入 report 阶段第 2 步;Do not use when 需要其他阶段或其他步骤。
@@ -1336,19 +1336,19 @@ skills:
   permissions:
     tools: *id005
     skills:
-    - report_03
+    - project.skills_100.report_03
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: report_02
+  prompt: '# skill: project.skills_100.report_02
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: report_03
+- name: project.skills_100.report_03
   version: 1.0.0
   kind: prompt
   description: report 阶段第 3 步处理器。Use when 流水线进入 report 阶段第 3 步;Do not use when 需要其他阶段或其他步骤。
@@ -1365,20 +1365,20 @@ skills:
   permissions:
     tools: *id005
     skills:
-    - report_04
-    - analyze_07
+    - project.skills_100.report_04
+    - project.skills_100.analyze_07
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: report_03
+  prompt: '# skill: project.skills_100.report_03
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: report_04
+- name: project.skills_100.report_04
   version: 1.0.0
   kind: prompt
   description: report 阶段第 4 步处理器。Use when 流水线进入 report 阶段第 4 步;Do not use when 需要其他阶段或其他步骤。
@@ -1395,19 +1395,19 @@ skills:
   permissions:
     tools: *id005
     skills:
-    - report_05
+    - project.skills_100.report_05
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: report_04
+  prompt: '# skill: project.skills_100.report_04
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: report_05
+- name: project.skills_100.report_05
   version: 1.0.0
   kind: prompt
   description: report 阶段第 5 步处理器。Use when 流水线进入 report 阶段第 5 步;Do not use when 需要其他阶段或其他步骤。
@@ -1424,19 +1424,19 @@ skills:
   permissions:
     tools: *id005
     skills:
-    - report_06
+    - project.skills_100.report_06
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: report_05
+  prompt: '# skill: project.skills_100.report_05
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: report_06
+- name: project.skills_100.report_06
   version: 1.0.0
   kind: prompt
   description: report 阶段第 6 步处理器。Use when 流水线进入 report 阶段第 6 步;Do not use when 需要其他阶段或其他步骤。
@@ -1453,19 +1453,19 @@ skills:
   permissions:
     tools: *id005
     skills:
-    - report_07
+    - project.skills_100.report_07
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: report_06
+  prompt: '# skill: project.skills_100.report_06
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: report_07
+- name: project.skills_100.report_07
   version: 1.0.0
   kind: prompt
   description: report 阶段第 7 步处理器。Use when 流水线进入 report 阶段第 7 步;Do not use when 需要其他阶段或其他步骤。
@@ -1482,19 +1482,19 @@ skills:
   permissions:
     tools: *id005
     skills:
-    - report_08
+    - project.skills_100.report_08
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: report_07
+  prompt: '# skill: project.skills_100.report_07
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: report_08
+- name: project.skills_100.report_08
   version: 1.0.0
   kind: prompt
   description: report 阶段第 8 步处理器。Use when 流水线进入 report 阶段第 8 步;Do not use when 需要其他阶段或其他步骤。
@@ -1511,19 +1511,19 @@ skills:
   permissions:
     tools: *id005
     skills:
-    - report_09
+    - project.skills_100.report_09
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: report_08
+  prompt: '# skill: project.skills_100.report_08
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: report_09
+- name: project.skills_100.report_09
   version: 1.0.0
   kind: prompt
   description: report 阶段第 9 步处理器。Use when 流水线进入 report 阶段第 9 步;Do not use when 需要其他阶段或其他步骤。
@@ -1546,12 +1546,12 @@ skills:
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: report_09
+  prompt: '# skill: project.skills_100.report_09
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: qa_00
+- name: project.skills_100.qa_00
   version: 1.0.0
   kind: prompt
   description: qa 阶段第 0 步处理器。Use when 流水线进入 qa 阶段第 0 步;Do not use when 需要其他阶段或其他步骤。
@@ -1567,23 +1567,23 @@ skills:
         type: string
   permissions:
     tools: &id006
-    - python_exec
+    - system.python.exec
     skills:
-    - qa_01
-    - report_00
-    - report_01
+    - project.skills_100.qa_01
+    - project.skills_100.report_00
+    - project.skills_100.report_01
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: qa_00
+  prompt: '# skill: project.skills_100.qa_00
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: qa_01
+- name: project.skills_100.qa_01
   version: 1.0.0
   kind: prompt
   description: qa 阶段第 1 步处理器。Use when 流水线进入 qa 阶段第 1 步;Do not use when 需要其他阶段或其他步骤。
@@ -1600,19 +1600,19 @@ skills:
   permissions:
     tools: *id006
     skills:
-    - qa_02
+    - project.skills_100.qa_02
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: qa_01
+  prompt: '# skill: project.skills_100.qa_01
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: qa_02
+- name: project.skills_100.qa_02
   version: 1.0.0
   kind: prompt
   description: qa 阶段第 2 步处理器。Use when 流水线进入 qa 阶段第 2 步;Do not use when 需要其他阶段或其他步骤。
@@ -1629,20 +1629,20 @@ skills:
   permissions:
     tools: *id006
     skills:
-    - qa_03
-    - report_04
+    - project.skills_100.qa_03
+    - project.skills_100.report_04
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: qa_02
+  prompt: '# skill: project.skills_100.qa_02
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: qa_03
+- name: project.skills_100.qa_03
   version: 1.0.0
   kind: prompt
   description: qa 阶段第 3 步处理器。Use when 流水线进入 qa 阶段第 3 步;Do not use when 需要其他阶段或其他步骤。
@@ -1659,19 +1659,19 @@ skills:
   permissions:
     tools: *id006
     skills:
-    - qa_04
+    - project.skills_100.qa_04
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: qa_03
+  prompt: '# skill: project.skills_100.qa_03
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: qa_04
+- name: project.skills_100.qa_04
   version: 1.0.0
   kind: prompt
   description: qa 阶段第 4 步处理器。Use when 流水线进入 qa 阶段第 4 步;Do not use when 需要其他阶段或其他步骤。
@@ -1688,19 +1688,19 @@ skills:
   permissions:
     tools: *id006
     skills:
-    - qa_05
+    - project.skills_100.qa_05
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: qa_04
+  prompt: '# skill: project.skills_100.qa_04
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: qa_05
+- name: project.skills_100.qa_05
   version: 1.0.0
   kind: prompt
   description: qa 阶段第 5 步处理器。Use when 流水线进入 qa 阶段第 5 步;Do not use when 需要其他阶段或其他步骤。
@@ -1717,19 +1717,19 @@ skills:
   permissions:
     tools: *id006
     skills:
-    - qa_06
+    - project.skills_100.qa_06
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: qa_05
+  prompt: '# skill: project.skills_100.qa_05
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: qa_06
+- name: project.skills_100.qa_06
   version: 1.0.0
   kind: prompt
   description: qa 阶段第 6 步处理器。Use when 流水线进入 qa 阶段第 6 步;Do not use when 需要其他阶段或其他步骤。
@@ -1746,19 +1746,19 @@ skills:
   permissions:
     tools: *id006
     skills:
-    - qa_07
+    - project.skills_100.qa_07
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: qa_06
+  prompt: '# skill: project.skills_100.qa_06
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: qa_07
+- name: project.skills_100.qa_07
   version: 1.0.0
   kind: prompt
   description: qa 阶段第 7 步处理器。Use when 流水线进入 qa 阶段第 7 步;Do not use when 需要其他阶段或其他步骤。
@@ -1775,19 +1775,19 @@ skills:
   permissions:
     tools: *id006
     skills:
-    - qa_08
+    - project.skills_100.qa_08
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: qa_07
+  prompt: '# skill: project.skills_100.qa_07
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: qa_08
+- name: project.skills_100.qa_08
   version: 1.0.0
   kind: prompt
   description: qa 阶段第 8 步处理器。Use when 流水线进入 qa 阶段第 8 步;Do not use when 需要其他阶段或其他步骤。
@@ -1804,19 +1804,19 @@ skills:
   permissions:
     tools: *id006
     skills:
-    - qa_09
+    - project.skills_100.qa_09
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: qa_08
+  prompt: '# skill: project.skills_100.qa_08
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: qa_09
+- name: project.skills_100.qa_09
   version: 1.0.0
   kind: prompt
   description: qa 阶段第 9 步处理器。Use when 流水线进入 qa 阶段第 9 步;Do not use when 需要其他阶段或其他步骤。
@@ -1839,12 +1839,12 @@ skills:
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: qa_09
+  prompt: '# skill: project.skills_100.qa_09
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: io_00
+- name: project.skills_100.io_00
   version: 1.0.0
   kind: prompt
   description: io 阶段第 0 步处理器。Use when 流水线进入 io 阶段第 0 步;Do not use when 需要其他阶段或其他步骤。
@@ -1860,22 +1860,22 @@ skills:
         type: string
   permissions:
     tools: &id007
-    - fs_read
-    - shell_exec
+    - system.file.read
+    - system.shell.exec
     skills:
-    - io_01
+    - project.skills_100.io_01
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: io_00
+  prompt: '# skill: project.skills_100.io_00
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: io_01
+- name: project.skills_100.io_01
   version: 1.0.0
   kind: prompt
   description: io 阶段第 1 步处理器。Use when 流水线进入 io 阶段第 1 步;Do not use when 需要其他阶段或其他步骤。
@@ -1892,19 +1892,19 @@ skills:
   permissions:
     tools: *id007
     skills:
-    - io_02
+    - project.skills_100.io_02
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: io_01
+  prompt: '# skill: project.skills_100.io_01
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: io_02
+- name: project.skills_100.io_02
   version: 1.0.0
   kind: prompt
   description: io 阶段第 2 步处理器。Use when 流水线进入 io 阶段第 2 步;Do not use when 需要其他阶段或其他步骤。
@@ -1921,19 +1921,19 @@ skills:
   permissions:
     tools: *id007
     skills:
-    - io_03
+    - project.skills_100.io_03
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: io_02
+  prompt: '# skill: project.skills_100.io_02
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: io_03
+- name: project.skills_100.io_03
   version: 1.0.0
   kind: prompt
   description: io 阶段第 3 步处理器。Use when 流水线进入 io 阶段第 3 步;Do not use when 需要其他阶段或其他步骤。
@@ -1950,19 +1950,19 @@ skills:
   permissions:
     tools: *id007
     skills:
-    - io_04
+    - project.skills_100.io_04
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: io_03
+  prompt: '# skill: project.skills_100.io_03
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: io_04
+- name: project.skills_100.io_04
   version: 1.0.0
   kind: prompt
   description: io 阶段第 4 步处理器。Use when 流水线进入 io 阶段第 4 步;Do not use when 需要其他阶段或其他步骤。
@@ -1979,19 +1979,19 @@ skills:
   permissions:
     tools: *id007
     skills:
-    - io_05
+    - project.skills_100.io_05
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: io_04
+  prompt: '# skill: project.skills_100.io_04
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: io_05
+- name: project.skills_100.io_05
   version: 1.0.0
   kind: prompt
   description: io 阶段第 5 步处理器。Use when 流水线进入 io 阶段第 5 步;Do not use when 需要其他阶段或其他步骤。
@@ -2008,19 +2008,19 @@ skills:
   permissions:
     tools: *id007
     skills:
-    - io_06
+    - project.skills_100.io_06
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: io_05
+  prompt: '# skill: project.skills_100.io_05
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: io_06
+- name: project.skills_100.io_06
   version: 1.0.0
   kind: prompt
   description: io 阶段第 6 步处理器。Use when 流水线进入 io 阶段第 6 步;Do not use when 需要其他阶段或其他步骤。
@@ -2037,19 +2037,19 @@ skills:
   permissions:
     tools: *id007
     skills:
-    - io_07
+    - project.skills_100.io_07
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: io_06
+  prompt: '# skill: project.skills_100.io_06
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: io_07
+- name: project.skills_100.io_07
   version: 1.0.0
   kind: prompt
   description: io 阶段第 7 步处理器。Use when 流水线进入 io 阶段第 7 步;Do not use when 需要其他阶段或其他步骤。
@@ -2066,19 +2066,19 @@ skills:
   permissions:
     tools: *id007
     skills:
-    - io_08
+    - project.skills_100.io_08
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: io_07
+  prompt: '# skill: project.skills_100.io_07
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: io_08
+- name: project.skills_100.io_08
   version: 1.0.0
   kind: prompt
   description: io 阶段第 8 步处理器。Use when 流水线进入 io 阶段第 8 步;Do not use when 需要其他阶段或其他步骤。
@@ -2095,19 +2095,19 @@ skills:
   permissions:
     tools: *id007
     skills:
-    - io_09
+    - project.skills_100.io_09
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: io_08
+  prompt: '# skill: project.skills_100.io_08
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: io_09
+- name: project.skills_100.io_09
   version: 1.0.0
   kind: prompt
   description: io 阶段第 9 步处理器。Use when 流水线进入 io 阶段第 9 步;Do not use when 需要其他阶段或其他步骤。
@@ -2130,12 +2130,12 @@ skills:
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: io_09
+  prompt: '# skill: project.skills_100.io_09
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: notify_00
+- name: project.skills_100.notify_00
   version: 1.0.0
   kind: prompt
   description: notify 阶段第 0 步处理器。Use when 流水线进入 notify 阶段第 0 步;Do not use when 需要其他阶段或其他步骤。
@@ -2151,21 +2151,21 @@ skills:
         type: string
   permissions:
     tools: &id008
-    - http_fetch
+    - system.net.http_fetch
     skills:
-    - notify_01
+    - project.skills_100.notify_01
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: notify_00
+  prompt: '# skill: project.skills_100.notify_00
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: notify_01
+- name: project.skills_100.notify_01
   version: 1.0.0
   kind: prompt
   description: notify 阶段第 1 步处理器。Use when 流水线进入 notify 阶段第 1 步;Do not use when 需要其他阶段或其他步骤。
@@ -2182,19 +2182,19 @@ skills:
   permissions:
     tools: *id008
     skills:
-    - notify_02
+    - project.skills_100.notify_02
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: notify_01
+  prompt: '# skill: project.skills_100.notify_01
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: notify_02
+- name: project.skills_100.notify_02
   version: 1.0.0
   kind: prompt
   description: notify 阶段第 2 步处理器。Use when 流水线进入 notify 阶段第 2 步;Do not use when 需要其他阶段或其他步骤。
@@ -2211,19 +2211,19 @@ skills:
   permissions:
     tools: *id008
     skills:
-    - notify_03
+    - project.skills_100.notify_03
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: notify_02
+  prompt: '# skill: project.skills_100.notify_02
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: notify_03
+- name: project.skills_100.notify_03
   version: 1.0.0
   kind: prompt
   description: notify 阶段第 3 步处理器。Use when 流水线进入 notify 阶段第 3 步;Do not use when 需要其他阶段或其他步骤。
@@ -2240,19 +2240,19 @@ skills:
   permissions:
     tools: *id008
     skills:
-    - notify_04
+    - project.skills_100.notify_04
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: notify_03
+  prompt: '# skill: project.skills_100.notify_03
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: notify_04
+- name: project.skills_100.notify_04
   version: 1.0.0
   kind: prompt
   description: notify 阶段第 4 步处理器。Use when 流水线进入 notify 阶段第 4 步;Do not use when 需要其他阶段或其他步骤。
@@ -2275,12 +2275,12 @@ skills:
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: notify_04
+  prompt: '# skill: project.skills_100.notify_04
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: audit_00
+- name: project.skills_100.audit_00
   version: 1.0.0
   kind: prompt
   description: audit 阶段第 0 步处理器。Use when 流水线进入 audit 阶段第 0 步;Do not use when 需要其他阶段或其他步骤。
@@ -2296,21 +2296,21 @@ skills:
         type: string
   permissions:
     tools: &id009
-    - fs_read
+    - system.file.read
     skills:
-    - audit_01
+    - project.skills_100.audit_01
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: audit_00
+  prompt: '# skill: project.skills_100.audit_00
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: audit_01
+- name: project.skills_100.audit_01
   version: 1.0.0
   kind: prompt
   description: audit 阶段第 1 步处理器。Use when 流水线进入 audit 阶段第 1 步;Do not use when 需要其他阶段或其他步骤。
@@ -2327,19 +2327,19 @@ skills:
   permissions:
     tools: *id009
     skills:
-    - audit_02
+    - project.skills_100.audit_02
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: audit_01
+  prompt: '# skill: project.skills_100.audit_01
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: audit_02
+- name: project.skills_100.audit_02
   version: 1.0.0
   kind: prompt
   description: audit 阶段第 2 步处理器。Use when 流水线进入 audit 阶段第 2 步;Do not use when 需要其他阶段或其他步骤。
@@ -2356,19 +2356,19 @@ skills:
   permissions:
     tools: *id009
     skills:
-    - audit_03
+    - project.skills_100.audit_03
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: audit_02
+  prompt: '# skill: project.skills_100.audit_02
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: audit_03
+- name: project.skills_100.audit_03
   version: 1.0.0
   kind: prompt
   description: audit 阶段第 3 步处理器。Use when 流水线进入 audit 阶段第 3 步;Do not use when 需要其他阶段或其他步骤。
@@ -2385,19 +2385,19 @@ skills:
   permissions:
     tools: *id009
     skills:
-    - audit_04
+    - project.skills_100.audit_04
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: audit_03
+  prompt: '# skill: project.skills_100.audit_03
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: audit_04
+- name: project.skills_100.audit_04
   version: 1.0.0
   kind: prompt
   description: audit 阶段第 4 步处理器。Use when 流水线进入 audit 阶段第 4 步;Do not use when 需要其他阶段或其他步骤。
@@ -2414,19 +2414,19 @@ skills:
   permissions:
     tools: *id009
     skills:
-    - audit_05
+    - project.skills_100.audit_05
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: audit_04
+  prompt: '# skill: project.skills_100.audit_04
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: audit_05
+- name: project.skills_100.audit_05
   version: 1.0.0
   kind: prompt
   description: audit 阶段第 5 步处理器。Use when 流水线进入 audit 阶段第 5 步;Do not use when 需要其他阶段或其他步骤。
@@ -2443,19 +2443,19 @@ skills:
   permissions:
     tools: *id009
     skills:
-    - audit_06
+    - project.skills_100.audit_06
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: audit_05
+  prompt: '# skill: project.skills_100.audit_05
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: audit_06
+- name: project.skills_100.audit_06
   version: 1.0.0
   kind: prompt
   description: audit 阶段第 6 步处理器。Use when 流水线进入 audit 阶段第 6 步;Do not use when 需要其他阶段或其他步骤。
@@ -2472,19 +2472,19 @@ skills:
   permissions:
     tools: *id009
     skills:
-    - audit_07
+    - project.skills_100.audit_07
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: audit_06
+  prompt: '# skill: project.skills_100.audit_06
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: audit_07
+- name: project.skills_100.audit_07
   version: 1.0.0
   kind: prompt
   description: audit 阶段第 7 步处理器。Use when 流水线进入 audit 阶段第 7 步;Do not use when 需要其他阶段或其他步骤。
@@ -2501,19 +2501,19 @@ skills:
   permissions:
     tools: *id009
     skills:
-    - audit_08
+    - project.skills_100.audit_08
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: audit_07
+  prompt: '# skill: project.skills_100.audit_07
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: audit_08
+- name: project.skills_100.audit_08
   version: 1.0.0
   kind: prompt
   description: audit 阶段第 8 步处理器。Use when 流水线进入 audit 阶段第 8 步;Do not use when 需要其他阶段或其他步骤。
@@ -2530,19 +2530,19 @@ skills:
   permissions:
     tools: *id009
     skills:
-    - audit_09
+    - project.skills_100.audit_09
   model:
     prefer:
     - mock/ops
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: audit_08
+  prompt: '# skill: project.skills_100.audit_08
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: audit_09
+- name: project.skills_100.audit_09
   version: 1.0.0
   kind: prompt
   description: audit 阶段第 9 步处理器。Use when 流水线进入 audit 阶段第 9 步;Do not use when 需要其他阶段或其他步骤。
@@ -2565,16 +2565,16 @@ skills:
   limits:
     max_steps: 12
     timeout: 60
-  prompt: '# skill: audit_09
+  prompt: '# skill: project.skills_100.audit_09
 
     处理输入 JSON,给出本步骤结果。
 
     '
-- name: mega_pipeline
+- name: project.skills_100.mega_pipeline
   version: 1.0.0
   kind: code
-  description: 深链环节 mega_pipeline。Use when 调试 mega_pipeline 纯 code 深链;Do not use when
-    需要 LLM 推理。
+  description: 深链环节 project.skills_100.mega_pipeline。Use when 调试 mega_pipeline 纯 code
+    深链;Do not use when 需要 LLM 推理。
   handler: skills100_handlers:mega_pipeline
   inputs:
     type: object
@@ -2593,12 +2593,12 @@ skills:
   permissions:
     tools: []
     skills:
-    - chain_00
-- name: chain_00
+    - project.skills_100.chain_00
+- name: project.skills_100.chain_00
   version: 1.0.0
   kind: code
-  description: 深链环节 chain_00。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.chain_00。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:chain_00
   inputs: &id011
     type: object
@@ -2611,120 +2611,120 @@ skills:
   permissions:
     tools: []
     skills:
-    - chain_01
-- name: chain_01
+    - project.skills_100.chain_01
+- name: project.skills_100.chain_01
   version: 1.0.0
   kind: code
-  description: 深链环节 chain_01。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.chain_01。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:chain_01
   inputs: *id011
   outputs: *id010
   permissions:
     tools: []
     skills:
-    - chain_02
-- name: chain_02
+    - project.skills_100.chain_02
+- name: project.skills_100.chain_02
   version: 1.0.0
   kind: code
-  description: 深链环节 chain_02。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.chain_02。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:chain_02
   inputs: *id011
   outputs: *id010
   permissions:
     tools: []
     skills:
-    - chain_03
-- name: chain_03
+    - project.skills_100.chain_03
+- name: project.skills_100.chain_03
   version: 1.0.0
   kind: code
-  description: 深链环节 chain_03。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.chain_03。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:chain_03
   inputs: *id011
   outputs: *id010
   permissions:
     tools: []
     skills:
-    - chain_04
-- name: chain_04
+    - project.skills_100.chain_04
+- name: project.skills_100.chain_04
   version: 1.0.0
   kind: code
-  description: 深链环节 chain_04。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.chain_04。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:chain_04
   inputs: *id011
   outputs: *id010
   permissions:
     tools: []
     skills:
-    - chain_05
-- name: chain_05
+    - project.skills_100.chain_05
+- name: project.skills_100.chain_05
   version: 1.0.0
   kind: code
-  description: 深链环节 chain_05。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.chain_05。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:chain_05
   inputs: *id011
   outputs: *id010
   permissions:
     tools: []
     skills:
-    - chain_06
-- name: chain_06
+    - project.skills_100.chain_06
+- name: project.skills_100.chain_06
   version: 1.0.0
   kind: code
-  description: 深链环节 chain_06。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.chain_06。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:chain_06
   inputs: *id011
   outputs: *id010
   permissions:
     tools: []
     skills:
-    - chain_07
-- name: chain_07
+    - project.skills_100.chain_07
+- name: project.skills_100.chain_07
   version: 1.0.0
   kind: code
-  description: 深链环节 chain_07。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.chain_07。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:chain_07
   inputs: *id011
   outputs: *id010
   permissions:
     tools: []
     skills:
-    - chain_08
-- name: chain_08
+    - project.skills_100.chain_08
+- name: project.skills_100.chain_08
   version: 1.0.0
   kind: code
-  description: 深链环节 chain_08。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.chain_08。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:chain_08
   inputs: *id011
   outputs: *id010
   permissions:
     tools: []
     skills:
-    - chain_09
-- name: chain_09
+    - project.skills_100.chain_09
+- name: project.skills_100.chain_09
   version: 1.0.0
   kind: code
-  description: 深链环节 chain_09。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.chain_09。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:chain_09
   inputs: *id011
   outputs: *id010
   permissions:
     tools: []
     skills:
-    - hub_agg
-- name: hub_agg
+    - project.skills_100.hub_agg
+- name: project.skills_100.hub_agg
   version: 1.0.0
   kind: code
-  description: 深链环节 hub_agg。Use when 调试 mega_pipeline 纯 code 深链;Do not use when 需要
-    LLM 推理。
+  description: 深链环节 project.skills_100.hub_agg。Use when 调试 mega_pipeline 纯 code 深链;Do
+    not use when 需要 LLM 推理。
   handler: skills100_handlers:hub_agg
   inputs: *id011
   outputs: *id010

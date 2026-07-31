@@ -33,7 +33,7 @@ from tests.helpers.config import write_config as _write_config
 def test_config_loader_builds_working_kernel(tmp_path):
     cfg = _write_config(tmp_path)
     kernel = build_kernel(cfg)
-    result = asyncio.run(kernel.run("fib", {"n": 3}))
+    result = asyncio.run(kernel.run("demo.fib", {"n": 3}))
     assert result == {"seq": [0, 1, 1]}
     assert list((tmp_path / "traces").glob("*.jsonl")), "telemetry 未按配置落盘"
 
@@ -46,7 +46,7 @@ def test_config_loader_builds_working_kernel(tmp_path):
 def test_cli_run_success_and_artifacts(tmp_path, capsys):
     cfg = _write_config(tmp_path)
     artifacts = tmp_path / "runs"
-    rc, out = _run_cli(capsys, "run", "fib", "--input", '{"n": 4}',
+    rc, out = _run_cli(capsys, "run", "demo.fib", "--input", '{"n": 4}',
                        "--config", str(cfg), "--artifacts", str(artifacts), "--json")
     assert rc == 0
     assert out["v"] == 1 and out["status"] == "done"
@@ -60,14 +60,14 @@ def test_cli_run_success_and_artifacts(tmp_path, capsys):
 
 def test_cli_run_validation_error_exit_2(tmp_path, capsys):
     cfg = _write_config(tmp_path)
-    rc, _ = _run_cli(capsys, "run", "fib", "--input", '{"n": "x"}',
+    rc, _ = _run_cli(capsys, "run", "demo.fib", "--input", '{"n": "x"}',
                      "--config", str(cfg), "--artifacts", str(tmp_path / "runs"), "--json")
     assert rc == 2
 
 
 def test_cli_run_failure_exit_3(tmp_path, capsys):
     cfg = _write_config(tmp_path)
-    rc, out = _run_cli(capsys, "run", "fib", "--input", '{"n": 10}',
+    rc, out = _run_cli(capsys, "run", "demo.fib", "--input", '{"n": 10}',
                        "--config", str(cfg), "--artifacts", str(tmp_path / "runs"), "--json")
     assert rc == 3
     assert "MaxDepthExceeded" in (out.get("error") or "")
@@ -81,7 +81,7 @@ def test_cli_run_failure_exit_3(tmp_path, capsys):
 def _completed_run(tmp_path, capsys) -> tuple[str, Path]:
     cfg = _write_config(tmp_path)
     artifacts = tmp_path / "runs"
-    rc, out = _run_cli(capsys, "run", "fib", "--input", '{"n": 3}',
+    rc, out = _run_cli(capsys, "run", "demo.fib", "--input", '{"n": 3}',
                        "--config", str(cfg), "--artifacts", str(artifacts), "--json")
     assert rc == 0
     return out["run_id"], Path(out["artifacts"]["dir"])
@@ -132,7 +132,7 @@ def test_cli_resume_from_checkpoint(tmp_path, capsys):
 
     kernel1.signals.subscribe("run.started", rec)
     with pytest.raises(PowerCut):
-        asyncio.run(kernel1.run("fib", {"n": 5}))
+        asyncio.run(kernel1.run("demo.fib", {"n": 5}))
     run_id = seen[0].run_id
     ckpt = tmp_path / "ckpt.json"
     kernel1.checkpoint(run_id, str(ckpt))

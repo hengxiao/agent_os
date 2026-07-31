@@ -27,7 +27,7 @@ def test_unknown_run_resources_404(tmp_path, path):
 
 def test_unknown_frame_404(tmp_path):
     client = _client(tmp_path)
-    run_id = run_and_wait(client, "fib", {"n": 2})
+    run_id = run_and_wait(client, "demo.fib", {"n": 2})
     r = client.get(f"/api/runs/{run_id}/frames/no-such-frame")
     assert r.status_code == 404
 

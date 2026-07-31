@@ -1,19 +1,22 @@
 """STDLIB 第 1 波核心工具(STDLIB-CATALOG §W1;STDLIB §3.3 补齐清单)。
 
-- §W1-1 ``fs_list`` / §W1-2 ``fs_search``:目录列举与内容检索,纯 Python 实现
+- §W1-1 ``system.file.list`` / §W1-2 ``system.file.search``:目录列举与内容检索,纯 Python 实现
   (不 shell out 到 ripgrep,std 边界是"无重型二进制依赖"),共用同一棵目录遍历;
   默认尊重 ``.gitignore`` 并跳过 ``.git/`` ``node_modules/`` ``.venv/``
   (``include_ignored`` / 显式单文件路径除外);分页 cursor = base64 编码的稳定
   偏移,截断时 ``total`` 如实 + ``next_cursor``(静默截断是危险的,§W1-1 决策②)。
-- §W1-3 ``now``:服务端时钟,声明 ``replayable``;回放机制在
+- §W1-3 ``system.time.now``:服务端时钟,声明 ``replayable``;回放机制在
   ``local_registry.dispatch``(replay 模式按调用序弹出 ``replay_records``
-  记录值返回,不执行——否则任何含 ``now`` 的 run 都无法确定性复现)。
-- §W1-4 ``todo_write``/``todo_update``:run 级任务清单,存 registry
+  记录值返回,不执行——否则任何含 ``system.time.now`` 的 run 都无法确定性复现)。
+- §W1-4 ``system.task.todo_write``/``system.task.todo_update``:run 级任务清单,存 registry
   ``run_states``(同 run_id 跨帧共享);状态栏注入见 ``context.manager``,
   checkpoint 持久见 ``kernel.checkpoint``。
-- §W1-5 ``skill_search``:tools/skills registry 子串检索,结果带权限信息
+- §W1-5 ``system.skill.search``:tools/skills registry 子串检索,结果带权限信息
   (防选中无权工具,§W1-5 坑);skills 数据源由 KernelBuilder 经 ``bind_skills``
-  注入(bind 模式,同 python_exec 的 ``bind`` 先例)。
+  注入(bind 模式,同 system.python.exec 的 ``bind`` 先例)。
+- Phase 3 补齐(library-design-plan §4.2):``system.file.stat``(读/写决策前探查,
+  不存在返回 ``exists=False`` 而非报错)、``system.file.delete``(高危,``confirm=True``,
+  仅文件与空目录)、``system.file.mkdir``(parents/exist_ok 语义,幂等)。
 
 ``.gitignore`` 支持常见模式子集:``*.ext``、``dir/``、含 ``/`` 的锚定相对路径、
 ``!`` 取反(后命中优先);不实现完整 gitwildmatch(``**`` 仅按 fnmatch 近似、
@@ -43,6 +46,7 @@ from agent_os.api.v1 import (
     ToolResult,
 )
 from agent_os.tools.local_registry import _FunctionTool, derive_spec, resolve_work_path
+from agent_os.tools.builtins import _check_if_match
 
 if TYPE_CHECKING:
     from agent_os.tools.local_registry import LocalPythonToolRegistry
@@ -50,16 +54,16 @@ if TYPE_CHECKING:
 #: 默认跳过的目录(§W1-1 决策①:不做这件事,真实仓库第一次列举就淹没在依赖目录里)
 _ALWAYS_SKIP_DIRS = frozenset({".git", "node_modules", ".venv"})
 
-#: fs_list 单次返回条目数默认上限(glob 递归在大仓库上很慢,§W1-1 坑)
+#: system.file.list 单次返回条目数默认上限(glob 递归在大仓库上很慢,§W1-1 坑)
 _LIST_DEFAULT_MAX = 200
 
-#: fs_search 单文件正则扫描超时(秒;灾难性回溯防护,超时跳过该文件并记 warning)
+#: system.file.search 单文件正则扫描超时(秒;灾难性回溯防护,超时跳过该文件并记 warning)
 _SEARCH_REGEX_TIMEOUT = 2.0
 
-#: fs_search 单次返回命中数默认上限
+#: system.file.search 单次返回命中数默认上限
 _SEARCH_DEFAULT_MAX = 200
 
-#: fs_search 结果 spill 阈值与 spill 后上下文保留条数(§W1-2 决策③)
+#: system.file.search 结果 spill 阈值与 spill 后上下文保留条数(§W1-2 决策③)
 _SPILL_MAX_HITS = 1000
 _SPILL_MAX_BYTES = 100_000
 _SPILL_KEEP = 50
@@ -194,7 +198,7 @@ def _walk_tree(root: Path, include_ignored: bool) -> list[tuple[Path, str, bool]
 
 
 def _display_path(path: Path, workdir: Path) -> str:
-    """条目路径:相对 workdir 的 posix 串(可直接喂 fs_read/fs_search);workdir 之外给绝对路径。"""
+    """条目路径:相对 workdir 的 posix 串(可直接喂 system.file.read/system.file.search);workdir 之外给绝对路径。"""
     try:
         return path.relative_to(workdir).as_posix()
     except ValueError:
@@ -202,7 +206,7 @@ def _display_path(path: Path, workdir: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# §W1-1 fs_list
+# §W1-1 system.file.list
 # ---------------------------------------------------------------------------
 
 
@@ -217,10 +221,10 @@ async def fs_list(
     """递归列举目录,返回 {entries: [{path, size, mtime, is_dir}], total, next_cursor?}。
 
     Use when 探索目录结构(文件任务的第一步);Do not use when 已知路径要读内容
-    (用 fs_read)或按内容找文件(用 fs_search)。默认尊重 .gitignore 并跳过
+    (用 system.file.read)或按内容找文件(用 system.file.search)。默认尊重 .gitignore 并跳过
     .git/node_modules/.venv(include_ignored=true 关闭);pattern 为 glob
     (如 "*.py",fnmatch 语义);截断时 total 如实、next_cursor 原样回传 cursor
-    翻页;mtime 与 now 组合可做卡死检测。
+    翻页;mtime 与 system.time.now 组合可做卡死检测。
     """
     if max_entries < 1:
         return _invalid(
@@ -241,10 +245,10 @@ async def fs_list(
                     kind=ToolErrorKind.NOT_FOUND,
                     message=f"目录不存在: {path}",
                     retryable=False,
-                    hint="用 fs_list 列举父目录确认结构(路径从 workdir 起算)",
+                    hint="用 system.file.list 列举父目录确认结构(路径从 workdir 起算)",
                 ),
             )
-        return _invalid(f"不是目录: {path}", "读文件用 fs_read;按内容查找用 fs_search")
+        return _invalid(f"不是目录: {path}", "读文件用 system.file.read;按内容查找用 system.file.search")
     entries: list[dict[str, Any]] = []
     for file_path, _rel, is_dir in _walk_tree(target, include_ignored):
         display = _display_path(file_path, workdir)
@@ -266,7 +270,7 @@ async def fs_list(
 
 
 # ---------------------------------------------------------------------------
-# §W1-2 fs_search
+# §W1-2 system.file.search
 # ---------------------------------------------------------------------------
 
 
@@ -295,7 +299,7 @@ async def fs_search(
     """按正则检索文件内容,返回 {hits: [{path, line, text, before, after}], total, next_cursor?, spill_ref?}。
 
     Use when 按内容定位文件(代码/文档检索标配原语);Do not use when 只列目录
-    (用 fs_list)或已知文件读片段(用 fs_read)。行号从 1 起计;context_lines
+    (用 system.file.list)或已知文件读片段(用 system.file.read)。行号从 1 起计;context_lines
     带前后文;二进制文件(NUL 字节探测)与 .gitignore 忽略项默认跳过;单文件
     正则扫描超 2s 跳过该文件并记入 warnings(灾难性回溯防护);结果过大
     (>1000 命中或 >100KB)自动 spill 到 blob 并返回 spill_ref,此处只留前 50 条。
@@ -328,7 +332,7 @@ async def fs_search(
                 kind=ToolErrorKind.NOT_FOUND,
                 message=f"路径不存在: {path}",
                 retryable=False,
-                hint="用 fs_list 确认目录结构(路径从 workdir 起算)",
+                hint="用 system.file.list 确认目录结构(路径从 workdir 起算)",
             ),
         )
     files: list[tuple[Path, str]] = []
@@ -385,7 +389,90 @@ async def fs_search(
 
 
 # ---------------------------------------------------------------------------
-# §W1-3 now(replayable;回放机制在 local_registry.dispatch)
+# Phase 3 补齐(library-design-plan §4.2):system.file.stat / delete / mkdir
+# ---------------------------------------------------------------------------
+
+
+async def fs_stat(path: str, ctx: ToolContext | None = None) -> dict[str, Any] | ToolResult:
+    """探查路径元信息,返回 {size, mtime, is_dir, exists};不存在返回 exists=False 而非报错。
+
+    Use when 读/写/删除决策前探查——确认存在性、类型、大小;mtime 与 system.time.now
+    组合可做卡死检测;Do not use when 要读内容(用 system.file.read)或列举目录
+    (用 system.file.list)。"不存在"是合法探查结果(ok=True, exists=False),
+    越出工作目录/read_paths 才是错误(INVALID_ARGS,同其他 fs 工具)。
+    """
+    workdir = Path(ctx.workdir).resolve() if ctx is not None else Path.cwd()
+    target = resolve_work_path(workdir, ctx.read_paths if ctx is not None else (), path)
+    if isinstance(target, ToolResult):
+        return target
+    if not target.exists():
+        return {"size": 0, "mtime": 0.0, "is_dir": False, "exists": False}
+    stat = target.stat()
+    return {"size": stat.st_size, "mtime": stat.st_mtime, "is_dir": target.is_dir(), "exists": True}
+
+
+async def fs_delete(path: str, if_match: str = "", ctx: ToolContext | None = None) -> str | ToolResult:
+    """删除文件或空目录(**高危**,spec 声明 confirm;``if_match`` 乐观锁语义同 system.file.write/edit)。
+
+    Use when 确定要移除工作目录内的文件(如清理临时产物);Do not use when 只想改内容
+    (用 system.file.edit/system.file.write)或要删非空目录(不支持,先用 system.file.list
+    列出内容逐个删除,再删空目录)。``if_match`` 为期望的当前内容(或其 sha256 十六进制):
+    不匹配拒删,不传不检查,仅对文件有效;路径不存在 → NOT_FOUND。
+    """
+    workdir = Path(ctx.workdir).resolve() if ctx is not None else Path.cwd()
+    target = resolve_work_path(workdir, ctx.read_paths if ctx is not None else (), path, write=True)
+    if isinstance(target, ToolResult):
+        return target
+    if not target.exists():
+        return ToolResult(
+            ok=False,
+            error=ToolError(
+                kind=ToolErrorKind.NOT_FOUND,
+                message=f"路径不存在: {path}",
+                retryable=False,
+                hint="用 system.file.list 或 system.file.stat 确认路径(从 workdir 起算)",
+            ),
+        )
+    if target.is_dir():
+        if if_match:
+            return _invalid("if_match 仅对文件有效(目录无内容可比对)", "删除空目录不传 if_match")
+        try:
+            target.rmdir()
+        except OSError:
+            return _invalid(
+                f"目录非空,拒绝删除: {path}",
+                "先用 system.file.list 列出内容,逐个删除后再删空目录;递归删除留待后续里程碑",
+            )
+        return f"已删除空目录 {path}"
+    conflict = _check_if_match(target, path, if_match)
+    if conflict is not None:
+        return conflict
+    target.unlink()
+    return f"已删除 {path}"
+
+
+async def fs_mkdir(path: str, ctx: ToolContext | None = None) -> dict[str, Any] | ToolResult:
+    """创建目录(parents=True、exist_ok=True 语义),返回 {created};已存在是幂等成功而非错误。
+
+    Use when 需要显式建目录本身(如搭产物目录结构);Do not use when 只是要写文件
+    (system.file.write 会自动建父目录,直接写即可)。路径上已有同名文件 → INVALID_ARGS。
+    """
+    workdir = Path(ctx.workdir).resolve() if ctx is not None else Path.cwd()
+    target = resolve_work_path(workdir, ctx.read_paths if ctx is not None else (), path, write=True)
+    if isinstance(target, ToolResult):
+        return target
+    if target.exists():
+        if not target.is_dir():
+            return _invalid(
+                f"路径已存在且不是目录: {path}", "换个目录名,或先用 system.file.delete 移除同名文件"
+            )
+        return {"created": False}
+    target.mkdir(parents=True, exist_ok=True)
+    return {"created": True}
+
+
+# ---------------------------------------------------------------------------
+# §W1-3 system.time.now(replayable;回放机制在 local_registry.dispatch)
 # ---------------------------------------------------------------------------
 
 
@@ -417,12 +504,12 @@ async def now(tz: str = "local") -> dict[str, Any] | ToolResult:
 
 
 # ---------------------------------------------------------------------------
-# §W1-4 todo_write / todo_update(run 级状态;状态栏/checkpoint 接线见模块 docstring)
+# §W1-4 system.task.todo_write / system.task.todo_update(run 级状态;状态栏/checkpoint 接线见模块 docstring)
 # ---------------------------------------------------------------------------
 
 
-def todo_write_tool(run_states: dict[str, dict[str, Any]]) -> Tool:
-    """构造 ``todo_write``(§W1-4;WRITE·run 级状态):全新规划,覆盖式写本 run 清单。"""
+def todo_write_tool(*, name: str = "system.task.todo_write", run_states: dict[str, dict[str, Any]]) -> Tool:
+    """构造 ``system.task.todo_write``(§W1-4;WRITE·run 级状态):全新规划,覆盖式写本 run 清单。"""
 
     async def todo_write(
         items: list[dict[str, Any]], ctx: ToolContext | None = None
@@ -430,7 +517,7 @@ def todo_write_tool(run_states: dict[str, dict[str, Any]]) -> Tool:
         """(重新)规划任务清单:整体覆盖本 run 的 TODO,返回 {count};跨帧共享(子帧可见)。
 
         Use when 任务有多步、需要显式计划防漏做;Do not use when 只推进单条状态
-        (用 todo_update,更便宜)。items 元素 {id, text, status?},status ∈
+        (用 system.task.todo_update,更便宜)。items 元素 {id, text, status?},status ∈
         pending/doing/done/cancelled(缺省 pending),id 须唯一。
         """
         normalized: list[dict[str, Any]] = []
@@ -463,13 +550,13 @@ def todo_write_tool(run_states: dict[str, dict[str, Any]]) -> Tool:
     return _FunctionTool(
         todo_write,
         derive_spec(
-            todo_write, permission=Permission.WRITE, timeout=10.0, idempotent=True, cost_hint="~1ms"
+            todo_write, name=name, permission=Permission.WRITE, timeout=10.0, idempotent=True, cost_hint="~1ms"
         ),
     )
 
 
-def todo_update_tool(run_states: dict[str, dict[str, Any]]) -> Tool:
-    """构造 ``todo_update``(§W1-4;WRITE·run 级状态):推进单条任务,高频便宜。"""
+def todo_update_tool(*, name: str = "system.task.todo_update", run_states: dict[str, dict[str, Any]]) -> Tool:
+    """构造 ``system.task.todo_update``(§W1-4;WRITE·run 级状态):推进单条任务,高频便宜。"""
 
     async def todo_update(
         id: str, status: str, note: str = "", ctx: ToolContext | None = None
@@ -477,7 +564,7 @@ def todo_update_tool(run_states: dict[str, dict[str, Any]]) -> Tool:
         """推进单条任务状态,返回更新后的 {item}(run 级清单,跨帧可见)。
 
         Use when 开始/完成/取消某条已规划任务;Do not use when 重新规划整张清单
-        (用 todo_write)。status ∈ pending/doing/done/cancelled;note 可选,
+        (用 system.task.todo_write)。status ∈ pending/doing/done/cancelled;note 可选,
         记录在 item 上(如"找到 3 个来源")。
         """
         if status not in _TODO_STATUSES:
@@ -494,7 +581,7 @@ def todo_update_tool(run_states: dict[str, dict[str, Any]]) -> Tool:
                     kind=ToolErrorKind.NOT_FOUND,
                     message=f"任务不存在: {id!r}(本 run 清单共 {len(todos)} 条)",
                     retryable=False,
-                    hint="先用 todo_write 规划清单,或核对 id",
+                    hint="先用 system.task.todo_write 规划清单,或核对 id",
                 ),
             )
         item["status"] = status
@@ -505,13 +592,51 @@ def todo_update_tool(run_states: dict[str, dict[str, Any]]) -> Tool:
     return _FunctionTool(
         todo_update,
         derive_spec(
-            todo_update, permission=Permission.WRITE, timeout=10.0, idempotent=True, cost_hint="~1ms"
+            todo_update, name=name, permission=Permission.WRITE, timeout=10.0, idempotent=True, cost_hint="~1ms"
+        ),
+    )
+
+
+def todo_read_tool(*, name: str = "system.task.todo_read", run_states: dict[str, dict[str, Any]]) -> Tool:
+    """构造 ``system.task.todo_read``(READ·run 级状态):读取完整任务清单,可选按状态过滤。"""
+
+    async def todo_read(
+        status: str = "", ctx: ToolContext | None = None
+    ) -> dict[str, Any] | ToolResult:
+        """读取本 run 的任务清单,返回 {todos};支持按 status 过滤。
+
+        Use when 需要完整清单做规划或确认队列位置(上下文注入只给摘要);
+        Do not use when 只想看进度(上下文状态行已注入,更便宜)。
+        status 可选值为 pending/doing/done/cancelled,缺省返回全部。
+        """
+        if status and status not in _TODO_STATUSES:
+            return _invalid(
+                f"status 非法: {status!r}", f"status 取值为 {'/'.join(sorted(_TODO_STATUSES))} 或留空"
+            )
+        run_id = ctx.run_id if ctx is not None else ""
+        todos = run_states.get(run_id, {}).get("todos") or []
+        if status:
+            todos = [t for t in todos if t.get("status") == status]
+        return {"todos": [dict(t) for t in todos], "count": len(todos)}
+
+    return _FunctionTool(
+        todo_read,
+        derive_spec(
+            todo_read,
+            name=name,
+            permission=Permission.READ,
+            timeout=10.0,
+            idempotent=True,
+            cacheable=True,
+            concurrent_safe=True,
+            concurrency_safe=True,
+            cost_hint="~1ms",
         ),
     )
 
 
 # ---------------------------------------------------------------------------
-# §W1-5 skill_search
+# §W1-5 system.skill.search
 # ---------------------------------------------------------------------------
 
 
@@ -527,11 +652,11 @@ def _match_score(query: str, keywords: list[str], name: str, description: str) -
     return 0
 
 
-def skill_search_tool(tools_registry: LocalPythonToolRegistry) -> Tool:
-    """构造 ``skill_search``(§W1-5;READ):检索 tools/skills registry,结果带权限信息。
+def skill_search_tool(*, name: str = "system.skill.search", registry: LocalPythonToolRegistry) -> Tool:
+    """构造 ``system.skill.search``(§W1-5;READ):检索 tools/skills registry,结果带权限信息。
 
     skills 数据源:装配时 KernelBuilder 调 ``tools.bind_skills(skills)`` 注入
-    (bind 模式,同 python_exec 的 ``bind`` 先例);未装配时只检索工具面。
+    (bind 模式,同 system.python.exec 的 ``bind`` 先例);未装配时只检索工具面。
     """
 
     async def skill_search(
@@ -554,7 +679,7 @@ def skill_search_tool(tools_registry: LocalPythonToolRegistry) -> Tool:
         keywords = text.split()
         scored: list[tuple[int, dict[str, Any]]] = []
         if kind in ("all", "tool"):
-            for spec in tools_registry.specs():
+            for spec in registry.specs():
                 score = _match_score(text, keywords, spec.name, spec.description)
                 if score:
                     scored.append((score, {
@@ -564,7 +689,7 @@ def skill_search_tool(tools_registry: LocalPythonToolRegistry) -> Tool:
                         "permission": spec.permission.name,
                     }))
         if kind in ("all", "skill"):
-            skills = getattr(tools_registry, "_skills", None)  # bind_skills 注入,同 manager 取 _blob 先例
+            skills = getattr(registry, "_skills", None)  # bind_skills 注入,同 manager 取 _blob 先例
             manifests_fn = getattr(skills, "manifests", None)
             if callable(manifests_fn):
                 for m in manifests_fn():
@@ -588,6 +713,7 @@ def skill_search_tool(tools_registry: LocalPythonToolRegistry) -> Tool:
         skill_search,
         derive_spec(
             skill_search,
+            name=name,
             permission=Permission.READ,
             timeout=10.0,
             idempotent=True,

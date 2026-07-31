@@ -68,7 +68,7 @@ const FRAME_INLINE = {
   working: {
     _inline_caps: {
       text: "## 内联能力(直接运用,无需调用)\n\n### date_style@1.0.0\n…",
-      hidden: ["skill__date_style"],
+      hidden: ["skill.date_style"],
       skills: [{ name: "date_style", version: "1.0.0", chars: 42 }],
     },
   },

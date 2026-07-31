@@ -1,55 +1,76 @@
-# 示例技能包(DESIGN.md §6.3 单文件形态):LocalFileSkillRegistry("./skills.yaml") 的加载对象。
-# 命名空间固定 local;寻址:<namespace>:<name>@<semver>(§6.1)。
 skills:
-  - name: summarize_text
-    version: 1.0.0
-    kind: prompt
-    description: 将长文本压缩为要点。Use when 输入超过一万字符;Do not use when 需要逐字保真。
-    inputs:  { type: object, properties: { text: { type: string } }, required: [text] }
-    outputs: { type: object, properties: { summary: { type: string } } }
-    permissions: { tools: [], skills: [] }
-    model: { prefer: ["openai/gpt-4o-mini"] }
-    prompt: |
-      你是摘要器。把以下文本压缩为不超过 5 条要点,输出 JSON {"summary": ...}:
-      {text}
-  - name: extract_entities
-    version: 0.1.0
-    kind: code
-    # 示例路径(非本仓库真实模块):指向宿主办提供的协程 `async def run(input, ctx)`,
-    # 由 code 技能加载器经 importlib 按 dotted path 加载并校验(§6.3)。
-    handler: my_skills.handlers:extract_entities
-    inputs: { type: object, properties: { text: { type: string } } }
-  # 递归菲波拉契 example case(DESIGN.md §3.1/§3.3/§9 的纵向测试锚点)。
-  # 语义:base case 直接返回;否则先 invoke 自己(n-1)拿到前 n-1 个数,
-  # 再调 python_exec(Logic Kernel 沙箱)计算最后两数之和,追加到数列末尾。
-  # 注意:prompt 模板经 str.format 渲染,正文不得出现裸露的 {} 字面量。
-  - name: fib
-    version: 1.0.0
-    kind: prompt
-    description: 生成前 n 个菲波拉契数。Use when 需要菲波拉契数列;Do not use when 需要大 n 高效计算(递归技能示例)。
-    inputs:
-      type: object
-      properties: { n: { type: integer, minimum: 1 } }
-      required: [n]
-    outputs:
-      type: object
-      properties:
-        seq: { type: array, items: { type: integer } }
-      required: [seq]
-    permissions:
-      tools: [python_exec]
-      skills: [fib]          # 自引用:显式声明才允许递归调用自己(加载期与运行期双重检查)
-    model: { prefer: ["mock/fib"] }
-    context_policy: { max_tokens: 32000, compress: off }
-    limits: { max_steps: 8, timeout: 60 }
-    prompt: |
-      你是菲波拉契数列生成器。输入是 JSON,字段 n 为整数,表示要生成前 n 个菲波拉契数。
+- name: demo.summarize_text
+  version: 1.0.0
+  kind: prompt
+  description: 将长文本压缩为要点。Use when 输入超过一万字符;Do not use when 需要逐字保真。
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+    required:
+    - text
+  outputs:
+    type: object
+    properties:
+      summary:
+        type: string
+  permissions:
+    tools: []
+    skills: []
+  model:
+    prefer:
+    - openai/gpt-4o-mini
+  prompt: '你是摘要器。把以下文本压缩为不超过 5 条要点,输出 JSON {"summary": ...}:
 
-      规则:
-      - base case:若 n 等于 1,直接返回答案,数列为 [0];若 n 等于 2,数列为 [0, 1]。
-      - 否则严格按顺序执行:
-        第一步,调用工具 skill__fib,参数中的 n 取 n-1,得到前 n-1 个菲波拉契数组成的数列;
-        第二步,调用工具 python_exec,用代码计算该数列最后两个元素之和。
-      - 把求和结果追加到数列末尾,即得到前 n 个菲波拉契数。
+    {text}
 
-      最终答案只输出一个 JSON 对象,唯一字段为 seq,值是整数数组,不要输出其他文字。
+    '
+- name: demo.extract_entities
+  version: 0.1.0
+  kind: code
+  handler: my_skills.handlers:extract_entities
+  inputs:
+    type: object
+    properties:
+      text:
+        type: string
+- name: demo.fib
+  version: 1.0.0
+  kind: prompt
+  description: 生成前 n 个菲波拉契数。Use when 需要菲波拉契数列;Do not use when 需要大 n 高效计算(递归技能示例)。
+  inputs:
+    type: object
+    properties:
+      n:
+        type: integer
+        minimum: 1
+    required:
+    - n
+  outputs:
+    type: object
+    properties:
+      seq:
+        type: array
+        items:
+          type: integer
+    required:
+    - seq
+  permissions:
+    tools:
+    - system.python.exec
+    skills:
+    - demo.fib
+  model:
+    prefer:
+    - mock/fib
+  context_policy:
+    max_tokens: 32000
+    compress: false
+  limits:
+    max_steps: 8
+    timeout: 60
+  prompt: "你是菲波拉契数列生成器。输入是 JSON,字段 n 为整数,表示要生成前 n 个菲波拉契数。\n\n规则:\n- base case:若 n\
+    \ 等于 1,直接返回答案,数列为 [0];若 n 等于 2,数列为 [0, 1]。\n- 否则严格按顺序执行:\n  第一步,调用工具 skill.demo.fib,参数中的\
+    \ n 取 n-1,得到前 n-1 个菲波拉契数组成的数列;\n  第二步,调用工具 system.python.exec,用代码计算该数列最后两个元素之和。\n\
+    - 把求和结果追加到数列末尾,即得到前 n 个菲波拉契数。\n\n最终答案只输出一个 JSON 对象,唯一字段为 seq,值是整数数组,不要输出其他文字。\n"

@@ -46,20 +46,20 @@ def fib_brain(req: ChatRequest) -> ChatResponse:
             usage=ChatUsage(prompt=1, completion=1),
         )
 
-    fib_calls = [cid for cid, name in call_names.items() if name == "skill__fib"]
+    fib_calls = [cid for cid, name in call_names.items() if name == "skill.demo.fib"]
     if not fib_calls:
         if n <= 2:
             return final([0] if n == 1 else [0, 1])
-        return calls(ToolCall(id=f"call-fib-{n}", name="skill__fib", args={"n": n - 1}))
+        return calls(ToolCall(id=f"call-fib-{n}", name="skill.demo.fib", args={"n": n - 1}))
 
     fib_result = results[fib_calls[-1]]
     assert fib_result["ok"], fib_result
     seq = fib_result["value"]["seq"]
 
-    py_calls = [cid for cid, name in call_names.items() if name == "python_exec"]
+    py_calls = [cid for cid, name in call_names.items() if name == "system.python.exec"]
     if not py_calls:
         code = f"result = {seq[-2]} + {seq[-1]}\nprint(result)"
-        return calls(ToolCall(id=f"call-py-{n}", name="python_exec", args={"code": code}))
+        return calls(ToolCall(id=f"call-py-{n}", name="system.python.exec", args={"code": code}))
 
     total = results[py_calls[-1]]["value"]["result"]
     return final(seq + [total])

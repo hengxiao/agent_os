@@ -98,7 +98,8 @@ def test_request_mapping_system_tools_max_tokens():
     assert all(m["role"] != "system" for m in body["messages"])
     assert body["max_tokens"] > 0  # 必填,缺省有默认
     assert body["tools"][0]["input_schema"] == {"type": "object"}
-    assert body["tools"][0]["name"] == "system.file.read"
+    # 线格式:点分 canonical 名发出时 mangle 为 __ 分隔(providers/naming.py)
+    assert body["tools"][0]["name"] == "system__file__read"
 
 
 def test_response_mapping_thinking_usage_stop_reason():
@@ -122,11 +123,14 @@ def test_response_mapping_thinking_usage_stop_reason():
 
 
 def test_tool_use_response_and_tool_result_round_trip():
-    """tool_use → ToolCall;assistant 回传 tool_use 块;连续 TOOL 合并为一条 user(§4 契约)。"""
+    """tool_use → ToolCall;assistant 回传 tool_use 块;连续 TOOL 合并为一条 user(§4 契约)。
+
+    线格式:API 返回 mangled 名(``__`` 分隔),解析回点分;assistant 历史回传时再 mangle。
+    """
     blocks = [
         {"type": "text", "text": "调用工具"},
-        {"type": "tool_use", "id": "tu_1", "name": "system.file.read", "input": {"path": "a.txt"}},
-        {"type": "tool_use", "id": "tu_2", "name": "system.file.read", "input": {"path": "b.txt"}},
+        {"type": "tool_use", "id": "tu_1", "name": "system__file__read", "input": {"path": "a.txt"}},
+        {"type": "tool_use", "id": "tu_2", "name": "system__file__read", "input": {"path": "b.txt"}},
     ]
     bodies: list[dict] = []
 
@@ -138,6 +142,7 @@ def test_tool_use_response_and_tool_result_round_trip():
 
     async def main():
         r1 = await p.chat(ChatRequest(model="anthropic/m", messages=[Message(role=Role.USER, content="q")]))
+        assert [tc.name for tc in r1.message.tool_calls] == ["system.file.read", "system.file.read"]
         history = [
             Message(role=Role.USER, content="q"),
             r1.message,
@@ -151,7 +156,7 @@ def test_tool_use_response_and_tool_result_round_trip():
     second = bodies[1]["messages"]
     assert [m["role"] for m in second] == ["user", "assistant", "user"]
     tool_use_blocks = [b for b in second[1]["content"] if b["type"] == "tool_use"]
-    assert [b["name"] for b in tool_use_blocks] == ["system.file.read", "system.file.read"]
+    assert [b["name"] for b in tool_use_blocks] == ["system__file__read", "system__file__read"]
     assert tool_use_blocks[0]["input"] == {"path": "a.txt"}
     # 连续 TOOL 消息合并为一条 user 消息,内含两个 tool_result 块
     result_blocks = second[2]["content"]

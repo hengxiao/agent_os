@@ -335,10 +335,11 @@ async function submitSession() {
     showModalError(e.message ?? "发起调试会话失败"); // 409 已有活跃会话等
   } finally {
     dh.busy = false;
-    if (!dh.closed && dh.els === els) {
-      els.submit.textContent = "开始调试 ▶";
-      validate();
-    }
+    // 无条件复位:成功路径已跳转(组件 detach),但 bfcache 回退时旧 DOM 可能重现,
+    // 此时按钮不能停在"启动中…";对已 detach 的 els 复位无害。
+    els.submit.disabled = false;
+    els.submit.textContent = "开始调试 ▶";
+    validate();
   }
 }
 

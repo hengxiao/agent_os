@@ -395,6 +395,16 @@ def create_app(
 
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
+    @app.middleware("http")
+    async def _static_no_cache(request: Request, call_next):  # type: ignore[no-untyped-def]
+        """静态资源禁启发式缓存:无版本号的 js/css 在代码更新后必须立即生效,
+        否则浏览器拿旧 JS 配新后端(调试台「启动中…」卡死即此因)。ETag 仍保
+        304 协商缓存,不增加重复传输。"""
+        resp = await call_next(request)
+        if request.url.path.startswith("/static") or request.url.path == "/":
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
         return FileResponse(_STATIC_DIR / "index.html")

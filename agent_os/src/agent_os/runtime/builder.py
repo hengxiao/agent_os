@@ -52,6 +52,7 @@ class KernelBuilder:
         self._memory: Any = None
         self._blackboard: Any = None
         self._supervisor: dict[str, Any] | None = None
+        self._debug_controller: Any = None
         self._retry: dict[str, Any] = {}
 
     def providers(self, *providers: Any) -> KernelBuilder:
@@ -134,6 +135,11 @@ class KernelBuilder:
             self._retry["backoff_base"] = backoff_base
         return self
 
+    def debug_controller(self, controller: Any) -> KernelBuilder:
+        """注入调试控制器(kernel/debug.py;缺省 None 时零开销、零行为变化)。"""
+        self._debug_controller = controller
+        return self
+
     def build(self) -> Kernel:
         """组装 Kernel(注入信号总线 / FrameStack / Dispatcher / RunControl 等内核件)。
 
@@ -146,6 +152,7 @@ class KernelBuilder:
         blackboard(M5b)接线到 kernel.blackboard(§12:StatusBoard 与帧间消息);
         supervisor(S1)有 handler 才装配 SupervisorManager 挂到 kernel.supervisor
         (SUPERVISOR.md §2.3;仅预置策略字段时不装配,运行时按"未装配"报 not_found);
+        debug_controller(P1)给了就把它挂到信号总线(直接订阅,见 kernel/debug.py);
         装配期权限闸门(§6.1):manifest 声明的工具必须在注册表中,缺失即拒绝加载。
         """
         unsupported: list[str] = []
@@ -219,4 +226,11 @@ class KernelBuilder:
                 supervisor.register(sidecar)
             kernel.sidecars = supervisor
             kernel.ctl = ctl
+        if self._debug_controller is not None:
+            # 调试原语(P1):直接订阅总线(不经 SidecarSupervisor,绕开 SYNC 2s
+            # 超时 fail-closed);订阅在 Telemetry/sidecar 之后,暂停前信号已落
+            # trace/SSE。无 sidecar 时补装 RunControlImpl,供 inject_message 落地
+            if kernel.ctl is None:
+                kernel.ctl = RunControlImpl(kernel)
+            self._debug_controller.attach(bus, kernel.ctl)
         return kernel

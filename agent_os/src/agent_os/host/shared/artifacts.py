@@ -28,7 +28,7 @@ from agent_os.host.shared.runrecord import (
     STATUS_FAILED,
     make_record,
 )
-from agent_os.kernel.checkpoint import CHECKPOINT_VERSION
+from agent_os.kernel.checkpoint import CHECKPOINT_VERSION, PeriodicCheckpointer
 from agent_os.kernel.errors import RunAborted
 
 
@@ -100,6 +100,8 @@ def execute_run(
     订阅 ``run.started`` 捕获 run_id;status 判定:正常返回 → ``done``,
     RunAborted 及其子类 → ``aborted``,其余异常 → ``failed``
     (error = ``"Type: message"``)。run 未开始(无 run_id)的异常原样上抛。
+    ``RunConfig.checkpoint_interval > 0`` 时挂载周期 checkpoint 订阅者
+    (Debugger P5;覆盖写"最近现场",kernel/checkpoint.py)。
     """
     started: list[str] = []
 
@@ -107,6 +109,10 @@ def execute_run(
         started.append(sig.run_id)
 
     kernel.signals.subscribe(RUN_STARTED, _rec)
+    interval = getattr(kernel.config, "checkpoint_interval", 0)
+    if interval > 0:
+        # Debugger P5 周期 checkpoint:每 N 步覆盖写"最近现场"(kernel/checkpoint.py)
+        PeriodicCheckpointer(kernel, interval, artifacts_root).attach()
     started_at = datetime.now(UTC).isoformat()
     status, result, error = STATUS_DONE, None, None
     try:

@@ -35,6 +35,7 @@ def assemble(
     sidecars=(),
     blackboard=None,
     telemetry_dir: str | Path | None = None,
+    debug_controller=None,
 ):
     """标准组装链:MockProvider(brain) + sandbox 工具 + 双 Logic Kernel。
 
@@ -54,6 +55,8 @@ def assemble(
         builder = builder.blackboard(blackboard)
     if telemetry_dir is not None:
         builder = builder.telemetry(JsonlTelemetrySink(str(telemetry_dir)))
+    if debug_controller is not None:
+        builder = builder.debug_controller(debug_controller)
     return builder.build()
 
 

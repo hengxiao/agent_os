@@ -83,22 +83,33 @@ async def _cli_supervisor(question: Question) -> dict[str, Any]:
 _cli_supervisor.supervisor_channel = "cli"
 
 
-def _build_kernel(config: str, inline: str | None = None, supervisor: bool = True) -> Any:
+def _build_kernel(
+    config: str,
+    inline: str | None = None,
+    supervisor: bool = True,
+    checkpoint_interval: int | None = None,
+) -> Any:
     """build_kernel 的退出码归类包装:SkillLoadError → 2,其余装配失败 → 4。
 
     ``inline``(``--inline on|off``,SKILL-INLINING.md §9 消融开关):覆盖本次 run 的
     ``[run].inline``;缺省用配置文件值。改动只落在本次装配私有的 dict 副本上。
+
+    ``checkpoint_interval``(``--checkpoint-interval``,Debugger P5):覆盖本次 run 的
+    ``[run].checkpoint_interval``(每 N 步周期 checkpoint,0=关);与 inline 同路径。
 
     ``supervisor``(S2,§2.3):注入 CLI 宿主通道(``_cli_supervisor``);replay
     传 False——回放按 trace 记录值走,不应阻塞等 stdin(§4)。
     """
     handler = _cli_supervisor if supervisor else None
     try:
-        if inline is None:
+        if inline is None and checkpoint_interval is None:
             return build_kernel(config, supervisor_handler=handler)
         cfg = load_config(config)
         run_section = dict(cfg.get("run") or {})
-        run_section["inline"] = inline
+        if inline is not None:
+            run_section["inline"] = inline
+        if checkpoint_interval is not None:
+            run_section["checkpoint_interval"] = checkpoint_interval
         cfg["run"] = run_section
         return build_kernel(cfg, supervisor_handler=handler)
     except SkillLoadError:
@@ -130,7 +141,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"输入错误: {e}", file=sys.stderr)
         return 2
     try:
-        kernel = _build_kernel(args.config, inline=getattr(args, "inline", None))
+        kernel = _build_kernel(
+            args.config,
+            inline=getattr(args, "inline", None),
+            checkpoint_interval=args.checkpoint_interval,
+        )
     except SkillLoadError as e:
         print(f"技能校验错误: {e}", file=sys.stderr)
         return 2
@@ -342,6 +357,13 @@ def _cmd_skills(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 2
 
 
+def _cmd_debug(args: argparse.Namespace) -> int:
+    """debug(P2 调试前端):延迟导入——debug.py 复用本模块助手,顶层导入会成环。"""
+    from agent_os.host.cli.debug import cmd_debug
+
+    return cmd_debug(args)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-os",
@@ -359,6 +381,13 @@ def _parser() -> argparse.ArgumentParser:
         choices=["on", "off"],
         default=None,
         help="merge 消融开关(SKILL-INLINING.md §9):off 时 inline 技能退化为压帧调用;缺省用配置值",
+    )
+    p_run.add_argument(
+        "--checkpoint-interval",
+        type=int,
+        default=None,
+        metavar="N",
+        help="周期 checkpoint(Debugger P5):每 N 步覆盖写 checkpoint.json(最近现场);缺省用配置值,0=关",
     )
     p_run.add_argument("--json", action="store_true", help="stdout 仅 RunRecord JSON")
     p_run.set_defaults(func=_cmd_run)
@@ -397,6 +426,28 @@ def _parser() -> argparse.ArgumentParser:
     p_diff.add_argument("--artifacts", default=".agent-os")
     p_diff.add_argument("--json", action="store_true")
     p_diff.set_defaults(func=_cmd_diff)
+
+    p_debug = sub.add_parser("debug", help="交互式调试技能 run(断点/单步/检视,Debugger P2)")
+    p_debug.add_argument("skill", nargs="?", help="技能名(--replay 时从产物 meta 读取,不给)")
+    p_debug.add_argument("--input", help="'<json>' 或 @file(live 调试必填;--replay 时从产物 meta 读取)")
+    p_debug.add_argument(
+        "--replay",
+        dest="replay",
+        default=None,
+        metavar="RUN_ID",
+        help="时间旅行(Debugger P5):回放该 run(trace+checkpoint 重建 Mock 脚本)并进调试会话",
+    )
+    p_debug.add_argument(
+        "--until-step",
+        dest="until_step",
+        type=int,
+        default=None,
+        metavar="N",
+        help="一次性步数断点:run 启动后不停,直到第 N 条 pre:step 才暂停",
+    )
+    p_debug.add_argument("--config", default="agent-os.toml")
+    p_debug.add_argument("--artifacts", default=".agent-os")
+    p_debug.set_defaults(func=_cmd_debug)
 
     p_skills = sub.add_parser("skills", help="skills.yaml lint(manifest 校验 + 依赖图检查)")
     skills_sub = p_skills.add_subparsers(dest="skills_command", required=True)

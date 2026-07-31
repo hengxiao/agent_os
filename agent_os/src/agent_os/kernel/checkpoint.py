@@ -38,13 +38,16 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from agent_os.api.v1 import (
     POST_FRAME_POP,
+    POST_STEP,
     RUN_ABORTED,
     RUN_FINISHED,
+    RUN_STARTED,
     FrameContext,
     FrameStatus,
     Message,
@@ -63,6 +66,8 @@ from agent_os.kernel.run import Run
 
 #: checkpoint JSON schema 版本(§10.2 schema 版本化)
 CHECKPOINT_VERSION = 1
+
+_log = logging.getLogger("agent_os.kernel.checkpoint")
 
 _USAGE_KEYS = {f.name for f in dataclasses.fields(Usage)}
 
@@ -155,6 +160,56 @@ def dump_checkpoint(kernel: Any, run_id: str, path: str) -> None:
     target.write_text(
         json.dumps(doc, ensure_ascii=False, indent=2, default=repr), encoding="utf-8"
     )
+
+
+class PeriodicCheckpointer:
+    """周期 checkpoint 订阅者(Debugger P5;``RunConfig.checkpoint_interval``,0=关)。
+
+    内核装配期挂到信号总线:``run.started`` 捕获 run_id,每 N 条 ``post:step``
+    调 :func:`dump_checkpoint` **覆盖写** ``<root>/runs/<run_id>/checkpoint.json``
+    —— 该文件语义是"最近现场"(不回溯保留历史快照),崩溃恢复点从终态提前到
+    最近 N 步;run 收尾的终态快照仍由宿主产物路径(artifacts.py)写同一文件。
+    落盘失败捕获 + log,不拖垮 run(与总线错误隔离同旨,§5.3)。
+    """
+
+    def __init__(self, kernel: Any, interval: int, artifacts_root: str | Path) -> None:
+        if interval < 1:
+            raise ValueError(f"checkpoint_interval 须 >= 1,得到: {interval!r}")
+        self._kernel = kernel
+        self._interval = interval
+        self._root = Path(artifacts_root)
+        self._counts: dict[str, int] = {}  # run_id → 已见 post:step 数
+
+    def attach(self) -> None:
+        """订阅 run 生命周期与 post:step(host 装配内核后、run 启动前调用)。"""
+        bus = self._kernel.signals
+        bus.subscribe(RUN_STARTED, self._on_started)
+        bus.subscribe(POST_STEP, self._on_step)
+        for name in (RUN_FINISHED, RUN_ABORTED):
+            bus.subscribe(name, self._on_end)
+
+    async def _on_started(self, sig: Signal) -> None:
+        self._counts[sig.run_id] = 0
+
+    async def _on_end(self, sig: Signal) -> None:
+        self._counts.pop(sig.run_id, None)
+
+    async def _on_step(self, sig: Signal) -> None:
+        count = self._counts.get(sig.run_id)
+        if count is None:
+            return
+        count += 1
+        self._counts[sig.run_id] = count
+        if count % self._interval != 0:
+            return
+        try:
+            dump_checkpoint(
+                self._kernel,
+                sig.run_id,
+                str(self._root / "runs" / sig.run_id / "checkpoint.json"),
+            )
+        except Exception:  # noqa: BLE001 — 周期落盘失败不得拖垮 run
+            _log.exception("周期 checkpoint 落盘失败(跳过):run=%s step=%s", sig.run_id, count)
 
 
 def _frame_from_dict(run_id: str, data: dict[str, Any]) -> SkillFrame:

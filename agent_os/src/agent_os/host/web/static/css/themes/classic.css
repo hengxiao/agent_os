@@ -1,0 +1,52 @@
+/* classic 主题(DEBUG-UI-THEMES.md §3.1):契约的参考实现——现状即主题。
+   值**逐字搬**自 css/tokens.css :root(行为零变化,像素级不动);
+   tokens.css 保留全部变量作为无 JS/未切换时的回退与契约清单参考。
+   契约清单(CONTRACT_TOKENS,见 js/themes.js)= DEBUG-UI-THEMES.md §2.1 全集。 */
+
+[data-theme="classic"] {
+  /* ── §3.1 色板(dark-first):基底 ───────────────────────────── */
+  --bg-0: #0b0e14;   /* 应用底色 */
+  --bg-1: #11151d;   /* 面板 */
+  --bg-2: #171d29;   /* 悬浮/选中 */
+  --bg-3: #1f2837;   /* 悬停 */
+  --line: #263043;   /* 分割线 */
+  --line-strong: #33405a; /* 强调描边(引导线 / hover 边界) */
+  --fg-0: #e6ebf2;   /* 主文本 */
+  --fg-1: #9aa7ba;   /* 次文本 */
+  --fg-2: #5d6b82;   /* 弱化/占位 */
+
+  /* 语义:run/frame 状态(状态永远"颜色 + 图标/文字"双编码) */
+  --ok:      #3fb68b;   /* done / success */
+  --warn:    #d9a03f;   /* paused / degraded */
+  --danger:  #e5534b;   /* failed / veto / error */
+  --aborted: #9e6bde;   /* aborted(独立一色,中止≠失败) */
+  --live:    #3b9eff;   /* running / live 指示(带脉冲动效) */
+
+  /* 语义:信号类型 */
+  --sig-llm:      #6f9fff;
+  --sig-tool:     #3fb68b;
+  --sig-sidecar:  #d9a03f;
+  --sig-compress: #8b7cf6;
+  --sig-budget:   #e5534b;
+  --sig-frame:    #5d6b82;
+
+  /* 语义:工具权限等级 */
+  --perm-read:  #5d6b82;
+  --perm-write: #d9a03f;
+  --perm-net:   #6f9fff;
+  --perm-exec:  #e5534b;
+
+  /* ── §3.2 字体与排版 ───────────────────────────────────────── */
+  --font-ui:  system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+
+  --text-2xs: 10px; /* 微型标签(phase chip / 区块标签) */
+  --text-xs: 11px;    /* 元信息、时间戳 */
+  --text-sm: 12.5px;  /* 列表正文、表格 */
+  --text-md: 14px;    /* 检视器正文 */
+  --text-lg: 16px;    /* 面板标题 */
+  --text-xl: 20px;    /* 页头 */
+
+  --s1: 4px; --s1-5: 6px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+  --r-sm: 4px; --r-conn: 6px; --r-md: 8px; --r-lg: 12px; /* r-conn:树连接线拐角 */
+}

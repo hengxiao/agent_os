@@ -11,6 +11,13 @@ import { absTime, copyText, emptyBlock, esc, fmtCost, relTime, toast } from "./u
 import { openLaunchDialog } from "./components/launch-dialog.js";
 import { closeSkillsView, openSkillsView } from "./components/skills-view.js";
 import { closeToolsView, openToolsView } from "./components/tools-view.js";
+import { closeDebugHome, openDebugHome } from "./components/debug-home.js";
+import {
+  closeDebugView,
+  debugChange,
+  debugClick,
+  openDebugView,
+} from "./components/debug-view.js";
 import {
   openInbox,
   pollInbox,
@@ -33,6 +40,7 @@ import {
   workbenchKeydown,
 } from "./workbench.js";
 import { installGlobalKeys } from "./shortcuts.js";
+import { initTheme, mountThemePicker, syncTheme } from "./themes.js";
 import { COMMANDS, openCommandPalette } from "./components/command-palette.js";
 import { openShortcutsPanel } from "./components/shortcuts-panel.js";
 
@@ -47,7 +55,8 @@ const ui = {
 };
 
 /* ── hash 路由(§4.1 深链接:#/runs、#/runs/<id>?frame=<fid>&signal=<i>、
-      #/skills、#/skills/<name>、#/tools、#/tools/<name>)────────────────── */
+      #/skills、#/skills/<name>、#/tools、#/tools/<name>;
+      P4 调试台:#/debug、#/debug/<session_id>)────────────────────── */
 
 function parseRoute(hash) {
   const raw = (hash || "").replace(/^#/, "");
@@ -60,6 +69,11 @@ function parseRoute(hash) {
   }
   if (seg[0] === "skills") return { name: "skills", runId: null, itemName: seg[1] ?? null, set };
   if (seg[0] === "tools") return { name: "tools", runId: null, itemName: seg[1] ?? null, set };
+  if (seg[0] === "debug") {
+    return seg[1]
+      ? { name: "debug-session", sessionId: seg[1], runId: null, set }
+      : { name: "debug-home", runId: null, set };
+  }
   return { name: "runs", runId: null, set };
 }
 
@@ -76,7 +90,8 @@ function applyRoute() {
 
 function renderNav() {
   const name = store.get("route").name;
-  const page = name === "run-detail" ? "runs" : name;
+  const page =
+    name === "run-detail" ? "runs" : name.startsWith("debug") ? "debug" : name;
   document.body.dataset.route = page; // 侧栏仅 Runs 页显示(app.css 按此驱动)
   document.querySelectorAll(".nav-item").forEach((a) => {
     if (a.dataset.nav === page) a.setAttribute("aria-current", "page");
@@ -225,12 +240,22 @@ function renderMain() {
   if (route.name !== "run-detail") closeWorkbench(); // 离开 Workbench:live 会话收尾
   if (route.name !== "skills") closeSkillsView();
   if (route.name !== "tools") closeToolsView();
+  if (route.name !== "debug-home") closeDebugHome();
+  if (route.name !== "debug-session") closeDebugView(); // 离开调试台:SSE/轮询收尾
   if (route.name === "skills") {
     openSkillsView(main, route.itemName); // §4.6(#/skills 与 #/skills/<name> 深链接恢复)
     return;
   }
   if (route.name === "tools") {
     openToolsView(main, route.itemName); // §4.7
+    return;
+  }
+  if (route.name === "debug-home") {
+    openDebugHome(main); // P4 调试首页:活跃会话 + 新会话(启动前断点)
+    return;
+  }
+  if (route.name === "debug-session") {
+    openDebugView(main, route.sessionId); // P4 调试台
     return;
   }
   if (route.name === "run-detail") {
@@ -303,6 +328,7 @@ async function poll() {
 store.subscribe((state, patch) => {
   if ("route" in patch) {
     renderNav();
+    syncTheme(); // 主题 scope 回落跟随页面(§5:未验收页面强制 classic)
     renderRunList(); // aria-selected 跟随路由
     renderMain();
   }
@@ -345,10 +371,12 @@ document.addEventListener("click", (e) => {
         toast(ok ? label : "复制失败", ok ? "success" : "error"));
       return;
     }
+    if (debugClick(e, action)) return; // P4 调试台动作(dbg-cmd/dbg-gutter/dbg-bp-* 等)
     workbenchClick(e, action); // workbench 自有 data-action(ft-toggle/tl-toggle/wb-* 等)
     return;
   }
   if (workbenchClick(e, null)) return; // workbench 行点击(帧树/时间线)
+  if (debugClick(e, null)) return; // P4 调试台行点击(调用栈/轨迹行)
   const item = e.target.closest(".run-item");
   if (item) location.hash = `#/runs/${encodeURIComponent(item.dataset.id)}`;
 });
@@ -365,6 +393,9 @@ $("#searchInput").addEventListener("input", (e) => {
   ui.search = e.target.value;
   renderRunList();
 });
+
+// P4 调试台 change 委托(新增断点表单 kind 切换 → match 输入禁用态)
+document.addEventListener("change", (e) => debugChange(e));
 
 // D6:set 切换器 → store(订阅者同步 hash/列表;Skills 页下拉经 store 联动)
 $("#setSelect").addEventListener("change", (e) => {
@@ -475,6 +506,8 @@ window.addEventListener("hashchange", applyRoute);
 /* ── 启动:深链接恢复(§4.1)→ 首次轮询 → 5s 周期 ─────────────────── */
 
 if (!location.hash) history.replaceState(null, "", "#/runs");
+initTheme(); // 主题 T1:URL > localStorage > classic 解析 + <html data-theme>
+mountThemePicker($("#themePicker")); // TopBar 主题切换器(§2.5)
 applyRoute();
 renderChips();
 loadSkillsets(); // D6:到达后渲染 set 下拉,并 sanitize hash 恢复的 set 名

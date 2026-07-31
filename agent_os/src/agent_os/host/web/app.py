@@ -11,6 +11,12 @@ S2 增量(SUPERVISOR.md v2 §2.3/§5):supervisor 收件箱两个端点——
 ``GET /api/supervisor/pending`` 列挂起中的裁决请求,
 ``POST /api/supervisor/{question_id}/answer`` 作答结算(对应 run 恢复);
 Web 收件箱即默认宿主通道,装配即得。
+
+P3 增量(Agent OS Debugger):``/api/debug/sessions`` 一族——调试会话
+(开会话即起 run)、断点增删、恢复命令、modify/inject 干预、live 帧检视
+与 SSE(state/bp_hit/paused/resumed/run_end);每 run 至多一个活跃会话。
+P5 增量(时间旅行):开会话增 ``{replay_run_id, until_step?}`` replay 形态
+(与 ``{skill, input}`` 互斥,响应带 ``mode: "replay"``)。
 """
 
 from __future__ import annotations
@@ -36,18 +42,23 @@ from agent_os.host.shared.artifacts import (
 from agent_os.host.web.rca import locate_first_error, usage_panel
 from agent_os.host.web.run_manager import (
     HUB_CLOSED,
+    DebugConflictError,
     ResumeConflictError,
     RunManager,
     RunValidationError,
     _jsonable,
 )
-from agent_os.kernel.errors import SkillLoadError
+from agent_os.kernel.errors import AgentOSError, SkillLoadError
 from agent_os.skills.manifest import validate_manifest
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 #: SSE 空闲 keepalive 间隔(秒):防代理/浏览器断连,dev 工具取保守值
 _SSE_KEEPALIVE = 15.0
+
+#: 调试会话 SSE 的轮询间隔(秒):wait_paused 的 asyncio.Event 绑在 run worker
+#: 循环上,REST/SSE 循环不能 await,轮询会话内存态是最简可靠方案(P3,简单优先)
+_DEBUG_SSE_POLL = 0.1
 
 #: kind 过滤(§4.3 ``kind=llm|tool|frame|sidecar|all``)→ 信号名子串集合
 _KIND_HINTS = {
@@ -63,12 +74,14 @@ class RunOverrides(BaseModel):
     """``POST /api/runs`` 的 ``overrides``(WEB-UI.md §4.3 高级区):合并进本次 run 的 RunConfig。
 
     ``inline``(SKILL-INLINING.md §9 消融开关):``"on" | "off"``,其余值 422。
+    ``checkpoint_interval``(Debugger P5 周期 checkpoint):每 N 步覆盖写"最近现场",0=关。
     """
 
     model: str | None = None
     max_cost: float | None = None
     max_steps: int | None = None
     inline: Literal["on", "off"] | None = None
+    checkpoint_interval: int | None = None
 
 
 class RunBody(BaseModel):
@@ -91,6 +104,49 @@ class SupervisorAnswerBody(BaseModel):
     """``POST /api/supervisor/{question_id}/answer`` 请求体(SUPERVISOR.md §2.4;S2)。"""
 
     answer: str
+
+
+class DebugBreakpointBody(BaseModel):
+    """``POST /api/debug/sessions/{sid}/breakpoints`` 请求体:kind + 名字 glob。"""
+
+    kind: str
+    match: str = "*"
+
+
+class DebugSessionBody(BaseModel):
+    """``POST /api/debug/sessions`` 请求体(P3 live / P5 replay 两形态,互斥)。
+
+    live 形态 ``{skill, input, breakpoints?}``;replay 形态(P5 时间旅行)
+    ``{replay_run_id, until_step?, breakpoints?}``——回放该 run 并挂调试会话,
+    ``until_step`` 注册一次性步数断点(直达第 N 条 ``pre:step`` 才暂停)。
+    ``breakpoints`` 在 run 启动前注册(调试启动即断是确定性的:起 run 后再加
+    断点会竞态错过早期信号)。两形态字段混给/都不给 → 400(路由层校验)。
+    """
+
+    skill: str | None = None
+    input: dict[str, Any] | None = None
+    breakpoints: list[DebugBreakpointBody] | None = None
+    replay_run_id: str | None = None
+    until_step: int | None = None
+
+
+class DebugCommandBody(BaseModel):
+    """``POST /api/debug/sessions/{sid}/command`` 请求体:恢复命令(仅 paused 可发)。"""
+
+    cmd: Literal["continue", "step_into", "step_over", "step_out", "stop"]
+
+
+class DebugModifyBody(BaseModel):
+    """``POST /api/debug/sessions/{sid}/modify`` 请求体:合并进本次工具调用的 args。"""
+
+    patch: dict[str, Any]
+
+
+class DebugInjectBody(BaseModel):
+    """``POST /api/debug/sessions/{sid}/inject`` 请求体:``frame_id`` 缺省=暂停帧。"""
+
+    text: str
+    frame_id: str | None = None
 
 
 def _run_dir(artifacts_root: Path, run_id: str) -> Path:
@@ -275,6 +331,29 @@ def _tool_doc(spec: Any) -> dict[str, Any]:
 
 def _sse_line(row: dict[str, Any]) -> str:
     return f"data: {json.dumps(row, ensure_ascii=False, default=repr)}\n\n"
+
+
+def _breakpoint_doc(bp: Any) -> dict[str, Any]:
+    """Breakpoint → JSON(kernel/debug.py;含命中计数 hits)。"""
+    return {
+        "id": bp.id,
+        "kind": bp.kind,
+        "match": bp.match,
+        "enabled": bp.enabled,
+        "hits": bp.hits,
+    }
+
+
+def _debug_session_doc(session: Any) -> dict[str, Any]:
+    """调试会话快照(``GET /api/debug/sessions/{sid}`` 与 SSE ``state`` 事件同形)。"""
+    return {
+        "session_id": session.id,
+        "run_id": session.run_id,
+        "state": session.state,
+        "pause_point": _jsonable(session.pause_point),
+        "breakpoints": [_breakpoint_doc(bp) for bp in session.breakpoints],
+        "frame_stack": _jsonable(session.frame_stack),
+    }
 
 
 def create_app(
@@ -558,6 +637,223 @@ def create_app(
                 for row in rows:
                     yield _sse_line(row)
             yield "event: end\ndata: {}\n\n"
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # ------------------------------------------------------------------
+    # Agent OS Debugger(P3):调试会话 API(错误语义跟随既有端点:
+    # 找不到 404 / 请求非法 400 / 状态冲突 409 / run 未开始 200+failed)
+    # ------------------------------------------------------------------
+
+    @app.post("/api/debug/sessions")
+    async def post_debug_session(body: DebugSessionBody) -> dict[str, Any]:
+        """开调试会话:注入 DebugController 装配内核起 run,返回 ``{session_id, run_id}``。
+
+        P5 replay 形态(``{replay_run_id, until_step?}``,与 ``{skill, input}`` 互斥,
+        混给/都不给 400):回放指定 run 并挂调试会话,响应带 ``mode: "replay"``
+        (回放边界:LLM Mock 回放,工具真实重跑)。
+        """
+        if body.replay_run_id is not None:
+            if body.skill is not None or body.input is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="replay_run_id 与 skill/input 互斥(replay 从产物 meta 读取)",
+                )
+            try:
+                session_id, run_id = await manager.start_debug_replay_session(
+                    body.replay_run_id,
+                    until_step=body.until_step,
+                    breakpoints=[(bp.kind, bp.match) for bp in body.breakpoints or ()],
+                )
+            except DebugConflictError as e:
+                raise HTTPException(status_code=409, detail=str(e)) from e
+            except FileNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e)) from e
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            except RunValidationError as e:
+                return {"status": "failed", "error": str(e)}
+            return {"session_id": session_id, "run_id": run_id, "mode": "replay"}
+        if body.skill is None or body.input is None:
+            raise HTTPException(
+                status_code=400,
+                detail="需要 {skill, input}(live)或 {replay_run_id}(replay)之一",
+            )
+        if body.until_step is not None:
+            raise HTTPException(status_code=400, detail="until_step 仅 replay 形态有效")
+        try:
+            session_id, run_id = await manager.start_debug_session(
+                body.skill,
+                body.input,
+                breakpoints=[(bp.kind, bp.match) for bp in body.breakpoints or ()],
+            )
+        except DebugConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e  # 未知断点 kind
+        except RunValidationError as e:
+            # 与 POST /api/runs 同归类(§3.3):技能不存在/输入不合 schema 等
+            return {"status": "failed", "error": str(e)}
+        return {"session_id": session_id, "run_id": run_id}
+
+    @app.get("/api/debug/sessions/{sid}")
+    def get_debug_session(sid: str) -> dict[str, Any]:
+        """会话快照:state/pause_point/breakpoints(含 hits)/frame_stack/run_id。"""
+        try:
+            session = manager.debug_session(sid)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=e.args[0]) from None
+        return _debug_session_doc(session)
+
+    @app.delete("/api/debug/sessions/{sid}")
+    async def delete_debug_session(sid: str) -> dict[str, Any]:
+        """显式结束会话:detach 放行(run 继续跑完),清理注册表。"""
+        try:
+            await manager.debug_close(sid)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=e.args[0]) from None
+        return {"ok": True, "session_id": sid}
+
+    @app.post("/api/debug/sessions/{sid}/breakpoints")
+    def post_debug_breakpoint(sid: str, body: DebugBreakpointBody) -> dict[str, Any]:
+        try:
+            bp = manager.debug_add_breakpoint(sid, body.kind, body.match)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=e.args[0]) from None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        except AgentOSError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        return _breakpoint_doc(bp)
+
+    @app.delete("/api/debug/sessions/{sid}/breakpoints/{bp_id}")
+    def delete_debug_breakpoint(sid: str, bp_id: str) -> dict[str, Any]:
+        try:
+            manager.debug_remove_breakpoint(sid, bp_id)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=e.args[0]) from None
+        return {"ok": True}
+
+    @app.post("/api/debug/sessions/{sid}/command")
+    async def post_debug_command(sid: str, body: DebugCommandBody) -> dict[str, Any]:
+        """恢复命令(仅 paused):continue / step_into / step_over / step_out / stop。"""
+        try:
+            await manager.debug_command(sid, body.cmd)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=e.args[0]) from None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        except AgentOSError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        return {"ok": True, "cmd": body.cmd}
+
+    @app.post("/api/debug/sessions/{sid}/modify")
+    async def post_debug_modify(sid: str, body: DebugModifyBody) -> dict[str, Any]:
+        """干预:改本次工具调用参数(仅暂停在 pre:tool.call;改完即放行)。"""
+        try:
+            await manager.debug_modify(sid, body.patch)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=e.args[0]) from None
+        except AgentOSError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        return {"ok": True}
+
+    @app.post("/api/debug/sessions/{sid}/inject")
+    async def post_debug_inject(sid: str, body: DebugInjectBody) -> dict[str, Any]:
+        """干预:向指定帧注入 USER/INJECTED 消息(``frame_id`` 缺省=暂停帧;注入后放行)。"""
+        try:
+            frame_id = await manager.debug_inject(sid, body.frame_id, body.text)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=e.args[0]) from None
+        except AgentOSError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from None
+        return {"ok": True, "frame_id": frame_id}
+
+    @app.get("/api/debug/sessions/{sid}/frames/{fid}")
+    def get_debug_frame(sid: str, fid: str) -> dict[str, Any]:
+        """帧检视(live 内存态;调试暂停时 checkpoint 尚未落盘):messages/working/usage。"""
+        try:
+            doc = manager.debug_frame(sid, fid)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=e.args[0]) from None
+        if doc is None:
+            raise HTTPException(status_code=404, detail=f"找不到帧: {fid}")
+        return doc
+
+    @app.get("/api/debug/sessions/{sid}/stream")
+    async def stream_debug(sid: str) -> StreamingResponse:
+        """调试会话 SSE:``state``(连接快照)→ ``bp_hit``/``paused``/``resumed`` → ``run_end``。
+
+        轮询会话内存态(_DEBUG_SSE_POLL):wait_paused 的 asyncio.Event 绑在
+        run worker 循环上,SSE 循环不能 await,轮询是最简可靠方案(P3,简单优先)。
+        """
+        try:
+            session = manager.debug_session(sid)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=e.args[0]) from None
+
+        def _event(name: str, data: dict[str, Any]) -> str:
+            return f"event: {name}\ndata: {json.dumps(_jsonable(data), ensure_ascii=False)}\n\n"
+
+        async def events() -> AsyncIterator[str]:
+            yield _event("state", _debug_session_doc(session))
+            # prev_state 不取当前态:已暂停的会话在连接后立即补发 paused(迟到客户端)
+            prev_state = ""
+            hits = {bp.id: bp.hits for bp in session.breakpoints}
+            idle = 0.0
+            while True:
+                emitted = False
+                for bp in session.breakpoints:
+                    if bp.hits > hits.get(bp.id, 0):
+                        hits[bp.id] = bp.hits
+                        yield _event(
+                            "bp_hit",
+                            {
+                                "session_id": sid,
+                                "breakpoint_id": bp.id,
+                                "kind": bp.kind,
+                                "match": bp.match,
+                                "hits": bp.hits,
+                            },
+                        )
+                        emitted = True
+                state = session.state
+                if state == "paused" and prev_state != "paused":
+                    yield _event(
+                        "paused",
+                        {"session_id": sid, "pause_point": _jsonable(session.pause_point)},
+                    )
+                    emitted = True
+                elif state != "paused" and prev_state == "paused":
+                    yield _event("resumed", {"session_id": sid})
+                    emitted = True
+                prev_state = state
+                if state == "detached":
+                    # run 收尾(run.finished emit 里 detach 早于 result 落盘):短暂等终态
+                    status = None
+                    if session.run_id is not None:
+                        for _ in range(50):
+                            status = (manager.state_of(session.run_id) or {}).get("status")
+                            if status in ("done", "failed", "aborted"):
+                                break
+                            await asyncio.sleep(_DEBUG_SSE_POLL)
+                    yield _event(
+                        "run_end",
+                        {"session_id": sid, "run_id": session.run_id, "status": status},
+                    )
+                    return
+                if emitted:
+                    idle = 0.0
+                    continue
+                await asyncio.sleep(_DEBUG_SSE_POLL)
+                idle += _DEBUG_SSE_POLL
+                if idle >= _SSE_KEEPALIVE:
+                    idle = 0.0
+                    yield ": keepalive\n\n"
 
         return StreamingResponse(
             events(),

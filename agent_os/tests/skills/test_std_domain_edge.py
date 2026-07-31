@@ -253,7 +253,7 @@ def test_memory_consolidate_threshold_override_and_bad_fields():
     # 缺 created_at / 畸形 access_count 不崩溃,按最老处理
     r2 = run("memory_consolidate", {"entries": [{"fact": "无日期条目"}], "today": "2026-07-26"})
     assert r2["pruned"] and not r2["entries"]
-    r3 = run("memory_consolidate", {"entries": []})
+    r3 = run("memory_consolidate", {"entries": [], "today": "2026-07-26"})
     assert r3 == {"entries": [], "pruned": []}
 
 
@@ -300,3 +300,18 @@ def test_verify_before_store_bool_is_not_one():
     })
     assert bad["verdict"] == "fail"
     assert "replay=" in bad["reason"] and "expected=" in bad["reason"]
+
+
+def test_memory_consolidate_refuses_to_read_system_clock():
+    """**复现性纪律**(STDLIB §1):时钟须过内核,``today`` 必填而非回落系统钟。
+
+    回归的是一个真实缺陷:原实现 ``_parse_day(...) or date.today()`` 让结果随
+    运行日期漂移——昨天创建、access_count 缺省的新事实(score 0.9945)一次
+    consolidate 即被删,而锚点测试也就挂在了真实时钟上(审计点名)。
+    """
+    with pytest.raises(ToolDispatchError) as exc:
+        run("memory_consolidate", {"entries": [{"fact": "某事实"}]})
+    assert "today" in str(exc.value)
+    # 结构化保真(§W0-3):kind 进消息、hint 进字段,一路没被压扁成一句人话
+    assert "rejected" in str(exc.value), "kind 应保真为 REJECTED 而非笼统 RUNTIME_ERROR"
+    assert "now" in exc.value.hint, "hint 须指出下一步:先调 now 工具取服务端日期"

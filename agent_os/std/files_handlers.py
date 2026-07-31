@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent_os.api.v1 import LogicError, SkillError
 from agent_os.tools.local_registry import resolve_work_path
 from agent_os.tools.std import _walk_tree
 
@@ -110,10 +111,21 @@ def _read_paths(ctx: Any) -> list[Path]:
 
 
 def _resolve(ctx: Any, path: str, *, write: bool = False) -> Path:
-    """按 §W0-1 三段判定解析 ``path``;越界/只读区写 → ValueError(结构化帧失败)。"""
+    """按 §W0-1 三段判定解析 ``path``;越界/只读区写 → :class:`SkillError`。
+
+    ``resolve_work_path`` **已经**构造好带运行期事实(当前 workdir / 只读区)
+    的 ``hint`` 与 ``kind``;此前这里只取 message 抛 ValueError,把它们整个丢掉,
+    模型只收到"路径越界"却不知道该往哪写(§W0-3 / STDLIB §8 第 13 条)。
+    """
     target = resolve_work_path(_workdir(ctx), _read_paths(ctx), path, write=write)
     if not isinstance(target, Path):
-        raise ValueError(target.error.message)
+        err = target.error
+        raise SkillError(
+            err.message,
+            kind=LogicError.REJECTED,
+            hint=err.hint,
+            retryable=err.retryable,
+        )
     return target
 
 
@@ -143,9 +155,17 @@ def _load_progress(target: Path, path: str) -> dict[str, Any]:
     try:
         data = json.loads(raw)
     except ValueError as e:
-        raise ValueError(f"进度文件不是合法 JSON: {path}({e});核对或删除后重新 init") from None
+        raise SkillError(
+            f"进度文件不是合法 JSON: {path}({e})",
+            kind=LogicError.REJECTED,
+            hint="核对该文件内容,或删除后重新 init",
+        ) from None
     if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
-        raise ValueError(f"进度文件结构非法: {path}(应为含 tasks 数组的对象)")
+        raise SkillError(
+            f"进度文件结构非法: {path}",
+            kind=LogicError.REJECTED,
+            hint='应为含 tasks 数组的对象,如 {"tasks": [{"id": "t1", "text": "..."}]}',
+        )
     return data
 
 
@@ -179,7 +199,11 @@ async def progress_track(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
         items: list[dict[str, Any]] = []
         for index, item in enumerate(tasks):
             if not isinstance(item, dict):
-                raise ValueError(f"tasks[{index}] 不是对象(每条形如 {{id, text}})")
+                raise SkillError(
+                    f"tasks[{index}] 不是对象",
+                    kind=LogicError.REJECTED,
+                    hint='每条形如 {"id": "t1", "text": "做什么"}',
+                )
             task_id, text = item.get("id"), item.get("text")
             if not isinstance(task_id, str) or not task_id:
                 raise ValueError(f"tasks[{index}] 缺少非空字符串 id")
@@ -512,21 +536,19 @@ def _apply_hunks(content: str, fp: _FilePatch) -> str | dict[str, Any]:
                     "file": fp.new_path if fp.new_path != "/dev/null" else fp.old_path,
                     "reason": f"上下文在文件中有 {len(spots)} 处匹配,无法唯一定位(请带更多上下文)",
                 }
-        if hunk.old_eof_no_nl:
-            # 旧侧末行须确为文件末行且无尾换行
-            if pos + len(old_seq) != len(working) or final_nl:
-                return {
-                    "applied": False,
-                    "file": fp.old_path,
-                    "reason": "'\\ No newline' 标记与文件实际末尾状态不符",
-                }
+        # 旧侧末行须确为文件末行且无尾换行
+        if hunk.old_eof_no_nl and (pos + len(old_seq) != len(working) or final_nl):
+            return {
+                "applied": False,
+                "file": fp.old_path,
+                "reason": "'\\ No newline' 标记与文件实际末尾状态不符",
+            }
         working[pos : pos + len(old_seq)] = new_seq
-        if hunk.new_eof_no_nl:
-            if pos + len(new_seq) != len(working):
-                return {
-                    "applied": False,
-                    "file": fp.new_path,
-                    "reason": "'\\ No newline' 标记不在结果文件末尾",
+        if hunk.new_eof_no_nl and pos + len(new_seq) != len(working):
+            return {
+                "applied": False,
+                "file": fp.new_path,
+                "reason": "'\\ No newline' 标记不在结果文件末尾",
                 }
             new_final_nl = False
         delta += len(new_seq) - len(old_seq)

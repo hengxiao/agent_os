@@ -16,6 +16,8 @@ import re
 from datetime import date
 from typing import Any
 
+from agent_os.api.v1 import LogicError, SkillError
+
 #: 保留阈值:score = 2·log1p(access_count) + 1/(1+age_days/180);低于则剪枝
 _KEEP_THRESHOLD = 1.0
 
@@ -63,7 +65,16 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 async def memory_consolidate(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """评分剪枝 + 近重复去重,返回 {entries: [保留项], pruned: [带理由的被剪枝项]}。"""
     entries = [dict(e) for e in args.get("entries") or [] if isinstance(e, dict) and e.get("fact")]
-    today = _parse_day(args.get("today")) or date.today()
+    # 时钟须过内核(STDLIB §1 复现性纪律):``today`` 必填,由调用方经 ``now``
+    # 工具取(它是 replayable 的,replay 时回放原值)。回落系统时钟会让本技能
+    # 的结果随运行日期漂移,锚点测试也就挂在了真实时钟上。
+    today = _parse_day(args.get("today"))
+    if today is None:
+        raise SkillError(
+            "memory_consolidate 需要 today(YYYY-MM-DD)",
+            kind=LogicError.REJECTED,
+            hint="先调 now 工具取服务端日期再传入;不读系统钟以保运行可复现(§1)",
+        )
     threshold = float(args.get("keep_threshold", _KEEP_THRESHOLD))
     for e in entries:
         e["score"] = round(_score(e, today), 4)

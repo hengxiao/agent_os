@@ -134,7 +134,8 @@ def test_memory_consolidate_and_check():
         {"fact": "A 重要事实", "access_count": 9, "created_at": "2026-07-01"},
         {"fact": "B 陈旧琐事", "access_count": 0, "created_at": "2025-01-01"},
     ]
-    r = run("memory_consolidate", {"entries": entries})
+    # today 显式传入:不读系统钟,断言才不随运行日期漂移(§1 复现性纪律)
+    r = run("memory_consolidate", {"entries": entries, "today": "2026-07-26"})
     facts = [e["fact"] for e in r["entries"]]
     assert "A 重要事实" in facts
     assert r.get("pruned"), "低价值条目应被标记剪枝"

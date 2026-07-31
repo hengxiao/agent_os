@@ -1,14 +1,21 @@
 """PythonSandboxLogicKernel(DESIGN.md §9.2/§9.7;M5)。
 
-子进程 + ``setrlimit``(CPU/内存/文件大小)+ 临时只读工作目录 + 默认断网
-(目的级白名单可配)。用于 LLM 动态代码(强制,无配置项可关闭)与声明
-``logic: {mode: sandbox}`` 的 code 技能。
-警示(§9.2):venv 不是沙箱——只隔离包依赖,文件系统/网络/进程全无约束。
-隔离阶梯(后端替换,契约不变):subprocess+rlimits(v1)→ OS 级(seccomp/nsjail)→
-容器 → microVM。
+用于 LLM 动态代码(强制,无配置项可关闭)与声明 ``logic: {mode: sandbox}``
+的 code 技能。隔离阶梯(后端替换,契约不变):subprocess+rlimits(v1)→
+OS 级(seccomp/nsjail)→ 容器 → microVM。
 
-v1 极简版接受偏差:**网络隔离不做**——M5 用 ``unshare``/nsjail 加固;
-文件系统仅靠 rlimits 与 ``-I`` 隔离,不是安全边界。
+**v1 实际提供的隔离(逐项,勿多信一项)**:
+
+- ✅ ``setrlimit``:CPU / 地址空间 / 文件大小 / fd 数(``limits.py``);
+- ✅ **env 白名单**:子进程不继承宿主环境,``*_API_KEY`` 等凭证读不到(``_ENV_ALLOWLIST``);
+- ✅ **cwd 隔离**:每次执行一个空临时目录,不是宿主 cwd(通常为用户仓库根);
+- ❌ **网络不隔离**——脚本可任意外连(M5 用 ``unshare``/nsjail 加固);
+- ❌ **文件系统不隔离**——绝对路径仍可读写宿主任意文件(仅 rlimits 兜底);
+- ❌ **进程不隔离**——可 fork 子进程,且当前不杀进程组。
+
+即:**v1 挡住"顺手就能拿到凭证/翻到项目文件",挡不住蓄意攻击**。需要真隔离
+请用 Docker 后端(``--network none`` + ``--cap-drop ALL`` + 只读 rootfs)。
+警示(§9.2):venv 不是沙箱——只隔离包依赖。
 
 code 技能入口(§9.2/§9.4):``source`` 为可 import 的模块路径时改走驱动脚本
 (``_DRIVER``)——沙箱内 import 模块、以 ``ctx=None`` 调 handler(v1 纯计算,无回调;
@@ -27,6 +34,7 @@ import logging
 import os
 import socket
 import sys
+import tempfile
 import time
 from typing import Any
 
@@ -38,10 +46,15 @@ from agent_os.api.v1 import (
     LogicError,
     TrustLevel,
 )
+from agent_os.kernel.errors import MaxDepthExceeded, RunAborted
 from agent_os.logic.inprocess import _is_module_path
 from agent_os.logic.limits import apply_limits
 
 _log = logging.getLogger("agent_os.logic")
+
+#: 不可被单帧吞掉的硬失败(§3.2 传播边界):syscall 分发抛出这些时不降级为
+#: 脚本可见的错误观察,而是中止编排并弹到 Run 边界。
+_HARD_FAILURES = (RunAborted, MaxDepthExceeded)
 
 #: 默认兜底墙钟(调用方未给 limits.wall_time 时)
 _DEFAULT_WALL_TIME = 30.0
@@ -131,6 +144,26 @@ except Exception:
 """
 
 
+#: 传给沙箱子进程的环境变量白名单(§9.2)。**只放行 Python 自举必需项**——
+#: 宿主 env 里的 ``*_API_KEY`` / ``*_TOKEN`` / 云凭证一律不进沙箱。
+#: 注意不含 ``HOME``:避免 ``~/.aws/credentials``、``~/.config/gh/hosts.yml``
+#: 这类按 HOME 定位的凭证文件被顺手读到(路径本身仍可硬编码,但那已是文件系统
+#: 隔离的职责,见模块 docstring 的 v1 偏差说明)。
+_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SYSTEMROOT", "TMPDIR")
+
+
+def _sandbox_env(pythonpath: str | None) -> dict[str, str]:
+    """构造沙箱子进程的环境:白名单 + 按需的 PYTHONPATH。
+
+    ``pythonpath`` 非 None 时(驱动脚本形态)追加——``-I`` 隐含 ``-E`` 使它不进
+    ``sys.path``,由驱动脚本自行读取并前置插入,保证宿主侧 handler 包可 import。
+    """
+    env = {k: os.environ[k] for k in _ENV_ALLOWLIST if k in os.environ}
+    if pythonpath:
+        env["PYTHONPATH"] = pythonpath
+    return env
+
+
 def _truncate(text: str, max_bytes: int | None) -> str:
     if max_bytes is None:
         return text
@@ -153,12 +186,19 @@ def _parse_driver_stdout(stdout: str) -> tuple[Any, str]:
     return None, stdout
 
 
-async def _serve_syscalls(sock: socket.socket, dispatch_fn: Any) -> int:
+async def _serve_syscalls(
+    sock: socket.socket, dispatch_fn: Any, hard_failure: list[BaseException] | None = None
+) -> int:
     """syscall 服务循环(CODE-ORCHESTRATION.md §2.2):逐条读请求 → 分发 → 写响应。
 
     纯传输层:分发与**限额**都由内核回调决定(``_dispatch_call`` 一条闸门;
     调用上限在内核侧计数并以结构化错误回给脚本,脚本可自行处置)。跑飞脚本
-    由 ``wall_time`` 兜底。分发抛异常(RunAborted 等硬失败)→ 回错误响应后停服。
+    由 ``wall_time`` 兜底。
+
+    **硬失败不在此处降级**(§3.2):``RunAborted`` / ``MaxDepthExceeded`` 等
+    经 ``hard_failure`` 传回调用方 re-raise;脚本侧只收到"通道关闭"并崩掉,
+    整次执行的结果一律作废——若在此转成一条脚本可无视的错误,预算超限与
+    ToolGuard 的 Stop 就会被脚本吃掉,run 照常跑完(实测过的真实缺陷)。
     """
     served = 0
     try:
@@ -188,7 +228,14 @@ async def _serve_syscalls(sock: socket.socket, dispatch_fn: Any) -> int:
                 payload = await dispatch_fn(kind, name, args)
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001 — 硬失败(RunAborted 等)由内核侧兜住并停服
+            except _HARD_FAILURES as e:
+                # 不回响应、直接停服:脚本下次 syscall 读到 EOF 即崩,
+                # 调用方 re-raise 使其弹到 Run 边界(§3.2)
+                _log.warning("syscall 遇硬失败,中止编排(%s %s): %r", kind, name, e)
+                if hard_failure is not None:
+                    hard_failure.append(e)
+                return served
+            except Exception as e:  # noqa: BLE001 — 普通失败折叠为脚本可处置的错误观察
                 _log.warning("syscall 分发失败(%s %s): %r", kind, name, e)
                 await respond({"id": call_id, "ok": False,
                                "error": {"kind": "internal",
@@ -221,13 +268,14 @@ class PythonSandboxLogicKernel:
         # 模块路径 → code 技能驱动;dispatch_fn 非 None 的源码 → 编排驱动;否则原样 -c(§9.4)
         module_mode = "\n" not in req.source and _is_module_path(req.source)
         orchestrate_mode = not module_mode and req.dispatch_fn is not None
-        env: dict[str, str] | None = None
+        # §9.2 env 白名单:子进程**不继承**宿主环境——LLM 动态代码一行
+        # ``os.environ["ANTHROPIC_API_KEY"]`` 即可读走凭证并经网络外发。
+        # 只放行 Python 自举必需项,其余(含全部 *_API_KEY / *_TOKEN)一律不传。
+        env = _sandbox_env(pythonpath if (module_mode or orchestrate_mode) else None)
         if module_mode:
             argv = [sys.executable, "-I", "-c", _DRIVER, json.dumps(req.args), req.source, req.entry]
-            env = {**os.environ, "PYTHONPATH": pythonpath}
         elif orchestrate_mode:
             argv = [sys.executable, "-I", "-c", _ORCH_DRIVER, req.source]
-            env = {**os.environ, "PYTHONPATH": pythonpath}
         else:
             argv = [sys.executable, "-I", "-c", req.source]
 
@@ -243,26 +291,50 @@ class PythonSandboxLogicKernel:
             child_sock.set_inheritable(True)
             syscall_pair = (parent_sock, child_sock)
             pass_fds = (child_sock.fileno(),)
-            env = {**(env or os.environ), "AGENT_OS_SYSCALL_FD": str(child_sock.fileno())}
+            env = {**env, "AGENT_OS_SYSCALL_FD": str(child_sock.fileno())}
 
         start = time.perf_counter()
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                preexec_fn=preexec,
-                env=env,
-                pass_fds=pass_fds,
+        # §9.2 cwd 隔离:每次执行一个空临时目录,而不是继承宿主 cwd(通常是用户
+        # 仓库根)——相对路径写入、``os.listdir(".")`` 侦察都被圈在这里。
+        # 不是安全边界(绝对路径仍可达,见模块 docstring 的 v1 偏差),但消除了
+        # "顺手就能读写整个项目"这一最大误伤面。
+        with tempfile.TemporaryDirectory(prefix="agent-os-sbx-") as cwd:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    preexec_fn=preexec,
+                    env=env,
+                    pass_fds=pass_fds,
+                    cwd=cwd,
+                )
+            finally:
+                if syscall_pair is not None:
+                    syscall_pair[1].close()  # 子进程已继承副本,父侧关掉自己的一端
+            return await self._collect(
+                proc, req, syscall_pair, start, wall, module_mode or orchestrate_mode
             )
-        finally:
-            if syscall_pair is not None:
-                syscall_pair[1].close()  # 子进程已继承副本,父侧关掉自己的一端
+
+    async def _collect(
+        self,
+        proc: Any,
+        req: ExecRequest,
+        syscall_pair: tuple[socket.socket, socket.socket] | None,
+        start: float,
+        wall: float,
+        driver_mode: bool,
+    ) -> ExecResult:
+        """等待子进程结束并归一化结果(syscall 服务循环在此期间并发跑)。"""
+        limits = req.limits
 
         server: asyncio.Task[int] | None = None
+        # 硬失败出口(§3.2):syscall 分发抛出的 RunAborted / MaxDepthExceeded 等
+        # 不可被单帧吞掉,经此单元传回并在下面原样 re-raise。
+        hard_failure: list[BaseException] = []
         if syscall_pair is not None:
             server = asyncio.create_task(
-                _serve_syscalls(syscall_pair[0], req.dispatch_fn)
+                _serve_syscalls(syscall_pair[0], req.dispatch_fn, hard_failure)
             )
         try:
             stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=wall)
@@ -278,10 +350,17 @@ class PythonSandboxLogicKernel:
                 usage=ExecUsage(cpu_ms=ms, wall_ms=ms),
             )
         finally:
+            if proc.returncode is None:  # 取消/异常路径:不留孤儿子进程
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
             if server is not None:
                 server.cancel()
             if syscall_pair is not None:
                 syscall_pair[0].close()
+        if hard_failure:
+            # 脚本可能已捕获那条错误并"正常"结束——但硬失败必须弹到 Run 边界,
+            # 故此处**先于**任何结果归一化上抛(§3.2 传播边界)。
+            raise hard_failure[0]
         ms = int((time.perf_counter() - start) * 1000)
         stdout = _truncate(stdout_b.decode("utf-8", errors="replace"), limits.stdout_bytes)
         stderr = _truncate(stderr_b.decode("utf-8", errors="replace"), limits.stdout_bytes)
@@ -296,7 +375,7 @@ class PythonSandboxLogicKernel:
                 error=ExecError(kind=LogicError.RUNTIME_ERROR, message=tail[-500:], traceback=stderr),
                 usage=usage,
             )
-        if module_mode or orchestrate_mode:
+        if driver_mode:
             value, body = _parse_driver_stdout(stdout)
             return ExecResult(value=value, stdout=body, stderr=stderr, usage=usage)
         # result 解析(stdout 最后一行 JSON)由 system.python.exec 工具层做(§9.4)

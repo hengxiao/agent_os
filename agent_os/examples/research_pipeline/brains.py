@@ -16,11 +16,8 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import re
-import sys
-from pathlib import Path
 from typing import Any
 
 from agent_os.api.v1 import (
@@ -242,50 +239,3 @@ def ops_brain(req: ChatRequest) -> ChatResponse:
     if name in _ORCHESTRATORS:
         return _ORCHESTRATORS[name](_frame_input(req), _completed_results(req))
     raise AssertionError(f"ops_brain 未覆盖的技能: {name}")
-
-
-# ---------------------------------------------------------------------------
-# support_desk 大脑代理(跨示例 sys.modules 共存桥)
-# ---------------------------------------------------------------------------
-
-
-def support_brain(req: ChatRequest) -> ChatResponse:
-    """``examples/support_desk`` 的 mock 大脑代理(按文件路径惰性加载)。
-
-    锚点机制约束:tests/test_examples.py 与 tests/test_support_example.py 都以
-    扁平名 ``import brains`` 取各自示例的大脑,而 pytest 单进程内
-    ``sys.modules["brains"]`` 先缓存者胜(test_examples 先跑)——support_desk
-    的 ``brains.py`` 本体因此经本代理以独立模块名 ``support_desk_brains``
-    按文件路径加载,不抢占 ``"brains"`` 命名。单独跑 test_support_example.py
-    (或 CLI 直接加载 support_desk/agent-os.toml)时,本体直接被 import,
-    本代理不会被用到。
-    """
-    module = sys.modules.get("support_desk_brains")
-    if module is None:
-        path = Path(__file__).resolve().parent.parent / "support_desk" / "brains.py"
-        spec = importlib.util.spec_from_file_location("support_desk_brains", path)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["support_desk_brains"] = module
-        spec.loader.exec_module(module)
-    return module.support_brain(req)
-
-
-def travel_brain(req: ChatRequest) -> ChatResponse:
-    """``examples/travel_planner`` 的 mock 大脑代理(与 support_brain 同一共存桥机制)。
-
-    tests/examples/test_travel_planner.py 同样以扁平名 ``import brains`` 取
-    ``travel_brain``;全量 pytest 单进程内 ``sys.modules["brains"]`` 已被本模块
-    (research_pipeline,字母序先跑)缓存,故 travel_planner 的 ``brains.py`` 本体
-    经本代理以独立模块名 ``travel_planner_brains`` 按文件路径加载。单独跑
-    test_travel_planner.py 时本体直接被 import,本代理不会被用到。
-    """
-    module = sys.modules.get("travel_planner_brains")
-    if module is None:
-        path = Path(__file__).resolve().parent.parent / "travel_planner" / "brains.py"
-        spec = importlib.util.spec_from_file_location("travel_planner_brains", path)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["travel_planner_brains"] = module
-        spec.loader.exec_module(module)
-    return module.travel_brain(req)

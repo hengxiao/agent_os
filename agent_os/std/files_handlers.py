@@ -561,10 +561,24 @@ async def apply_patch(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
             if target.exists():
                 return {"applied": False, "file": display, "reason": "新建失败: 目标文件已存在"}
             content = ""
+            newline = "\n"
         else:
             if not target.is_file():
                 return {"applied": False, "file": display, "reason": f"文件不存在: {display}"}
-            content = target.read_text(encoding="utf-8", errors="replace")
+            raw = target.read_bytes()
+            try:
+                content = raw.decode("utf-8")
+            except UnicodeDecodeError as e:
+                # 静默用 U+FFFD 覆盖写回等于毁文件(§8 第 7 条:不得静默改写)
+                return {
+                    "applied": False,
+                    "file": display,
+                    "reason": f"文件不是合法 UTF-8(偏移 {e.start}),拒绝改写以免破坏内容",
+                }
+            newline = _detect_newline(raw)
+            # 归一化为 LF 再匹配(hunk 按 \n 切行);写回时按 newline 还原,
+            # 使 CRLF 文件既能打补丁、又不被静默转成 LF
+            content = content.replace("\r\n", "\n").replace("\r", "\n")
         result = _apply_hunks(content, fp)
         if isinstance(result, dict):
             result["file"] = display
@@ -578,22 +592,34 @@ async def apply_patch(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
                     "file": display,
                     "reason": "删除补丁未覆盖整个文件(应用后仍有剩余内容)",
                 }
-            planned.append((target, None, display))
+            planned.append((target, None, display, newline))
             continue
-        planned.append((target, result, display))
+        planned.append((target, result, display, newline))
 
-    for target, new_content, _display_path in planned:
+    for target, new_content, _display_path, newline in planned:
         if new_content is None:
             target.unlink()
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(new_content, encoding="utf-8")
-    return {"applied": True, "files": [d for _t, _c, d in planned]}
+            # newline="" 关掉换行翻译,原文件是 CRLF 就仍写回 CRLF(§8 第 7 条)
+            with target.open("w", encoding="utf-8", newline="") as fh:
+                fh.write(new_content if newline == "\n" else new_content.replace("\n", newline))
+    return {"applied": True, "files": [d for _t, _c, d, _n in planned]}
 
 
 # ---------------------------------------------------------------------------
 # summarize_tree —— 目录级结构摘要(复用 §W1 walker:gitignore + 跳过依赖目录)
 # ---------------------------------------------------------------------------
+
+
+def _detect_newline(raw: bytes) -> str:
+    """按首个换行判定原文件行尾(CRLF / CR / LF),用于写回时保真。"""
+    i = raw.find(b"\n")
+    if i > 0 and raw[i - 1:i] == b"\r":
+        return "\r\n"
+    if i == -1 and b"\r" in raw:
+        return "\r"
+    return "\n"
 
 
 async def summarize_tree(input: dict[str, Any], ctx: Any) -> dict[str, Any]:

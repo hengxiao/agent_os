@@ -21,7 +21,7 @@ from agent_os.providers.mock import MockProvider
 from agent_os.runtime.builder import KernelBuilder
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.local_registry import LocalPythonToolRegistry
-from tests.helpers.kernels import PROJECT_ROOT
+from tests.helpers.kernels import PROJECT_ROOT, load_example_module
 
 DESK_DIR = PROJECT_ROOT / "examples" / "support_desk"
 
@@ -52,13 +52,8 @@ def _build(brain):
 
 
 def _load_brain():
-    sys.path.insert(0, str(DESK_DIR))
-    try:
-        import brains
-
-        return brains.support_brain
-    finally:
-        sys.path.remove(str(DESK_DIR))
+    """专属模块名加载,不与其它示例的 brains.py 争 sys.modules(见 helper docstring)。"""
+    return load_example_module("support_desk").support_brain
 
 
 def test_support_desk_loads_skills():

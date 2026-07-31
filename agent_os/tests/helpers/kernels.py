@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from agent_os.api.v1 import Permission, RunConfig, Signal, ToolPolicy
@@ -78,3 +79,24 @@ def record_all(kernel) -> list[Signal]:
 
     kernel.signals.subscribe("*", rec)
     return seen
+
+
+def load_example_module(example: str, filename: str = "brains.py"):
+    """按文件路径加载 examples 下的模块,**用专属模块名**避免跨示例串扰。
+
+    四个示例各有一个 ``brains.py``;若都以扁平名 ``import brains`` 加载,
+    ``sys.modules["brains"]`` 先缓存者胜 —— 测试的通过与否取决于**执行顺序**
+    (实测:排除任一文件即 4 个确定性失败),且单跑与全量跑走不同代码路径。
+    专属模块名(``<example>_brains``)从根上消除这个耦合。
+    """
+    import importlib.util
+
+    path = PROJECT_ROOT / "examples" / example / filename
+    mod_name = f"{example}_{Path(filename).stem}"
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    if spec is None or spec.loader is None:  # pragma: no cover — 路径写错才会到这
+        raise ImportError(f"无法按路径加载示例模块: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = module
+    spec.loader.exec_module(module)
+    return module

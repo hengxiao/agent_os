@@ -29,14 +29,17 @@ from agent_os.api.v1 import (
     ChatResponse,
     ChatUsage,
     Message,
+    Mode,
     Permission,
     Role,
     RunConfig,
     SkillFrame,
     SkillRef,
+    Stop,
     ToolCall,
     ToolPolicy,
 )
+from agent_os.kernel.errors import RunAborted
 from agent_os.sidecars import CodeScanner, ToolGuard
 from tests.helpers.kernels import assemble, record_all, sandbox_tools
 
@@ -398,3 +401,49 @@ def test_replay_run_with_orchestration(tmp_path, capsys):
 replay_brain = orchestrating_brain(
     'r = ctx.call_tool("system.file.write", {"path": "o.txt", "content": "x"})\nresult = r["ok"]'
 )
+
+
+# ---------------------------------------------------------------------------
+# §3.2 硬失败传播边界(CODE-ORCHESTRATION §6 锚点 7)
+# ---------------------------------------------------------------------------
+
+
+class _HardStop:
+    """SYNC sidecar:在 pre:tool.call 返回 Stop → _dispatch_call 内部抛 RunAborted。"""
+
+    name = "hardstop"
+    subscriptions = ("pre:tool.call",)
+    mode = Mode.SYNC
+    priority = 10
+    needs_free_text = False
+
+    async def on_signal(self, sig, ctl):
+        return Stop("测试:编排期间硬停止")
+
+
+def test_hard_failure_escapes_orchestration(tmp_path):
+    """编排期间的 RunAborted **不得**被降级为脚本可无视的错误。
+
+    回归的是一个真实缺陷:``_serve_syscalls`` 曾用 ``except Exception`` 把
+    RunAborted/MaxDepthExceeded 一并转成 ``{"kind": "internal"}`` 回给脚本,
+    而 ``_run_orchestration`` 从不检查 server 任务——脚本捕获后照常算完,
+    run 正常返回 ``{"done": true}``,预算超限与 ToolGuard 的 Stop 就此失效。
+    """
+    script = """
+r = ctx.call_tool("system.file.write", {"path": "x.txt", "content": "1"})
+result = {"swallowed": True, "err": (r.get("error") or {}).get("kind")}
+"""
+    kernel = _kernel(tmp_path, script, sidecars=(_HardStop(),))
+    with pytest.raises(RunAborted, match="编排期间硬停止"):
+        _run(kernel)
+
+
+def test_ordinary_tool_failure_still_reaches_script(tmp_path):
+    """对照组:**普通**失败仍折叠为脚本可处置的错误观察,不中止 run。"""
+    script = """
+r = ctx.call_tool("system.file.read", {"path": "not-there.txt"})
+result = {"ok": r["ok"], "kind": r["error"]["kind"]}
+"""
+    out = _run(_kernel(tmp_path, script))["value"]
+    assert out["result"]["ok"] is False
+    assert out["result"]["kind"] == "not_found"

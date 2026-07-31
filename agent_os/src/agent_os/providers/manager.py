@@ -66,17 +66,54 @@ class ProviderManager:
         rate_limits: dict[str, tuple[float, int]] | None = None,
         stream_idle_timeout: float = 30.0,
         fallbacks: dict[str, list[str]] | None = None,
+        prices: dict[str, dict[str, float]] | None = None,
     ) -> None:
         self.providers: dict[str, Provider] = {}
         self.max_attempts = max_attempts
         self.backoff_base = backoff_base
         self.stream_idle_timeout = stream_idle_timeout
         self.fallbacks = {model: list(chain) for model, chain in (fallbacks or {}).items()}
+        #: 每百万 token 单价表(§4.2 记账职责在 manager)。键为完整 model 串或
+        #: provider 前缀(精确优先);值取 ``{input, output, cache_read?, cache_write?}``。
+        #: **价格属配置不属代码**——硬编码的价目表必然过期,且各家各档差异大。
+        self.prices = {k: dict(v) for k, v in (prices or {}).items()}
         self._buckets = {
             name: _TokenBucket(rate, burst) for name, (rate, burst) in (rate_limits or {}).items()
         }
         for p in providers or []:
             self.register(p)
+
+    def price_for(self, model: str) -> dict[str, float] | None:
+        """取该 model 的单价:完整串精确匹配优先,回落 provider 前缀。"""
+        if model in self.prices:
+            return self.prices[model]
+        prefix, _, _ = model.partition("/")
+        return self.prices.get(prefix)
+
+    def _apply_cost(self, model: str, resp: ChatResponse) -> ChatResponse:
+        """按单价表折算 ``usage.cost``(§4.2)。
+
+        provider 自报 cost 时不覆盖(有些端点直接给金额);无单价表则保持 0.0——
+        此时 ``RunConfig.max_cost`` 与 BudgetGuard 形同虚设,故装配期会告警
+        (见 ``runtime.config``),不在此静默假装有护栏。
+        """
+        usage = resp.usage
+        if usage is None or usage.cost:
+            return resp
+        price = self.price_for(model)
+        if not price:
+            return resp
+        per_mtok = 1_000_000.0
+        usage.cost = round(
+            (usage.prompt * price.get("input", 0.0)
+             + usage.completion * price.get("output", 0.0)
+             + usage.cache_read * price.get("cache_read", price.get("input", 0.0))
+             + usage.cache_write * price.get("cache_write", price.get("input", 0.0))
+             + usage.thinking * price.get("output", 0.0))
+            / per_mtok,
+            8,
+        )
+        return resp
 
     def register(self, provider: Provider) -> None:
         """注册 provider(前缀路由键 = provider.name,§4.2)。"""
@@ -125,7 +162,7 @@ class ProviderManager:
         for i, model in enumerate(chain):
             attempt_req = req if i == 0 else self._fallback_request(req, model)
             try:
-                return await self._chat_with_retries(attempt_req)
+                return self._apply_cost(model, await self._chat_with_retries(attempt_req))
             except ProviderError as e:
                 if not e.retryable or i == len(chain) - 1:
                     raise

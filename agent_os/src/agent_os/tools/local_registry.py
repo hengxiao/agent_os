@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import shutil
 import tempfile
 import traceback
 import types
@@ -270,6 +271,17 @@ class LocalPythonToolRegistry:
             return result
         return ToolResult(ok=True, value=result)
 
+    def release_run(self, run_id: str) -> None:
+        """run 收尾:删掉该 run 的临时工作目录并忘掉登记。
+
+        不删的话 ``mkdtemp`` 的结果只增不减——长驻宿主会把 /tmp 塞满
+        (审计发现:全仓原先无任何 rmtree)。已配置 workdir(§W0-1 分区)时
+        不属本注册表所有,不动。
+        """
+        wd = self._workdirs.pop(run_id, None)
+        if wd:
+            shutil.rmtree(wd, ignore_errors=True)
+
     def _workdir(self, run_id: str) -> str:
         """每 run 一个临时工作目录(限定 fs 工具范围,§2.2;§W0-1 缺省档,配置 workdir 时不走这里)。"""
         wd = self._workdirs.get(run_id)
@@ -299,6 +311,7 @@ class LocalPythonToolRegistry:
         system.net.http_request(非 GET 通用 HTTP,与 http_fetch 共用执行体);新工具无旧名,不设别名。
         """
         from agent_os.tools.builtins import (
+            blob_get,
             fs_edit,
             fs_read,
             fs_write,
@@ -351,6 +364,18 @@ class LocalPythonToolRegistry:
         reg.register_alias("shell_exec", "system.shell.exec")
         reg.register(http_fetch_tool(name="system.net.http_fetch", transport=http_transport))
         reg.register_alias("http_fetch", "system.net.http_fetch")
+        # spill 的读取端(§8.3):没有它,所有返回 spill_ref 的工具都是死胡同——
+        # 模型被告知"用 blob_get 取全文"却调不到该工具
+        reg.tool(
+            name="system.blob.get",
+            permission=Permission.READ,
+            idempotent=True,
+            cacheable=True,
+            concurrent_safe=True,
+            concurrency_safe=True,
+            cost_hint="~1ms(进程内 blob)",
+        )(blob_get)
+        reg.register_alias("blob_get", "system.blob.get")
         # —— §W1 核心工具(契约字段同 READ 档统一声明,门槛见 tests/test_std_gate.py)——
         reg.tool(
             name="system.file.list",

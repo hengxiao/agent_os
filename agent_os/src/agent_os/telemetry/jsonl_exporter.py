@@ -15,6 +15,7 @@ provenance(支撑 loss masking)。
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import IO
 
@@ -77,6 +78,29 @@ class JsonlTelemetrySink:
     async def flush(self) -> None:
         for fh in self._files.values():
             fh.flush()
+            os.fsync(fh.fileno())  # 行缓冲只到 page cache;WAL 语义要求真正落盘
+
+    async def close_run(self, run_id: str) -> None:
+        """run 收尾:flush + fsync + **关闭该 run 的句柄**。
+
+        不关的话每个 run 泄一个常驻 fd(Web 长驻宿主跑够多 run 即耗尽),
+        且归档 trace 可能拷到半行(§10.2 轨迹即全部状态,不容缺行)。
+        """
+        fh = self._files.pop(run_id, None)
+        if fh is None:
+            return
+        try:
+            fh.flush()
+            os.fsync(fh.fileno())
+        finally:
+            fh.close()
+
+    async def close(self) -> None:
+        """关闭全部句柄(内核 aclose / 宿主退出)。"""
+        for run_id in list(self._files):
+            await self.close_run(run_id)
+        for exporter in self.exporters:
+            await exporter.close()
 
     async def snapshot(self, run_id: str) -> Checkpoint:
         """检查点快照语义在 ``Kernel.checkpoint``(M5a 不实现于此)。"""

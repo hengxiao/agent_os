@@ -31,13 +31,13 @@ from agent_os.runtime.builder import KernelBuilder
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.builtins import python_exec_tool
 from agent_os.tools.local_registry import LocalPythonToolRegistry
-from tests.helpers.kernels import PROJECT_ROOT
+from tests.helpers.kernels import PROJECT_ROOT, load_example_module
 
 RESEARCH_DIR = PROJECT_ROOT / "examples" / "research_pipeline"
 S100_DIR = PROJECT_ROOT / "examples" / "skills_100"
 
 
-def _build(brain_path: str | None, skills_path: Path):
+def _build(brain, skills_path: Path):
     config = RunConfig(
         model="mock/ops",
         max_depth=12,
@@ -46,13 +46,7 @@ def _build(brain_path: str | None, skills_path: Path):
     )
     tools = LocalPythonToolRegistry.with_builtins()
     tools.register(python_exec_tool(PythonSandboxLogicKernel()))
-    if brain_path is None:
-        provider = MockProvider()
-    else:
-        module, _, func = brain_path.partition(":")
-        import importlib
-
-        provider = MockProvider(getattr(importlib.import_module(module), func))
+    provider = MockProvider() if brain is None else MockProvider(brain)
     return (
         KernelBuilder(config)
         .providers(provider)
@@ -80,7 +74,7 @@ def test_research_pipeline_loads_twenty_skills():
 def test_research_pipeline_runs_end_to_end():
     sys.path.insert(0, str(RESEARCH_DIR))
     try:
-        kernel = _build("brains:ops_brain", RESEARCH_DIR / "skills.yaml")
+        kernel = _build(load_example_module("research_pipeline").ops_brain, RESEARCH_DIR / "skills.yaml")
         seen: list[Signal] = []
 
         async def rec(sig: Signal) -> None:

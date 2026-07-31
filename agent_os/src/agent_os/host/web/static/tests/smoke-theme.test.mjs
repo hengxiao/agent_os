@@ -341,5 +341,30 @@ const {
   applyTheme("classic"); // 复位持久化/URL
 }
 
+/* ══ 10. 状态色点 → 猫咪表情(moe css 源级断言;双编码钩子/文字不受影响)══ */
+{
+  const moeCss = readFileSync(path.join(staticDir, "css/themes/moe.css"), "utf8");
+  const EMOJI = {
+    running: "😺", done: "😸", failed: "😿",
+    aborted: "🙀", unknown: "😴", paused: "🐾",
+  };
+  for (const [st, emoji] of Object.entries(EMOJI)) {
+    assert.ok(
+      moeCss.includes(`.status-pill[data-status="${st}"] .pill-dot::before`) &&
+        moeCss.includes(`content: "${emoji}"`),
+      `moe pill ${st} → ${emoji}`);
+  }
+  assert.match(moeCss, /@keyframes moe-spin/, "running 猫咪转圈动画");
+  for (const [tone, emoji] of Object.entries({ done: "😸", danger: "😿", aborted: "🙀" })) {
+    assert.ok(
+      moeCss.includes(`.banner[data-tone="${tone}"] .banner-icon::before`) &&
+        moeCss.includes(`content: "${emoji}"`),
+      `moe 结束横幅 ${tone} → ${emoji}`);
+  }
+  /* classic 不受影响:classic.css 不得出现 pill emoji 规则 */
+  const classicCss = readFileSync(path.join(staticDir, "css/themes/classic.css"), "utf8");
+  assert.ok(!classicCss.includes("pill-dot::before"), "classic 保持色点,无 emoji 替换");
+}
+
 console.warn = realWarn;
 console.log("smoke-theme.test.mjs: all assertions passed");

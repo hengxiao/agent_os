@@ -159,13 +159,28 @@
 
 /* StatusPill → 贴纸徽章(文字状态保留,双编码不豁免) */
 [data-theme="moe"] .status-pill { border-radius: 999px; }
-/* running 呼吸(克制:opacity 单通道,不动 layout) */
-[data-theme="moe"] .status-pill[data-status="running"] {
-  animation: moe-breathe 2s ease-in-out infinite;
+
+/* 状态色点 → 猫咪表情(§MOE 化身表:pill 通道;文字/颜色钩子原样保留):
+   running 😺 转圈 / done 😸 / failed 😿 / aborted 🙀 / unknown(未开始)😴 /
+   paused 🐾(抓到啦=断点命中)。双编码不豁免:data-status 钩子与文字通道不动 */
+[data-theme="moe"] .status-pill .pill-dot {
+  width: auto;
+  height: auto;
+  background: none;
+  box-shadow: none;
 }
-@keyframes moe-breathe {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.72; }
+[data-theme="moe"] .status-pill .pill-dot::before { display: inline-block; }
+[data-theme="moe"] .status-pill[data-status="running"] .pill-dot::before {
+  content: "😺";
+  animation: moe-spin 1.2s linear infinite;
+}
+[data-theme="moe"] .status-pill[data-status="done"] .pill-dot::before { content: "😸"; }
+[data-theme="moe"] .status-pill[data-status="failed"] .pill-dot::before { content: "😿"; }
+[data-theme="moe"] .status-pill[data-status="aborted"] .pill-dot::before { content: "🙀"; }
+[data-theme="moe"] .status-pill[data-status="unknown"] .pill-dot::before { content: "😴"; }
+[data-theme="moe"] .status-pill[data-status="paused"] .pill-dot::before { content: "🐾"; }
+@keyframes moe-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* 调试控制条:奶油渐变 + 粉色虚线边(标题卡) */
@@ -188,8 +203,13 @@
   50%      { box-shadow: 0 0 12px rgba(168, 230, 207, 0.9); }
 }
 
-/* 结束横幅:手账贴纸(虚线边) */
+/* 结束横幅:手账贴纸(虚线边) + ● 图标换猫咪表情(文字 aria 由 banner 主体承担) */
 [data-theme="moe"] .dbg-end { border-style: dashed; }
+[data-theme="moe"] .banner .banner-icon { font-size: 0; } /* 藏 ●,emoji 上场 */
+[data-theme="moe"] .banner .banner-icon::before { font-size: var(--text-lg); }
+[data-theme="moe"] .banner[data-tone="done"] .banner-icon::before { content: "😸"; }
+[data-theme="moe"] .banner[data-tone="danger"] .banner-icon::before { content: "😿"; }
+[data-theme="moe"] .banner[data-tone="aborted"] .banner-icon::before { content: "🙀"; }
 
 /* 调用栈帧:hover 右移 + 左缘主色;当前帧腮红包围 */
 [data-theme="moe"] .dbg-frame {

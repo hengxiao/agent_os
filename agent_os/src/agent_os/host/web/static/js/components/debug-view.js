@@ -427,6 +427,11 @@ function renderBar() {
         ` data-tip="${esc(tip)}" title="${esc(tip)}"${paused ? "" : " disabled"}>${label}</button>`).join("") +
     `</div>` +
     `<a class="btn btn-mini dbg-home-link" href="#/debug" title="返回调试首页">会话列表</a>` +
+    (dbg.doc?.rerunnable
+      ? `<button class="btn btn-mini dbg-rerun" data-action="dbg-rerun"` +
+        ` data-tip="以同一 skill/input/启动断点重开新会话(当前会话停止并结束)"` +
+        ` title="以同一 skill/input/启动断点重开新会话(当前会话停止并结束)">⟳ 重新运行</button>`
+      : "") +
     // MascotLayer(MOE §2):主题声明 mascot 时挂在控制条右侧;层自身判主题,classic 下为空
     `<span class="dbg-mascot-slot">${mascotHtml(mascotStateFor(dbg.doc, dbg.endStatus))}</span>` +
     `</div>` +
@@ -722,6 +727,21 @@ async function postCommand(cmd) {
   }
 }
 
+/* 重新运行(⟳):后端停掉并结束当前会话,以同一 skill/input/启动断点重开,跳新会话 */
+async function rerunSession() {
+  try {
+    const res = await postJson(
+      `/api/debug/sessions/${encodeURIComponent(dbg.sessionId)}/rerun`);
+    if (res?.session_id) {
+      location.hash = `#/debug/${encodeURIComponent(res.session_id)}`;
+      return;
+    }
+    toast(res?.error ?? "重新运行失败(会话未开始)", "error"); // 200 + failed(技能已卸载等)
+  } catch (e) {
+    toast(e.message ?? "重新运行失败", "error");
+  }
+}
+
 async function addBreakpoint(kind, match) {
   try {
     await postJson(`/api/debug/sessions/${encodeURIComponent(dbg.sessionId)}/breakpoints`, {
@@ -839,6 +859,7 @@ export function debugClick(e, action) {
     const act = action.dataset.action;
     if (act === "dbg-retry") return load(), true;
     if (act === "dbg-cmd") return postCommand(action.dataset.cmd), true;
+    if (act === "dbg-rerun") return rerunSession(), true;
     if (act === "dbg-gutter") return toggleGutter(action.dataset), true;
     if (act === "dbg-bp-add") return addBreakpointFromForm(), true;
     if (act === "dbg-bp-del") return removeBreakpoint(action.dataset.bpId), true;

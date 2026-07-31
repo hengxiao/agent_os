@@ -353,6 +353,8 @@ def _debug_session_doc(session: Any) -> dict[str, Any]:
         "pause_point": _jsonable(session.pause_point),
         "breakpoints": [_breakpoint_doc(bp) for bp in session.breakpoints],
         "frame_stack": _jsonable(session.frame_stack),
+        # rerun 可用性(live 会话有创建参数 origin;replay/CLI 为 None)
+        "rerunnable": session.origin is not None,
     }
 
 
@@ -760,6 +762,22 @@ def create_app(
         except AgentOSError as e:
             raise HTTPException(status_code=409, detail=str(e)) from None
         return {"ok": True, "cmd": body.cmd}
+
+    @app.post("/api/debug/sessions/{sid}/rerun")
+    async def post_debug_rerun(sid: str) -> dict[str, Any]:
+        """重新运行:停掉并结束当前会话,以同一 skill/input/启动断点重开新会话。"""
+        try:
+            session_id, run_id = await manager.rerun_debug_session(sid)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=e.args[0]) from None
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        except DebugConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except RunValidationError as e:
+            # 与 POST /api/debug/sessions 同归类:技能已被卸载等
+            return {"status": "failed", "error": str(e)}
+        return {"session_id": session_id, "run_id": run_id}
 
     @app.post("/api/debug/sessions/{sid}/modify")
     async def post_debug_modify(sid: str, body: DebugModifyBody) -> dict[str, Any]:

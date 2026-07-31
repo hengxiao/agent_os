@@ -661,7 +661,42 @@ class RunManager:
             self._debug.close_session(session.id)
             self._debug_loops.pop(session.id, None)
             raise
+        # rerun 依据:同参数重开(replay 形态无 origin——回放参数在产物 meta,
+        # 语义上应走 replay 端点而非 live 重跑)
+        session.origin = {
+            "skill": skill,
+            "input": input,
+            "skill_set": skill_set,
+            "breakpoints": [{"kind": k, "match": m} for k, m in breakpoints or ()],
+        }
         return session.id, run_id
+
+    async def rerun_debug_session(self, session_id: str) -> tuple[str, str]:
+        """``POST .../rerun``:以创建参数(skill/input/启动断点)重开新会话。
+
+        旧会话仍活跃时先收尾:paused → ``stop`` 命令(走正常中止路径,
+        checkpoint 落盘);running → ``stop_run`` 置中止标志;随后 detach +
+        清注册表(同 DELETE)。无 origin(replay/CLI 会话)→ ``ValueError``
+        (路由层归 400);其余错误语义同 :meth:`start_debug_session`。
+        """
+        session = self.debug_session(session_id)  # KeyError → 404
+        origin = session.origin
+        if origin is None:
+            raise ValueError("该会话没有创建参数(replay/CLI 会话),不支持 rerun")
+        if session.state != "detached":
+            if session.state == "paused":
+                await self._in_debug_loop(session, lambda: session.resume("stop"))
+            elif session.run_id:
+                await self.stop_run(session.run_id)  # best-effort:已结束则 False
+            await self._in_debug_loop(session, session.detach)
+            self._debug.close_session(session.id)
+            self._debug_loops.pop(session.id, None)
+        return await self.start_debug_session(
+            origin["skill"],
+            origin["input"],
+            skill_set=origin.get("skill_set"),
+            breakpoints=[(bp["kind"], bp["match"]) for bp in origin.get("breakpoints", [])],
+        )
 
     async def start_debug_replay_session(
         self,

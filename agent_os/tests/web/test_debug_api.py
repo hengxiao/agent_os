@@ -230,6 +230,66 @@ def test_debug_delete_detaches_and_run_finishes(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# rerun:以创建参数(skill/input/启动断点)重开新会话
+# ---------------------------------------------------------------------------
+
+
+def test_debug_rerun_paused_stops_old_and_restarts(tmp_path):
+    """paused 会话 rerun:旧 run 走 stop 中止、旧会话清出注册表;新会话启动即断。"""
+    client = _client(tmp_path)
+    sid, run_id = _open_session(client, 3, breakpoints=[{"kind": "step"}])
+    _wait_pause(client, sid)
+    assert client.get(f"/api/debug/sessions/{sid}").json()["rerunnable"] is True
+
+    r = client.post(f"/api/debug/sessions/{sid}/rerun")
+    assert r.status_code == 200, r.text
+    doc = r.json()
+    new_sid, new_run = doc["session_id"], doc["run_id"]
+    assert new_sid != sid and new_run != run_id
+
+    # 旧会话已结束并清出注册表;旧 run 走中止路径(stop 命令语义)
+    assert client.get(f"/api/debug/sessions/{sid}").status_code == 404
+    assert wait_status(client, run_id)["status"] == "aborted"
+
+    # 新会话带 origin:启动断点生效(启动即断),快照仍 rerunable
+    point = _wait_pause(client, new_sid)
+    assert point["signal"] == "pre:step"
+    new_doc = client.get(f"/api/debug/sessions/{new_sid}").json()
+    assert new_doc["rerunnable"] is True
+    assert any(bp["kind"] == "step" for bp in new_doc["breakpoints"]), "启动断点随 origin 重开"
+    _command(client, new_sid, "stop")
+    wait_status(client, new_run)
+
+
+def test_debug_rerun_finished_session(tmp_path):
+    """detached(run 已结束)会话 rerun:无需收尾,直接重开并跑完。"""
+    client = _client(tmp_path)
+    sid, run_id = _open_session(client, 1)  # 无断点:run 直接跑完
+    detail = wait_status(client, run_id)
+    assert detail["status"] == "done"
+
+    r = client.post(f"/api/debug/sessions/{sid}/rerun")
+    assert r.status_code == 200, r.text
+    new_run = r.json()["run_id"]
+    assert new_run != run_id
+    detail = wait_status(client, new_run)
+    assert detail["status"] == "done" and detail["result"] == {"seq": [0]}
+
+
+def test_debug_rerun_error_semantics(tmp_path):
+    """404(未知会话)/ 400(replay 会话无 origin)。"""
+    client = _client(tmp_path)
+    assert client.post("/api/debug/sessions/dbg-nope/rerun").status_code == 404
+    src_run = run_and_wait(client, "demo.fib", {"n": 1})
+    r = client.post("/api/debug/sessions", json={"replay_run_id": src_run})
+    assert r.status_code == 200, r.text
+    sid, run_id = r.json()["session_id"], r.json()["run_id"]
+    wait_status(client, run_id)
+    assert client.get(f"/api/debug/sessions/{sid}").json()["rerunnable"] is False
+    assert client.post(f"/api/debug/sessions/{sid}/rerun").status_code == 400
+
+
+# ---------------------------------------------------------------------------
 # 错误语义:404 / 400 / 409 / 200+failed
 # ---------------------------------------------------------------------------
 

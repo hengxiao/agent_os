@@ -98,6 +98,7 @@ const state = {
     state: "paused",
     pause_point: PP_TOOL,
     breakpoints: [structuredClone(BP1)],
+    rerunnable: true, // live 会话带 origin → 控制条出「⟳ 重新运行」
     frame_stack: [
       { frame_id: "f1", skill: "local:fib@1.0.0", depth: 1 },
       { frame_id: "f2", skill: "local:fib@1.0.0", depth: 2 },
@@ -151,6 +152,9 @@ globalThis.fetch = async (url, options = {}) => {
     return reply({ ok: true });
   }
   if (u === "/api/debug/sessions/dbg-s1/command") return reply({ ok: true, cmd: body?.cmd });
+  if (u === "/api/debug/sessions/dbg-s1/rerun" && method === "POST") {
+    return reply({ session_id: "dbg-s2", run_id: "r2" });
+  }
   if (u === "/api/debug/sessions/dbg-s1/modify") return reply({ ok: true });
   if (u === "/api/debug/sessions/dbg-s1/inject") return reply({ ok: true, frame_id: "f1" });
   if (u === "/api/debug/sessions/dbg-gone") return notFound();
@@ -276,6 +280,7 @@ const clickAction = (dataset) => {
   assert.ok(!/dbg-cmd"[^>]*disabled/.test(bar.innerHTML), "paused 时命令可用");
   assert.match(bar.innerHTML, /▶ Continue|⇥ Into|⇢ Over|↥ Out|■ Stop/, "按钮图标语言");
   assert.match(bar.innerHTML, /data-state="poll"|data-state="ok"/, "连接状态点");
+  assert.match(bar.innerHTML, /data-action="dbg-rerun"/, "rerunable 会话出「⟳ 重新运行」");
 
   /* 调用栈:栈顶在前,暂停帧高亮 */
   const stack = main.querySelector("#dbgStack");
@@ -475,6 +480,16 @@ const clickAction = (dataset) => {
   await flush();
   const inj = requests.find((r) => r.url.endsWith("/inject"));
   assert.deepEqual(inj.body, { text: "调试注入的补充说明" }, "inject 请求体(frame_id 缺省=暂停帧)");
+
+  /* 重新运行(⟳):POST /rerun → 跳新会话 */
+  requests.length = 0;
+  const hashBefore = locationStub.hash;
+  assert.equal(clickAction({ action: "dbg-rerun" }), true, "点击 ⟳ 重新运行");
+  await flush();
+  const rerun = requests.find((r) => r.method === "POST" && r.url.endsWith("/rerun"));
+  assert.ok(rerun, "rerun 请求发出");
+  assert.equal(locationStub.hash, "#/debug/dbg-s2", "跳新会话");
+  locationStub.hash = hashBefore; // 复位:后续段落仍操作 dbg-s1
 
   closeDebugView();
 }

@@ -116,6 +116,9 @@ class DebugSession:
         self._step_frame_id: str | None = None
         #: 非可仲裁信号上收到的 stop:推迟到下一个 pre:step / pre:tool.call 落地
         self._pending_stop: str | None = None
+        #: 创建参数(host 层回填;live 形态 {skill, input, skill_set, breakpoints}),
+        #: 供 rerun 以同参数重开新会话;replay/CLI 会话为 None(不可 rerun)
+        self.origin: dict[str, Any] | None = None
         #: 状态变更通知(wait_paused 的等待源)
         self._state_changed = asyncio.Event()
 

@@ -140,7 +140,15 @@ REPL 与 run 跑在**同一事件循环**(调试原语要求);读命令走
 | `POST .../modify` · `POST .../inject` | 干预(仅 paused) |
 | `GET .../frames/{fid}` | 帧检视(live 内存态:暂停时 checkpoint 尚未落盘) |
 | `GET .../stream` | SSE:`state` → `bp_hit`/`paused`/`resumed` → `run_end` |
+| `POST .../rerun` | 重新运行:停掉并结束当前会话,以创建参数(skill/input/启动断点)重开新会话 |
 | `DELETE /api/debug/sessions/{sid}` | detach 放行,run 跑完 |
+
+rerun 的依据是 live 会话创建时回填的 `origin`(skill/input/skill_set/启动
+断点,`kernel/debug.py` 的 `DebugSession.origin`);快照带
+`rerunnable`(replay/CLI 会话无 origin → rerun 归 400)。旧会话仍活跃时
+先收尾:paused 走 `stop` 命令(正常中止路径,checkpoint 落盘),running
+置中止标志,随后 detach + 清注册表(同 DELETE 语义);已结束的会话直接
+重开。调试台控制条在 `rerunnable` 时出「⟳ 重新运行」按钮,成功后跳新会话。
 
 REST 线程与 run worker 线程之间经**跨线程命令桥**
 (`run_coroutine_threadsafe` 投递到 worker 事件循环)执行命令——

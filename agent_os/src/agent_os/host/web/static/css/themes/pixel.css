@@ -1,0 +1,335 @@
+/* pixel 主题(DEBUG-UI-THEMES.md §3.6):8-bit 复古游戏。
+   深靛底(#1a1c2c 系)+ 饱和红白机色板;圆角归零,边框 2px 阶梯像素边
+   (box-shadow 硬偏移拼出);状态点/精灵 image-rendering: pixelated;
+   预算条 45° 条纹(HP/MP 感);入场动画 steps() 跳帧;mascot = sprite8
+   (mascot.js 的 sprite8-* symbol,色彩全在此)。
+   契约变量按 §2.1 全量定义(字面 hex——契约测试直接解析 css 源做 WCAG
+   对比度计算,var() 引用无法求值);--pixel-* 是内部调色板,只供装饰层
+   (像素边阴影/条纹/精灵配色),不承担文本色职责。
+   双编码不豁免:装饰只改视觉,data-status 钩子与文字通道不动。 */
+
+[data-theme="pixel"] {
+  color-scheme: dark;
+
+  /* 基底:深靛夜(8-bit 夜空) */
+  --bg-0: #1a1c2c;   /* 应用底色 */
+  --bg-1: #23253a;   /* 面板/卡片面 */
+  --bg-2: #2c2f4a;   /* 悬浮/选中 */
+  --bg-3: #363a58;   /* 悬停加深 */
+  --line: #3d4166;
+  --line-strong: #5a5f8c;
+  /* 文本:冷白主文本 + 灰蓝层级 */
+  --fg-0: #f2f3fa;
+  --fg-1: #b4b9dc;
+  --fg-2: #8287ad;
+
+  /* 语义色:饱和 8-bit 色板(明度逐个提到关键配对 ≥4.5:1) */
+  --ok:      #5dd65d;   /* done / success(HP 绿) */
+  --warn:    #f8d838;   /* paused / degraded(金币黄) */
+  --danger:  #ff6b5e;   /* failed / veto / error */
+  --aborted: #c08cf8;   /* aborted(中止≠失败) */
+  --live:    #4ecdf8;   /* running / live(MP 蓝) */
+
+  /* 语义:信号类型(与语义色同锚点) */
+  --sig-llm:      #7ec4ff;
+  --sig-tool:     #5dd65d;
+  --sig-sidecar:  #f8d838;
+  --sig-compress: #c08cf8;
+  --sig-budget:   #ff6b5e;
+  --sig-frame:    #8287ad;
+
+  /* 语义:工具权限等级 */
+  --perm-read:  #8287ad;
+  --perm-write: #f8d838;
+  --perm-net:   #7ec4ff;
+  --perm-exec:  #ff6b5e;
+
+  /* 排版:像素体回退链("Press Start 2P" 不内嵌 webfont,§3.6),回退 mono 小号 */
+  --font-ui: "Press Start 2P", "VT323", "SF Mono", "JetBrains Mono", Consolas, monospace;
+  --font-mono: "Press Start 2P", "VT323", "SF Mono", "JetBrains Mono", Consolas, monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  --s1: 4px; --s1-5: 6px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+
+  /* 形状:圆角归零(像素块的阶梯感由 box-shadow 拼,不靠圆角) */
+  --r-sm: 0; --r-conn: 0; --r-md: 2px; --r-lg: 2px;
+
+  /* 阴影:硬偏移像素投影(覆盖 tokens.css 柔和阴影,装饰层全面生效) */
+  --shadow-sm: 4px 4px 0 rgb(0 0 0 / 0.35);
+  --shadow-md: 6px 6px 0 rgb(0 0 0 / 0.45);
+  --shadow-pop: 4px 4px 0 rgb(0 0 0 / 0.5);
+
+  /* 暂停行底色:暗金块(= --warn 的低明度底色版,checkpoint 高亮) */
+  --debug-paused-bg: #3a3418;
+}
+
+/* ── 内部调色板(装饰层专用:像素边/条纹/精灵配色,不作文本色)── */
+[data-theme="pixel"] {
+  --pixel-shadow:    4px 4px 0 rgb(0 0 0 / 0.35);  /* 卡片/横幅像素边 */
+  --pixel-shadow-sm: 3px 3px 0 rgb(0 0 0 / 0.35);  /* 按钮/输入像素边 */
+  --pixel-shadow-press: 1px 1px 0 rgb(0 0 0 / 0.35); /* 按下回弹 */
+  --pixel-ink:    #14161f;   /* 8-bit 深色描边/亮底上的文字 */
+  --pixel-armor:  #38a0f8;   /* sprite8 甲 */
+  --pixel-skin:   #f8c890;   /* sprite8 肤 */
+  --pixel-weapon: #d8dce8;   /* sprite8 武器(银) */
+  --pixel-gold:   #f8d838;   /* sprite8 金币·星 */
+  --pixel-stripe: rgb(0 0 0 / 0.22);        /* 预算条 45° 条纹 */
+  --pixel-live-glow: rgb(78 205 248 / 0.35); /* focus 硬光晕(= --live alpha) */
+}
+
+/* ── 像素化组件样式(只加 override,不改组件)────────────────────
+   装饰全部消费契约 token / --pixel-*;真实类名挂钩(app.css/dbg-*)。 */
+
+/* 卡片:2px 描边 + 硬偏移像素边(阶梯感),无渐变无模糊 */
+[data-theme="pixel"] .card {
+  background: var(--bg-1);
+  border: 2px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: var(--pixel-shadow);
+}
+
+/* 按钮:硬边手感——零过渡(帧切换感),hover 浮一格,active 按下两格 */
+[data-theme="pixel"] .btn {
+  border: 2px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: var(--pixel-shadow-sm);
+  transition: none;
+}
+[data-theme="pixel"] .btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 rgb(0 0 0 / 0.35);
+}
+[data-theme="pixel"] .btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: var(--pixel-shadow-press);
+}
+[data-theme="pixel"] .btn[disabled],
+[data-theme="pixel"] .btn[disabled]:hover {
+  transform: none;
+  box-shadow: none;
+  opacity: 0.55;
+}
+
+/* 主按钮:MP 蓝亮面 + 深色描边(START 按钮);hover 提亮,active 同 .btn 压回 */
+[data-theme="pixel"] .btn-primary {
+  background: var(--live);
+  border-color: var(--pixel-ink);
+  color: var(--pixel-ink);
+  font-weight: 600;
+}
+[data-theme="pixel"] .btn-primary:hover {
+  background: #76dcfa;
+  border-color: var(--pixel-ink);
+}
+[data-theme="pixel"] .btn-primary:active {
+  background: var(--live);
+}
+[data-theme="pixel"] .btn-primary[disabled],
+[data-theme="pixel"] .btn-primary[disabled]:hover {
+  background: var(--bg-3);
+  border-color: var(--line);
+  color: var(--fg-2);
+  transform: none;
+  box-shadow: none;
+}
+
+/* 输入:2px 硬边 + focus 硬光晕(无模糊) */
+[data-theme="pixel"] .input,
+[data-theme="pixel"] textarea {
+  border: 2px solid var(--line-strong);
+  border-radius: 0;
+  background: var(--bg-1);
+}
+[data-theme="pixel"] .input:focus,
+[data-theme="pixel"] textarea:focus {
+  border-color: var(--live);
+  box-shadow: 3px 3px 0 var(--pixel-live-glow);
+  outline: none;
+}
+
+/* 导航:选中项亮面硬边块(替代 classic 下划线) */
+[data-theme="pixel"] .nav-item { border-radius: 0; }
+[data-theme="pixel"] .nav-item[aria-current="page"] {
+  background: var(--live);
+  color: var(--pixel-ink);
+  font-weight: 600;
+  box-shadow: var(--pixel-shadow-sm);
+}
+[data-theme="pixel"] .nav-item[aria-current="page"]::after { content: none; }
+
+/* 顶栏:面板色 + 2px 硬下边 */
+[data-theme="pixel"] .app-topbar {
+  background: var(--bg-1);
+  border-bottom: 2px solid var(--line-strong);
+}
+
+/* StatusPill → 像素徽章(文字状态保留,双编码不豁免) */
+[data-theme="pixel"] .status-pill {
+  border: 2px solid var(--line-strong);
+  border-radius: 0;
+}
+/* 状态色点 → 方块像素(尺寸/颜色钩子不动,只改形状) */
+[data-theme="pixel"] .status-pill .pill-dot {
+  border-radius: 0;
+  image-rendering: pixelated;
+}
+
+/* 调试控制条:硬边标题卡 + 手柄按键 */
+[data-theme="pixel"] .dbg-bar {
+  border: 2px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: var(--pixel-shadow);
+}
+[data-theme="pixel"] .dbg-cmd {
+  border: 2px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: var(--pixel-shadow-sm);
+  transition: none;
+}
+[data-theme="pixel"] .dbg-cmd:active {
+  transform: translate(2px, 2px);
+  box-shadow: var(--pixel-shadow-press);
+}
+/* SSE 连接点:方块像素灯 */
+[data-theme="pixel"] .dbg-conn { border-radius: 0; }
+
+/* 横幅:2px 全描边(tone 色)+ 硬像素边 */
+[data-theme="pixel"] .banner {
+  border: 2px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: var(--pixel-shadow);
+}
+[data-theme="pixel"] .banner[data-tone="warn"]    { border-color: var(--warn); }
+[data-theme="pixel"] .banner[data-tone="danger"]  { border-color: var(--danger); }
+[data-theme="pixel"] .banner[data-tone="aborted"] { border-color: var(--aborted); }
+[data-theme="pixel"] .banner[data-tone="done"],
+[data-theme="pixel"] .banner[data-tone="ok"]      { border-color: var(--ok); }
+[data-theme="pixel"] .banner[data-tone="info"]    { border-color: var(--live); }
+
+/* 结束横幅:LEVEL CLEAR 牌——双线 4px 描边 + 大写加宽字距 */
+[data-theme="pixel"] .dbg-end { border-width: 4px; border-style: double; }
+[data-theme="pixel"] .dbg-end .banner-title {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* 预算条 = HP/MP:硬边槽 + 45° 条纹填充(§3.6) */
+[data-theme="pixel"] .pb {
+  border: 2px solid var(--line-strong);
+  border-radius: 0;
+  box-shadow: var(--pixel-shadow-sm);
+}
+[data-theme="pixel"] .pb-fill {
+  border-radius: 0;
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--pixel-stripe) 0,
+    var(--pixel-stripe) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  transition: none;
+}
+
+/* 调用栈帧:地牢层数——方块行,hover 左缘 MP 蓝,当前层 warn 双夹边(checkpoint) */
+[data-theme="pixel"] .dbg-frame { border-radius: 0; transition: none; }
+[data-theme="pixel"] .dbg-frame:hover {
+  background: var(--bg-3);
+  box-shadow: inset 2px 0 0 var(--live);
+}
+[data-theme="pixel"] .dbg-frame[data-current="true"] {
+  box-shadow: inset 3px 0 0 var(--warn), inset -3px 0 0 var(--warn);
+}
+
+/* 主题切换器:硬边小卡 + 方块 swatch */
+[data-theme="pixel"] .theme-picker-btn {
+  border: 2px solid var(--line-strong);
+  border-radius: 0;
+  background: var(--bg-2);
+  box-shadow: var(--pixel-shadow-sm);
+}
+[data-theme="pixel"] .theme-picker-btn:hover {
+  background: var(--bg-3);
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 rgb(0 0 0 / 0.35);
+}
+[data-theme="pixel"] .theme-picker-btn .swatch,
+[data-theme="pixel"] .theme-picker-btn .swatch i { border-radius: 0; }
+
+/* sprite8 精灵层(mascot.js 的 sprite8-* symbol;结构在 js,色彩全在此) */
+[data-theme="pixel"] .mascot-layer { display: inline-flex; align-items: center; }
+[data-theme="pixel"] .mascot-svg { image-rendering: pixelated; }
+[data-theme="pixel"] .mascot-svg .p8a { fill: var(--pixel-armor); }   /* 甲 */
+[data-theme="pixel"] .mascot-svg .p8s { fill: var(--pixel-skin); }    /* 肤 */
+[data-theme="pixel"] .mascot-svg .p8e { fill: var(--pixel-ink); stroke: var(--pixel-ink); } /* 眼·痕(path 需 fill+stroke) */
+[data-theme="pixel"] .mascot-svg .p8w { fill: var(--pixel-weapon); }  /* 武器 */
+[data-theme="pixel"] .mascot-svg .p8c { fill: var(--pixel-gold); }    /* 金币·星 */
+/* 表情状态色:甲随状态换色(契约 token,不做 --pixel-* 变体) */
+[data-theme="pixel"] .mascot-layer[data-expr="running"] .mascot-svg .p8a { fill: var(--live); }
+[data-theme="pixel"] .mascot-layer[data-expr="paused"]  .mascot-svg .p8a { fill: var(--warn); }
+[data-theme="pixel"] .mascot-layer[data-expr="done"]    .mascot-svg .p8a { fill: var(--ok); }
+[data-theme="pixel"] .mascot-layer[data-expr="failed"]  .mascot-svg .p8a { fill: var(--danger); }
+
+/* ── P2 时间线:像素梯子竖轨 + 方块行号 chips ───────────────────── */
+[data-theme="pixel"] .dbg-trace-list { position: relative; }
+[data-theme="pixel"] .dbg-trace-list::before {
+  content: "";
+  position: absolute;
+  left: 28px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--line) 0px,
+    var(--line) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  pointer-events: none;
+}
+[data-theme="pixel"] .dbg-trace-list .tr-gutter {
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  margin-right: 4px;
+  position: relative; /* 压过 ::before 竖轨 */
+  z-index: 1;
+}
+/* 行首关卡标记(双编码:ASCII 装饰,正文文字通道不变) */
+[data-theme="pixel"] .dbg-row[data-kind="run"]  .tr-body::before { content: "» "; color: var(--ok); }
+[data-theme="pixel"] .dbg-row[data-kind="llm"]  .tr-body::before { content: "» "; color: var(--sig-llm); }
+[data-theme="pixel"] .dbg-row[data-kind="tool"] .tr-body::before { content: "» "; color: var(--sig-tool); }
+
+/* ── P3 检视面板:小节标题 » + 干预区像素虚线框 ─────────────────── */
+[data-theme="pixel"] .dbg-sec-title {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+[data-theme="pixel"] .dbg-sec-title::before { content: "» "; color: var(--live); }
+[data-theme="pixel"] .dbg-intervene {
+  border: 2px dashed var(--line-strong);
+  border-radius: 0;
+  padding: var(--s2);
+}
+
+/* ── P4 入场动画(steps 跳帧) + reduced-motion 兜底 ─────────────── */
+@keyframes pixel-pop-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+[data-theme="pixel"] .card { animation: pixel-pop-in 0.24s steps(4) both; }
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="pixel"] *,
+  [data-theme="pixel"] *::before,
+  [data-theme="pixel"] *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

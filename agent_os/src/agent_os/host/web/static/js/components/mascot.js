@@ -1,19 +1,12 @@
 /* MascotLayer(DEBUG-UI-THEMES.md §2.4;DEBUG-UI-MOE.md §2 Mochi M1):
    主题声明 mascot 时才渲染的独立层——组件零分支:层自己读当前主题(currentTheme().mascot),
-   mascot 为 null 的主题(classic)下 mascotHtml 返回空串。
-   M1:纯 SVG <symbol> 精灵表 + 3 个基础表情(无动效,动效 M2):
-     running 原地小跑 / paused 立正举爪 / done 撒花静态帧。
-   视觉样式(腮红/描边/表情状态色)全部在 css/themes/moe.css,此处只出结构。 */
+   mascot 为 null 的主题(classic/terminal/blueprint/ink)下 mascotHtml 返回空串。
+   多 mascot 注册表(MASCOTS):每个 mascot = { name, exprs, sprite },
+   sprite8(pixel 主题)是 mascot 抽象的第二实例,证明层可换(§3.6)。
+   M1:纯 SVG <symbol> 精灵表 + 基础表情(无动效,动效 M2)。
+   视觉样式全部在 css/themes/<id>.css,此处只出结构。 */
 
 import { currentTheme } from "../themes.js";
-
-const EXPRS = {
-  running: { label: "运行中" },
-  paused: { label: "已暂停,轮到你了" },
-  done: { label: "完成,撒花" },
-  failed: { label: "出错啦,求抱抱" },
-  ready: { label: "准备出发", symbol: "paused" }, // 调试首页待机(复用举爪精灵)
-};
 
 /* 会话快照 → Mochi 表情(failed 差分 T1.3 哭脸;aborted/待机暂不映射 → 不渲染) */
 export function mascotStateFor(doc, endStatus = null) {
@@ -87,16 +80,98 @@ const MOCHI_SPRITE =
   `</symbol>` +
   `</svg>`;
 
-/* 渲染 mascot 层:非 mascot 主题 / 未映射状态 → 空串(层整体消失) */
+/* sprite8 精灵表(pixel 主题;8-bit 小勇者,2px 像素块):
+   .p8a 甲/.p8s 肤/.p8e 眼·痕/.p8w 武器/.p8c 金币·星;色彩全在 pixel.css。 */
+const SPRITE8_SPRITE =
+  `<svg class="mascot-sprite" width="0" height="0" style="position:absolute" aria-hidden="true">` +
+  // running:前进——头+甲盔+甲身,双腿前后叉开,持剑手前伸
+  `<symbol id="sprite8-running" viewBox="0 0 32 32">` +
+  `<rect class="p8a" x="12" y="2" width="8" height="3"/>` +
+  `<rect class="p8s" x="13" y="5" width="6" height="5"/>` +
+  `<rect class="p8e" x="14" y="6" width="2" height="2"/>` +
+  `<rect class="p8e" x="18" y="6" width="2" height="2"/>` +
+  `<rect class="p8a" x="13" y="10" width="6" height="8"/>` +
+  `<rect class="p8a" x="10" y="18" width="3" height="6"/>` +
+  `<rect class="p8a" x="19" y="18" width="3" height="6"/>` +
+  `<rect class="p8s" x="19" y="11" width="5" height="3"/>` +
+  `<rect class="p8w" x="24" y="8" width="2" height="7"/>` +
+  `</symbol>` +
+  // paused:立正举剑——双腿并拢,右臂上举,剑朝天
+  `<symbol id="sprite8-paused" viewBox="0 0 32 32">` +
+  `<rect class="p8a" x="12" y="4" width="8" height="3"/>` +
+  `<rect class="p8s" x="13" y="7" width="6" height="5"/>` +
+  `<rect class="p8e" x="14" y="8" width="2" height="2"/>` +
+  `<rect class="p8e" x="18" y="8" width="2" height="2"/>` +
+  `<rect class="p8a" x="13" y="12" width="6" height="8"/>` +
+  `<rect class="p8a" x="13" y="20" width="2" height="6"/>` +
+  `<rect class="p8a" x="17" y="20" width="2" height="6"/>` +
+  `<rect class="p8s" x="19" y="8" width="3" height="5"/>` +
+  `<rect class="p8w" x="21" y="1" width="2" height="8"/>` +
+  `</symbol>` +
+  // done:胜利跳——整体上移,双腿收起,头顶金币星
+  `<symbol id="sprite8-done" viewBox="0 0 32 32">` +
+  `<rect class="p8c" x="15" y="1" width="2" height="2"/>` +
+  `<rect class="p8c" x="13" y="3" width="6" height="2"/>` +
+  `<rect class="p8c" x="15" y="5" width="2" height="2"/>` +
+  `<rect class="p8a" x="12" y="7" width="8" height="3"/>` +
+  `<rect class="p8s" x="13" y="10" width="6" height="5"/>` +
+  `<rect class="p8e" x="14" y="11" width="2" height="2"/>` +
+  `<rect class="p8e" x="18" y="11" width="2" height="2"/>` +
+  `<rect class="p8a" x="13" y="15" width="6" height="8"/>` +
+  `<rect class="p8a" x="12" y="23" width="3" height="3"/>` +
+  `<rect class="p8a" x="17" y="23" width="3" height="3"/>` +
+  `<rect class="p8s" x="8" y="13" width="4" height="3"/>` +
+  `<rect class="p8s" x="20" y="13" width="4" height="3"/>` +
+  `</symbol>` +
+  // failed:摔倒——甲身横躺,头侧放,X 形双眼,头上冒金星
+  `<symbol id="sprite8-failed" viewBox="0 0 32 32">` +
+  `<rect class="p8a" x="12" y="20" width="14" height="6"/>` +
+  `<rect class="p8s" x="5" y="18" width="6" height="6"/>` +
+  `<path class="p8e" d="M6.5 19.5l3 3M9.5 19.5l-3 3" fill="none" stroke-width="1.2"/>` +
+  `<rect class="p8c" x="5" y="14" width="2" height="2"/>` +
+  `<rect class="p8c" x="9" y="12" width="2" height="2"/>` +
+  `</symbol>` +
+  `</svg>`;
+
+/* mascot 注册表:mochi(萌系团子)/ sprite8(8-bit 勇者);exprs key 全集一致
+   (running/paused/done/failed/ready),ready 经 symbol 复用 paused 精灵。 */
+const MASCOTS = {
+  mochi: {
+    name: "Mochi",
+    exprs: {
+      running: { label: "运行中" },
+      paused: { label: "已暂停,轮到你了" },
+      done: { label: "完成,撒花" },
+      failed: { label: "出错啦,求抱抱" },
+      ready: { label: "准备出发", symbol: "paused" }, // 调试首页待机(复用举爪精灵)
+    },
+    sprite: MOCHI_SPRITE,
+  },
+  sprite8: {
+    name: "Sprite8",
+    exprs: {
+      running: { label: "前进!" },
+      paused: { label: "待命,轮到你操作" },
+      done: { label: "LEVEL CLEAR!" },
+      failed: { label: "摔倒了…GAME OVER" },
+      ready: { label: "PRESS ▶", symbol: "paused" }, // 调试首页待机(复用举剑精灵)
+    },
+    sprite: SPRITE8_SPRITE,
+  },
+};
+
+/* 渲染 mascot 层:主题未声明 mascot / mascot 未知 / 未映射状态 → 空串(层整体消失) */
 export function mascotHtml(expr) {
   const theme = currentTheme();
-  if (!theme?.mascot || !expr || !EXPRS[expr]) return "";
-  const symbol = EXPRS[expr].symbol ?? expr; // ready 等复用既有精灵
+  const m = theme?.mascot ? MASCOTS[theme.mascot] : null;
+  if (!m || !expr || !m.exprs[expr]) return "";
+  const e = m.exprs[expr];
+  const symbol = e.symbol ?? expr; // ready 等复用既有精灵
   return (
     `<span class="mascot-layer" data-mascot="${theme.mascot}" data-expr="${expr}"` +
-    ` role="img" aria-label="Mochi:${EXPRS[expr].label}">` +
-    MOCHI_SPRITE +
+    ` role="img" aria-label="${m.name}:${e.label}">` +
+    m.sprite +
     `<svg class="mascot-svg" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">` +
-    `<use href="#mochi-${symbol}"></use></svg></span>`
+    `<use href="#${theme.mascot}-${symbol}"></use></svg></span>`
   );
 }

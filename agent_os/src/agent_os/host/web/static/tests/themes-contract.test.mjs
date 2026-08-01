@@ -1,12 +1,15 @@
-/* 主题契约测试骨架(主题系统 T1,DEBUG-UI-THEMES.md §4;本期做 1/2/3):
+/* 主题契约测试骨架(主题系统 T1,DEBUG-UI-THEMES.md §4;本期做 1/2/3/4/6):
    遍历注册表逐主题断言——
    1) token 完整性:契约清单(CONTRACT_TOKENS,§2.1)每个变量在主题的
       [data-theme="<id>"] 规则下都有定义且非空(直接解析 css 源,不依赖浏览器);
    2) 对比度:状态色/文本色关键配对 ≥ 4.5:1(WCAG AA;程序化相对亮度计算,
       主题作者改色即时反馈);弱化层级(fg-2/sig-frame/perm-read)≥ 3:1;
    3) 双编码:渲染 fixture 后,状态元素同时带颜色钩子(data-status/data-on)与
-      文字/图标(label 文本/●/▶),不依赖色觉单通道。
-   (4 文案键 / 5 动效降级 / 6 组件无分支 在 T2 补全。)
+      文字/图标(label 文本/●/▶),不依赖色觉单通道;
+   4) 文案键完整:copy 表覆盖 COPY_KEYS 全量(T2 补全);
+   6) 组件无分支:静态扫描 js/components,禁止出现主题 id 字符串/data-theme 属性
+      (差异必须走契约层;T2 补全)。
+   (5 动效降级待动效播放层落地后补。)
    运行:node static/tests/themes-contract.test.mjs */
 
 import assert from "node:assert/strict";
@@ -31,7 +34,7 @@ globalThis.localStorage = {
   removeItem: () => {},
 };
 
-const { CONTRACT_TOKENS, listThemes } = await import("../js/themes.js");
+const { CONTRACT_TOKENS, COPY_KEYS, listThemes } = await import("../js/themes.js");
 const { statusPill } = await import("../js/components/status-pill.js");
 const { renderDebugTrace } = await import("../js/components/debug-view.js");
 
@@ -130,6 +133,32 @@ for (const theme of themes) {
   assert.match(
     traceHtml, /<span class="tr-mark" aria-hidden="true">▶<\/span>/,
     `[${theme.id}] 暂停行缺图标通道(▶)`);
+
+  /* ══ 4. 文案键完整(§2.2:copy 表覆盖 COPY_KEYS 全量)══ */
+  const missingKeys = COPY_KEYS.filter((k) => !(k in (theme.copy ?? {})));
+  assert.deepEqual(missingKeys, [], `[${theme.id}] 文案 key 缺失:${missingKeys.join(", ")}`);
+}
+
+/* ══ 6. 组件无分支(§2:差异必须走契约层;静态扫描 js/components)══
+   禁:主题 id 字符串字面量、data-theme 属性、按主题 id 的比较。
+   例外:"terminal" 字面量同时是 emptyBlock 的图标名,故只禁其比较形态。 */
+{
+  const { readdirSync } = await import("node:fs");
+  const componentsDir = path.join(staticDir, "js/components");
+  const themeIds = listThemes().map((t) => t.id);
+  const quoted = themeIds.filter((id) => id !== "terminal").join("|");
+  const FORBIDDEN = [
+    { re: /\bdata-theme\b/, desc: "data-theme 属性" },
+    { re: new RegExp(`\\btheme\\s*===?\\s*["'](${themeIds.join("|")})["']`), desc: "按主题 id 比较" },
+    { re: new RegExp(`["'](${quoted})["']`), desc: "主题 id 字符串字面量" },
+  ];
+  for (const file of readdirSync(componentsDir)) {
+    if (!file.endsWith(".js")) continue;
+    const src = readFileSync(path.join(componentsDir, file), "utf8");
+    for (const { re, desc } of FORBIDDEN) {
+      assert.ok(!re.test(src), `组件无分支:${file} 出现 ${desc}`);
+    }
+  }
 }
 
 console.log("themes-contract.test.mjs: all assertions passed");

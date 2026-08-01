@@ -41,6 +41,10 @@ doc.documentElement = new StubEl("html");
 doc.styleSheets = [
   sheetStub("classic", "css/themes/classic.css"),
   sheetStub("moe", "css/themes/moe.css"),
+  sheetStub("terminal", "css/themes/terminal.css"),
+  sheetStub("blueprint", "css/themes/blueprint.css"),
+  sheetStub("ink", "css/themes/ink.css"),
+  sheetStub("pixel", "css/themes/pixel.css"),
 ];
 doc.querySelector = (sel) => doc.body.querySelector(sel);
 const toastStack = new StubEl("div");
@@ -129,9 +133,9 @@ const {
 /* ══ 1. 注册表:声明完整 + css 已加载 + 契约完整才注册 ═══════════ */
 {
   const list = listThemes();
-  assert.equal(list.length, 2, "classic + moe 两主题注册");
+  assert.equal(list.length, 6, "六主题注册(classic/moe + T2/T3 四主题)");
   const byId = Object.fromEntries(list.map((t) => [t.id, t]));
-  for (const id of ["classic", "moe"]) {
+  for (const id of ["classic", "moe", "terminal", "blueprint", "ink", "pixel"]) {
     const t = byId[id];
     assert.ok(t, `主题 ${id} 已注册`);
     for (const f of ["id", "name", "css", "copy", "motion", "mascot", "scope"]) {
@@ -156,7 +160,7 @@ const {
   });
   assert.equal(ok, false, "css 未加载的主题不注册");
   assert.ok(warns.some((w) => w.includes("ghost") && w.includes("未加载")), "warn:css 未加载");
-  assert.equal(listThemes().length, 2, "注册表未被污染");
+  assert.equal(listThemes().length, 6, "注册表未被污染");
 }
 
 /* ══ 2. 启动解析:URL > localStorage;URL 命中持久化 ═══════════════ */
@@ -204,7 +208,7 @@ const {
   assert.ok(!historyCalls.at(-1).includes("theme="), "classic 为默认,URL 省略 theme 参数");
 
   warns.length = 0;
-  applyTheme("pixel"); // T2 主题,未注册
+  applyTheme("hologram"); // 不存在的主题 id
   assert.equal(doc.documentElement.dataset.theme, "classic", "未知主题回落 classic");
   assert.ok(warns.some((w) => w.includes("未知主题")), "warn:未知主题");
   doc.body.dataset.route = "runs";
@@ -222,7 +226,7 @@ const {
   assert.ok(btn && menu, "切换器按钮 + 菜单渲染");
   assert.equal(menu.hidden, true, "菜单默认收起");
   const items = menu.querySelectorAll(".theme-item");
-  assert.equal(items.length, 2, "两个主题项");
+  assert.equal(items.length, 6, "六个主题项");
   for (const item of items) {
     const dots = item.querySelector(".swatch").children;
     assert.equal(dots.length, 3, "每项三色 swatch");
@@ -387,6 +391,52 @@ const {
   assert.match(moeCss, /@keyframes moe-pop-in/, "卡片入场动画");
   assert.ok(moeCss.includes("prefers-reduced-motion"), "reduced-motion 兜底");
   assert.ok(!classicCss.includes("moe-pop-in"), "classic 无入场动画");
+}
+
+/* ══ 11. T2/T3 四主题:注册、文案腔调、mascot 抽象第二实例(§3.3-3.6)══ */
+{
+  assert.ok(themes.listThemes().length >= 6, "注册表六主题齐全");
+  const byId = Object.fromEntries(themes.listThemes().map((t) => [t.id, t]));
+  for (const id of ["terminal", "blueprint", "ink", "pixel"]) {
+    assert.ok(byId[id], `主题 ${id} 已注册`);
+    assert.equal(byId[id].scope, "app-wide", `${id} 同 moe 的 T1.1 依据全站开放`);
+  }
+  assert.equal(byId.terminal.mascot, null, "terminal 无 mascot(气场不需要)");
+  assert.equal(byId.blueprint.mascot, null, "blueprint 无 mascot");
+  assert.equal(byId.ink.mascot, null, "ink 无 mascot(禅不需要团子)");
+  assert.equal(byId.pixel.mascot, "sprite8", "pixel mascot = sprite8");
+
+  /* 各主题文案腔调(技术原文并列保留) */
+  applyTheme("terminal");
+  assert.equal(themes.copy("status.done"), "[done]", "terminal shell 腔");
+  assert.match(themes.copy("status.paused"), /\[halted\]\(paused\)/, "terminal 技术原文并列");
+  assert.equal(mascotHtml("running"), "", "terminal:mascot 层不渲染");
+  applyTheme("blueprint");
+  assert.equal(themes.copy("status.done"), "APPROVED(done)", "blueprint 图签腔");
+  assert.equal(themes.copy("debug.end.title"), "run 已归档", "blueprint 归档文案");
+  applyTheme("ink");
+  assert.equal(themes.copy("status.paused"), "驻(paused)", "ink 文言腔 + 原文并列");
+  assert.equal(themes.copy("debug.end.title"), "墨尽", "ink 结束文案");
+  applyTheme("pixel");
+  assert.equal(themes.copy("status.done"), "CLEAR!", "pixel 游戏腔");
+  assert.equal(themes.copy("debug.end.title"), "QUEST END", "pixel 结束文案");
+
+  /* sprite8:mascot 抽象第二实例——同一 MascotLayer 接口,另一套精灵表 */
+  const pRun = mascotHtml("running");
+  assert.match(pRun, /data-mascot="sprite8" data-expr="running"/, "pixel:sprite8 层渲染");
+  assert.match(pRun, /<symbol id="sprite8-running"/, "sprite8 精灵表:running");
+  assert.match(pRun, /<symbol id="sprite8-paused"/, "sprite8 精灵表:paused");
+  assert.match(pRun, /<symbol id="sprite8-done"/, "sprite8 精灵表:done");
+  assert.match(pRun, /<symbol id="sprite8-failed"/, "sprite8 精灵表:failed");
+  assert.match(pRun, /href="#sprite8-running"/, "引用 sprite8 running 精灵");
+  assert.match(pRun, /role="img" aria-label="Sprite8:/, "sprite8 aria 双编码");
+  const pReady = mascotHtml("ready");
+  assert.match(pReady, /href="#sprite8-paused"/, "sprite8 ready 复用 paused 精灵");
+  /* 表情映射与 mochi 共用同一 mascotStateFor(层接口一致) */
+  assert.equal(mascotStateFor({ state: "detached" }, "failed"), "failed", "sprite8 共用表情映射");
+
+  applyTheme("classic");
+  doc.body.dataset.route = "runs";
 }
 
 console.warn = realWarn;

@@ -13,6 +13,10 @@
 
 import { COPY as classicCopy } from "./copy/classic.js";
 import { COPY as moeCopy } from "./copy/moe.js";
+import { COPY as terminalCopy } from "./copy/terminal.js";
+import { COPY as blueprintCopy } from "./copy/blueprint.js";
+import { COPY as inkCopy } from "./copy/ink.js";
+import { COPY as pixelCopy } from "./copy/pixel.js";
 
 export const DEFAULT_THEME = "classic";
 export const THEME_STORAGE_KEY = "agent-os.theme";
@@ -59,6 +63,43 @@ const REGISTRY = [
     motion: { "bp-hit": "subtle", step: "subtle", resume: "subtle", "run-done": "subtle", intervene: "subtle" },
     mascot: "mochi",
     scope: "app-wide", // T1.1 全站开放(组件零分支:全站消费同一语义 token,观感走查随用随修)
+  },
+  /* T2/T3 四主题(§3.3-3.6):同 moe 的 T1.1 依据,token 全集过契约即 app-wide */
+  {
+    id: "terminal",
+    name: "Terminal · 终端极客",
+    css: "css/themes/terminal.css",
+    copy: terminalCopy,
+    motion: { "bp-hit": "subtle", step: "subtle", resume: "subtle", "run-done": "subtle", intervene: "subtle" },
+    mascot: null,
+    scope: "app-wide",
+  },
+  {
+    id: "blueprint",
+    name: "Blueprint · 蓝图",
+    css: "css/themes/blueprint.css",
+    copy: blueprintCopy,
+    motion: { "bp-hit": "subtle", step: "subtle", resume: "subtle", "run-done": "subtle", intervene: "subtle" },
+    mascot: null,
+    scope: "app-wide",
+  },
+  {
+    id: "ink",
+    name: "Ink · 水墨",
+    css: "css/themes/ink.css",
+    copy: inkCopy,
+    motion: { "bp-hit": "subtle", step: "subtle", resume: "subtle", "run-done": "subtle", intervene: "subtle" },
+    mascot: null,
+    scope: "app-wide",
+  },
+  {
+    id: "pixel",
+    name: "Pixel · 像素复古",
+    css: "css/themes/pixel.css",
+    copy: pixelCopy,
+    motion: { "bp-hit": "subtle", step: "subtle", resume: "subtle", "run-done": "subtle", intervene: "subtle" },
+    mascot: "sprite8", // mascot 抽象第二实例(§3.6:与 mochi 共用 MascotLayer 接口)
+    scope: "app-wide",
   },
 ];
 

@@ -132,9 +132,14 @@ null 主题下该层不渲染,组件无任何分支判断。
 | 期 | 内容 |
 |---|---|
 | T1(随 P4) | 契约 + 注册表 + 切换器 + `classic` 抽离(行为零变化)+ `moe` M1 + 契约测试骨架(§4 的 1/2/3) |
-| T2 | `terminal` + `pixel`(一动一静,验证动效档案与 mascot 抽象)+ 契约测试补全(4/5/6) |
-| T3 | `blueprint` + `ink`(两个克制系,验证"无 mascot 主题"路径)+ 文案表全量 |
+| T2 ✅ | `terminal` + `pixel`(一动一静,验证动效档案与 mascot 抽象)+ 契约测试补 4/6(文案键/组件无分支) |
+| T3 ✅ | `blueprint` + `ink`(两个克制系,验证"无 mascot 主题"路径) |
 | T4(可选) | 推广到 Runs/Skills/Tools 页(每页逐主题验收后才开放 `scope`) |
+
+> 现状(T2/T3 已交付):六主题全部 `scope: "app-wide"`,依据同 T1.1(组件零分支 + 契约
+> 全集校验)。`pixel` 的 `sprite8` 是 mascot 抽象的第二实例,与 `mochi` 共用 MascotLayer
+> 接口(mascot.js 的 MASCOTS 注册表)。契约测试 5(动效降级)待动效播放层落地后补;
+> terminal 的 amber 变体按 §6 不繁殖,v1 只有磷光绿。
 
 每个主题的 `scope` 字段声明它验收过哪些页面;未验收页面强制回落 `classic`——**宁可回落,不半成品**。
 

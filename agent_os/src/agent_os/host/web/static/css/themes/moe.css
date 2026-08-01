@@ -322,3 +322,9 @@
     transition: none !important;
   }
 }
+
+/* ── 背景图案:散落樱花(大小两株五瓣花平铺,data-URI SVG, pastel 低饱和)── */
+[data-theme="moe"] body {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Cg fill='%23ffc9d6' fill-opacity='.45'%3E%3Ccircle cx='48' cy='42' r='7'/%3E%3Ccircle cx='57' cy='49' r='7'/%3E%3Ccircle cx='53' cy='59' r='7'/%3E%3Ccircle cx='43' cy='59' r='7'/%3E%3Ccircle cx='39' cy='49' r='7'/%3E%3C/g%3E%3Ccircle cx='48' cy='50' r='3.5' fill='%23ff9eb0' fill-opacity='.55'/%3E%3Cg fill='%23ffd9e2' fill-opacity='.5'%3E%3Ccircle cx='144' cy='138' r='5'/%3E%3Ccircle cx='150' cy='143' r='5'/%3E%3Ccircle cx='147' cy='150' r='5'/%3E%3Ccircle cx='141' cy='150' r='5'/%3E%3Ccircle cx='138' cy='143' r='5'/%3E%3C/g%3E%3Ccircle cx='144' cy='144' r='2.5' fill='%23ffb3c2' fill-opacity='.6'/%3E%3C/svg%3E");
+}

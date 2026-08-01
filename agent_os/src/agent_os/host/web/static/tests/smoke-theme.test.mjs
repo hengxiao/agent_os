@@ -439,5 +439,29 @@ const {
   doc.body.dataset.route = "runs";
 }
 
+/* ══ 12. 主题背景图案(每主题 body 一层符合气质的平铺纹理;css 源断言)══ */
+{
+  const BG_MOTIFS = {
+    classic: "radial-gradient(circle, rgb(230 235 242",   // 工程点阵
+    moe: "data:image/svg+xml",                            // 散落樱花
+    terminal: "12px 12px",                                // 磷光点阵(扫描线之上)
+    blueprint: "120px 120px",                             // 120px 主格线 + 十字规线
+    ink: "feTurbulence",                                  // 宣纸噪点
+    pixel: "data:image/svg+xml",                          // 8-bit 星空
+  };
+  for (const [id, motif] of Object.entries(BG_MOTIFS)) {
+    const css = readFileSync(path.join(staticDir, `css/themes/${id}.css`), "utf8");
+    const bodyRule = new RegExp(`\\[data-theme="${id}"\\] body\\s*\\{[^}]*background-image`);
+    assert.match(css, bodyRule, `[${id}] body 背景图案规则存在`);
+    const block = css.match(new RegExp(`\\[data-theme="${id}"\\] body\\s*\\{([^}]*)\\}`));
+    assert.ok(block && block[1].includes(motif), `[${id}] 背景图案母题(${motif})`);
+  }
+  /* moe 樱花与 pixel 星空都是 SVG 母题,再分别确认其特征色值 */
+  const moeCss = readFileSync(path.join(staticDir, "css/themes/moe.css"), "utf8");
+  assert.ok(moeCss.includes("%23ffc9d6"), "moe 樱花花瓣色(浅粉)");
+  const pixelCss = readFileSync(path.join(staticDir, "css/themes/pixel.css"), "utf8");
+  assert.ok(pixelCss.includes("%234ecdf8"), "pixel 星空 MP 蓝星");
+}
+
 console.warn = realWarn;
 console.log("smoke-theme.test.mjs: all assertions passed");

@@ -50,3 +50,9 @@
   --s1: 4px; --s1-5: 6px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
   --r-sm: 4px; --r-conn: 6px; --r-md: 8px; --r-lg: 12px; /* r-conn:树连接线拐角 */
 }
+
+/* ── 背景图案:工程点阵(严肃工程的"图纸感",1px 点 / 28px 网,3% 白)── */
+[data-theme="classic"] body {
+  background-image: radial-gradient(circle, rgb(230 235 242 / 0.03) 1px, transparent 1.5px);
+  background-size: 28px 28px;
+}

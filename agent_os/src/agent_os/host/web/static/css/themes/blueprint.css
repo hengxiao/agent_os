@@ -72,6 +72,7 @@
 /* ── 内部调色板(装饰层专用:网格/图框/图章,不作文本色)── */
 [data-theme="blueprint"] {
   --blueprint-grid:    rgba(255, 255, 255, 0.05);  /* 24px 方格网线 */
+  --blueprint-grid-major: rgba(255, 255, 255, 0.10); /* 120px 主格线 */
   --blueprint-accent:  #2f6fd0;   /* 主按钮晒图蓝(白字 4.88:1) */
   --blueprint-accent-hover: #3d82ec;
   --blueprint-ink:     #ffada0;   /* 图章/修订云线红(= --danger) */
@@ -80,12 +81,15 @@
 /* ── 图框化组件样式(§3.4;只加 override,不改组件)─────────────
    装饰全部消费契约 token 或 --blueprint-*;真实类名挂钩(app.css/dbg-*)。 */
 
-/* 图纸底:24px 方格网(CSS gradient 画线,5% 白) */
+/* 图纸底:24px 细方格网 + 120px 主格线 + 主格交点十字规线(制图坐标网) */
 [data-theme="blueprint"] body {
   background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cpath d='M60 54v12M54 60h12' stroke='%23ffffff' stroke-opacity='.09' stroke-width='1'/%3E%3C/svg%3E"),
+    linear-gradient(var(--blueprint-grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--blueprint-grid-major) 1px, transparent 1px),
     linear-gradient(var(--blueprint-grid) 1px, transparent 1px),
     linear-gradient(90deg, var(--blueprint-grid) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-size: 120px 120px, 120px 120px, 120px 120px, 24px 24px, 24px 24px;
 }
 
 /* 卡片/调试控制条:虚线"图框"(制图边框) */

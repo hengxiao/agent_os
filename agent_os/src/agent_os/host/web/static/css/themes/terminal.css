@@ -75,15 +75,18 @@
 
 /* ── 装饰层(只加 override,不改组件;全部消费契约 token)───────── */
 
-/* CRT 扫描线:body 全屏叠加 repeating-linear-gradient,~2% 透明度 */
+/* CRT 扫描线 + 磷光点阵:body 全屏叠加,扫描线 ~2% / 点阵 4.5% 透明度 */
 [data-theme="terminal"] body {
-  background-image: repeating-linear-gradient(
-    0deg,
-    var(--terminal-scanline) 0px,
-    var(--terminal-scanline) 1px,
-    transparent 1px,
-    transparent 3px
-  );
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      var(--terminal-scanline) 0px,
+      var(--terminal-scanline) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    radial-gradient(circle, rgba(51, 255, 102, 0.045) 1px, transparent 1.5px);
+  background-size: auto, 12px 12px;
 }
 
 /* 卡片:double 边框 + 极轻磷光晕(终端窗口感) */

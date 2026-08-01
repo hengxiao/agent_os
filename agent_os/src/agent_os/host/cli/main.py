@@ -28,7 +28,7 @@ from typing import Any
 
 import yaml
 
-from agent_os.api.v1 import Question
+from agent_os.api.v1 import Question, cli_principal
 from agent_os.host.shared.artifacts import (
     execute_resume,
     execute_run,
@@ -158,7 +158,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 4
     try:
         record = execute_run(
-            kernel, args.skill, run_input, artifacts_root=Path(args.artifacts), host="cli"
+            kernel, args.skill, run_input, artifacts_root=Path(args.artifacts), host="cli",
+            # 数据层身份(DATA-AUTHZ.md §2.2):CLI 本机用户即身份
+            principal=cli_principal(),
         )
     except SkillLoadError as e:
         # run 未开始的根帧输入校验/技能寻址错(execute_run 上抛)→ 2(§3.3)
@@ -286,6 +288,8 @@ def _cmd_replay(args: argparse.Namespace) -> int:
             meta.get("input") or {},
             artifacts_root=Path(args.artifacts),
             host="cli",
+            # replay 同样是本机用户发起(§2.2);原 run 身份不进 replay(D3 派生链再议)
+            principal=cli_principal(),
         )
     except SkillLoadError as e:
         print(f"校验错误: {e}", file=sys.stderr)

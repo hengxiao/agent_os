@@ -203,8 +203,12 @@ class Kernel:
     # §13 生命周期入口
     # ------------------------------------------------------------------
 
-    async def run(self, skill: str, input: dict[str, Any]) -> Any:
-        """§13 生命周期入口:解析根技能 → 构建根帧 → 跑帧树 → usage 汇总返回。"""
+    async def run(self, skill: str, input: dict[str, Any], principal: Any = None) -> Any:
+        """§13 生命周期入口:解析根技能 → 构建根帧 → 跑帧树 → usage 汇总返回。
+
+        ``principal``(DATA-AUTHZ.md §2.2):宿主认证后的调用方身份,存根帧并
+        由子帧原样继承;缺省 None = v1 单用户语义(数据层不启用拦截)。
+        """
         skill_obj = self.skills.get(SkillRef(name=skill))
         manifest = skill_obj.manifest
         if manifest.inputs:
@@ -221,6 +225,7 @@ class Kernel:
             skill=skill_obj.ref,
             input=dict(input),
             depth=1,
+            principal=principal,
             context=FrameContext(
                 messages=[
                     Message(role=Role.USER, content=json.dumps(input), source=Source.PARENT_INPUT)

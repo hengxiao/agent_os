@@ -99,3 +99,7 @@ class SkillFrame:
     #: 升权判定比较调用帧与被调 skill 的档,故必须随帧保存
     #: (checkpoint 序列化保证 resume 后判定一致)
     tier: str = "none"
+    #: 数据层身份(DATA-AUTHZ.md §2.3;additive):run 启动者的 Principal,子帧/升权帧
+    #: 原样继承(身份不变量——升权改的是副作用许可,不是身份);None = v1 单用户语义
+    #: (宿主未注入身份,数据层不启用拦截)
+    principal: Any = None

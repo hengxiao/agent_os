@@ -101,6 +101,7 @@ from agent_os.api.v1 import (
     Mode,
     RunControl,
     Signal,
+    web_single_user_principal,
 )
 from agent_os.host.shared.artifacts import execute_resume, execute_run
 from agent_os.host.shared.replay import build_mock_script, replace_providers
@@ -426,6 +427,18 @@ class RunManager:
                 cfg, extra_sidecars=[_StopBridge()], supervisor_handler=handler
             )
 
+    def _principal(self) -> Any:
+        """数据层身份(DATA-AUTHZ.md §2.2):Web 单用户模式 = 部署者。
+
+        登录名取宿主配置 ``[web].user``(缺省本机用户);配置读取失败不拖垮 run
+        (退化为本机用户)。多用户会话映射(api-token / 逐会话身份)属 D3。
+        """
+        try:
+            login = (load_config(self._config_path).get("web") or {}).get("user")
+        except Exception:  # noqa: BLE001 — 身份构造失败退化为缺省,不阻断 run
+            login = None
+        return web_single_user_principal(login)
+
     async def start_run(
         self,
         skill: str,
@@ -506,7 +519,8 @@ class RunManager:
                     kernel.signals.subscribe(RUN_STARTED, _cap_loop)
                 kernel.signals.subscribe(RUN_STARTED, _cap)
                 record = execute_run(
-                    kernel, skill, input, artifacts_root=self._artifacts_root, host="web"
+                    kernel, skill, input, artifacts_root=self._artifacts_root, host="web",
+                    principal=self._principal(),  # 数据层身份(DATA-AUTHZ.md §2.2)
                 )
                 record["skill_set"] = tag
                 self._tag_artifacts(record["run_id"], tag)

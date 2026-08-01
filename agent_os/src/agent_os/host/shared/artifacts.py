@@ -94,6 +94,7 @@ def execute_run(
     *,
     artifacts_root: Path,
     host: str,
+    principal: Any = None,
 ) -> dict[str, Any]:
     """跑一个 run 并落产物(§2.2),返回 RunRecord dict(§3.3)。
 
@@ -102,6 +103,8 @@ def execute_run(
     (error = ``"Type: message"``)。run 未开始(无 run_id)的异常原样上抛。
     ``RunConfig.checkpoint_interval > 0`` 时挂载周期 checkpoint 订阅者
     (Debugger P5;覆盖写"最近现场",kernel/checkpoint.py)。
+    ``principal``(DATA-AUTHZ.md §2.2):宿主认证后的调用方身份,透传给
+    ``Kernel.run``;缺省 None = v1 单用户语义。
     """
     started: list[str] = []
 
@@ -116,7 +119,7 @@ def execute_run(
     started_at = datetime.now(UTC).isoformat()
     status, result, error = STATUS_DONE, None, None
     try:
-        result = asyncio.run(kernel.run(skill, input))
+        result = asyncio.run(kernel.run(skill, input, principal=principal))
     except RunAborted as e:
         status, error = STATUS_ABORTED, f"{type(e).__name__}: {e}"
     except Exception as e:  # 宿主边界故意兜底:run 失败归 RunRecord,不炸宿主(§3.3)

@@ -261,6 +261,9 @@ class LocalFileSkillRegistry:
             parent_id=parent.frame_id,
             input=dict(call.args),
             depth=parent.depth + 1,
+            # 身份不变量(DATA-AUTHZ.md §2.3):子帧原样继承父帧 principal——
+            # skill 嵌套/升权/code 沙箱都不改变身份(升权改的是副作用许可)
+            principal=parent.principal,
             context=FrameContext(
                 messages=[
                     Message(

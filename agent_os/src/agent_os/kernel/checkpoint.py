@@ -55,6 +55,7 @@ from agent_os.api.v1 import (
     FrameStatus,
     Grant,
     Message,
+    Principal,
     Role,
     RunStatus,
     Signal,
@@ -151,6 +152,8 @@ def dump_checkpoint(kernel: Any, run_id: str, path: str) -> None:
                 "error": str(f.error) if f.error is not None else None,
                 "call_id": f.call_id,
                 "tier": f.tier,  # 帧信任档(ESCALATION.md §2.2;additive,schema v1 不变)
+                # 数据层身份(DATA-AUTHZ.md §2.3;additive):随帧落盘,resume 身份不变
+                "principal": dataclasses.asdict(f.principal) if f.principal is not None else None,
                 "usage": _usage_to_dict(f.usage),
                 "context": {
                     "messages": [_message_to_dict(m) for m in f.context.messages],
@@ -220,12 +223,15 @@ class PeriodicCheckpointer:
 
 
 def _frame_from_dict(run_id: str, data: dict[str, Any]) -> SkillFrame:
+    principal_raw = data.get("principal")
     return SkillFrame(
         frame_id=data["frame_id"],
         run_id=run_id,
         skill=SkillRef.parse(data["skill"]),
         parent_id=data.get("parent_id"),
         input=data.get("input", {}),
+        # 旧 checkpoint 无此字段:None = v1 单用户语义(不启用拦截,不放大身份)
+        principal=Principal(**principal_raw) if principal_raw else None,
         context=FrameContext(
             messages=[_message_from_dict(m) for m in data["context"]["messages"]],
             working=data["context"].get("working", {}),

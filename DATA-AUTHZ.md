@@ -156,7 +156,24 @@ run 详情页可按 principal 过滤:谁、读了哪些域、被拒几次。
 
 | 期 | 内容 |
 |---|---|
-| D1 | Principal 模型 + CLI/单用户 Web 来源 + fs 域(复用 resolve_work_path 边界)+ dispatch 强制点 + 默认拒绝 |
+| D1 ✅ | Principal 模型 + CLI/单用户 Web 来源 + fs 域(复用 resolve_work_path 边界)+ dispatch 强制点 + 默认拒绝。已实现:`api/v1/principal.py`、`SkillFrame.principal` 随帧继承与 checkpoint 往返、dispatch 数据闸(schema 后/权限前)、`ToolSpec.data_domains` + 内置 fs 工具声明 `["fs.*"]`、`register_fs_domain` 宿主 API;759 测试全绿 |
+
+> 实现注(D1):
+> 1. **"未配置域按 confidential"在 D1 不生效**——配置段(`[data]`、per-subject
+>    域白名单)属 D2,D1 的兼容策略是"**未配置 = 不启用数据层拦截**":目标路径
+>    落不进任何已配置域时退化为现状 `resolve_work_path` 沙箱语义,保证既有行为
+>    零破坏。**默认拒绝只作用于已配置域**(内置默认域 `fs.workdir`=public +
+>    `register_fs_domain` 程序化注册的域);D2 配置段落地后恢复"未配置域按
+>    confidential"的原文语义。
+> 2. 存放点在**帧**(`SkillFrame.principal`)而非 RunContext:dispatch 只见帧,
+>    帧级存放天然给出"子帧/升权帧原样继承"的身份不变量(make_frame 复制),
+>    checkpoint 随帧序列化;`Kernel.run(principal=)`/`execute_run(principal=)`
+>    是宿主的注入点。
+> 3. 来源 clearance:CLI 与 Web 单用户都给 confidential——单用户 = 机器的主人,
+>    与"D1 默认不拦截"的单用户语义一致;拦截只对显式构造的低 clearance 身份
+>    (测试/嵌入宿主)生效。`[web].user` 提供部署者登录名,缺省 `user:$USER`。
+> 4. `allow()` 的第二判据(per-subject 域白名单)与 `ToolContext.credentials`
+>    判据回写依赖配置段,属 D2;`action` 参数为协议面占位,D1 不参与判定。
 | D2 | 域配置段 + db/net 工具声明 + 审计信号 + 拒绝面不泄内容检查 |
 | D3 | 派生链最弱一环 + EscalationRequest 数据面展示 + 多用户 Web 会话映射 |
 

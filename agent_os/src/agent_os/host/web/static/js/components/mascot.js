@@ -11,14 +11,17 @@ const EXPRS = {
   running: { label: "运行中" },
   paused: { label: "已暂停,轮到你了" },
   done: { label: "完成,撒花" },
+  failed: { label: "出错啦,求抱抱" },
+  ready: { label: "准备出发", symbol: "paused" }, // 调试首页待机(复用举爪精灵)
 };
 
-/* 会话快照 → Mochi 表情(M1 三表情;failed/aborted/待机差分在 M2,暂不映射 → 不渲染) */
+/* 会话快照 → Mochi 表情(failed 差分 T1.3 哭脸;aborted/待机暂不映射 → 不渲染) */
 export function mascotStateFor(doc, endStatus = null) {
   const st = doc?.state;
   if (st === "running") return "running";
   if (st === "paused") return "paused";
   if (st === "detached" && endStatus === "done") return "done";
+  if (st === "detached" && endStatus === "failed") return "failed";
   return null;
 }
 
@@ -69,17 +72,31 @@ const MOCHI_SPRITE =
   `<circle class="cf1" cx="21.5" cy="6" r="1.1"/>` +
   `<circle class="cf4" cx="27" cy="6.5" r="1.1"/>` +
   `</symbol>` +
+  // failed:哭脸——皱眉闭眼(下垂弧),双颊挂泪(.mt),嘴下撇,双爪垂落
+  `<symbol id="mochi-failed" viewBox="0 0 32 32">` +
+  `<circle class="mb" cx="16" cy="17" r="10.5"/>` +
+  `<circle class="mbh" cx="10.5" cy="19.5" r="2"/>` +
+  `<circle class="mbh" cx="21.5" cy="19.5" r="2"/>` +
+  `<path class="mm" d="M10.6 15.4q1.9-1.5 3.8 0"/>` +
+  `<path class="mm" d="M17.6 15.4q1.9-1.5 3.8 0"/>` +
+  `<path class="mt" d="M11.6 17.6q-1.6 2.8 0 4.4 1.6-1.6 0-4.4z"/>` +
+  `<path class="mt" d="M20.4 17.6q-1.6 2.8 0 4.4 1.6-1.6 0-4.4z"/>` +
+  `<path class="mm" d="M13 21.6q3-2.2 6 0"/>` +
+  `<path class="mp" d="M10.5 26l-2.5 3"/>` +
+  `<path class="mp" d="M21.5 26l2.5 3"/>` +
+  `</symbol>` +
   `</svg>`;
 
 /* 渲染 mascot 层:非 mascot 主题 / 未映射状态 → 空串(层整体消失) */
 export function mascotHtml(expr) {
   const theme = currentTheme();
   if (!theme?.mascot || !expr || !EXPRS[expr]) return "";
+  const symbol = EXPRS[expr].symbol ?? expr; // ready 等复用既有精灵
   return (
     `<span class="mascot-layer" data-mascot="${theme.mascot}" data-expr="${expr}"` +
     ` role="img" aria-label="Mochi:${EXPRS[expr].label}">` +
     MOCHI_SPRITE +
     `<svg class="mascot-svg" viewBox="0 0 32 32" width="28" height="28" aria-hidden="true">` +
-    `<use href="#mochi-${expr}"></use></svg></span>`
+    `<use href="#mochi-${symbol}"></use></svg></span>`
   );
 }

@@ -257,3 +257,68 @@
 [data-theme="moe"] .mascot-layer[data-expr="running"] .mascot-svg .mb { stroke: var(--live); }
 [data-theme="moe"] .mascot-layer[data-expr="paused"] .mascot-svg .mb { stroke: var(--warn); }
 [data-theme="moe"] .mascot-layer[data-expr="done"] .mascot-svg .mb { stroke: var(--ok); }
+
+[data-theme="moe"] .mascot-layer[data-expr="failed"] .mascot-svg .mb { stroke: var(--danger); }
+/* 哭脸泪滴:LLM 蓝(契约 token,不做 --moe-* 变体) */
+[data-theme="moe"] .mascot-svg .mt { fill: var(--sig-llm); }
+
+/* ── P2 时间线:粉色虚线竖轨 + 圆徽章行号 + 类型 emoji ─────────── */
+[data-theme="moe"] .dbg-trace-list { position: relative; }
+[data-theme="moe"] .dbg-trace-list::before {
+  content: "";
+  position: absolute;
+  left: 28px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--moe-primary-light) 0px,
+    var(--moe-primary-light) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  pointer-events: none;
+}
+[data-theme="moe"] .dbg-trace-list .tr-gutter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--moe-primary-light);
+  color: var(--live);
+  border-radius: 999px;
+  padding: 0 6px;
+  margin-right: 4px;
+  position: relative; /* 压过 ::before 竖轨 */
+  z-index: 1;
+}
+/* 行类型 emoji(双编码:图标只是装饰,正文文字通道不变) */
+[data-theme="moe"] .dbg-row[data-kind="run"]  .tr-body::before { content: "🚀 "; }
+[data-theme="moe"] .dbg-row[data-kind="call"] .tr-body::before { content: "📞 "; }
+[data-theme="moe"] .dbg-row[data-kind="ret"]  .tr-body::before { content: "↩️ "; }
+[data-theme="moe"] .dbg-row[data-kind="llm"]  .tr-body::before { content: "🧠 "; }
+[data-theme="moe"] .dbg-row[data-kind="tool"] .tr-body::before { content: "🔧 "; }
+[data-theme="moe"] .dbg-row[data-kind="exec"] .tr-body::before { content: "💻 "; }
+
+/* ── P3 检视面板:小节标题 🌸 + 干预区手账虚线 ──────────────────── */
+[data-theme="moe"] .dbg-sec-title::before { content: "🌸 "; }
+[data-theme="moe"] .dbg-intervene {
+  border: var(--stroke) dashed var(--moe-primary-light);
+  border-radius: var(--r-lg);
+  padding: var(--s2);
+}
+
+/* ── P4 入场动画 + reduced-motion 兜底 ─────────────────────────── */
+@keyframes moe-pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+[data-theme="moe"] .card { animation: moe-pop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="moe"] *,
+  [data-theme="moe"] *::before,
+  [data-theme="moe"] *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

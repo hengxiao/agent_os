@@ -13,6 +13,7 @@ import { getJson, postJson } from "../api.js";
 import { copy } from "../themes.js";
 import { emptyBlock, esc, shortId, shortSkill } from "../util.js";
 import { statusPill } from "./status-pill.js";
+import { mascotHtml } from "./mascot.js";
 import { BREAKPOINT_KINDS, matchEditable } from "./breakpoint-list.js";
 import {
   skeletonFromSchema,
@@ -105,7 +106,12 @@ function renderShell() {
 function buildForm(card) {
   if (!card) return;
   card.innerHTML = "";
-  card.appendChild($el("div", "dh-title", "新调试会话"));
+  const titleRow = $el("div", "dh-title-row");
+  titleRow.appendChild($el("div", "dh-title", "新调试会话"));
+  const mascotSlot = $el("span", "dbg-mascot-slot");
+  mascotSlot.innerHTML = mascotHtml("ready"); // 待机精灵;classic(无 mascot)下为空串
+  titleRow.appendChild(mascotSlot);
+  card.appendChild(titleRow);
 
   // Skill 下拉(加载前禁用;option title = description,同 Launch Modal)
   const skillField = $el("label", "field");

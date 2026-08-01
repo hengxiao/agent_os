@@ -280,9 +280,18 @@ const {
   assert.equal(mascotStateFor({ state: "running" }), "running");
   assert.equal(mascotStateFor({ state: "paused" }), "paused");
   assert.equal(mascotStateFor({ state: "detached" }, "done"), "done");
-  assert.equal(mascotStateFor({ state: "detached" }, "failed"), null, "failed 差分 M2,不渲染");
+  assert.equal(mascotStateFor({ state: "detached" }, "failed"), "failed", "failed → 哭脸表情");
+  assert.equal(mascotStateFor({ state: "detached" }, "aborted"), null, "aborted 不映射");
   assert.equal(mascotHtml(null), "", "未映射状态 → 层消失");
+
+  const failedHtml = mascotHtml("failed");
+  assert.match(failedHtml, /<symbol id="mochi-failed"/, "精灵表:failed 哭脸");
+  assert.match(failedHtml, /href="#mochi-failed"/, "引用 failed 表情");
+  const readyHtml = mascotHtml("ready");
+  assert.match(readyHtml, /data-expr="ready"/, "ready 待机表情(调试首页)");
+  assert.match(readyHtml, /href="#mochi-paused"/, "ready 复用 paused 精灵");
   applyTheme("classic");
+  assert.equal(mascotHtml("ready"), "", "classic:ready 层也不渲染");
   doc.body.dataset.route = "runs";
 }
 
@@ -364,6 +373,20 @@ const {
   /* classic 不受影响:classic.css 不得出现 pill emoji 规则 */
   const classicCss = readFileSync(path.join(staticDir, "css/themes/classic.css"), "utf8");
   assert.ok(!classicCss.includes("pill-dot::before"), "classic 保持色点,无 emoji 替换");
+
+  /* P1 哭脸泪滴 / P2 时间线 emoji / P3 检视面板 / P4 入场动画(moe css 源级断言) */
+  assert.ok(moeCss.includes(".mascot-svg .mt"), "failed 泪滴 .mt 规则");
+  const KIND_EMOJI = { run: "🚀", call: "📞", ret: "↩️", llm: "🧠", tool: "🔧", exec: "💻" };
+  for (const [kind, emoji] of Object.entries(KIND_EMOJI)) {
+    assert.ok(
+      moeCss.includes(`.dbg-row[data-kind="${kind}"]`) && moeCss.includes(`content: "${emoji} "`),
+      `时间线 ${kind} → ${emoji}`);
+  }
+  assert.ok(moeCss.includes(".dbg-trace-list::before"), "时间线粉色虚线竖轨");
+  assert.ok(moeCss.includes(".dbg-sec-title::before"), "检视面板小节标题 🌸");
+  assert.match(moeCss, /@keyframes moe-pop-in/, "卡片入场动画");
+  assert.ok(moeCss.includes("prefers-reduced-motion"), "reduced-motion 兜底");
+  assert.ok(!classicCss.includes("moe-pop-in"), "classic 无入场动画");
 }
 
 console.warn = realWarn;

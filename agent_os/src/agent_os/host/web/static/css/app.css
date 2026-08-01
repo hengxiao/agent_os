@@ -2221,6 +2221,7 @@ th.is-sorted .us-sort { color: var(--live); }
   gap: var(--s3);
 }
 .dh-title { font-size: var(--text-lg); font-weight: 600; }
+.dh-title-row { display: flex; align-items: center; gap: var(--s2); }
 .dh-bp-head {
   display: flex;
   align-items: center;

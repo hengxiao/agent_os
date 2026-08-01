@@ -34,7 +34,7 @@ from agent_os.api.v1 import (
 from agent_os.blackboard import BlackboardConflict, LocalBlackboard
 from agent_os.kernel.errors import MaxDepthExceeded, SkillLoadError
 from tests.helpers.brains import fib_brain
-from tests.helpers.kernels import assemble
+from tests.helpers.kernels import assemble, auto_approve
 
 SPAWN_YAML = """
   - name: test.spawn_pair
@@ -99,7 +99,12 @@ def _build(tmp_path, *, max_depth: int = 8):
         compression="off",
     )
     return assemble(
-        config, fib_brain, _yaml(tmp_path, FIB_PART + SPAWN_YAML), blackboard=LocalBlackboard()
+        config,
+        fib_brain,
+        _yaml(tmp_path, FIB_PART + SPAWN_YAML),
+        blackboard=LocalBlackboard(),
+        # spawn 升权闸(ESCALATION.md §3;E2):自动批准通道等价于生产宿主里人每次放行
+        supervisor=auto_approve,
     )
 
 

@@ -24,4 +24,7 @@ export const COPY = {
   "home.sessions.empty.hint": "在上方选择技能与输入,可预填启动前断点,开始第一次调试",
   // 调试台:run 结束横幅标题(状态原文由组件并列直渲,本 key 不吞)
   "debug.end.title": "run 已结束",
+  // 升权卡片(ESCALATION.md §3;E2):params 折叠区与 requested 权限集的标签
+  "escalation.params": "调用参数",
+  "escalation.requested": "请求权限",
 };

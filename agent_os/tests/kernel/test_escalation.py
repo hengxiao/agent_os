@@ -67,7 +67,7 @@ skills:
       required: [decision]
     permissions:
       tools: []
-      skills: [child_exec, child_read]
+      skills: [child_exec, child_read, child_write]
     model: { prefer: ["mock/x"] }
     limits: { max_steps: 6 }
     prompt: |
@@ -90,6 +90,40 @@ skills:
     limits: { max_steps: 6 }
     prompt: |
       你是高档根调用方,按需调用子技能并汇报结果。
+  - name: child_write
+    version: 1.0.0
+    kind: prompt
+    description: 中档子技能。Use when 需要写入;Do not use when 只读或不可逆。
+    inputs:
+      type: object
+      properties: { cmd: { type: string } }
+      required: [cmd]
+    outputs:
+      type: object
+      properties: { ran: { type: boolean } }
+      required: [ran]
+    permissions:
+      tools: [write_tool]
+      skills: []
+    model: { prefer: ["mock/x"] }
+    limits: { max_steps: 3 }
+    prompt: |
+      CHILD_WRITE_MARK 你是写入员,按 cmd 写入并汇报。
+  - name: root_spawn
+    version: 1.0.0
+    kind: code
+    handler: tests.helpers.code_skills:spawn_one
+    inputs:
+      type: object
+      properties: { skill: { type: string }, args: { type: object } }
+      required: [skill]
+    outputs:
+      type: object
+      properties: { frame_id: { type: string }, value: { type: object } }
+      required: [frame_id, value]
+    permissions:
+      tools: []
+      skills: [child_exec, child_write, child_read]
   - name: child_exec
     version: 1.0.0
     kind: prompt
@@ -162,7 +196,7 @@ def _brain(root_call: dict) -> callable:
 
     def brain(req: ChatRequest) -> ChatResponse:
         system = req.messages[0].content if req.messages else ""
-        if "CHILD_PROMPT_MARK" in system or "CHILD_READ_MARK" in system:
+        if "CHILD_" in system:
             return ChatResponse(
                 message=Message(role=Role.ASSISTANT, content=json.dumps({"ran": True})),
                 finish_reason="stop",
@@ -609,3 +643,382 @@ def test_escalation_request_mapping():
     assert pending["call_id"] == "c1"
     assert pending["question_id"] == "esc-1"
     assert pending["skill"] == "child_exec"
+
+
+# ---------------------------------------------------------------------------
+# E2:approve-run Grant(§4)、信号三枚(§5)、spawn 升权闸、CLI 透传
+# ---------------------------------------------------------------------------
+
+
+def _build_with_brain(tmp_path, handler, brain, *, yaml_text: str = SKILLS_YAML):
+    config = RunConfig(
+        model="mock/x",
+        tool_policy=ToolPolicy(max_permission=Permission.EXEC),
+        compression="off",
+    )
+    builder = (
+        KernelBuilder(config)
+        .providers(MockProvider(brain))
+        .tools(_tools())
+        .skills(LocalFileSkillRegistry(_yaml(tmp_path, yaml_text)))
+        .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
+    )
+    if handler is not None:
+        builder = builder.supervisor(handler, timeout_s=5.0)
+    return builder.build()
+
+
+def _twice_brain(call: dict, state: dict | None = None):
+    """根帧连发两次同一 skill 调用再汇总;child_calls 计数可注入断电(崩溃恢复测试用)。"""
+    st = state if state is not None else {"child_calls": 0, "crash_at": None}
+
+    def brain(req: ChatRequest) -> ChatResponse:
+        system = req.messages[0].content if req.messages else ""
+        if "CHILD_" in system:
+            st["child_calls"] += 1
+            if st.get("crash_at") == st["child_calls"]:
+                raise RunAborted("模拟断电")
+            return ChatResponse(
+                message=Message(role=Role.ASSISTANT, content=json.dumps({"ran": True})),
+                finish_reason="stop",
+                usage=ChatUsage(prompt=1, completion=1),
+            )
+        calls = [
+            tc for m in req.messages if m.role is Role.ASSISTANT for tc in m.tool_calls
+        ]
+        if len(calls) < 2:
+            return ChatResponse(
+                message=Message(
+                    role=Role.ASSISTANT,
+                    tool_calls=[
+                        ToolCall(id=f"c{len(calls)}", name=call["name"], args=call["args"])
+                    ],
+                ),
+                finish_reason="tool_calls",
+                usage=ChatUsage(prompt=1, completion=1),
+            )
+        results = [json.loads(m.content) for m in req.messages if m.role is Role.TOOL]
+        decision = "ok" if results and all(r["ok"] for r in results) else "fail"
+        return ChatResponse(
+            message=Message(role=Role.ASSISTANT, content=json.dumps({"decision": decision})),
+            finish_reason="stop",
+            usage=ChatUsage(prompt=1, completion=1),
+        )
+
+    return brain
+
+
+def test_l2_options_include_approve_run(tmp_path):
+    """L2(reversible)升权确认的 options 三枚:approve-once / approve-run / deny。"""
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-run", "decided_by": "user:test"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_write", "args": {"cmd": "w"}})
+    result = asyncio.run(kernel.run("root_caller", {"task": "t"}))
+    assert result["decision"] == "ok"
+    assert asked[0].options == ["approve-once", "approve-run", "deny"]
+
+
+def test_l3_approve_run_answer_rejected(tmp_path):
+    """L3 永不提供 approve-run:手工构造该答案被 options 校验打回重问(§3 原则 2)。"""
+    attempts = []
+
+    async def handler(question):
+        attempts.append(question.previous_error)
+        return {"answer": "approve-run" if len(attempts) == 1 else "approve-once"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_exec", "args": {"cmd": "ls"}})
+    result = asyncio.run(kernel.run("root_caller", {"task": "t"}))
+    assert result["decision"] == "ok"
+    assert len(attempts) == 2 and attempts[0] is None and attempts[1], (
+        "L3 的 approve-run 答案必须被打回(previous_error 重问)"
+    )
+
+
+def test_approve_run_registers_grant_and_skips_reconfirmation(tmp_path):
+    """approve-run → 登记 run 档 Grant(tier 快照/decided_by);本 run 内同 skill
+    后续调用直接放行,并发 post:skill.escalate decision="grant-run"。"""
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-run", "decided_by": "user:test"}
+
+    call = {"name": "skill.child_write", "args": {"cmd": "w"}}
+    kernel = _build_with_brain(tmp_path, handler, _twice_brain(call))
+    escalate_signals = []
+
+    async def rec(sig):
+        escalate_signals.append(sig)
+
+    run_ids = []
+
+    async def rec_run(sig):
+        run_ids.append(sig.run_id)
+
+    kernel.signals.subscribe("post:skill.escalate", rec)
+    kernel.signals.subscribe("run.started", rec_run)
+    result = asyncio.run(kernel.run("root_caller", {"task": "t"}))
+
+    assert result["decision"] == "ok"
+    assert len(asked) == 1, "Grant 命中后第二次调用不得再问"
+    grants = kernel._runs[run_ids[0]].grants
+    assert len(grants) == 1
+    grant = grants[0]
+    assert grant.skill == "child_write"
+    assert grant.scope == "run"
+    assert grant.tier == "reversible"  # 批准时的推导档快照
+    assert grant.decided_by == "user:test"
+    assert grant.decided_at > 0
+    decisions = [s.payload["decision"] for s in escalate_signals]
+    assert decisions == ["approve-run", "grant-run"]
+    hit = escalate_signals[1]
+    assert hit.payload["skill"] == "child_write"
+    assert hit.payload["tier"] == "reversible"
+    assert hit.payload["scope"] == "run"
+    assert hit.payload["decided_by"] == "user:test"
+
+
+def test_grant_consumption_only_reversible():
+    """Grant 消费点双保险(§4):run 档只对 reversible 目标生效;once 档消费即焚。"""
+    from agent_os.api.v1 import Grant, SkillFrame
+    from agent_os.kernel.run import Run
+
+    # 只需内核对象的 _runs 表:最小装配
+    config = RunConfig(model="mock/x", compression="off")
+    kernel = (
+        KernelBuilder(config)
+        .providers(MockProvider(lambda req: None))
+        .tools(_tools())
+        .build()
+    )
+    run = Run(run_id="r1")
+    kernel._runs["r1"] = run
+    frame = SkillFrame(frame_id="f1", run_id="r1", tier="none")
+
+    run.grants.append(
+        Grant(skill="s3", tier="irreversible", scope="run", decided_by="u", decided_at=1.0)
+    )
+    assert kernel._consume_grant(frame, "s3", "irreversible") is None, (
+        "L3 目标永不消费 run 档 Grant(即使手工构造)"
+    )
+    run.grants.append(
+        Grant(skill="s2", tier="reversible", scope="run", decided_by="u", decided_at=1.0)
+    )
+    assert kernel._consume_grant(frame, "s2", "reversible") is not None
+    assert kernel._consume_grant(frame, "other", "reversible") is None, "异 skill 不命中"
+
+    run.grants.append(
+        Grant(skill="s1", tier="irreversible", scope="once", decided_by="u", decided_at=1.0)
+    )
+    hit = kernel._consume_grant(frame, "s1", "irreversible")
+    assert hit is not None and hit.scope == "once"
+    assert all(g.skill != "s1" for g in run.grants), "once 档消费即焚"
+    assert kernel._consume_grant(frame, "s1", "irreversible") is None
+
+
+def test_escalate_signals_payloads(tmp_path):
+    """信号三枚(§5):pre 载荷 {skill, tier, params, requested};post 载荷
+    {decision, decided_by, scope};deny 另有 skill.escalation.denied。"""
+    seen = []
+
+    async def rec(sig):
+        seen.append(sig)
+
+    async def handler(question):
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_exec", "args": {"cmd": "ls"}})
+    for name in ("pre:skill.escalate", "post:skill.escalate", "skill.escalation.denied"):
+        kernel.signals.subscribe(name, rec)
+    result = asyncio.run(kernel.run("root_caller", {"task": "t"}))
+    assert result["decision"] == "ok"
+
+    pre = next(s for s in seen if s.name == "pre:skill.escalate")
+    assert pre.payload["skill"] == "child_exec"
+    assert pre.payload["tier"] == "irreversible"
+    assert pre.payload["params"] == {"cmd": "ls"}
+    assert pre.payload["requested"] == {"tools": ["exec_tool"], "skills": []}
+    assert pre.payload["frame_id"]
+    post = next(s for s in seen if s.name == "post:skill.escalate")
+    assert post.payload["decision"] == "approve-once"
+    assert post.payload["decided_by"] == "user:test"
+    assert post.payload["scope"] == "once"
+    assert not any(s.name == "skill.escalation.denied" for s in seen)
+
+
+def test_denied_signal_payload(tmp_path):
+    """deny → post:skill.escalate(decision="deny")+ skill.escalation.denied 各一枚。"""
+    seen = []
+
+    async def rec(sig):
+        seen.append(sig)
+
+    async def handler(question):
+        return {"answer": "deny", "decided_by": "user:test"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_exec", "args": {"cmd": "rm"}})
+    for name in ("post:skill.escalate", "skill.escalation.denied"):
+        kernel.signals.subscribe(name, rec)
+    result = asyncio.run(kernel.run("root_caller", {"task": "t"}))
+    assert result["decision"] == "permission_denied"
+
+    post = next(s for s in seen if s.name == "post:skill.escalate")
+    assert post.payload["decision"] == "deny"
+    assert post.payload["decided_by"] == "user:test"
+    denied = next(s for s in seen if s.name == "skill.escalation.denied")
+    assert denied.payload["skill"] == "child_exec"
+    assert denied.payload["tier"] == "irreversible"
+    assert denied.payload["decided_by"] == "user:test"
+
+
+def test_checkpoint_restores_grants(tmp_path):
+    """grants 随 checkpoint 序列化:approve-run 后断电 → resume 恢复 Grant →
+    后续同 skill 调用命中放行(不再确认)。"""
+    state = {"child_calls": 0, "crash_at": 1}
+    call = {"name": "skill.child_write", "args": {"cmd": "w"}}
+    asks = {"k1": 0, "k2": 0}
+
+    async def handler1(question):
+        asks["k1"] += 1
+        return {"answer": "approve-run", "decided_by": "user:test"}
+
+    async def handler2(question):
+        asks["k2"] += 1
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel1 = _build_with_brain(tmp_path, handler1, _twice_brain(call, state))
+    seen = []
+
+    async def rec(sig):
+        seen.append(sig)
+
+    kernel1.signals.subscribe("run.started", rec)
+
+    async def first_run():
+        with pytest.raises(RunAborted):
+            await kernel1.run("root_caller", {"task": "t"})
+
+    asyncio.run(first_run())
+    run_id = seen[0].run_id
+    ckpt = tmp_path / "ckpt-grants.json"
+    kernel1.checkpoint(run_id, str(ckpt))
+    doc = json.loads(ckpt.read_text(encoding="utf-8"))
+    assert doc["run"]["grants"], "checkpoint 必须含 grants"
+    assert doc["run"]["grants"][0]["skill"] == "child_write"
+    assert doc["run"]["grants"][0]["scope"] == "run"
+
+    kernel2 = _build_with_brain(tmp_path, handler2, _twice_brain(call, state))
+    result = asyncio.run(kernel2.resume(str(ckpt)))
+    assert result["decision"] == "ok"
+    assert asks["k1"] == 1 and asks["k2"] == 0, "resume 后 Grant 命中,不得重新确认"
+
+
+# ---------------------------------------------------------------------------
+# E2:spawn 后台帧升权闸(§3.4 + ESCALATION.md §3)
+# ---------------------------------------------------------------------------
+
+
+def test_spawn_escalation_approve(tmp_path):
+    """code 技能 spawn 高档 skill → 闸触发(确认等待在 spawn 调用点)→ 批准 → 后台帧跑完。"""
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_exec", "args": {"cmd": "ls"}})
+    result = asyncio.run(kernel.run("root_spawn", {"skill": "child_exec", "args": {"cmd": "ls"}}))
+    assert result["value"] == {"ran": True}
+    assert len(asked) == 1
+    assert asked[0].kind == "escalation"
+    assert asked[0].context["skill"] == "child_exec"
+
+
+def test_spawn_escalation_deny_raises(tmp_path):
+    """spawn 升权被拒 → SkillLoadError 上抛(与白名单拒绝同形),后台帧未创建。"""
+
+    async def handler(question):
+        return {"answer": "deny", "decided_by": "user:test"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_exec", "args": {"cmd": "rm"}})
+    mock = kernel.providers.providers["mock"]
+    with pytest.raises(Exception, match="拒绝"):
+        asyncio.run(kernel.run("root_spawn", {"skill": "child_exec", "args": {"cmd": "rm"}}))
+    child_reqs = [r for r in mock.recorded if "CHILD_PROMPT_MARK" in r.messages[0].content]
+    assert not child_reqs, "被拒绝的 spawn 不得进入子帧"
+
+
+def test_spawn_invalid_args_no_confirmation(tmp_path):
+    """spawn 参数预校验失败 → SkillLoadError,不产生确认请求(与 invoke 同语义)。"""
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_exec", "args": {"bad": 1}})
+    with pytest.raises(Exception, match="inputs schema"):
+        asyncio.run(kernel.run("root_spawn", {"skill": "child_exec", "args": {"bad": 1}}))
+    assert not asked
+
+
+def test_spawn_same_tier_no_confirmation(tmp_path):
+    """spawn 低档 skill(降权/同档)不触发确认,直接后台运行。"""
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_read", "args": {"cmd": "r"}})
+    result = asyncio.run(kernel.run("root_spawn", {"skill": "child_read", "args": {"cmd": "r"}}))
+    assert result["value"] == {"ran": True}
+    assert not asked
+
+
+# ---------------------------------------------------------------------------
+# E2:CLI 答案透传(SUPERVISOR.md §2.3 CLI 宿主通道 + ESCALATION.md §3)
+# ---------------------------------------------------------------------------
+
+
+def test_cli_supervisor_passthrough_escalation(monkeypatch, capsys):
+    """CLI 通道:escalation 问题带 kind 与结构化载荷,options 内答案原样闭环。"""
+    import io
+    import sys
+
+    from agent_os.api.v1 import Question
+    from agent_os.host.cli.main import _cli_supervisor
+
+    question = Question(
+        question_id="esc-1",
+        run_id="r",
+        frame_id="f",
+        question="升权确认:root(none → reversible)请求调用 child_write,批准本次执行?",
+        context={
+            "skill": "child_write",
+            "tier": "reversible",
+            "params": {"cmd": "w"},
+            "requested": {"tools": ["write_tool"], "skills": []},
+            "reason_hint": "none → reversible",
+        },
+        options=["approve-once", "approve-run", "deny"],
+        kind="escalation",
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("approve-run\n"))
+    out = asyncio.run(_cli_supervisor(question))
+    assert out == {"answer": "approve-run", "decided_by": "host:cli"}
+    row = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    assert row["kind"] == "escalation"
+    assert row["options"] == ["approve-once", "approve-run", "deny"]
+    assert row["context"]["tier"] == "reversible"
+    assert row["context"]["params"] == {"cmd": "w"}
+
+    # 普通问答行形状不变(不带 kind)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("ok\n"))
+    asyncio.run(_cli_supervisor(Question(question_id="q-1", question="继续?")))
+    row2 = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    assert "kind" not in row2

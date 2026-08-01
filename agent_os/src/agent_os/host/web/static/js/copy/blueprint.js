@@ -18,4 +18,6 @@ export const COPY = {
   "home.sessions.empty": "图档为空",
   "home.sessions.empty.hint": "选择技能与输入,可预置标注",
   "debug.end.title": "run 已归档",
+  "escalation.params": "调用参数(已校)",
+  "escalation.requested": "申请权限面",
 };

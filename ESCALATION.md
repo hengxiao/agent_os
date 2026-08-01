@@ -231,6 +231,12 @@ Web 收件箱(SUPERVISOR.md §2.2 的 InboxChannel)与 CLI
 结构化载荷,UI 对 `kind == "escalation"` 渲染专门卡片(参数 JSON、权限集
 徽标、三个选项),普通问答现状不变。
 
+> 实现注(E2):`spawn_frame`(§3.4 后台帧)同样过闸——语义与 `_invoke_skill`
+> 一致(预校验 → 判定 → 挂起/Grant/放行/拒绝),确认等待发生在 spawn 调用点
+> 本身(await 裁决后才 `create_task`),父帧不挂起的设计不变;spawn 不走 LLM
+> 分发、没有 tool result 观察通道,拒绝/参数不合以 `SkillLoadError` 上抛
+> (与白名单拒绝同形,交 code 技能处理)。
+
 ### 原则 3/4:暂存、隔离、干净 context
 
 现状已经几乎就是目标形态,设计将其**明文化为不变量**:
@@ -283,6 +289,12 @@ class Grant:
   保证 replay 确定);`once` 档消费即焚。
 - 消费点:`_invoke_skill` 的升权判定处——目标档为 L2 且存在 `run` 档
   Grant 时跳过确认直接放行(仍记信号)。
+
+> 实现注(E2):存放点落在内核侧 `kernel/run.py` 的 `Run.grants`(契约层
+> `Run` 不动,checkpoint `run.grants` 字段 additive);`approve-once`
+> **不登记** Grant——它的"本次"就是发牌这一刻,直接放行,下次同调用必
+> 再撞闸;`once` 档的"消费即焚"路径留在 `_consume_grant` 兜底(崩溃残留
+> /手工构造的 once Grant 命中即移除)。
 - **run 档 Grant 只对 L2 有意义**:L3 的 EscalationRequest 不提供
   approve-run 选项(§3 原则 2),即使有人手工构造答案,消费点也只对
   `tier == "reversible"` 的 Grant 生效——双保险。
@@ -297,13 +309,17 @@ class Grant:
 
 ## 5. 信号与审计
 
-新信号(照 `pre:skill.invoke` 先例,runner 发射,sidecar/Web 可订阅):
+新信号(照 `pre:skill.invoke` 先例,runner 发射,sidecar/Web 可订阅;**E2 已实现**):
 
 | 信号 | 载荷 | 时机 |
 |---|---|---|
 | `pre:skill.escalate` | {skill, tier, frame_id, params, requested} | 确认请求发出时 |
 | `post:skill.escalate` | {skill, tier, decision, decided_by, scope} | 收到批准/拒绝 |
 | `skill.escalation.denied` | {skill, tier, decided_by} | 拒绝(父帧收 PERMISSION_DENIED) |
+
+> 实现注(E2):Grant 命中放行时无确认请求,故只发 `post:skill.escalate`
+> (`decision="grant-run"`,无配对 pre);`decision` 取值
+> `approve-once | approve-run | grant-run | deny`。
 
 run 详情页信号流直接可读:谁、何时、批了哪次升权、档位与 scope 是什么。
 Web 调试台的时间线(`.dbg-row`)为 escalation 行加 kind=`escalation`,
@@ -329,7 +345,7 @@ Web 调试台的时间线(`.dbg-row`)为 escalation 行加 kind=`escalation`,
 | 期 | 内容 |
 |---|---|
 | E1 ✅ | 三档推导 + 升权判定 + 挂起确认(复用 inbox)+ approve-once/deny + 干净 context 不变量测试。已实现:`api/v1/escalation.py`、`_invoke_skill` 升权闸、分档 lint 硬闸门(≥L2 禁 inline、L3 禁 confirm:first)、checkpoint/resume 重走闸门;734 测试全绿 |
-| E2 | L2 的 approve-run Grant + 信号三枚 + Web 升权卡片 + CLI 答案透传 + `spawn_frame` 升权闸(E1 遗留的绕道口子) |
+| E2 ✅ | L2 的 approve-run Grant + 信号三枚 + Web 升权卡片 + CLI 答案透传 + `spawn_frame` 升权闸(E1 遗留的绕道口子)。已实现:内核 `Run.grants` 随 checkpoint 往返、`_consume_grant` 消费点(双保险仅 L2)、options 按档区分(L2 三枚/L3 两枚)、inbox.js `escalationCardHtml`(copy 六主题同步)、CLI `kind` 透传;746 Python + 21 前端测试全绿 |
 | E3 | 审计面板(按 run 列升权事件)+ lint 严格化(reversal/blast_radius 必填)+ 文档(DESIGN.md §8 引用更新) |
 
 ## 8. 不做

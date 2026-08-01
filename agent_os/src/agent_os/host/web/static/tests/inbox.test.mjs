@@ -4,7 +4,12 @@
    运行:node static/tests/inbox.test.mjs(无需 DOM、无第三方依赖)。 */
 
 import assert from "node:assert/strict";
-import { badgeModel, questionCardHtml, sortedPending } from "../js/components/inbox.js";
+import {
+  badgeModel,
+  escalationCardHtml,
+  questionCardHtml,
+  sortedPending,
+} from "../js/components/inbox.js";
 
 const q = (over = {}) => ({
   question_id: "q-1",
@@ -80,6 +85,73 @@ const q = (over = {}) => ({
   const html = questionCardHtml(q({ question: '<img src=x onerror="alert(1)">' }));
   assert.ok(!html.includes("<img"), "question 转义");
   assert.ok(html.includes("&lt;img"), "转义实体出现");
+}
+
+/* ── 升权卡片(ESCALATION.md §3;E2)─────────────────────────────
+   kind == "escalation" 的 pending 项渲染专卡:档位徽标(perm 色板槽位)、
+   skill 名、reason_hint、params JSON(可折叠)、requested 权限集、选项按钮。 */
+const escQ = (over = {}, ctx = {}) => ({
+  question_id: "esc-1",
+  run_id: "run-abcdef123456",
+  frame_id: "f-abc123",
+  question: "升权确认:root 帧(none → irreversible)请求调用 system.admin.deploy,批准?",
+  kind: "escalation",
+  context: {
+    skill: "system.admin.deploy",
+    tier: "irreversible",
+    params: { target: "vm-01", dry_run: false },
+    requested: { tools: ["system.shell.exec", "fs.write"], skills: ["common.dev.run_tests"] },
+    reason_hint: "none → irreversible",
+    ...ctx,
+  },
+  options: ["approve-once", "deny"],
+  urgency: "high",
+  previous_error: null,
+  asked_at: 1785000000,
+  ...over,
+});
+
+/* 结构:徽标/skill/reason/params/requested/options(L3 两枚) */
+{
+  const html = escalationCardHtml(escQ());
+  assert.ok(html.includes('data-kind="escalation"'), "升权卡片钩子");
+  assert.ok(html.includes('data-perm="EXEC"'), "L3 徽标走 EXEC 色板槽位");
+  assert.ok(html.includes("irreversible"), "档名直渲(技术文本)");
+  assert.ok(html.includes("system.admin.deploy"), "skill 名");
+  assert.ok(html.includes("none → irreversible"), "reason_hint");
+  assert.ok(html.includes("vm-01"), "params JSON 内容");
+  assert.ok(html.includes("<details"), "params 可折叠");
+  assert.ok(html.includes("调用参数"), "params 标签走 copy(classic 基准)");
+  assert.ok(html.includes("system.shell.exec"), "requested tools");
+  assert.ok(html.includes("skill:common.dev.run_tests"), "requested skills");
+  assert.ok(html.includes('data-answer="approve-once"'), "L3 approve-once 按钮");
+  assert.ok(html.includes('data-answer="deny"'), "L3 deny 按钮");
+  assert.ok(!html.includes("approve-run"), "L3 不渲染 approve-run(硬规则)");
+  assert.ok(!html.includes("sup-input"), "有 options 不出现文本输入");
+}
+
+/* L2:三枚选项 + WRITE 色板槽位;kind 分发与深链接/错误条沿用 */
+{
+  const l2 = escQ(
+    { options: ["approve-once", "approve-run", "deny"], urgency: "normal" },
+    { tier: "reversible", skill: "ops.db.write" });
+  const html = questionCardHtml(l2); // questionCardHtml 按 kind 分发
+  assert.ok(html.includes('data-kind="escalation"'), "kind 分发到升权卡片");
+  assert.ok(html.includes('data-perm="WRITE"'), "L2 徽标走 WRITE 色板槽位");
+  assert.ok(html.includes('data-answer="approve-run"'), "L2 渲染 approve-run 按钮");
+  assert.ok(html.includes("#/runs/run-abcdef123456"), "run 深链接沿用");
+  assert.ok(html.includes("?frame=f-abc123"), "帧深链接沿用");
+  assert.ok(questionCardHtml(escQ(), "须从 options 选择").includes("须从 options 选择"),
+    "错误条沿用(重答语义)");
+}
+
+/* 防御:缺 context/未知 tier 不炸;XSS 转义 */
+{
+  const html = escalationCardHtml(escQ({ context: null }));
+  assert.ok(html.includes('data-perm="READ"'), "未知 tier 回落 none→READ 槽位");
+  const evil = escQ({}, { skill: '<img src=x onerror="alert(1)">' });
+  const evilHtml = escalationCardHtml(evil);
+  assert.ok(!evilHtml.includes("<img"), "skill 名转义");
 }
 
 console.log("inbox.test.mjs: all assertions passed");

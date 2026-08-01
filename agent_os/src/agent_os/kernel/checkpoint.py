@@ -53,6 +53,7 @@ from agent_os.api.v1 import (
     RUN_STARTED,
     FrameContext,
     FrameStatus,
+    Grant,
     Message,
     Role,
     RunStatus,
@@ -135,6 +136,8 @@ def dump_checkpoint(kernel: Any, run_id: str, path: str) -> None:
             "error": run.state.error,
             # §W1-4:run 级工具状态(todo 清单等)随 checkpoint 落盘(additive,schema v1 不变)
             "run_state": getattr(kernel.tools, "run_states", {}).get(run_id, {}),
+            # ESCALATION.md §4(E2):升权批准台账随 checkpoint 落盘(resume 后 Grant 命中一致)
+            "grants": [dataclasses.asdict(g) for g in getattr(run, "grants", [])],
         },
         "frames": [
             {
@@ -326,6 +329,8 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
     run = Run(run_id=doc["run"]["run_id"], config=kernel.config)
     run.state.usage = _usage_from_dict(doc["run"]["usage"])
     run.state.status = RunStatus.RUNNING
+    # ESCALATION.md §4(E2):恢复升权批准台账(approve-run 的 run 档 Grant 跨断电有效)
+    run.grants = [Grant(**g) for g in doc["run"].get("grants", [])]
     kernel._runs[run.run_id] = run
     # §W1-4:恢复 run 级工具状态(todo 清单等),恢复后状态栏与工具读到同一份
     saved_run_state = doc["run"].get("run_state")

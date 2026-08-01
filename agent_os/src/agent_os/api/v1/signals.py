@@ -22,6 +22,7 @@ __all__ = [
     "POST_LLM_CHUNK",
     "POST_LLM_RESPONSE",
     "POST_LOGIC_EXEC",
+    "POST_SKILL_ESCALATE",
     "POST_SKILL_INVOKE",
     "POST_STEP",
     "POST_TOOL_CALL",
@@ -30,6 +31,7 @@ __all__ = [
     "PRE_FRAME_PUSH",
     "PRE_LLM_REQUEST",
     "PRE_LOGIC_EXEC",
+    "PRE_SKILL_ESCALATE",
     "PRE_SKILL_INVOKE",
     "PRE_STEP",
     "PRE_TOOL_CALL",
@@ -37,6 +39,7 @@ __all__ = [
     "RUN_FINISHED",
     "RUN_STARTED",
     "SIGNAL_NAMES",
+    "SKILL_ESCALATION_DENIED",
     "SUPERVISOR_ANSWER",
     "SUPERVISOR_ASK",
     "SUPERVISOR_TIMEOUT",
@@ -65,6 +68,12 @@ POST_TOOL_CALL = "post:tool.call"
 
 PRE_SKILL_INVOKE = "pre:skill.invoke"
 POST_SKILL_INVOKE = "post:skill.invoke"
+
+#: 升权确认(ESCALATION.md §5;E2):pre 在确认请求发出时,post 在收到裁决
+#: (含 Grant 命中放行,decision="grant-run"),denied 专记拒绝——审计/重放可区分
+PRE_SKILL_ESCALATE = "pre:skill.escalate"
+POST_SKILL_ESCALATE = "post:skill.escalate"
+SKILL_ESCALATION_DENIED = "skill.escalation.denied"
 
 PRE_LOGIC_EXEC = "pre:logic.exec"  # 逻辑代码执行,pre 可否决
 POST_LOGIC_EXEC = "post:logic.exec"
@@ -104,6 +113,9 @@ SIGNAL_NAMES: tuple[str, ...] = (
     POST_TOOL_CALL,
     PRE_SKILL_INVOKE,
     POST_SKILL_INVOKE,
+    PRE_SKILL_ESCALATE,
+    POST_SKILL_ESCALATE,
+    SKILL_ESCALATION_DENIED,
     PRE_LOGIC_EXEC,
     POST_LOGIC_EXEC,
     PRE_COMPRESS,

@@ -24,4 +24,6 @@ export const COPY = {
   "home.sessions.empty.hint": "select skill + input above; preset bps optional.",
   // 调试台:run 结束横幅标题(状态原文由组件并列直渲,本 key 不吞)
   "debug.end.title": "run finished",
+  "escalation.params": "argv (validated)",
+  "escalation.requested": "requested caps",
 };

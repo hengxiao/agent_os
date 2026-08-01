@@ -1999,6 +1999,17 @@ th.is-sorted .us-sort { color: var(--live); }
 }
 .sup-actions .sup-input { flex: 1; min-width: 0; }
 
+/* 升权卡片(ESCALATION.md §3;E2):question 摘要 / reason_hint / requested 权限集 */
+.sup-esc-q { font-size: var(--text-xs); color: var(--fg-1); word-break: break-word; }
+.sup-reason { font-size: var(--text-xs); color: var(--fg-2); }
+.sup-req {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+.sup-req-label { font-size: var(--text-xs); color: var(--fg-1); }
+
 /* run 头"等待上级裁决"Banner(帧拿不到精确标注时的兜底,S3 §5) */
 .wb-wait { align-items: center; }
 .wb-wait .banner-main { flex: 1; }

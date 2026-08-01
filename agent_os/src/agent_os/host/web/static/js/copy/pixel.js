@@ -24,4 +24,6 @@ export const COPY = {
   "home.sessions.empty.hint": "choose skill + input to start your quest",
   // 调试台:run 结束横幅标题(状态原文由组件并列直渲,本 key 不吞)
   "debug.end.title": "QUEST END",
+  "escalation.params": "PARAMS (validated)",
+  "escalation.requested": "ASKED POWERS",
 };

@@ -72,6 +72,10 @@ async def _cli_supervisor(question: Question) -> dict[str, Any]:
         "options": question.options,
         "urgency": question.urgency,
     }
+    # 升权确认(ESCALATION.md §3):kind 透传给 coding agent 区分渲染/作答;
+    # 结构化载荷(skill/tier/params/requested)本就在 context 里直通
+    if question.kind != "question":
+        row["kind"] = question.kind
     if question.previous_error:
         row["previous_error"] = question.previous_error
     print(json.dumps(row, ensure_ascii=False, default=repr), file=sys.stderr, flush=True)

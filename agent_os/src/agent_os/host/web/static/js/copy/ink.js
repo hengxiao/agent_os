@@ -18,4 +18,6 @@ export const COPY = {
   "home.sessions.empty": "卷轴未启",
   "home.sessions.empty.hint": "选技能与输入,可预置句读",
   "debug.end.title": "墨尽",
+  "escalation.params": "入参",
+  "escalation.requested": "所请之权",
 };

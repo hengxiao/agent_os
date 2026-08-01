@@ -17,4 +17,6 @@ export const COPY = {
   "home.sessions.empty": "✨ 还没有冒险记录呢",
   "home.sessions.empty.hint": "在上方选择技能与输入,开始第一次冒险吧",
   "debug.end.title": "🌸 跑完啦~",
+  "escalation.params": "要喂给高档技能的参数",
+  "escalation.requested": "想借用的权限",
 };

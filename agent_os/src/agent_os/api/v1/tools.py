@@ -25,6 +25,7 @@ __all__ = [
     "ToolResult",
     "ToolSchema",
     "ToolSpec",
+    "derive_side_effect",
 ]
 
 
@@ -109,6 +110,26 @@ class ToolSpec:
     cost_hint: str = ""  # 成本量级("~10ms"/"~5s,大文件更久" 形式,不写绝对秒数依赖)
     replayable: bool = False  # 可回放:replay/崩溃恢复重跑时可直接返回记录值(如 now)
     concurrent_safe: bool = False  # §W0-2 命名;与 §14.1 预留 concurrency_safe 同义,声明时一并置位
+    # —— 升权分档(ESCALATION.md §2.1;additive)——
+    #: 副作用语义档:"none" | "reversible" | "irreversible";None → 按 Permission
+    #: 推导(见 derive_side_effect)。工具作者最清楚自己的副作用,可显式下调
+    #: (如只读诊断 exec);skill 档不允许声明,由权限面推导。
+    side_effect: str | None = None
+
+
+#: Permission → 缺省副作用档(ESCALATION.md §2.1):EXEC 是任意命令,按最坏情况
+#: 算 irreversible;WRITE/NET 改了世界但可补偿/可容忍;READ 不改世界。
+_PERMISSION_SIDE_EFFECT: dict[Permission, str] = {
+    Permission.READ: "none",
+    Permission.WRITE: "reversible",
+    Permission.NET: "reversible",
+    Permission.EXEC: "irreversible",
+}
+
+
+def derive_side_effect(spec: ToolSpec) -> str:
+    """工具的副作用档:显式 ``side_effect`` 优先,缺省按 ``permission`` 推导。"""
+    return spec.side_effect or _PERMISSION_SIDE_EFFECT[spec.permission]
 
 
 @dataclass

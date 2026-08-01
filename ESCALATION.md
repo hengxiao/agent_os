@@ -13,6 +13,8 @@
 > v0.2:信任层级由两档(standard/elevated)改为三档(§2.1,按副作用可逆性分级),
 >   确认强度随档收紧:L2 可逆 → 允许 approve-run;L3 不可逆 → 每次必须人审;
 >   新增分档工程标准(§2.3):不同档按不同标准 design/implement/test。
+> v0.3:E1 已实现(内核升权闸 + 干净 context 不变量,734 测试全绿);
+>   §2.2 根帧 tier 修正为"直接能力档"(完整推导档会使闸门成为死代码)。
 
 ---
 
@@ -38,10 +40,10 @@ skill 嵌套调用时,父帧的内容(用户输入、工具观察、网页/文�
 ### 非目标
 
 - **不管机密性(数据访问控制)**:数据能不能读、能读哪些,由**数据层的
-  authN+Z** 完成——以 run 的 principal(启动 run 的人/调用方身份)为判据,
-  与 skill/帧无关。升权系统闸的是**副作用与执行权**("会不会改世界"),
-  不是"能看到什么"。因此 L1(读取档)的判据里不含机密性维度
-  (见 TIER-STANDARDS.md §0)。这也带来一个连贯的三闸模型:
+  authN+Z** 完成(设计见 `DATA-AUTHZ.md`)——以 run 的 principal(启动 run
+  的人/调用方身份)为判据,与 skill/帧无关。升权系统闸的是**副作用与执行权**
+  ("会不会改世界"),不是"能看到什么"。因此 L1(读取档)的判据里不含
+  机密性维度(见 TIER-STANDARDS.md §0)。这也带来一个连贯的三闸模型:
   **读 = 数据层 authZ;写 = 档位升权;泄露 = 写闸兜底**——把读到的机密
   发出网(NET 发送)是副作用,照样撞 L2/L3 闸门,读授权不意味着能外泄。
 - 不防御高层 skill 自身 prompt 被污染(那是 skill 作者的供应链问题,交给
@@ -104,11 +106,19 @@ escalation = tier_of(target) > tier_of(caller_frame)
 即:**从低档帧调用高档 skill = 升权事件**;同档移动不确认(同档内部的
 可信度由作者负责);**高档调低档是降权,永不确认**。
 
-帧的 tier:子帧继承被调 skill 的推导档(它在高层环境里跑,再调同档 skill
-是同层移动);根帧 = 根 skill 的推导档。
+帧的 tier:子帧继承被调 skill 的**完整推导档**(进入即继承整个已审信封,
+信封内同层移动不再确认);**根帧 = 根 skill 的直接能力档(只看自己的
+tools,不沿 skills 递归)**——run 启动只确认了根技能的直接能力面,经子
+技能间接够到更高档必须过闸。
+
+> 实现注(E1):若根帧也按完整推导档(含 skills 递归),则被调 skill 必在
+> 调用方白名单内,恒有 `tier(target) ≤ tier(caller)`,升权事件在数学上
+> 永不触发,闸门成为死代码。目标侧与 lint 仍用完整推导档(薄 orchestrator
+> 不能靠转包一层洗档);根帧取直接能力档,闸门才有意义。
 
 根技能由宿主直接启动,不经过升权闸门——人用 `--skill system.admin.deploy`
-启动 run,本身就是确认。
+启动 run,本身就是确认(确认的是根技能的直接能力面,不是它能间接够到的
+整张图)。
 
 ### 2.3 分档工程标准(design / implement / test)
 
@@ -318,9 +328,9 @@ Web 调试台的时间线(`.dbg-row`)为 escalation 行加 kind=`escalation`,
 
 | 期 | 内容 |
 |---|---|
-| E1 | 三档推导 + 升权判定 + 挂起确认(复用 inbox)+ approve-once/deny + 干净 context 不变量测试。无 UI 专卡(pending JSON 直渲即可用) |
-| E2 | L2 的 approve-run Grant + 信号三枚 + Web 升权卡片 + CLI 答案透传 |
-| E3 | 审计面板(按 run 列升权事件)+ lint 严格化 + 文档(DESIGN.md §8 引用更新) |
+| E1 ✅ | 三档推导 + 升权判定 + 挂起确认(复用 inbox)+ approve-once/deny + 干净 context 不变量测试。已实现:`api/v1/escalation.py`、`_invoke_skill` 升权闸、分档 lint 硬闸门(≥L2 禁 inline、L3 禁 confirm:first)、checkpoint/resume 重走闸门;734 测试全绿 |
+| E2 | L2 的 approve-run Grant + 信号三枚 + Web 升权卡片 + CLI 答案透传 + `spawn_frame` 升权闸(E1 遗留的绕道口子) |
+| E3 | 审计面板(按 run 列升权事件)+ lint 严格化(reversal/blast_radius 必填)+ 文档(DESIGN.md §8 引用更新) |
 
 ## 8. 不做
 

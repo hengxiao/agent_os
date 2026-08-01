@@ -60,19 +60,22 @@ class InboxChannel:
         rows: list[dict[str, Any]] = []
         for entry in entries:
             q = entry["question"]
-            rows.append(
-                {
-                    "question_id": q.question_id,
-                    "run_id": q.run_id,
-                    "frame_id": q.frame_id,
-                    "question": q.question,
-                    "context": q.context,
-                    "options": q.options,
-                    "urgency": q.urgency,
-                    "previous_error": q.previous_error,
-                    "asked_at": entry["asked_at"],
-                }
-            )
+            row = {
+                "question_id": q.question_id,
+                "run_id": q.run_id,
+                "frame_id": q.frame_id,
+                "question": q.question,
+                "context": q.context,
+                "options": q.options,
+                "urgency": q.urgency,
+                "previous_error": q.previous_error,
+                "asked_at": entry["asked_at"],
+            }
+            # 升权确认(ESCALATION.md §3):kind 与结构化载荷(在 context 里,原样直通)
+            # 透出给宿主;普通问答行形状不变(E1 无 UI 专卡,pending JSON 直渲即可用)
+            if q.kind != "question":
+                row["kind"] = q.kind
+            rows.append(row)
         rows.sort(key=lambda r: (r["urgency"] != "high", r["asked_at"]))
         return rows
 

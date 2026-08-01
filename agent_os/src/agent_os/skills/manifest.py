@@ -9,12 +9,16 @@ from __future__ import annotations
 from typing import Any
 
 from agent_os.api.v1 import (
+    TIER_IRREVERSIBLE,
+    TIER_NONE,
     ContextPolicy,
     ModelPolicy,
     SkillKind,
     SkillLimits,
     SkillManifest,
     SkillPermissions,
+    SkillTrust,
+    tier_exceeds,
 )
 from agent_os.kernel.errors import SkillLoadError
 
@@ -64,6 +68,20 @@ def parse_manifest(data: dict[str, Any]) -> SkillManifest:
         if lim_raw
         else None
     )
+    trust_raw = data.get("trust")
+    trust = None
+    if trust_raw:
+        # ESCALATION.md §2.1:confirm 只允许上调(always)或缺省;非法值加载期拒绝
+        confirm = trust_raw.get("confirm")
+        if confirm is not None and confirm not in ("always", "first"):
+            raise SkillLoadError(
+                f"技能 {name}: trust.confirm 应为 'always' | 'first',得到: {confirm!r}"
+            )
+        trust = SkillTrust(
+            confirm=confirm,
+            reversal=trust_raw.get("reversal"),
+            blast_radius=trust_raw.get("blast_radius"),
+        )
     return SkillManifest(
         name=name,
         version=str(data.get("version", "")),
@@ -81,6 +99,7 @@ def parse_manifest(data: dict[str, Any]) -> SkillManifest:
         handler=data.get("handler"),
         logic=data.get("logic"),
         inline=bool(data.get("inline", False)),
+        trust=trust,
     )
 
 
@@ -91,14 +110,40 @@ INLINE_PROMPT_MAX_CHARS = 500
 INLINE_DEPS_MAX = 3
 
 
-def validate_manifest(manifest: SkillManifest) -> list[str]:
+def validate_escalation_gates(manifest: SkillManifest, tier: str) -> None:
+    """升权分档硬闸门(ESCALATION.md §2.1/§3.4;抛 SkillLoadError)。
+
+    需要推导档作输入——推导依赖 Tool Registry,故本函数由同时持有两者的
+    装配点(KernelBuilder)或测试直接调用;loader 单用 validate_manifest 时
+    不经过本闸门。
+    """
+    if tier_exceeds(tier, TIER_NONE) and manifest.inline:
+        raise SkillLoadError(
+            f"技能 {manifest.name}: 推导档 {tier} ≥L2 禁止 inline: true"
+            "(merge 会把高层指令并入低层帧,干净 context 不变量被破坏,§3.4)"
+        )
+    if (
+        tier == TIER_IRREVERSIBLE
+        and manifest.trust is not None
+        and manifest.trust.confirm == "first"
+    ):
+        raise SkillLoadError(
+            f"技能 {manifest.name}: 推导档 irreversible(L3)禁止 confirm: first"
+            "(不可逆操作不允许批量授权,每次必须人审,§2.1)"
+        )
+
+
+def validate_manifest(manifest: SkillManifest, tier: str | None = None) -> list[str]:
     """加载期校验;返回告警列表(错误直接抛出)。权限闸门:声明的工具/子技能必须存在
 
     且权限等级不超过 RunConfig 上限,否则拒绝加载并报出具体缺失项(§6.1)。
 
     本函数只做 manifest 自洽性 lint;跨技能引用与工具存在性由 Registry/Builder 检查。
     内联(merge)技能另有硬闸门与 lint(SKILL-INLINING.md §3.2/§3.3)。
+    ``tier``(推导档)给定时追加升权分档硬闸门(ESCALATION.md §2.1/§3.4)。
     """
+    if tier is not None:
+        validate_escalation_gates(manifest, tier)
     warnings: list[str] = []
     desc = manifest.description
     if manifest.kind is SkillKind.PROMPT and not manifest.prompt and not manifest.entry:

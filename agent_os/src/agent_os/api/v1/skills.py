@@ -28,6 +28,7 @@ __all__ = [
     "SkillPermissions",
     "SkillRegistry",
     "SkillSchema",
+    "SkillTrust",
 ]
 
 
@@ -75,6 +76,19 @@ class SkillLimits:
 
 
 @dataclass
+class SkillTrust:
+    """``trust:`` 块(ESCALATION.md §2.1;additive):确认策略覆盖项。
+
+    tier **不**在本块声明——skill 的档由权限面推导(白名单 tools/skills 取 max),
+    作者只能上调确认强度,不能把自己说低。
+    """
+
+    confirm: str | None = None  # always | first;缺省按推导档(L2→first,L3→always)
+    reversal: str | None = None  # L2 的逆转/补偿机制(TIER-STANDARDS §4;必填 lint 属 E3)
+    blast_radius: str | None = None  # L3 的最坏影响面(TIER-STANDARDS §5;必填 lint 属 E3)
+
+
+@dataclass
 class SkillManifest:
     """Skill 清单(§2.1,字段逐字,含 ``verifier`` 冻结槽位)。
 
@@ -97,6 +111,7 @@ class SkillManifest:
     handler: str | None = None  # 单文件形态 code 技能入口(dotted path,如 "my_skills.handlers:run")
     logic: dict[str, Any] | None = None  # {"mode": "trusted" | "sandbox"}(§9.2)
     inline: bool = False  # 预展开(merge):prompt 并入调用方 SYSTEM,不生成伪工具(SKILL-INLINING.md)
+    trust: SkillTrust | None = None  # 升权确认策略覆盖项(ESCALATION.md §2.1;缺省按推导档)
 
 
 #: code 技能入口签名(§6.3):``async def run(input, ctx)``

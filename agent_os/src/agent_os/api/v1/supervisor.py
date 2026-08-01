@@ -68,6 +68,9 @@ class Question:
     frame_id: str = ""
     run_id: str = ""
     previous_error: str | None = None
+    #: 请求类别(additive;ESCALATION.md §3):"question" = LLM 主动提问(默认),
+    #: "escalation" = 内核判定的升权确认——结构化载荷走 ``context``,宿主按 kind 区分渲染
+    kind: str = "question"
 
 
 class Answer(TypedDict, total=False):

@@ -10,7 +10,7 @@ WAL 原则:"trajectory 是 Agent 的全部状态"——帧 transcript 完整入�
      "run": {"run_id", "status", "usage": {...}, "result", "error",
              "run_state"(§W1-4 run 级工具状态,additive,schema v1 不变)},
      "frames": [{"frame_id", "skill", "parent_id", "input", "depth", "status",
-                 "result", "error", "call_id", "usage": {...},
+                 "result", "error", "call_id", "tier", "usage": {...},
                  "context": {"messages": [...], "working", "pinned", "token_estimate"}}]}
 
 ``status`` 是检查点视角的进展标签:``"done"`` = 帧已完成,或一步 LLM 调用都未
@@ -31,7 +31,10 @@ WAL 原则:"trajectory 是 Agent 的全部状态"——帧 transcript 完整入�
 例外(SUPERVISOR.md §4):``ask_supervisor`` 调用无工具结果且帧 ``working`` 含
 ``_pending_ask`` 时**不是**"分发到一半断电"——恢复时先经
 ``Kernel._settle_pending_ask`` 重新向调用方提问并写回真实答案,
-再进入上面三条规则结算其余调用。
+再进入上面三条规则结算其余调用。升权确认(ESCALATION.md §3)同理:
+``_pending_escalation`` 在档时经 ``Kernel._settle_pending_escalation``
+重走升权闸门(重问 → 批准则当场补建子帧跑完,拒绝则写 PERMISSION_DENIED),
+不落 interrupted 占位。
 """
 
 from __future__ import annotations
@@ -144,6 +147,7 @@ def dump_checkpoint(kernel: Any, run_id: str, path: str) -> None:
                 "result": f.result,
                 "error": str(f.error) if f.error is not None else None,
                 "call_id": f.call_id,
+                "tier": f.tier,  # 帧信任档(ESCALATION.md §2.2;additive,schema v1 不变)
                 "usage": _usage_to_dict(f.usage),
                 "context": {
                     "messages": [_message_to_dict(m) for m in f.context.messages],
@@ -230,6 +234,7 @@ def _frame_from_dict(run_id: str, data: dict[str, Any]) -> SkillFrame:
         error=data.get("error"),
         usage=_usage_from_dict(data.get("usage", {})),
         call_id=data.get("call_id"),
+        tier=data.get("tier", "none"),  # 旧 checkpoint 无此字段:按最低档恢复(不放大权限)
     )
 
 
@@ -344,6 +349,8 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
             # pending ask(SUPERVISOR.md §4):重新向调用方提问结算,
             # 先于未配对结算——不得落入 interrupted 占位
             await kernel._settle_pending_ask(frame)
+            # pending 升权确认(ESCALATION.md §3):重走升权闸门(重问/带答案重入)
+            await kernel._settle_pending_escalation(frame)
             _settle_unpaired_calls(kernel, frame)
             skill_obj = kernel.skills.get(frame.skill)
             try:

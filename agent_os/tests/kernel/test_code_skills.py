@@ -31,7 +31,7 @@ from agent_os.api.v1 import (
 from agent_os.kernel.errors import AgentOSError, OutputValidationError, SkillLoadError
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from tests.helpers.brains import fib_brain
-from tests.helpers.kernels import assemble
+from tests.helpers.kernels import assemble, auto_approve
 
 # fib 技能(与 skills/skills.yaml 中一致;code 技能测试的依赖项)
 FIB_SKILL = """
@@ -132,7 +132,9 @@ def _build(skills_yaml: str, *, force_sandbox: bool = False):
         compression="off",
     )
     config.logic_policy.force_sandbox = force_sandbox
-    return assemble(config, fib_brain, skills_yaml)
+    # 升权闸门(ESCALATION.md §3):code 技能编排高档 prompt 技能构成升权,
+    # 装配自动批准通道等价于生产宿主里人每次放行
+    return assemble(config, fib_brain, skills_yaml, supervisor=auto_approve)
 
 
 def test_code_skill_orchestrates_prompt_skills(tmp_path):

@@ -22,7 +22,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_os.api.v1 import ASK_SUPERVISOR_TOOL, ORCHESTRATE_TOOL, RunConfig
+from agent_os.api.v1 import (
+    ASK_SUPERVISOR_TOOL,
+    ORCHESTRATE_TOOL,
+    RunConfig,
+    derive_skill_tier,
+)
 from agent_os.context.manager import ContextManager
 from agent_os.context.rolling_window import RollingWindowCompressor
 from agent_os.kernel import Kernel
@@ -33,6 +38,7 @@ from agent_os.kernel.signals import InProcessSignalBus
 from agent_os.kernel.stack import FrameStack
 from agent_os.providers.manager import ProviderManager
 from agent_os.sidecars.supervisor import SidecarSupervisor
+from agent_os.skills.manifest import validate_escalation_gates
 from agent_os.supervisor import SupervisorManager
 from agent_os.tools.local_registry import LocalPythonToolRegistry
 
@@ -181,6 +187,11 @@ class KernelBuilder:
             )
             if missing:
                 raise SkillLoadError(f"manifest 声明的工具未注册(§6.1 权限闸门): {missing}")
+            # 升权分档硬闸门(ESCALATION.md §2.1/§3.4):推导档 ≥L2 禁 inline、
+            # L3 禁 confirm: first。推导需要 Tool Registry,loader 单跑时不经过——
+            # 装配是 tools 与 skills 同时在场的唯一加载期检查点
+            for m in skills.manifests():
+                validate_escalation_gates(m, derive_skill_tier(m, tools, skills))
         sup_manager = None
         if self._supervisor is not None and self._supervisor["handler"] is not None:
             # SUPERVISOR.md §2.3:装配级 handler 通道(S2 宿主通道——Web 收件箱 /

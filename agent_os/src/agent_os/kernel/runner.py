@@ -49,6 +49,7 @@ from agent_os.api.v1 import (
     RUN_STARTED,
     Allow,
     ChatUsage,
+    EscalationRequest,
     ExecRequest,
     ForceCompress,
     FrameContext,
@@ -75,6 +76,9 @@ from agent_os.api.v1 import (
     ToolResult,
     TrustLevel,
     Veto,
+    derive_skill_tier,
+    derive_tools_tier,
+    tier_exceeds,
 )
 from agent_os.kernel.checkpoint import (
     _last_tool_message,
@@ -217,6 +221,11 @@ class Kernel:
                     Message(role=Role.USER, content=json.dumps(input), source=Source.PARENT_INPUT)
                 ]
             ),
+            # 根帧 = 根 skill 的直接能力档(只看自己的 tools;ESCALATION.md §2.2)。
+            # 根技能由宿主直接启动不过闸——但启动只确认了根技能的直接能力面,
+            # 经子技能够到更高档仍要过升权闸;若按完整推导档(含 skills 递归),
+            # 白名单内调用恒不升权,闸门成为死代码
+            tier=derive_tools_tier(manifest, self.tools),
         )
         await self.signals.emit(
             Signal(name=RUN_STARTED, run_id=run.run_id, payload={"skill": str(skill_obj.ref)})
@@ -841,6 +850,26 @@ class Kernel:
                 f"调用子技能 {name} 将达到 depth={frame.depth + 1},"
                 f"超过 max_depth={self.config.max_depth}"
             )
+        target = self.skills.get(SkillRef(name=name))
+        target_tier = derive_skill_tier(target.manifest, self.tools, self.skills)
+        if tier_exceeds(target_tier, frame.tier):
+            # 升权闸门(ESCALATION.md §3):白名单检查后、make_frame 之前。
+            # 原则 1 先校验后确认:参数不合被调方 inputs schema → INVALID_ARGS
+            # 错误观察,**不产生确认请求**(审的就是要执行的,不存在审一套跑一套)
+            try:
+                jsonschema.validate(call.args, target.manifest.inputs)
+            except jsonschema.ValidationError as e:
+                return {
+                    "ok": False,
+                    "value": None,
+                    "error": _error_payload(
+                        ToolErrorKind.INVALID_ARGS,
+                        f"子技能 {name} 的调用参数不合 inputs schema: {e.message}",
+                    ),
+                }
+            denied = await self._confirm_escalation(call, frame, name, target.manifest, target_tier)
+            if denied is not None:
+                return denied
         try:
             child = self.skills.make_frame(
                 SkillCall(name=name, args=dict(call.args), call_id=call.id), frame
@@ -854,6 +883,8 @@ class Kernel:
         # 登记触发子帧的父帧调用 id(checkpoint 恢复按 call_id 配对结算,§10.2;
         # LogicContext.invoke 经 _dispatch_call 委托到此,同一路径覆盖)
         child.call_id = call.id
+        # 子帧继承被调 skill 推导档(§2.2:它在高层环境里跑,再调同档是同层移动)
+        child.tier = target_tier
         try:
             value = await self.run_frame(child)
         except (MaxDepthExceeded, RunAborted):
@@ -872,6 +903,98 @@ class Kernel:
             }
         await self.signals.emit(self._sig(POST_SKILL_INVOKE, frame, {"skill": name, "ok": True}))
         return {"ok": True, "value": value, "error": None}
+
+    # ------------------------------------------------------------------
+    # ESCALATION.md §3:升权确认——内核判定升权后强制挂起等裁决(原则 2,
+    # 确认不由 LLM 发起);闭环复用 supervisor 通道(同 _ask_supervisor 先例)
+    # ------------------------------------------------------------------
+
+    async def _confirm_escalation(
+        self,
+        call: ToolCall,
+        frame: SkillFrame,
+        name: str,
+        target_manifest: SkillManifest,
+        target_tier: str,
+    ) -> dict[str, Any] | None:
+        """升权确认:pending 落盘 → supervisor 裁决 → 放行(None)或错误观察。
+
+        approve-once → 返回 None 放行本次调用;deny → 父帧 PERMISSION_DENIED
+        错误观察(与白名单拒绝同形;E1 无 Grant 缓存,重试同调用会再次挂起
+        ——防"磨到批准")。无 supervisor 通道时 fail-closed:升权无人可审
+        等于无人把关,直接拒绝。
+        """
+        if self.supervisor is None:
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(
+                    ToolErrorKind.PERMISSION_DENIED,
+                    f"升权调用 {name}({frame.tier} → {target_tier})需要人审,"
+                    "但未装配 supervisor 确认通道",
+                    hint="用 KernelBuilder.supervisor(handler) 注入调用方通道(SUPERVISOR.md §2.3)",
+                ),
+            }
+        request = EscalationRequest(
+            question_id=f"esc-{uuid.uuid4().hex[:12]}",
+            run_id=frame.run_id,
+            frame_id=frame.frame_id,
+            skill=name,
+            tier=target_tier,
+            params=dict(call.args),
+            requested={
+                "tools": list(target_manifest.permissions.tools),
+                "skills": list(target_manifest.permissions.skills),
+            },
+            reason_hint=f"{frame.tier} → {target_tier}",
+        )
+        # pending 升权入 working(checkpoint 随帧序列化;resume 凭此重走闸门,§3 原则 3)
+        frame.context.working["_pending_escalation"] = request.to_pending(call.id)
+        outcome = await self.supervisor.ask(frame, request.to_supervisor_args(str(frame.skill.name)))
+        # 仅正常闭环(含超时/兜底)才清 pending;异常(断电/取消)保留,供 resume 重问
+        frame.context.working.pop("_pending_escalation", None)
+        if outcome.get("ok") is False:
+            return {"ok": False, "value": None, "error": outcome["error"]}
+        if outcome["answer"] == "approve-once":
+            return None  # 放行本次调用
+        return {
+            "ok": False,
+            "value": None,
+            "error": _error_payload(
+                ToolErrorKind.PERMISSION_DENIED,
+                f"升权调用 {name} 被拒绝(decided_by: {outcome['decided_by']})",
+                hint="可改道完成或请求用户改用高档技能直接启动",
+            ),
+        }
+
+    async def _settle_pending_escalation(self, frame: SkillFrame) -> bool:
+        """resume 结算 pending 升权(§3 原则 3):重走升权闸门,结果写为该 call 的 tool result。
+
+        在 ``_settle_unpaired_calls`` 之前调用(与 ``_settle_pending_ask`` 同旨):
+        挂起在确认闸门的 skill 调用不是"分发到一半断电",不得落入 interrupted
+        占位——重入 ``_invoke_skill`` 会重新判定升权并再次挂起等裁决,批准后
+        当场补建子帧跑完,配对原子性天然闭合。已配对的只清标志。
+        """
+        pending = frame.context.working.pop("_pending_escalation", None)
+        if pending is None:
+            return False
+        call_id = pending.get("call_id")
+        messages = frame.context.messages
+        for index, msg in enumerate(messages):
+            if msg.role is not Role.ASSISTANT:
+                continue
+            for call in msg.tool_calls:
+                if call.id != call_id:
+                    continue
+                if not (call.name.startswith("skill.") or call.name.startswith("skill__")):
+                    continue
+                if _last_tool_message(messages, index, call.id) is not None:
+                    return False  # 已结算:只清 pending 标志
+                manifest = self.skills.get(frame.skill).manifest
+                payload = await self._invoke_skill(call, frame, manifest)
+                messages.append(self._tool_message(call, payload))
+                return True
+        return False
 
     # ------------------------------------------------------------------
     # §3.4 spawn 后台帧:父帧不挂起,子帧独立预算后台运行;join 退化为读终态
@@ -897,6 +1020,11 @@ class Kernel:
                 f"超过 max_depth={self.config.max_depth}"
             )
         child = self.skills.make_frame(SkillCall(name=skill, args=dict(input)), parent)
+        # 子帧继承被调 skill 推导档(与 _invoke_skill 同旨),后代调用的升权判定才有基准;
+        # spawn 路径本身的升权闸不在 E1 范围(见 ESCALATION.md §6 改动面:仅 _invoke_skill)
+        child.tier = derive_skill_tier(
+            self.skills.get(SkillRef(name=skill)).manifest, self.tools, self.skills
+        )
         task = asyncio.create_task(self.run_frame(child))
         self._spawned[child.frame_id] = task
         # spawn-and-forget 的子帧异常由 StatusBoard 记录(failed);提前 retrieve,

@@ -20,6 +20,7 @@
 
 ## 架构与规范
 
+- [SKILL-DEV.md](SKILL-DEV.md) — Skill 开发平台(Skill Lab)方案:草稿存储(DraftStore/OverlayRegistry)、全字段编辑器、Agent 助手(skill.dev.assistant)、测试面板、五关提交闸门。
 - [DESIGN.md](DESIGN.md) — 微内核总体设计:九子系统契约、agent loop、帧模型、权限三层交集、信号与记账(全仓架构基准)。
 - [NAMING.md](NAMING.md) — 命名规范:`<域>.<动作>[.<对象>]` 点分命名与动词-副作用对应规则。
 - [RUNNERS.md](RUNNERS.md) — 宿主运行器:CLI/Web 薄宿主、配置文件(agent-os.toml)各段语义、退出码契约。

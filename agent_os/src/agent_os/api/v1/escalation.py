@@ -37,6 +37,7 @@ __all__ = [
     "Grant",
     "derive_skill_tier",
     "derive_tools_tier",
+    "explain_skill_tier",
     "tier_exceeds",
     "tier_rank",
 ]
@@ -100,12 +101,24 @@ def derive_skill_tier(
     ``_visiting`` 是独立使用本函数时的防环兜底。查不到的子技能按 none 计
     (引用存在性由加载期闸门保证,此处防御性跳过)。
     """
-    best = TIER_NONE
+    return explain_skill_tier(manifest, tools, skills, _visiting)["tier"]
+
+
+def explain_skill_tier(
+    manifest: SkillManifest,
+    tools: Any = None,
+    skills: Any = None,
+    _visiting: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """推导档 + 来源明细(docs/SKILL-DEV.md §2.4"每处都有出处";编辑器悬停/闸门 G3 用)。
+
+    返回 ``{"tier": 推导档, "sources": [{kind, name, tier}...], "top": [最高档来源...]}``
+    ——人能看见档从哪个工具/子技能来,而不是一个光秃秃的等级。
+    """
+    sources: list[dict[str, str]] = []
     for name in manifest.permissions.tools:
-        tier = _tool_tier(tools, name)
-        if tier_rank(tier) > tier_rank(best):
-            best = tier
-    if skills is not None and tier_rank(best) < tier_rank(TIER_IRREVERSIBLE):
+        sources.append({"kind": "tool", "name": name, "tier": _tool_tier(tools, name)})
+    if skills is not None:
         for dep in manifest.permissions.skills:
             if dep in _visiting:
                 continue
@@ -115,11 +128,16 @@ def derive_skill_tier(
                 _log.debug("推导档跳过解析失败的子技能 %s: %r", dep, e)
                 continue
             tier = derive_skill_tier(sub, tools, skills, _visiting | {dep})
-            if tier_rank(tier) > tier_rank(best):
-                best = tier
-            if best == TIER_IRREVERSIBLE:
-                break
-    return best
+            sources.append({"kind": "skill", "name": dep, "tier": tier})
+    best = TIER_NONE
+    for s in sources:
+        if tier_rank(s["tier"]) > tier_rank(best):
+            best = s["tier"]
+    return {
+        "tier": best,
+        "sources": sources,
+        "top": [s for s in sources if s["tier"] == best and tier_rank(best) > 0],
+    }
 
 
 @dataclass(frozen=True)

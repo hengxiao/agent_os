@@ -214,7 +214,19 @@ promote 后想回滚 → skills.yaml 的 .bak(promote 自动备份)+ git。
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| L1 | DraftStore + drafts CRUD API + 编辑器(全字段)+ 推导档实时显示 | 手动建/改/存草稿;UI 无 agent/测试 |
+| L1 ✅ | DraftStore + drafts CRUD API + 编辑器(全字段)+ 推导档实时显示 | 手动建/改/存草稿;UI 无 agent/测试。已实现:`skills/draft_store.py` + OverlaySkillRegistry、`/api/lab` 六端点、`#/lab` 三栏骨架与七组编辑器;783 Python + 22 前端测试全绿 |
+
+> 实现注(L1):
+> 1. POST /api/lab/drafts 的复制参数名用 `from_skill`(`from` 是 JS/Python
+>    双端关键字,避免转义面);
+> 2. `/tier` 增加 `?tools=&skills=` 查询覆盖——编辑器**未保存**的白名单也能
+>    实时推导(§2.4"保存永不打断"的自然延伸,磁盘草稿不被污染);
+> 3. drafts_root 配置键定为 `[lab].drafts_root`(照 `[web].user` 先例),
+>    缺省 `<artifacts_root>/drafts`;
+> 4. 编辑器在客户端拦 JSON 不合法的 inputs/outputs(提示而非写坏草稿);
+>    "保存永不报错"指服务端不校验,不代表把语法错写进存储;
+> 5. 中右栏(Agent L4/测试 L3)与"检查/提交"按钮为占位/置灰,copy key
+>    六主题已同步。
 | L2 | 闸门 G1-G3 + validate API + 报告卡片 + promote(含 .bak 与 version bump) | 不合规草稿提交被拒,合规草稿进生产可 run |
 | L3 | 测试面板:test-run + trace 复用 + outputs 校验 + G4 冒烟入闸 | tests/case 驱动试跑,失败 trace 可见 |
 | L4 | Agent 助手:`skill.dev.assistant` + `skill.draft.*` 工具组 + chat 栏 | 对话式建/改 skill,助手无 promote 能力 |

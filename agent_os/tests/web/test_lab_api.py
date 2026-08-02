@@ -1,0 +1,205 @@
+"""L1 锚点测试:Skill Lab API(docs/SKILL-DEV.md §1.5)。
+
+端点:GET/POST /api/lab/drafts、GET/PUT/DELETE /api/lab/drafts/{name}、
+GET /api/lab/drafts/{name}/tier(含 ?tools=&skills= 未保存白名单覆盖)。
+drafts_root 取 ``[lab].drafts_root``(本文件用 tmp_path 钉死,不碰实例目录)。
+"""
+
+from __future__ import annotations
+
+import textwrap
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from agent_os.host.web.app import create_app
+
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
+
+SKILLS_YAML = """
+skills:
+  - name: common.text.word_count
+    version: 1.0.0
+    kind: prompt
+    description: 数字数。Use when 统计词数;Do not use when 其他。
+    inputs:
+      type: object
+      properties: { text: { type: string } }
+    outputs:
+      type: object
+      properties: { count: { type: integer } }
+    permissions:
+      tools: []
+      skills: []
+    model: { prefer: ["mock/x"] }
+    prompt: |
+      你是词数统计员。
+"""
+
+CONFIG_TOML = """
+[run]
+model = "mock/x"
+compression = "off"
+
+[providers.mock]
+brain = "tests.kernel.test_supervisor:expense_brain"
+
+[tools]
+builtins = true
+python_exec = "off"
+
+[skills]
+path = "{skills}"
+
+[lab]
+drafts_root = "{drafts}"
+"""
+
+
+def _client(tmp_path: Path) -> TestClient:
+    (tmp_path / "skills.yaml").write_text(textwrap.dedent(SKILLS_YAML), encoding="utf-8")
+    cfg = tmp_path / "agent-os.toml"
+    cfg.write_text(
+        CONFIG_TOML.format(skills=tmp_path / "skills.yaml", drafts=tmp_path / "drafts"),
+        encoding="utf-8",
+    )
+    return TestClient(create_app(cfg, artifacts_root=tmp_path / "runs"))
+
+
+def _create(client: TestClient, name: str = "weather.query") -> dict:
+    r = client.post("/api/lab/drafts", json={"name": name})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+# ---------------------------------------------------------------------------
+# CRUD 全端点
+# ---------------------------------------------------------------------------
+
+
+def test_crud_round_trip(tmp_path):
+    """建 → 读 → 列表(含 tier/mtime)→ 存(.bak)→ 删;删除后 404。"""
+    client = _client(tmp_path)
+    draft = _create(client)
+    assert draft["manifest"]["name"] == "weather.query"
+    assert draft["parse_error"] is None
+
+    r = client.get("/api/lab/drafts/weather.query")
+    assert r.status_code == 200
+    assert r.json()["manifest"]["kind"] == "prompt"
+
+    rows = client.get("/api/lab/drafts").json()
+    assert len(rows) == 1
+    assert rows[0]["name"] == "weather.query"
+    assert rows[0]["tier"] == "none"  # 空模板无白名单 → L1
+    assert rows[0]["mtime"] > 0
+
+    manifest = draft["manifest"] | {"description": "查天气。Use when x;Do not use when y"}
+    r = client.put(
+        "/api/lab/drafts/weather.query",
+        json={"manifest": manifest, "prompt": "你是天气员。", "handler": None,
+              "tests": {"case1.json": {"input": {}}}},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["prompt"] == "你是天气员。"
+    assert (tmp_path / "drafts" / "weather.query" / "manifest.yaml.bak").is_file()
+
+    r = client.delete("/api/lab/drafts/weather.query")
+    assert r.status_code == 200
+    assert client.get("/api/lab/drafts/weather.query").status_code == 404
+    assert client.get("/api/lab/drafts").json() == []
+
+
+def test_create_from_production_and_conflict(tmp_path):
+    """from 生产复制;重名 409;from 不存在 404;坏名字 400。"""
+    client = _client(tmp_path)
+    r = client.post("/api/lab/drafts", json={"name": "lab.word_count", "from_skill": "common.text.word_count"})
+    assert r.status_code == 201, r.text
+    assert r.json()["manifest"]["version"] == "1.0.0"
+
+    r = client.post("/api/lab/drafts", json={"name": "lab.word_count"})
+    assert r.status_code == 409
+    r = client.post("/api/lab/drafts", json={"name": "lab.x", "from_skill": "no.such"})
+    assert r.status_code == 404
+    r = client.post("/api/lab/drafts", json={"name": "../etc"})
+    assert r.status_code == 400
+
+
+def test_read_noncompliant_draft_no_500(tmp_path):
+    """草稿暂时不合规:read 返回原文 + parse_error,不是 500(§1.2 容错)。"""
+    client = _client(tmp_path)
+    _create(client)
+    (tmp_path / "drafts" / "weather.query" / "manifest.yaml").write_text(
+        "kind: [unclosed", encoding="utf-8"
+    )
+    r = client.get("/api/lab/drafts/weather.query")
+    assert r.status_code == 200
+    assert r.json()["parse_error"]
+    # 列表也不被拖垮:tier 置 None
+    rows = client.get("/api/lab/drafts").json()
+    assert rows[0]["tier"] is None
+
+
+# ---------------------------------------------------------------------------
+# /tier:实时推导档 + 来源明细 + 未保存白名单覆盖
+# ---------------------------------------------------------------------------
+
+
+def _save_with_tools(client: TestClient, tools: list[str]) -> None:
+    draft = client.get("/api/lab/drafts/weather.query").json()
+    manifest = draft["manifest"] | {
+        "description": "查天气。Use when x;Do not use when y",
+        "permissions": {"tools": tools, "skills": []},
+    }
+    r = client.put("/api/lab/drafts/weather.query",
+                   json={"manifest": manifest, "prompt": "p", "handler": None})
+    assert r.status_code == 200
+
+
+def test_tier_detail_and_override(tmp_path):
+    """tier:tools 取 max + top 明细;?tools= 用未保存的白名单覆盖(编辑器实时刷新)。"""
+    client = _client(tmp_path)
+    _create(client)
+    _save_with_tools(client, ["system.file.write"])
+    detail = client.get("/api/lab/drafts/weather.query/tier").json()
+    assert detail["tier"] == "reversible"
+    assert [s["name"] for s in detail["top"]] == ["system.file.write"]
+    assert detail["parse_error"] is None
+
+    # 编辑器把 file.delete 加进白名单但还没保存:query 覆盖 → irreversible
+    detail2 = client.get(
+        "/api/lab/drafts/weather.query/tier",
+        params={"tools": "system.file.write,system.file.delete"},
+    ).json()
+    assert detail2["tier"] == "irreversible"
+    by_name = {s["name"]: s["tier"] for s in detail2["sources"]}
+    assert by_name["system.file.delete"] == "irreversible"
+    # 磁盘上的草稿未被覆盖写污染
+    assert client.get("/api/lab/drafts/weather.query/tier").json()["tier"] == "reversible"
+
+
+def test_tier_skill_source_detail(tmp_path):
+    """tier 明细覆盖 skills 来源:白名单里的子技能档递归进 sources。"""
+    client = _client(tmp_path)
+    _create(client)
+    draft = client.get("/api/lab/drafts/weather.query").json()
+    manifest = draft["manifest"] | {
+        "description": "查天气。Use when x;Do not use when y",
+        "permissions": {"tools": [], "skills": ["common.text.word_count"]},
+    }
+    client.put("/api/lab/drafts/weather.query",
+               json={"manifest": manifest, "prompt": "p", "handler": None})
+    detail = client.get("/api/lab/drafts/weather.query/tier").json()
+    assert detail["tier"] == "none"  # word_count 无工具 → L1
+    assert detail["sources"][0]["kind"] == "skill"
+    assert detail["sources"][0]["name"] == "common.text.word_count"
+
+
+def test_tier_endpoints_errors(tmp_path):
+    """tier/保存/删除的错误归类:不存在 404,坏名字 400。"""
+    client = _client(tmp_path)
+    assert client.get("/api/lab/drafts/no.such/tier").status_code == 404
+    assert client.put("/api/lab/drafts/no.such", json={"manifest": {}}).status_code == 404
+    assert client.delete("/api/lab/drafts/no.such").status_code == 404
+    assert client.get("/api/lab/drafts/..%2Fetc").status_code in (400, 404, 422)

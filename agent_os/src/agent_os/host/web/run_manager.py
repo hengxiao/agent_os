@@ -976,6 +976,14 @@ class RunManager:
         """按名字取 manifest;不存在返回 ``None``(路由层归 404)。"""
         return next((m for m in self.skills_manifests(skill_set) if m.name == name), None)
 
+    def shared_skills_registry(self) -> Any:
+        """共享 skills registry(docs/SKILL-DEV.md §1.1:Lab 推导档的生产层数据源)。"""
+        return self._shared_registry()
+
+    def shared_tools_registry(self) -> Any:
+        """共享 tools registry(docs/SKILL-DEV.md §1.1:Lab 推导档的工具档数据源)。"""
+        return self._shared_tools()
+
     def _shared_tools(self) -> Any:
         """惰性装配共享 tools registry(``GET /api/tools`` 数据源;D4)。
 

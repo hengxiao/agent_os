@@ -100,8 +100,9 @@ export function questionCardHtml(q, err = null) {
 }
 
 /* 档位 → perm 色板槽位(与 Permission 缺省推导同一梯度:L1↔READ,L2↔WRITE,L3↔EXEC)。
-   颜色走 --perm-* 契约 token;档名/参数/权限名是技术文本,直渲不进 copy 表。 */
-const TIER_PERM = { none: "READ", reversible: "WRITE", irreversible: "EXEC" };
+   颜色走 --perm-* 契约 token;档名/参数/权限名是技术文本,直渲不进 copy 表。
+   (导出供 Skill Lab 推导档徽标复用,docs/SKILL-DEV.md §2.1) */
+export const TIER_PERM = { none: "READ", reversible: "WRITE", irreversible: "EXEC" };
 
 /* 升权卡片(docs/ESCALATION.md §3;E2):档位徽标(perm-badge 风格)+ skill 名 + question +
    reason_hint + params JSON(可折叠)+ requested 权限集 chips + 选项按钮。

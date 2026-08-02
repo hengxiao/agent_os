@@ -11,6 +11,7 @@ import { absTime, copyText, emptyBlock, esc, fmtCost, relTime, toast } from "./u
 import { openLaunchDialog } from "./components/launch-dialog.js";
 import { closeSkillsView, openSkillsView } from "./components/skills-view.js";
 import { closeToolsView, openToolsView } from "./components/tools-view.js";
+import { closeLab, openLab } from "./components/lab.js";
 import { closeDebugHome, openDebugHome } from "./components/debug-home.js";
 import {
   closeDebugView,
@@ -69,6 +70,8 @@ function parseRoute(hash) {
   }
   if (seg[0] === "skills") return { name: "skills", runId: null, itemName: seg[1] ?? null, set };
   if (seg[0] === "tools") return { name: "tools", runId: null, itemName: seg[1] ?? null, set };
+  // Skill Lab(docs/SKILL-DEV.md;L1):#/lab 与 #/lab/<draft> 深链接
+  if (seg[0] === "lab") return { name: "lab", runId: null, draft: seg[1] ?? null, set };
   if (seg[0] === "debug") {
     return seg[1]
       ? { name: "debug-session", sessionId: seg[1], runId: null, set }
@@ -242,6 +245,7 @@ function renderMain() {
   if (route.name !== "tools") closeToolsView();
   if (route.name !== "debug-home") closeDebugHome();
   if (route.name !== "debug-session") closeDebugView(); // 离开调试台:SSE/轮询收尾
+  if (route.name !== "lab") closeLab(); // 离开 Lab:丢弃页面状态(草稿在服务端,随时可回)
   if (route.name === "skills") {
     openSkillsView(main, route.itemName); // §4.6(#/skills 与 #/skills/<name> 深链接恢复)
     return;
@@ -256,6 +260,10 @@ function renderMain() {
   }
   if (route.name === "debug-session") {
     openDebugView(main, route.sessionId); // P4 调试台
+    return;
+  }
+  if (route.name === "lab") {
+    openLab(main, route.draft); // Skill Lab(docs/SKILL-DEV.md;L1)
     return;
   }
   if (route.name === "run-detail") {

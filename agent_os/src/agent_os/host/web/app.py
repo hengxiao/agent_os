@@ -33,6 +33,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from agent_os.api.v1 import SkillRef, explain_skill_tier
 from agent_os.host.shared.artifacts import (
     frame_tree,
     read_checkpoint,
@@ -49,6 +50,8 @@ from agent_os.host.web.run_manager import (
     _jsonable,
 )
 from agent_os.kernel.errors import AgentOSError, SkillLoadError
+from agent_os.runtime.config import load_config
+from agent_os.skills.draft_store import DraftStore, OverlaySkillRegistry
 from agent_os.skills.manifest import validate_manifest
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -68,6 +71,20 @@ _KIND_HINTS = {
     "sidecar": ("budget", "veto", "sidecar"),
     "run": ("run.",),
 }
+
+
+def _lab_store(config_path: str | Path, artifacts_root: Path) -> DraftStore:
+    """装配 DraftStore(docs/SKILL-DEV.md §1.2;L1)。
+
+    drafts_root 取宿主配置 ``[lab].drafts_root``(照 ``[web].user`` 先例);
+    缺省 ``<artifacts_root>/drafts``;配置读取失败退化为缺省,不拖垮装配。
+    """
+    drafts_root = None
+    try:
+        drafts_root = (load_config(config_path).get("lab") or {}).get("drafts_root")
+    except Exception:  # noqa: BLE001 — Lab 存储配置失败不阻断 Web 启动
+        drafts_root = None
+    return DraftStore(drafts_root or (Path(artifacts_root) / "drafts"))
 
 
 class RunOverrides(BaseModel):
@@ -104,6 +121,22 @@ class SupervisorAnswerBody(BaseModel):
     """``POST /api/supervisor/{question_id}/answer`` 请求体(docs/SUPERVISOR.md §2.4;S2)。"""
 
     answer: str
+
+
+class LabCreateBody(BaseModel):
+    """``POST /api/lab/drafts``(docs/SKILL-DEV.md §1.5):空模板或从生产 skill 复制。"""
+
+    name: str
+    from_skill: str | None = None  # 生产 skill 名(前端把 `from` 关键字映射为本字段)
+
+
+class LabSaveBody(BaseModel):
+    """``PUT /api/lab/drafts/{name}``(§1.5):整体替换;tests=None 不动 tests 目录。"""
+
+    manifest: dict[str, Any]
+    prompt: str = ""
+    handler: str | None = None
+    tests: dict[str, Any] | None = None
 
 
 class DebugBreakpointBody(BaseModel):
@@ -619,6 +652,112 @@ def create_app(
     def list_tools() -> list[dict[str, Any]]:
         """工具清单(docs/WEB-UI.md §6.2):共享 tools registry 的全量 ToolSpec 摘要(Tools 浏览器)。"""
         return [_tool_doc(s) for s in manager.tools_specs()]
+
+    # ------------------------------------------------------------------
+    # Skill Lab(docs/SKILL-DEV.md §1.5;L1):drafts CRUD + 实时推导档
+    # ------------------------------------------------------------------
+
+    lab_store = _lab_store(config_path, root)
+
+    def _lab_overlay() -> OverlaySkillRegistry:
+        """生产 registry + 草稿层(草稿优先;L1 仅服务推导档,test-run 装配属 L3)。"""
+        return OverlaySkillRegistry(manager.shared_skills_registry(), lab_store)
+
+    def _lab_tier_of(manifest: Any) -> str:
+        return explain_skill_tier(manifest, manager.shared_tools_registry(), _lab_overlay())["tier"]
+
+    @app.get("/api/lab/drafts")
+    def lab_list_drafts() -> list[dict[str, Any]]:
+        """草稿列表(§1.5):name/推导档/最近修改时间;暂不合规的草稿 tier 置 None。"""
+        rows = lab_store.list()
+        for row in rows:
+            try:
+                row["tier"] = _lab_tier_of(lab_store.load_skill(row["name"]).manifest)
+            except (SkillLoadError, RunValidationError):
+                row["tier"] = None  # 半成品也要能进列表(§1.2 允许临时不合规)
+        return rows
+
+    @app.post("/api/lab/drafts", status_code=201)
+    def lab_create_draft(body: LabCreateBody) -> dict[str, Any]:
+        """新建草稿(§1.5):空模板,或 ``from_skill`` 从生产 skill 复制。"""
+        source = None
+        if body.from_skill:
+            try:
+                source = manager.shared_skills_registry().get(SkillRef(name=body.from_skill))
+            except (SkillLoadError, RunValidationError) as e:
+                raise HTTPException(status_code=404, detail=f"找不到生产技能: {body.from_skill}") from e
+        try:
+            return lab_store.create(body.name, source=source)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+
+    @app.get("/api/lab/drafts/{name}")
+    def lab_read_draft(name: str) -> dict[str, Any]:
+        """读草稿(§1.5):manifest + prompt + handler + tests;解析失败带 parse_error 不 500。"""
+        try:
+            return lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.put("/api/lab/drafts/{name}")
+    def lab_save_draft(name: str, body: LabSaveBody) -> dict[str, Any]:
+        """保存草稿(§1.5):整体替换,上一版自动 .bak;不校验内容(闸门守在出口)。"""
+        try:
+            return lab_store.save(
+                name,
+                manifest=body.manifest,
+                prompt=body.prompt,
+                handler=body.handler,
+                tests=body.tests,
+            )
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.delete("/api/lab/drafts/{name}")
+    def lab_delete_draft(name: str) -> dict[str, Any]:
+        """删草稿(§1.5;L2 语义,UI 已确认)。"""
+        try:
+            lab_store.delete(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"ok": True, "name": name}
+
+    @app.get("/api/lab/drafts/{name}/tier")
+    def lab_draft_tier(name: str, tools: str | None = None, skills: str | None = None) -> dict[str, Any]:
+        """实时推导档(§1.3/§2.4):tier + 每来源明细(top = 贡献最高档的工具/技能)。
+
+        ``?tools=a,b&skills=c,d`` 用编辑器**未保存**的白名单覆盖计算——推导档随
+        表单实时刷新,不必先保存(保存永不打断创作流,§2.4)。
+        """
+        try:
+            draft = lab_store.read(name)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        if draft["parse_error"] is not None or draft["manifest"] is None:
+            # 半成品给不出档:明示原因而不是 500(与 read 同一容错语义)
+            return {"tier": None, "sources": [], "top": [], "parse_error": draft["parse_error"]}
+        try:
+            manifest = lab_store.load_skill(name).manifest
+        except SkillLoadError as e:
+            return {"tier": None, "sources": [], "top": [], "parse_error": str(e)}
+        if tools is not None:
+            manifest.permissions.tools = [t for t in tools.split(",") if t]
+        if skills is not None:
+            manifest.permissions.skills = [s for s in skills.split(",") if s]
+        try:
+            detail = explain_skill_tier(manifest, manager.shared_tools_registry(), _lab_overlay())
+        except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        detail["parse_error"] = None
+        return detail
 
     @app.get("/api/runs/{run_id}/stream")
     async def stream_run(run_id: str) -> StreamingResponse:

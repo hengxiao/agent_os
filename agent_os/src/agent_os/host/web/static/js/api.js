@@ -39,3 +39,12 @@ export const postJson = (path, body) =>
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+
+export const putJson = (path, body) =>
+  request(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+export const deleteJson = (path) => request(path, { method: "DELETE" });

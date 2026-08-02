@@ -239,7 +239,7 @@ const count = (html, needle) => html.split(needle).length - 1;
   assert.equal(view.els.setSel.value, "", "默认跟随侧栏 = 全部");
   assert.match(view.els.list.innerHTML, /brw-group[^>]*>set_a \(1\)/, "全部:按 set 分组组头");
   assert.match(view.els.list.innerHTML, /brw-group[^>]*>set_b \(1\)/);
-  assert.equal(count(view.els.list.innerHTML, "brw-item\""), 2, "全部:两组技能都在");
+  assert.equal(count(view.els.list.innerHTML, "brw-item "), 2, "全部:两组技能都在");
   assert.ok(
     http.gets.includes("/api/skills/alpha_echo?skill_set=set_a"),
     "全部:详情按技能所属 set 拉取",

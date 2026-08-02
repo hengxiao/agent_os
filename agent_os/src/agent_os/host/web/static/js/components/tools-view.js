@@ -12,6 +12,14 @@
 
 import { getJson } from "../api.js";
 import { emptyBlock, esc, routeDescHtml } from "../util.js";
+import {
+  allNamespaces,
+  buildNsTree,
+  defaultExpanded,
+  filterNsTree,
+  flattenLeaves,
+  nsTreeHtml,
+} from "./ns-tree.js";
 import { normalizePerm, permBadge } from "./perm-badge.js";
 import { schemaView } from "./schema-view.js";
 
@@ -30,6 +38,7 @@ const tv = {
   selected: null,
   search: "",
   permFilter: null, // null = 全部;否则 READ|WRITE|NET|EXEC(单选)
+  expanded: null, // 命名空间折叠态(Set;null = 未初始化,首次渲染按 defaultExpanded)
 };
 
 /* ── 骨架 ───────────────────────────────────────────────────── */
@@ -101,6 +110,17 @@ function onClick(e) {
   }
   if (e.target.closest?.("[data-tools]") && tv.root.contains(e.target.closest("[data-tools]"))) {
     loadList(); // 面板内重试
+    return;
+  }
+  // 命名空间折叠/展开(树化浏览;过滤态下强制全展开,不响应)
+  const toggle = e.target.closest?.("[data-ns-toggle]");
+  if (toggle && tv.root.contains(toggle)) {
+    if (tv.search.trim()) return;
+    if (tv.expanded === null) tv.expanded = defaultExpanded(buildNsTree(tv.tools));
+    const full = toggle.dataset.nsToggle;
+    if (tv.expanded.has(full)) tv.expanded.delete(full);
+    else tv.expanded.add(full);
+    renderList();
     return;
   }
   const item = e.target.closest?.(".brw-item");
@@ -179,13 +199,14 @@ function visibleTools() {
   });
 }
 
-function toolItemHtml(t) {
+function toolItemHtml(t, depth = 0) {
   const sel = t.name === tv.selected;
+  const lastSeg = t.name.split(".").pop();
   return (
-    `<div class="brw-item" data-name="${esc(t.name)}" role="option" tabindex="0"` +
-    ` aria-selected="${sel}" title="${esc(t.name)}">` +
+    `<div class="brw-item ns-leaf" style="--ns-depth:${depth}" data-name="${esc(t.name)}"` +
+    ` role="option" tabindex="0" aria-selected="${sel}" title="${esc(t.name)}">` +
     `<div class="brw-item-row">` +
-    `<span class="brw-item-name mono">${esc(t.name)}</span>` +
+    `<span class="brw-item-name mono">${esc(lastSeg)}</span>` +
     permBadge(t.permission) +
     `</div>` +
     `</div>`
@@ -215,7 +236,11 @@ function renderList() {
         : emptyBlock("无匹配的工具", "调整搜索关键词或权限筛选", "search");
     return;
   }
-  box.innerHTML = tools.map(toolItemHtml).join("");
+  // 树化浏览(docs/NAMING.md §2):perm 筛选先过滤,搜索走 filterNsTree(祖先链自动展开)
+  const q = tv.search.trim().toLowerCase();
+  const tree = filterNsTree(buildNsTree(tools), q);
+  const expanded = q ? allNamespaces(tree) : (tv.expanded ??= defaultExpanded(tree));
+  box.innerHTML = nsTreeHtml(tree, { expanded, leafHtml: toolItemHtml });
 }
 
 /* ── 渲染:右详情(§4.7 分区)──────────────────────────────────────── */

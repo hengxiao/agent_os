@@ -70,4 +70,5 @@ export const COPY = {
   "lab.chat.thinking": "执笔中…",
   "lab.chat.failed": "笔误",
   "lab.chat.updated": "已改 ",
+  "ns.toggle": "阖/启",
 };

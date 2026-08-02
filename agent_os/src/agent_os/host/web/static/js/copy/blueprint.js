@@ -70,4 +70,5 @@ export const COPY = {
   "lab.chat.thinking": "作业中…",
   "lab.chat.failed": "助手出错",
   "lab.chat.updated": "助手改注 ",
+  "ns.toggle": "合/展",
 };

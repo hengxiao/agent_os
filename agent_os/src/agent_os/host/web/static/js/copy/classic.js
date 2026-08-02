@@ -77,4 +77,5 @@ export const COPY = {
   "lab.chat.thinking": "助手工作中…",
   "lab.chat.failed": "助手出错了",
   "lab.chat.updated": "agent 更新了 ",
+  "ns.toggle": "折叠/展开",
 };

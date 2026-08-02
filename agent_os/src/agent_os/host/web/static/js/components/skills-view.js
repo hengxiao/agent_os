@@ -23,6 +23,14 @@ import { store } from "../store.js";
 import { COPY_SVG, emptyBlock, esc, routeDescHtml, toast } from "../util.js";
 import { banner } from "./banner.js";
 import { openLaunchDialog } from "./launch-dialog.js";
+import {
+  allNamespaces,
+  buildNsTree,
+  defaultExpanded,
+  filterNsTree,
+  flattenLeaves,
+  nsTreeHtml,
+} from "./ns-tree.js";
 import { schemaView } from "./schema-view.js";
 
 /* ── findCycles:permissions.skills 依赖图的循环依赖(Tarjan SCC)────
@@ -92,6 +100,7 @@ const sv = {
   reloadBusy: false,
   set: null, // D6:当前 set 范围(null = 全部;单 set/无 sets 恒 null)
   unsub: null, // D6:store 订阅退订(侧栏 set 切换联动)
+  expanded: null, // 命名空间折叠态(Set;null = 未初始化,首次渲染按 defaultExpanded)
 };
 
 /* ── 骨架:createElement 搭结构(引用直持),内容区留空 ────────────── */
@@ -158,6 +167,17 @@ function onClick(e) {
     else if (act === "retry-detail") sv.selected && ensureDetail(sv.selected, true);
     // D6:把技能所属 set 一并预填(多 set 下 Launch Modal 提交带 skill_set)
     else if (act === "run") openLaunchDialog({ presetSkill: sv.selected, presetSet: skillSetOf(sv.selected) });
+    return;
+  }
+  // 命名空间折叠/展开(树化浏览;过滤态下强制全展开,不响应)
+  const toggle = e.target.closest?.("[data-ns-toggle]");
+  if (toggle && sv.root.contains(toggle)) {
+    if (sv.search.trim()) return;
+    if (sv.expanded === null) sv.expanded = defaultExpanded(buildNsTree(sv.skills));
+    const full = toggle.dataset.nsToggle;
+    if (sv.expanded.has(full)) sv.expanded.delete(full);
+    else sv.expanded.add(full);
+    renderList();
     return;
   }
   const item = e.target.closest?.(".brw-item");
@@ -365,14 +385,23 @@ function visibleSkills() {
   return sv.skills.filter((s) => !q || (s.name || "").toLowerCase().includes(q));
 }
 
-function skillItemHtml(s) {
+/* 树化浏览(docs/NAMING.md §2):当前过滤态的树 + 展开集合(搜索时祖先链全展开) */
+function currentTree() {
+  const q = sv.search.trim().toLowerCase();
+  const tree = filterNsTree(buildNsTree(sv.skills), q);
+  const expanded = q ? allNamespaces(tree) : (sv.expanded ??= defaultExpanded(tree));
+  return { tree, expanded };
+}
+
+function skillItemHtml(s, depth = 0) {
   const sel = s.name === sv.selected;
   const cyclic = sv.cycles.has(s.name);
+  const lastSeg = s.name.split(".").pop();
   return (
-    `<div class="brw-item" data-name="${esc(s.name)}" role="option" tabindex="0"` +
-    ` aria-selected="${sel}" title="${esc(s.name)}">` +
+    `<div class="brw-item ns-leaf" style="--ns-depth:${depth}" data-name="${esc(s.name)}"` +
+    ` role="option" tabindex="0" aria-selected="${sel}" title="${esc(s.name)}">` +
     `<div class="brw-item-row">` +
-    `<span class="brw-item-name">${esc(s.name)}</span>` +
+    `<span class="brw-item-name">${esc(lastSeg)}</span>` +
     (s.inline
       ? `<span class="inline-chip" title="merge:指令并入调用方 SYSTEM,不产生调用帧">⇥ inline</span>`
       : "") +
@@ -403,32 +432,36 @@ function renderList() {
       `</div>`;
     return;
   }
-  const skills = visibleSkills();
-  if (!skills.length) {
+  const { tree, expanded } = currentTree();
+  if (!flattenLeaves(tree).length) {
     box.innerHTML =
       sv.skills.length === 0
         ? emptyBlock("还没有技能", "在 agent-os.toml 配置 skills.path", "box")
         : emptyBlock("无匹配的技能", "调整搜索关键词", "search");
     return;
   }
-  // D6:多 set "全部" 时按 set 分组(组头 = set 名 + 技能数;组序保持拉取序)
+  // D6:多 set "全部" 时按 set 分组(组头在树之上;树按组内技能各自建)
   if (multiSets() && !sv.set) {
+    const q = sv.search.trim().toLowerCase();
     const groups = new Map();
-    for (const s of skills) {
+    for (const s of visibleSkills()) {
       const key = s._set ?? "default";
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(s);
     }
     box.innerHTML = [...groups.entries()]
-      .map(
-        ([set, list]) =>
-          `<div class="brw-group" role="presentation">${esc(set)} (${list.length})</div>` +
-          list.map(skillItemHtml).join(""),
-      )
+      .map(([set, list]) => {
+        const subTree = q ? filterNsTree(buildNsTree(list), q) : buildNsTree(list);
+        const subExpanded = q ? allNamespaces(subTree) : expanded;
+        return (
+          `<div class="brw-group" role="presentation">${esc(set)} (${flattenLeaves(subTree).length})</div>` +
+          nsTreeHtml(subTree, { expanded: subExpanded, leafHtml: skillItemHtml })
+        );
+      })
       .join("");
     return;
   }
-  box.innerHTML = skills.map(skillItemHtml).join("");
+  box.innerHTML = nsTreeHtml(tree, { expanded, leafHtml: skillItemHtml });
 }
 
 /* ── 渲染:右详情(§4.6 分区)──────────────────────────────────────── */

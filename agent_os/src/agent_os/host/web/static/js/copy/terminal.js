@@ -76,4 +76,5 @@ export const COPY = {
   "lab.chat.thinking": "working…",
   "lab.chat.failed": "assistant error",
   "lab.chat.updated": "agent updated ",
+  "ns.toggle": "collapse/expand",
 };

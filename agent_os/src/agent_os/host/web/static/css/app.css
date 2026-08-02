@@ -2244,6 +2244,38 @@ th.is-sorted .us-sort { color: var(--live); }
   padding: 0 var(--s1);
 }
 
+/* 命名空间树(docs/NAMING.md §2;Skills/Tools 浏览器共用):折叠箭头 + 计数,
+   缩进走 --ns-depth(结构行为,零主题分支,只消费 token) */
+.ns-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: var(--s1) var(--s2);
+  padding-left: calc(var(--s2) + var(--ns-depth, 0) * var(--s4));
+  color: var(--fg-1);
+  font-size: var(--text-xs);
+}
+.ns-toggle {
+  border: none;
+  background: none;
+  color: var(--fg-2);
+  cursor: pointer;
+  padding: 0 var(--s1);
+  font-size: var(--text-2xs);
+  width: var(--s4);
+}
+.ns-toggle:hover { color: var(--fg-0); }
+.ns-name { font-weight: 600; }
+.ns-count {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-2);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 0 var(--s1);
+}
+.ns-leaf { padding-left: calc(var(--s4) + var(--ns-depth, 0) * var(--s4)); }
+
 /* run 头"等待上级裁决"Banner(帧拿不到精确标注时的兜底,S3 §5) */
 .wb-wait { align-items: center; }
 .wb-wait .banner-main { flex: 1; }

@@ -69,4 +69,5 @@ export const COPY = {
   "lab.chat.thinking": "努力干活中…",
   "lab.chat.failed": "呜…搞砸了",
   "lab.chat.updated": "帮你改了 ",
+  "ns.toggle": "折一下/展开",
 };

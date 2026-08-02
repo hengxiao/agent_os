@@ -39,6 +39,40 @@ def test_create_empty_template(store):
     assert draft["tests"] == {}
 
 
+def test_templates_create_and_pass_g1_g2(tmp_path, store):
+    """模板库(docs/SKILL-DEV.md §4 L5):三件套字段就位,创建后 G1/G2 直接过。"""
+    from agent_os.skills.gate import validate_draft
+    from agent_os.skills.local_file import LocalFileSkillRegistry
+    from agent_os.tools.local_registry import LocalPythonToolRegistry
+
+    prod = LocalFileSkillRegistry(str(_empty_yaml(tmp_path)))
+    tools = LocalPythonToolRegistry.with_builtins()
+    for key, expect in (
+        ("prompt_query", {"tools": [], "skills": []}),
+        ("file_process", {"tools": ["system.file.read", "system.file.write"], "skills": []}),
+        ("danger_op", {"tools": ["system.file.delete"], "skills": []}),
+    ):
+        draft = store.create(f"tpl.{key}", template=key)
+        assert draft["manifest"]["permissions"] == expect
+        assert draft["manifest"]["description"]
+        assert draft["prompt"]
+        report = validate_draft(draft, production=prod, tools=tools)
+        assert report["gates"]["g1"]["status"] == "pass", key
+        assert report["gates"]["g2"]["status"] == "pass", key
+        # trust 占位是真实机制描述:L2/L3 模板的 G3 必填项也直接过
+        assert report["gates"]["g3"]["status"] == "pass", key
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="未知模板"):
+        store.create("tpl.bogus", template="bogus")
+
+
+def _empty_yaml(tmp_path):
+    p = tmp_path / "skills.yaml"
+    p.write_text("skills: []\n", encoding="utf-8")
+    return p
+
+
 def test_create_from_production(tmp_path, store):
     """从生产 skill 复制:manifest 字段全带,目录名覆盖为草稿名(独立个体)。"""
     skills_yaml = tmp_path / "skills.yaml"

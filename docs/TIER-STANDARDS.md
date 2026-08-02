@@ -164,6 +164,10 @@
 | L3 | 把 L3 工具包进 L2 skill 里"降级" | 推导档取 max,包不住;lint 会抓到,reviewer 也不要放过 |
 | 任意 | 用 prompt 叮嘱代替机制("请模型先问用户") | prompt 叮嘱可被注入绕过;闸门必须在 runner,不在自然语言里 |
 
+> 镜像面的强制点:prompt 里**教唆绕过确认/隐瞒副作用**的注入诱导,由
+> Skill Lab 提交闸门 G5 逐句拦截(模式表与正面表述白名单见
+> `agent_os/src/agent_os/skills/gate.py`,docs/SKILL-DEV.md §1.4 L5 已实现)。
+
 > 逐档落地示例(L1 巡检 / L2 幂等写入 + approve-run / L3 指名目标 +
 > dry_run 一致性 + 每次人审,全真工具零 mock)见
 > `agent_os/examples/workspace_janitor`。

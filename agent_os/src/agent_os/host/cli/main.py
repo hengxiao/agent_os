@@ -332,6 +332,78 @@ def _cmd_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_lab(args: argparse.Namespace) -> int:
+    """lab validate(docs/SKILL-DEV.md §3;L5):草稿跑提交闸门(G1-G5),头less 输出。
+
+    闸门与 Web 同一函数(skills/gate.py):G4 冒烟用本配置装配的内核真跑
+    (overlay 草稿优先);报告落盘 ``drafts/<name>/gate/``(与 Web 共用
+    drafts_root,promote 可直接消费)。退出码:pass/warn = 0,fail = 2(lint 先例)。
+    """
+    import asyncio as _asyncio
+
+    import jsonschema as _jsonschema
+
+    from agent_os.skills.draft_store import DraftStore, OverlaySkillRegistry
+    from agent_os.skills.gate import validate_draft
+
+    cfg = load_config(args.config)
+    drafts_root = (cfg.get("lab") or {}).get("drafts_root") or str(
+        Path(args.artifacts) / "drafts"
+    )
+    store = DraftStore(drafts_root)
+    try:
+        draft = store.read(args.name)
+    except (FileNotFoundError, ValueError) as e:
+        _emit_report({"ok": False, "error": str(e)}, args.json, [f"error: {e}"])
+        return 2
+    try:
+        kernel = _build_kernel(args.config)
+    except (SkillLoadError, _InfraError) as e:
+        _emit_report({"ok": False, "error": str(e)}, args.json, [f"error: {e}"])
+        return 4
+    if kernel.skills is None:
+        # 无 [skills] 配置也能验草稿:生产层给空 registry(推导档只算 tools)
+        kernel.skills = _EmptyProduction()
+    from agent_os.host.web.run_manager import (
+        RunManager,  # 延迟导入(web 依赖不进 CLI 主路径)
+    )
+
+    RunManager.swap_skills_overlay(kernel, OverlaySkillRegistry(kernel.skills, store))
+    outputs = (draft.get("manifest") or {}).get("outputs") or {}
+
+    def smoke(case: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result = _asyncio.run(kernel.run(args.name, case.get("input") or {}))
+        except Exception as e:  # noqa: BLE001 — 冒烟失败归 G4 finding,不炸 validate
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        if outputs:
+            try:
+                _jsonschema.validate(result, outputs)
+            except _jsonschema.ValidationError as e:
+                return {"ok": False, "error": f"outputs 校验失败: {e.message}"}
+        return {"ok": True, "error": None}
+
+    report = validate_draft(draft, production=kernel.skills, tools=kernel.tools, smoke_runner=smoke)
+    report = store.save_gate_report(args.name, report)
+    ok = report["status"] != "fail"
+    _emit_report(
+        {"ok": ok, "status": report["status"], "report": report},
+        args.json,
+        [f"{args.name}: {report['status']}"],
+    )
+    return 0 if ok else 2
+
+
+class _EmptyProduction:
+    """空生产 registry(CLI 无 [skills] 配置时的推导档兜底)。"""
+
+    def get(self, ref: Any) -> Any:
+        raise SkillLoadError(f"未注册的技能: {ref}")
+
+    def manifests(self) -> list[Any]:
+        return []
+
+
 def _cmd_skills(args: argparse.Namespace) -> int:
     """skills validate|list(§3.2):构造即加载走完整校验管线,失败退出码 2。"""
     try:
@@ -464,6 +536,16 @@ def _parser() -> argparse.ArgumentParser:
         sp.add_argument("path", help="skills.yaml 路径")
         sp.add_argument("--json", action="store_true")
         sp.set_defaults(func=_cmd_skills)
+
+    # Skill Lab(docs/SKILL-DEV.md §3;L5):草稿闸门头less 入口(coding agent 可用)
+    p_lab = sub.add_parser("lab", help="Skill Lab:草稿提交闸门(G1-G5)")
+    lab_sub = p_lab.add_subparsers(dest="lab_command", required=True)
+    sp_lab = lab_sub.add_parser("validate", help="跑提交闸门;pass/warn 退出码 0,fail 2")
+    sp_lab.add_argument("name", help="草稿名(drafts_root 下的目录名)")
+    sp_lab.add_argument("--config", default="agent-os.toml")
+    sp_lab.add_argument("--artifacts", default=".agent-os")
+    sp_lab.add_argument("--json", action="store_true")
+    sp_lab.set_defaults(func=_cmd_lab)
     return parser
 
 

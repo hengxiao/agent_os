@@ -270,7 +270,15 @@ promote 后想回滚 → skills.yaml 的 .bak(promote 自动备份)+ git。
 > 4. `lab.draft.test_run` 工具内限步 25(装配成本高;外圈 RunConfig 仍在);
 > 5. chat 与编辑器刷新用轮询(同 L3 注;SSE 增量打磨留 L5);改稿后编辑器
 >    以服务端草稿为准重载(L4 单用户单会话),diff 行标出改动顶层字段。
-| L5 | G5 提示词卫生 + CLI `lab validate` + 模板库 + diff 视图打磨 | 全套体验走查 |
+| L5 ✅ | G5 提示词卫生 + CLI `lab validate` + 模板库 + diff 视图打磨 | 全套体验走查。已实现:G5 逐句反模式扫描(模式表在 gate.py,宁稳勿滥:正面表述白名单)、`agent-os lab validate`(G1-G5 同闸门,退出码 pass/warn=0、fail=2)、三档模板库(创建即过 G1-G3);812 Python + 24 前端测试全绿 |
+
+> 实现注(L5):
+> 1. G5 逐句判定:命中反模式的句子若同时命中正面表述白名单(确认后/征得/
+>    ask the user 等)则放行——"让用户确认后才执行"不得误伤;
+> 2. `lab validate` 的报告同样落盘 `drafts/<name>/gate/`(与 Web 共用
+>    drafts_root)——CLI 查完,Web 可以直接 promote;
+> 3. 模板 trust 占位是**真实机制描述**(不是"待定"空话),L2/L3 模板因此
+>    直接过 G3 必填项;diff 视图打磨未做(超出本期最低可用面,留后续)。
 
 依赖说明:L2 的 G3 必填 lint 即 ESCALATION 的 E3 一部分(两份计划在此汇合);
 L4 依赖 L1-L3(助手改的是同一草稿、查的是同一闸门、试的是同一面板)。

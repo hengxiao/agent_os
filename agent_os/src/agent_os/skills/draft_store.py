@@ -50,6 +50,73 @@ _EMPTY_MANIFEST: dict[str, Any] = {
     "permissions": {"tools": [], "skills": []},
 }
 
+#: 模板库(§4 L5;轻量):三档骨架,字段就位(G1/G2/G3 直接过),内容留人改。
+#: trust 占位是**真实可用**的机制描述(不是空话)——L2/L3 模板的 G3 必填项即此落地。
+DRAFT_TEMPLATES: dict[str, dict[str, Any]] = {
+    "prompt_query": {
+        "description": "查询类技能。Use when 需要按 query 检索/推理回答;Do not use when 需要写副作用。",
+        "inputs": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "查询内容"}},
+            "required": ["query"],
+        },
+        "outputs": {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"],
+        },
+        "permissions": {"tools": [], "skills": []},
+        "prompt": "你是查询助手。按输入的 query 回答,最终答案输出 answer 字段(只输出该 JSON)。\n",
+    },
+    "file_process": {
+        "description": "文件处理类技能(L2 骨架)。Use when 需要读写工作区文件;Do not use when 要删除文件或停进程。",
+        "inputs": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "workdir 内相对路径"}},
+            "required": ["path"],
+        },
+        "outputs": {
+            "type": "object",
+            "properties": {"written": {"type": "string"}},
+            "required": ["written"],
+        },
+        "permissions": {"tools": ["system.file.read", "system.file.write"], "skills": []},
+        "trust": {"reversal": "覆盖写前自动 .bak(写工具现状),回滚 = 取回 .bak 重写"},
+        "prompt": (
+            "你是文件处理员(L2 可逆档)。读写仅限 workdir 内输入的 path;"
+            "写操作幂等(同内容重复写不产生差异)。最终答案输出 written 字段。\n"
+        ),
+    },
+    "danger_op": {
+        "description": "危险操作类技能(L3 骨架)。Use when 需要对指名目标做不可逆操作;Do not use when 目标未指名或可逆完成。",
+        "inputs": {
+            "type": "object",
+            "properties": {
+                "targets": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 20,
+                },
+                "dry_run": {"type": "boolean"},
+            },
+            "required": ["targets", "dry_run"],
+        },
+        "outputs": {
+            "type": "object",
+            "properties": {"destroyed": {"type": "array", "items": {"type": "string"}}},
+            "required": ["destroyed"],
+        },
+        "permissions": {"tools": ["system.file.delete"], "skills": []},
+        "trust": {"blast_radius": "仅 targets 指名清单(单次 ≤20);空目标/通配目标报错"},
+        "prompt": (
+            "你是危险操作执行员(L3 不可逆档)。dry_run=true 时只返回将影响的清单,"
+            "一个不删;false 时按 targets 逐个调用 system.file.delete,不得增删目标。"
+            "最终答案输出 destroyed 字段(实际删除清单)。\n"
+        ),
+    },
+}
+
 
 class DraftStore:
     """草稿目录的 CRUD(§1.2;解析容错见 :meth:`read`)。"""
@@ -101,16 +168,29 @@ class DraftStore:
             )
         return rows
 
-    def create(self, name: str, *, source: Skill | None = None) -> dict[str, Any]:
-        """新建草稿:空模板,或 ``source``(生产 Skill 对象)复制。已存在 → FileExistsError。"""
+    def create(
+        self,
+        name: str,
+        *,
+        source: Skill | None = None,
+        template: str | None = None,
+    ) -> dict[str, Any]:
+        """新建草稿:空模板 / ``template`` 模板库(§4 L5)/ ``source`` 生产复制。已存在 → FileExistsError。"""
         d = self._dir(name)
         if d.exists():
             raise FileExistsError(f"草稿已存在: {name}")
+        if template is not None and template not in DRAFT_TEMPLATES:
+            raise ValueError(
+                f"未知模板: {template!r}(可选: {sorted(DRAFT_TEMPLATES)})"
+            )
         d.mkdir(parents=True)
         (d / "tests").mkdir()
         if source is None:
+            tpl = DRAFT_TEMPLATES.get(template or "")
             manifest = {"name": name, **_EMPTY_MANIFEST}
-            prompt = "# 在这里写指令体(prompt)\n"
+            if tpl:
+                manifest.update({k: v for k, v in tpl.items() if k != "prompt"})
+            prompt = (tpl or {}).get("prompt") or "# 在这里写指令体(prompt)\n"
         else:
             manifest = _manifest_to_dict(source.manifest)
             manifest["name"] = name  # 复制即改名:草稿是独立个体

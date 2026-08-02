@@ -71,4 +71,7 @@ export const COPY = {
   "lab.chat.failed": "笔误",
   "lab.chat.updated": "已改 ",
   "ns.toggle": "阖/启",
+  "lab.tpl.prompt_query": "帖:查询(L1)",
+  "lab.tpl.file_process": "帖:文件(L2)",
+  "lab.tpl.danger_op": "帖:危(L3)",
 };

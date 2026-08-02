@@ -264,7 +264,7 @@ def test_validate_endpoint_report_shape(tmp_path):
     assert report["status"] == "pass"
     assert set(report["gates"]) == {"g1", "g2", "g3", "g4", "g5"}
     assert report["gates"]["g4"]["status"] == "pass"
-    assert report["gates"]["g5"]["status"] == "skip"
+    assert report["gates"]["g5"]["status"] == "pass"  # L5:提示词卫生实关(无诱导即过)
     assert report["manifest_hash"]
     gate_dir = tmp_path / "drafts" / "weather.query" / "gate"
     assert list(gate_dir.glob("*.json")), "报告必须落盘"

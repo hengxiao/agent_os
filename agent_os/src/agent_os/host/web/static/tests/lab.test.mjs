@@ -172,6 +172,7 @@ const DRAFT = {
   });
   assert.ok(html.includes('value="weather.query"'), "草稿下拉");
   assert.ok(html.includes('data-lab="create"'), "新建按钮");
+  assert.ok(html.includes('value="tpl:prompt_query"'), "模板库选项(L5)");
   assert.ok(html.includes('data-lab="save"'), "保存按钮");
   assert.ok(html.includes("disabled"), "检查/提交置灰(L2)");
   assert.ok(html.includes('data-perm="WRITE"'));

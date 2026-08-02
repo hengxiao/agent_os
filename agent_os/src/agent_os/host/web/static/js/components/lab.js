@@ -276,13 +276,17 @@ export function topbarHtml(view) {
   const prodOptions = (view.skillsCatalog ?? [])
     .map((s) => `<option value="${esc(s.name)}">${esc(s.name)}</option>`)
     .join("");
+  // 模板库(docs/SKILL-DEV.md §4 L5;key 与后端 DRAFT_TEMPLATES 一一对应)
+  const tplOptions = ["prompt_query", "file_process", "danger_op"]
+    .map((k) => `<option value="tpl:${k}">${esc(copy(`lab.tpl.${k}`))}</option>`)
+    .join("");
   return (
     `<div class="lab-top">` +
     `<select class="input lab-select" data-lab="select">${options}</select>` +
     `<input class="input mono lab-new-name" data-lab="new-name" placeholder="domain.action"` +
     ` aria-label="${esc(copy("lab.new"))}">` +
     `<select class="input lab-new-from" data-lab="new-from">` +
-    `<option value="">${esc(copy("lab.new.empty"))}</option>${prodOptions}</select>` +
+    `<option value="">${esc(copy("lab.new.empty"))}</option>${tplOptions}${prodOptions}</select>` +
     `<button class="btn" data-lab="create">${esc(copy("lab.new"))}</button>` +
     `<button class="btn" data-lab="delete">${esc(copy("lab.delete"))}</button>` +
     `<span class="lab-top-tier" data-lab-tier-badge title="${esc(tierTitle(view.tierDetail))}">` +
@@ -748,7 +752,10 @@ async function _createDraft() {
     return;
   }
   const from = fromEl?.value ?? "";
-  await postJson("/api/lab/drafts", { name, from_skill: from || null });
+  const body = from.startsWith("tpl:")
+    ? { name, template: from.slice(4) } // 模板库(docs/SKILL-DEV.md §4 L5)
+    : { name, from_skill: from || null };
+  await postJson("/api/lab/drafts", body);
   await _loadDrafts();
   _renderTop();
   await _selectDraft(name);

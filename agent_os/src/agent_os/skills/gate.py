@@ -38,6 +38,54 @@ GATES = ("g1", "g2", "g3", "g4", "g5")
 #: version 语义化(语义化版本三段;非语义化版本 G1 warn,promote 会重写)
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 
+#: G5 提示词卫生(§1.4;docs/TIER-STANDARDS.md §8 反模式的镜像):
+#: prompt 教唆"绕过确认/隐瞒副作用" = 把机制问题写回自然语言,必须 fail。
+#: 宁稳勿滥——逐句判定,命中句同时命中正面表述白名单则放行
+#: ("让用户确认后才执行"这类正面表述不得误伤)。
+_G5_PATTERNS: tuple[tuple[str, str], ...] = (  # (regex, 说明)
+    (r"跳过.{0,4}(确认|审批|人审)", "教唆跳过确认"),
+    (r"忽略.{0,4}(确认|审批|用户)", "教唆忽略确认/用户"),
+    (r"无视.{0,4}(用户|确认|审批)", "教唆无视用户/确认"),
+    (r"(不用|不需要|无需|不必).{0,6}(问|询问|确认|审批|人审)", "教唆免确认直接执行"),
+    (r"绕过(确认|审批|用户|闸门)", "教唆绕过确认/闸门"),
+    (r"隐瞒(副作用|影响|后果)", "教唆隐瞒副作用"),
+    (r"(不要|别)告诉用户", "教唆对用户隐瞒"),
+    (
+        r"\b(ignore|disregard|bypass|skip)\b.{0,24}\b(user|confirm|confirmation|approval|review)\b",
+        "injection inducement (EN)",
+    ),
+    (r"\bno need to (ask|confirm)\b", "injection inducement (EN)"),
+    (r"\bdon'?t (ask|consult)\b", "injection inducement (EN)"),
+    (r"\bwithout (asking|confirmation|approval|review)\b", "injection inducement (EN)"),
+)
+_G5_SAFELIST = re.compile(
+    r"确认后|确认才|征得|经(用户|人)|审批后|人审"
+    r"|\bask the user\b|\bafter (user )?(confirmation|approval)\b"
+    r"|\bwith (user )?approval\b|\bmust (ask|confirm)\b",
+    re.IGNORECASE,
+)
+_G5_SENTENCE_SPLIT = re.compile(r"[。!?!;；\n]+")
+
+
+def _g5_findings(prompt: str) -> list[dict[str, str]]:
+    """G5 逐句扫描:命中反模式且非同句正面表述 → fail finding(带句子摘录)。"""
+    findings: list[dict[str, str]] = []
+    for sentence in _G5_SENTENCE_SPLIT.split(prompt or ""):
+        text = sentence.strip()
+        if not text:
+            continue
+        for pattern, why in _G5_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE) and not _G5_SAFELIST.search(text):
+                findings.append(
+                    _finding(
+                        "fail",
+                        "TIER-STANDARDS.md §8",
+                        f"prompt 含注入诱导({why}): {text[:80]}",
+                    )
+                )
+                break  # 一句一条,不重复轰炸
+    return findings
+
 
 def manifest_hash(draft: dict[str, Any]) -> str:
     """草稿内容指纹(manifest+prompt+handler 规范化 JSON 的 sha1 前 16 位)。
@@ -222,12 +270,14 @@ def validate_draft(
                         )
                     )
             gates["g4"] = {"status": _status_of(g4), "findings": g4}
-    gates["g5"] = {"status": "skip", "note": "提示词卫生,L5 实现", "findings": []}
+    # —— G5 提示词卫生(§1.4;L5):注入诱导逐句扫描(模式表见模块顶部,宁稳勿滥)——
+    g5 = _g5_findings(draft.get("prompt") or "")
+    gates["g5"] = {"status": _status_of(g5), "findings": g5}
 
     overall = "pass"
-    if any(gates[g]["status"] == "fail" for g in ("g1", "g2", "g3", "g4")):
+    if any(gates[g]["status"] == "fail" for g in ("g1", "g2", "g3", "g4", "g5")):
         overall = "fail"
-    elif any(gates[g]["status"] == "warn" for g in ("g1", "g2", "g3", "g4")):
+    elif any(gates[g]["status"] == "warn" for g in ("g1", "g2", "g3", "g4", "g5")):
         overall = "warn"
     return {
         "report_id": "",  # 落盘时由 DraftStore 赋值(ts + hash)

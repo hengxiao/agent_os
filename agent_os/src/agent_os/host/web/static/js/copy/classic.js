@@ -78,4 +78,7 @@ export const COPY = {
   "lab.chat.failed": "助手出错了",
   "lab.chat.updated": "agent 更新了 ",
   "ns.toggle": "折叠/展开",
+  "lab.tpl.prompt_query": "模板:查询类(L1)",
+  "lab.tpl.file_process": "模板:文件处理(L2)",
+  "lab.tpl.danger_op": "模板:危险操作(L3)",
 };

@@ -71,4 +71,7 @@ export const COPY = {
   "lab.chat.failed": "助手出错",
   "lab.chat.updated": "助手改注 ",
   "ns.toggle": "合/展",
+  "lab.tpl.prompt_query": "图幅:查询类(L1)",
+  "lab.tpl.file_process": "图幅:文件处理(L2)",
+  "lab.tpl.danger_op": "图幅:危险操作(L3)",
 };

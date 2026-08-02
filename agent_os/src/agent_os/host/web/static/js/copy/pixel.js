@@ -77,4 +77,7 @@ export const COPY = {
   "lab.chat.failed": "assistant crashed",
   "lab.chat.updated": "agent patched ",
   "ns.toggle": "FOLD/OPEN",
+  "lab.tpl.prompt_query": "TPL: QUERY (L1)",
+  "lab.tpl.file_process": "TPL: FILE (L2)",
+  "lab.tpl.danger_op": "TPL: DANGER (L3)",
 };

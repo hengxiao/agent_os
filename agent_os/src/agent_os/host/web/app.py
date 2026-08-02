@@ -172,10 +172,11 @@ class SupervisorAnswerBody(BaseModel):
 
 
 class LabCreateBody(BaseModel):
-    """``POST /api/lab/drafts``(docs/SKILL-DEV.md §1.5):空模板或从生产 skill 复制。"""
+    """``POST /api/lab/drafts``(docs/SKILL-DEV.md §1.5):空模板/模板库/从生产 skill 复制。"""
 
     name: str
     from_skill: str | None = None  # 生产 skill 名(前端把 `from` 关键字映射为本字段)
+    template: str | None = None  # 模板库 key(§4 L5:prompt_query|file_process|danger_op)
 
 
 class LabSaveBody(BaseModel):
@@ -765,7 +766,7 @@ def create_app(
             except (SkillLoadError, RunValidationError) as e:
                 raise HTTPException(status_code=404, detail=f"找不到生产技能: {body.from_skill}") from e
         try:
-            return lab_store.create(body.name, source=source)
+            return lab_store.create(body.name, source=source, template=body.template)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except FileExistsError as e:

@@ -439,6 +439,10 @@ class RunManager:
             login = None
         return web_single_user_principal(login)
 
+    def principal(self) -> Any:
+        """本宿主的单用户 principal(docs/SKILL-DEV.md §1.2:promote 记录的 promoted_by)。"""
+        return self._principal()
+
     async def start_run(
         self,
         skill: str,

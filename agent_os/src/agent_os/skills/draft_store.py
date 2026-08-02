@@ -214,6 +214,49 @@ class DraftStore:
         shutil.rmtree(d)
 
     # ------------------------------------------------------------------
+    # 闸门报告与 promote 记录(docs/SKILL-DEV.md §1.4;L2)
+    # ------------------------------------------------------------------
+
+    def _gate_dir(self, name: str) -> Path:
+        d = self._dir(name)
+        if not d.is_dir():
+            raise FileNotFoundError(f"草稿不存在: {name}")
+        gate = d / "gate"
+        gate.mkdir(exist_ok=True)
+        return gate
+
+    def save_gate_report(self, name: str, report: dict[str, Any]) -> dict[str, Any]:
+        """报告落盘 ``gate/<ts>.json``(§1.4);report_id = ``<ts_ms>-<manifest_hash>``。
+
+        id 同时含时间与内容哈希:审计可读,防报告与内容错位的比对键也内嵌其中。
+        """
+        gate = self._gate_dir(name)
+        report = dict(report)
+        report["report_id"] = f"{int(report['created_at'] * 1000)}-{report['manifest_hash']}"
+        (gate / f"{int(report['created_at'] * 1000)}.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return report
+
+    def read_gate_report(self, name: str, report_id: str) -> dict[str, Any]:
+        """按 id 读报告;不存在 → FileNotFoundError(promote 前必查,防编造报告)。"""
+        gate = self._gate_dir(name)
+        for f in gate.glob("*.json"):
+            try:
+                report = json.loads(f.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            if report.get("report_id") == report_id:
+                return report
+        raise FileNotFoundError(f"找不到闸门报告: {report_id}")
+
+    def record_promotion(self, name: str, record: dict[str, Any]) -> None:
+        """promote 记录追加进 ``gate/promotions.jsonl``(§1.2 provenance 槽位首用)。"""
+        gate = self._gate_dir(name)
+        with (gate / "promotions.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    # ------------------------------------------------------------------
     # 装配面(OverlaySkillRegistry / tier 推导用)
     # ------------------------------------------------------------------
 

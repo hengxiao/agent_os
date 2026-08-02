@@ -262,7 +262,7 @@ export function editorHtml(view) {
   return groups.join("");
 }
 
-/* 顶部条 HTML:草稿选择 / 新建(空 / 从生产复制)/ 删除(两击确认)/ tier 徽标 / 置灰按钮 / 保存 */
+/* 顶部条 HTML:草稿选择 / 新建(空 / 从生产复制)/ 删除(两击确认)/ tier 徽标 / 检查·提交 / 保存 */
 export function topbarHtml(view) {
   const rows = view.drafts ?? [];
   const options = rows
@@ -287,20 +287,76 @@ export function topbarHtml(view) {
     `<span class="lab-top-tier" data-lab-tier-badge title="${esc(tierTitle(view.tierDetail))}">` +
     `${tierBadgeHtml(view.tier)}</span>` +
     `<span class="lab-top-actions">` +
-    `<button class="btn" disabled title="L2">${esc(copy("lab.check"))}</button>` +
-    `<button class="btn" disabled title="L2">${esc(copy("lab.promote"))}</button>` +
+    `<button class="btn" data-lab="check">${esc(copy("lab.check"))}</button>` +
+    `<button class="btn" data-lab="promote"${promoteReady(view) ? "" : " disabled"}>` +
+    `${esc(copy("lab.promote"))}</button>` +
     `<button class="btn btn-primary" data-lab="save">${esc(copy("lab.save"))}</button>` +
     `</span></div>`
   );
 }
 
-/* 状态栏文本(§2.1):已保存 HH:MM · 草稿(未提交);未保存过只有后者 */
+/* 报告过期判定(§2.3):保存时间晚于报告时间 → 旧报告作废(服务端另有哈希校验兜底) */
+export function isReportStale(view) {
+  return Boolean(
+    view?.report && view.savedAt && view.savedAt > view.report.created_at * 1000
+  );
+}
+
+/* 提交按钮点亮条件(§1.4):报告在、无 fail、不过期、warn 已确认 */
+export function promoteReady(view) {
+  if (!view?.report || isReportStale(view)) return false;
+  if (view.report.status === "fail") return false;
+  if (view.report.status === "warn" && !view.ackWarn) return false;
+  return true;
+}
+
+/* 五关卡片(§1.4/§2.1):绿 pass / 黄 warn / 红 fail / 灰 skip;findings 可展开,
+   每条带条款号(clause,链 docs/TIER-STANDARDS.md 等)。 */
+export function gateCardsHtml(report) {
+  if (!report) return "";
+  const order = ["g1", "g2", "g3", "g4", "g5"];
+  const cards = order
+    .map((gid) => {
+      const gate = report.gates?.[gid] ?? { status: "skip", findings: [] };
+      const status = gate.status ?? "skip";
+      const title = copy(`lab.gate.${gid}`);
+      const findings = (gate.findings ?? [])
+        .map(
+          (f) =>
+            `<li class="lab-finding" data-level="${esc(f.level)}">` +
+            `<span class="lab-clause mono">${esc(f.clause ?? "")}</span> ${esc(f.message ?? "")}</li>`
+        )
+        .join("");
+      const body = gate.note
+        ? `<div class="lab-gate-note">${esc(gate.note)}</div>`
+        : findings
+          ? `<details class="lab-gate-details"><summary>${(gate.findings ?? []).length} 项</summary>` +
+            `<ul class="lab-findings">${findings}</ul></details>`
+          : "";
+      return (
+        `<div class="lab-gate-card" data-status="${esc(status)}">` +
+        `<div class="lab-gate-head"><span class="lab-gate-title">${esc(title)}</span>` +
+        `<span class="lab-gate-status" data-status="${esc(status)}">${esc(copy(`lab.gate.${status}`))}</span></div>` +
+        body +
+        `</div>`
+      );
+    })
+    .join("");
+  return `<div class="lab-gate">${cards}</div>`;
+}
+
+/* 状态栏文本(§2.1):已保存 HH:MM · 草稿(未提交)[· 距上次检查有改动 ⚠] */
 export function statusLine(view) {
-  if (!view.savedAt) return copy("lab.uncommitted");
-  const d = new Date(view.savedAt);
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${copy("lab.saved")} ${hh}:${mm} · ${copy("lab.uncommitted")}`;
+  const parts = [];
+  if (view.savedAt) {
+    const d = new Date(view.savedAt);
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    parts.push(`${copy("lab.saved")} ${hh}:${mm}`);
+  }
+  parts.push(copy("lab.uncommitted"));
+  if (isReportStale(view)) parts.push(copy("lab.status.stale"));
+  return parts.join(" · ");
 }
 
 /* ── 页面(DOM)─────────────────────────────────────────────── */
@@ -328,8 +384,71 @@ export async function saveCurrentDraft() {
   );
   lab.savedAt = Date.now();
   toast(copy("lab.saved"), "success");
-  _renderStatus();
+  _renderStatus(); // 保存晚于上次检查 → "距上次检查有改动 ⚠"(§2.3)
+  _renderTop(); // 报告过期 → 提交按钮立即熄灭(服务端哈希校验兜底)
   return saved;
+}
+
+/* 检查(§1.4):跑闸门 → 五关卡片进右栏;warn 时需勾选"我已阅读警告"才亮提交 */
+export async function runCheck() {
+  if (!lab?.form) return null;
+  const report = await postJson(
+    `/api/lab/drafts/${encodeURIComponent(lab.form.name)}/validate`
+  );
+  lab.report = report;
+  lab.ackWarn = false;
+  lab.confirming = false;
+  _renderGate();
+  _renderTop();
+  _renderStatus();
+  return report;
+}
+
+function _renderGate() {
+  const host = lab.root?.querySelector(".lab-test");
+  if (!host) return;
+  if (!lab.report) {
+    host.innerHTML = emptyBlock(copy("lab.test.empty"), "", "inbox");
+    return;
+  }
+  const ackRow =
+    lab.report.status === "warn"
+      ? `<label class="lab-ack"><input type="checkbox" data-lab-ack="1"${lab.ackWarn ? " checked" : ""}>` +
+        `<span>${esc(copy("lab.gate.ack"))}</span></label>`
+      : "";
+  host.innerHTML = gateCardsHtml(lab.report) + ackRow;
+}
+
+/* 提交确认(§2.3 流程 5):内联确认行(version 可改,留空自动 bump)+ 确认/取消 */
+function _promoteConfirmHtml() {
+  return (
+    `<div class="lab-promote-confirm">` +
+    `<input class="input mono" data-lab="promote-version" placeholder="${esc(copy("lab.promote.version"))}">` +
+    `<button class="btn btn-primary" data-lab="promote-confirm">${esc(copy("lab.promote.confirm"))}</button>` +
+    `<button class="btn" data-lab="promote-cancel">${esc(copy("lab.cancel"))}</button>` +
+    `</div>`
+  );
+}
+
+async function _doPromote() {
+  const versionEl = lab.root.querySelector('[data-lab="promote-version"]');
+  return confirmPromote({ version: versionEl?.value?.trim() || null, warningsAck: lab.ackWarn });
+}
+
+/* promote 提交(§2.3 流程 5;导出供测试):成功消费报告并提示;被拒(409 等)上抛 */
+export async function confirmPromote({ version = null, warningsAck = false } = {}) {
+  if (!lab?.form || !lab?.report) return null;
+  const result = await postJson(
+    `/api/lab/drafts/${encodeURIComponent(lab.form.name)}/promote`,
+    { report_id: lab.report.report_id, version, warnings_ack: warningsAck }
+  );
+  lab.report = null; // 已进生产:旧报告消费掉,下一次迭代重新检查
+  lab.ackWarn = false;
+  lab.confirming = false;
+  _renderGate();
+  _renderTop();
+  toast(`${copy("lab.promote.done")}: ${result.name}@${result.version}`, "success");
+  return result;
 }
 
 /* 推导档实时刷新:?tools=&skills= 用未保存白名单覆盖(§1.3;不必先保存) */
@@ -380,7 +499,11 @@ async function _selectDraft(name) {
   lab.form = draftToForm(draft);
   lab.parseError = draft.parse_error ?? null;
   lab.savedAt = null;
+  lab.report = null; // 换草稿:旧报告不属于新对象
+  lab.ackWarn = false;
+  lab.confirming = false;
   _renderEditor();
+  _renderGate();
   await refreshTier();
   _renderStatus();
 }
@@ -397,7 +520,7 @@ function _renderEditor() {
 
 function _renderTop() {
   const host = lab.root?.querySelector(".lab-top-host");
-  if (host) host.innerHTML = topbarHtml(lab);
+  if (host) host.innerHTML = topbarHtml(lab) + (lab.confirming ? _promoteConfirmHtml() : "");
 }
 
 async function _createDraft() {
@@ -438,6 +561,17 @@ function _bindEvents() {
       if (action === "create") return await _createDraft();
       if (action === "delete") return await _deleteDraft(btn);
       if (action === "save") return await saveCurrentDraft();
+      if (action === "check") return await runCheck();
+      if (action === "promote") {
+        if (!promoteReady(lab)) return; // 未点亮不响应(与 disabled 双保险)
+        lab.confirming = true;
+        return _renderTop();
+      }
+      if (action === "promote-confirm") return await _doPromote();
+      if (action === "promote-cancel") {
+        lab.confirming = false;
+        return _renderTop();
+      }
     } catch (err) {
       toast(err.message ?? String(err), "error");
     }
@@ -450,6 +584,10 @@ function _bindEvents() {
     }
   });
   lab.root.addEventListener("change", async (e) => {
+    if (e.target.closest("[data-lab-ack]")) {
+      lab.ackWarn = Boolean(e.target.checked);
+      return _renderTop(); // warn 勾选门:提交按钮随勾选亮灭(§1.4)
+    }
     const sel = e.target.closest("[data-lab='select']");
     if (sel?.value) return _selectDraft(sel.value);
     const cand = e.target.closest("[data-chip-candidate]");
@@ -494,6 +632,9 @@ export function openLab(main, name = null) {
     tierDetail: null,
     savedAt: null,
     parseError: null,
+    report: null, // 最近一次闸门报告(§1.4;保存后过期)
+    ackWarn: false, // warn 报告的"我已阅读警告"勾选
+    confirming: false, // promote 内联确认行开关
     root: document.createElement("div"),
   };
   lab.root.className = "lab";

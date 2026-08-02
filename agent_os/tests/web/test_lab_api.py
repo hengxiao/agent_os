@@ -203,3 +203,126 @@ def test_tier_endpoints_errors(tmp_path):
     assert client.put("/api/lab/drafts/no.such", json={"manifest": {}}).status_code == 404
     assert client.delete("/api/lab/drafts/no.such").status_code == 404
     assert client.get("/api/lab/drafts/..%2Fetc").status_code in (400, 404, 422)
+
+
+# ---------------------------------------------------------------------------
+# L2:validate + promote(docs/SKILL-DEV.md §1.4/§1.5)
+# ---------------------------------------------------------------------------
+
+
+def _save_manifest(client: TestClient, manifest: dict, prompt: str = "你是天气员。") -> None:
+    r = client.put(
+        "/api/lab/drafts/weather.query",
+        json={"manifest": manifest, "prompt": prompt, "handler": None},
+    )
+    assert r.status_code == 200, r.text
+
+
+def _good_weather_manifest(**over):
+    m = {
+        "name": "weather.query",
+        "version": "0.1.0",
+        "kind": "prompt",
+        "description": "查天气。Use when 需要天气;Do not use when 其他。",
+        "inputs": {"type": "object", "properties": {"city": {"type": "string"}}},
+        "outputs": {"type": "object", "properties": {}},
+        "permissions": {"tools": [], "skills": []},
+    }
+    return m | over
+
+
+def test_validate_endpoint_report_shape(tmp_path):
+    """validate:五关结构 + G4/G5 skip 占位;报告落盘 drafts/<name>/gate/。"""
+    client = _client(tmp_path)
+    _create(client)
+    _save_manifest(client, _good_weather_manifest())
+    r = client.post("/api/lab/drafts/weather.query/validate")
+    assert r.status_code == 200, r.text
+    report = r.json()
+    assert report["report_id"]
+    assert report["status"] == "pass"
+    assert set(report["gates"]) == {"g1", "g2", "g3", "g4", "g5"}
+    assert report["gates"]["g4"]["status"] == "skip"
+    assert report["gates"]["g5"]["status"] == "skip"
+    assert report["manifest_hash"]
+    gate_dir = tmp_path / "drafts" / "weather.query" / "gate"
+    assert list(gate_dir.glob("*.json")), "报告必须落盘"
+
+
+def test_validate_fail_blocks_and_promote_rejections(tmp_path):
+    """L2 缺 reversal → G3 fail → promote 409;warn 未 ack → 409;假报告 404。"""
+    client = _client(tmp_path)
+    _create(client)
+    _save_manifest(
+        client, _good_weather_manifest(permissions={"tools": ["system.file.write"], "skills": []})
+    )
+    report = client.post("/api/lab/drafts/weather.query/validate").json()
+    assert report["status"] == "fail"
+    assert any(
+        "reversal" in f["message"] for f in report["gates"]["g3"]["findings"]
+    )
+
+    r = client.post(
+        "/api/lab/drafts/weather.query/promote",
+        json={"report_id": report["report_id"], "warnings_ack": True},
+    )
+    assert r.status_code == 409, r.text
+
+    # warn(description 太短)未 ack → 409;假 report_id → 404
+    _save_manifest(client, _good_weather_manifest(description="太短"))
+    warn_report = client.post("/api/lab/drafts/weather.query/validate").json()
+    assert warn_report["status"] == "warn"
+    r = client.post(
+        "/api/lab/drafts/weather.query/promote",
+        json={"report_id": warn_report["report_id"], "warnings_ack": False},
+    )
+    assert r.status_code == 409
+    r = client.post(
+        "/api/lab/drafts/weather.query/promote",
+        json={"report_id": "bogus-id", "warnings_ack": True},
+    )
+    assert r.status_code == 404
+
+
+def test_promote_end_to_end_and_stale_report(tmp_path):
+    """promote 全路径:写生产 + .bak + GET /api/skills 可见(reload)+ 记录;
+    报告后再改草稿 → 哈希错位 409;二次 promote → version bump。"""
+    client = _client(tmp_path)
+    _create(client)
+    _save_manifest(client, _good_weather_manifest())
+    report = client.post("/api/lab/drafts/weather.query/validate").json()
+
+    r = client.post(
+        "/api/lab/drafts/weather.query/promote",
+        json={"report_id": report["report_id"], "warnings_ack": False},
+    )
+    assert r.status_code == 200, r.text
+    result = r.json()
+    assert result["version"] == "0.1.0"
+    assert result["action"] == "appended"
+    assert (tmp_path / "skills.yaml.bak").is_file()
+    names = [s["name"] for s in client.get("/api/skills").json()]
+    assert "weather.query" in names, "reload 后生产技能列表必须可见"
+    promos = (tmp_path / "drafts" / "weather.query" / "gate" / "promotions.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert report["report_id"] in promos
+
+    # 报告后再改草稿:旧报告作废
+    _save_manifest(client, _good_weather_manifest(), prompt="改过了")
+    r = client.post(
+        "/api/lab/drafts/weather.query/promote",
+        json={"report_id": report["report_id"], "warnings_ack": False},
+    )
+    assert r.status_code == 409
+    assert "不一致" in r.json()["detail"]
+
+    # 重新检查 → 二次 promote:同名 replace + patch bump
+    report2 = client.post("/api/lab/drafts/weather.query/validate").json()
+    r2 = client.post(
+        "/api/lab/drafts/weather.query/promote",
+        json={"report_id": report2["report_id"], "warnings_ack": False},
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["version"] == "0.1.1"
+    assert r2.json()["action"] == "replaced"

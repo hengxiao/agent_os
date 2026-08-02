@@ -346,7 +346,7 @@ Web 调试台的时间线(`.dbg-row`)为 escalation 行加 kind=`escalation`,
 |---|---|
 | E1 ✅ | 三档推导 + 升权判定 + 挂起确认(复用 inbox)+ approve-once/deny + 干净 context 不变量测试。已实现:`api/v1/escalation.py`、`_invoke_skill` 升权闸、分档 lint 硬闸门(≥L2 禁 inline、L3 禁 confirm:first)、checkpoint/resume 重走闸门;734 测试全绿 |
 | E2 ✅ | L2 的 approve-run Grant + 信号三枚 + Web 升权卡片 + CLI 答案透传 + `spawn_frame` 升权闸(E1 遗留的绕道口子)。已实现:内核 `Run.grants` 随 checkpoint 往返、`_consume_grant` 消费点(双保险仅 L2)、options 按档区分(L2 三枚/L3 两枚)、inbox.js `escalationCardHtml`(copy 六主题同步)、CLI `kind` 透传;746 Python + 21 前端测试全绿 |
-| E3 | 审计面板(按 run 列升权事件)+ lint 严格化(reversal/blast_radius 必填)+ 文档(DESIGN.md §8 引用更新) |
+| E3 | 审计面板(按 run 列升权事件)+ lint 严格化(reversal/blast_radius 必填)+ 文档(DESIGN.md §8 引用更新)。**部分落地**:reversal/blast_radius 必填 lint 已于 Skill Lab 提交闸门 G3 落地(docs/SKILL-DEV.md §1.4,L2 期;`skills/gate.py`),审计面板与 DESIGN.md 引用更新待做 |
 
 > 完整示例(全真工具、零 mock,三档剧情:approve-run / L3 每次必问 / deny /
 > 崩溃恢复)见 `agent_os/examples/workspace_janitor`。

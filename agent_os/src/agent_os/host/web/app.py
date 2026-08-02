@@ -52,6 +52,8 @@ from agent_os.host.web.run_manager import (
 from agent_os.kernel.errors import AgentOSError, SkillLoadError
 from agent_os.runtime.config import load_config
 from agent_os.skills.draft_store import DraftStore, OverlaySkillRegistry
+from agent_os.skills.gate import GateError, promote_draft
+from agent_os.skills.gate import validate_draft as validate_gate_draft
 from agent_os.skills.manifest import validate_manifest
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -137,6 +139,18 @@ class LabSaveBody(BaseModel):
     prompt: str = ""
     handler: str | None = None
     tests: dict[str, Any] | None = None
+
+
+class LabPromoteBody(BaseModel):
+    """``POST /api/lab/drafts/{name}/promote``(docs/SKILL-DEV.md §1.5;L2)。
+
+    ``report_id`` 必填(闸门报告);``version`` 缺省自动(bump patch / 0.1.0);
+    报告或复跑有 warn 时必须 ``warnings_ack``(§1.4:黄关强制人工确认)。
+    """
+
+    report_id: str
+    version: str | None = None
+    warnings_ack: bool = False
 
 
 class DebugBreakpointBody(BaseModel):
@@ -758,6 +772,52 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(e)) from e
         detail["parse_error"] = None
         return detail
+
+    @app.post("/api/lab/drafts/{name}/validate")
+    def lab_validate_draft(name: str) -> dict[str, Any]:
+        """跑提交闸门(docs/SKILL-DEV.md §1.4;L2):五关报告,落盘 ``gate/<ts>.json``。"""
+        try:
+            draft = lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        try:
+            report = validate_gate_draft(
+                draft,
+                production=manager.shared_skills_registry(),
+                tools=manager.shared_tools_registry(),
+            )
+        except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return lab_store.save_gate_report(name, report)
+
+    @app.post("/api/lab/drafts/{name}/promote")
+    def lab_promote_draft(name: str, body: LabPromoteBody) -> dict[str, Any]:
+        """promote(docs/SKILL-DEV.md §2.3 流程 5):闸门通过 → 写生产 → reload → 记录。
+
+        错误归类:草稿/报告不存在 404;报告过期/含 fail/warn 未确认 409(GateError);
+        生产面不支持(非单文件 skills.yaml)400。
+        """
+        try:
+            return promote_draft(
+                store=lab_store,
+                name=name,
+                report_id=body.report_id,
+                version=body.version,
+                warnings_ack=body.warnings_ack,
+                production=manager.shared_skills_registry(),
+                tools=manager.shared_tools_registry(),
+                principal=manager.principal().subject,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except GateError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except SkillLoadError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @app.get("/api/runs/{run_id}/stream")
     async def stream_run(run_id: str) -> StreamingResponse:

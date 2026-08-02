@@ -227,7 +227,19 @@ promote 后想回滚 → skills.yaml 的 .bak(promote 自动备份)+ git。
 >    "保存永不报错"指服务端不校验,不代表把语法错写进存储;
 > 5. 中右栏(Agent L4/测试 L3)与"检查/提交"按钮为占位/置灰,copy key
 >    六主题已同步。
-| L2 | 闸门 G1-G3 + validate API + 报告卡片 + promote(含 .bak 与 version bump) | 不合规草稿提交被拒,合规草稿进生产可 run |
+| L2 ✅ | 闸门 G1-G3 + validate API + 报告卡片 + promote(含 .bak 与 version bump) | 不合规草稿提交被拒,合规草稿进生产可 run。已实现:`skills/gate.py`(五关 + 哈希防错位 + promote 编排)、`/api/lab` validate/promote 端点、五关卡片与 ack 门/promote 确认/过期提示;795 Python + 22 前端测试全绿 |
+
+> 实现注(L2):
+> 1. promote 写生产**只支持单文件 skills.yaml**(目录/多文件 set 形态的归并
+>    策略留 L5);写入前自动 `skills.yaml.bak`,随后 `reload()`(§6.1 先例);
+> 2. 报告 id = `<ts_ms>-<manifest_hash>`,哈希覆盖 manifest+prompt+handler——
+>    草稿改一字节旧报告即作废;promote 除比哈希外**复跑 G1-G3**(G4/G5 信报告);
+> 3. G4/G5 本期 `skip` 占位,五关结构先稳定,前端灰卡渲染;
+> 4. 草稿 prompt.md 在 promote 时内联进生产条目(单文件形态);handler.py
+>    不复制——code 技能的 handler dotted path 原样携带,源码归并留 L5;
+> 5. promoted_by 取 Web 单用户 principal(RunManager.principal());
+> 6. G1 的 prompt 缺失 lint 以打过 prompt 补丁的 manifest 判定(prompt.md
+>    即指令体,不误报)。
 | L3 | 测试面板:test-run + trace 复用 + outputs 校验 + G4 冒烟入闸 | tests/case 驱动试跑,失败 trace 可见 |
 | L4 | Agent 助手:`skill.dev.assistant` + `skill.draft.*` 工具组 + chat 栏 | 对话式建/改 skill,助手无 promote 能力 |
 | L5 | G5 提示词卫生 + CLI `lab validate` + 模板库 + diff 视图打磨 | 全套体验走查 |

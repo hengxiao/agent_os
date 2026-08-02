@@ -232,4 +232,137 @@ const DRAFT = {
   closeLab();
 }
 
+/* ── L2:五关卡片 / promoteReady / 过期提示(§1.4/§2.3)──────────────── */
+{
+  const {
+    gateCardsHtml,
+    isReportStale,
+    promoteReady,
+    statusLine,
+    topbarHtml,
+  } = await import("../js/components/lab.js");
+
+  const report = {
+    report_id: "r1",
+    status: "fail",
+    created_at: 1000,
+    gates: {
+      g1: { status: "pass", findings: [] },
+      g2: { status: "warn", findings: [{ level: "warn", clause: "TIER-STANDARDS.md §2", message: "参数缺 type" }] },
+      g3: { status: "fail", findings: [{ level: "fail", clause: "TIER-STANDARDS.md §4", message: "L2 必填 trust.reversal" }] },
+      g4: { status: "skip", note: "冒烟试跑,L3 实现", findings: [] },
+      g5: { status: "skip", note: "提示词卫生,L5 实现", findings: [] },
+    },
+  };
+  const html = gateCardsHtml(report);
+  assert.ok(html.includes('data-status="pass"'), "绿卡");
+  assert.ok(html.includes('data-status="warn"'), "黄卡");
+  assert.ok(html.includes('data-status="fail"'), "红卡");
+  assert.ok((html.match(/data-status="skip"/g) ?? []).length >= 2, "G4/G5 灰卡占位");
+  assert.ok(html.includes("TIER-STANDARDS.md §4"), "fail 带条款号");
+  assert.ok(html.includes("trust.reversal"), "finding 文本");
+  assert.ok(html.includes("L3 实现"), "skip note");
+
+  // promoteReady:fail 拒;stale 拒;warn 需 ack;pass 放
+  assert.equal(promoteReady({ report }), false);
+  assert.equal(promoteReady({ report: { ...report, status: "pass" } }), true);
+  assert.equal(promoteReady({ report: { ...report, status: "warn" }, ackWarn: false }), false);
+  assert.equal(promoteReady({ report: { ...report, status: "warn" }, ackWarn: true }), true);
+  assert.equal(isReportStale({ report, savedAt: 1000 * 1000 + 1 }), true, "保存晚于报告 → 过期");
+  assert.equal(isReportStale({ report, savedAt: 1 }), false);
+  assert.equal(promoteReady({ report: { ...report, status: "pass" }, savedAt: 1000 * 1000 + 1 }), false);
+
+  // topbar:pass 报告 → 提交点亮;无报告 → 熄灭
+  const top = topbarHtml({ name: "a.b", drafts: [], skillsCatalog: [], tier: "none",
+    report: { status: "pass", created_at: 1 }, ackWarn: false });
+  assert.ok(!/data-lab="promote"[^>]*disabled/.test(top), "全绿后提交按钮点亮");
+  const topNoReport = topbarHtml({ name: "a.b", drafts: [], skillsCatalog: [], tier: "none" });
+  assert.ok(/data-lab="promote"[^>]*disabled/.test(topNoReport), "无报告提交熄灭");
+  assert.ok(/data-lab="check"/.test(topNoReport) && !/data-lab="check"[^>]*disabled/.test(topNoReport),
+    "检查按钮 L2 起解锁");
+
+  // 状态栏:过期提示
+  assert.match(statusLine({ report, savedAt: 1000 * 1000 + 1 }), /改动|changed|改/);
+  assert.ok(!statusLine({ report, savedAt: 1 }).includes("⚠"));
+}
+
+/* ── L2 DOM 冒烟:validate → 卡片/ack 门 → promote(fetch stub)────────── */
+{
+  const { openLab, closeLab, runCheck } = await import("../js/components/lab.js");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const toastStack = doc.createElement("div");
+  toastStack.setAttribute("id", "toastStack");
+  doc.body.appendChild(toastStack);
+  doc.querySelector = (sel) => doc.body.querySelector(sel);
+
+  const calls = [];
+  const DRAFT_MIN = {
+    name: "weather.query",
+    manifest: { name: "weather.query", version: "0.1.0", kind: "prompt",
+      description: "x", inputs: { type: "object" }, outputs: { type: "object" },
+      permissions: { tools: [], skills: [] } },
+    prompt: "你是天气员。", handler: null, parse_error: null, tests: {},
+  };
+  const REPORT = {
+    report_id: "r-1", status: "warn", created_at: 100, manifest_hash: "h",
+    gates: { g1: { status: "warn", findings: [{ level: "warn", clause: "c", message: "m" }] },
+      g2: { status: "pass", findings: [] }, g3: { status: "pass", findings: [] },
+      g4: { status: "skip", findings: [] }, g5: { status: "skip", findings: [] } },
+  };
+  globalThis.fetch = async (path, options = {}) => {
+    const url = String(path);
+    calls.push({ url, method: options.method ?? "GET", body: options.body });
+    const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (url === "/api/lab/drafts") return reply([{ name: "weather.query", tier: "none", mtime: 1 }]);
+    if (url === "/api/lab/drafts/weather.query") return reply(DRAFT_MIN);
+    if (url.startsWith("/api/lab/drafts/weather.query/tier")) return reply({ tier: "none", sources: [], top: [] });
+    if (url === "/api/tools") return reply([]);
+    if (url === "/api/skills") return reply([]);
+    if (url === "/api/lab/drafts/weather.query/validate") return reply(REPORT);
+    if (url === "/api/lab/drafts/weather.query/promote") {
+      return reply({ name: "weather.query", version: "0.1.0", action: "appended" });
+    }
+    throw new Error(`未 stub 的请求: ${url}`);
+  };
+
+  const main = doc.createElement("main");
+  doc.body.appendChild(main);
+  openLab(main);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const { confirmPromote } = await import("../js/components/lab.js");
+  const report = await runCheck();
+  assert.equal(report.report_id, "r-1");
+  const promotePost = () => calls.find((c) => c.url.endsWith("/promote"));
+  assert.ok(!promotePost(), "未确认前不发 promote");
+
+  // warn + ack → promote 请求体带 report_id / warnings_ack / version
+  const result = await confirmPromote({ version: "1.0.0", warningsAck: true });
+  assert.equal(result.action, "appended");
+  const body = JSON.parse(promotePost().body);
+  assert.deepEqual(body, { report_id: "r-1", version: "1.0.0", warnings_ack: true });
+
+  // 报告已消费:再提交返回 null(下一次迭代需重新检查)
+  assert.equal(await confirmPromote({ warningsAck: true }), null);
+
+  // 被拒路径(409):上抛给调用方(按钮处理器 toast)
+  globalThis.fetch = async (path, options = {}) => {
+    const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (String(path) === "/api/lab/drafts") return reply([{ name: "weather.query" }]);
+    if (String(path) === "/api/lab/drafts/weather.query") return reply(DRAFT_MIN);
+    if (String(path).startsWith("/api/lab/drafts/weather.query/tier")) return reply({ tier: "none", sources: [], top: [] });
+    if (String(path) === "/api/tools" || String(path) === "/api/skills") return reply([]);
+    if (String(path) === "/api/lab/drafts/weather.query/validate") return reply(REPORT);
+    return { ok: false, status: 409, json: async () => ({ detail: "报告与当前草稿不一致" }) };
+  };
+  openLab(main);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  await runCheck();
+  await assert.rejects(confirmPromote({ warningsAck: true }), /不一致/, "409 被拒原因上抛");
+  closeLab();
+}
+
 console.log("lab.test.mjs: all assertions passed");

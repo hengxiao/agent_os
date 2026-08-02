@@ -2115,6 +2115,69 @@ th.is-sorted .us-sort { color: var(--live); }
   padding-top: var(--s2);
 }
 
+/* Skill Lab 闸门(docs/SKILL-DEV.md §1.4;L2):五关卡片(状态色 = 语义 token 双编码) */
+.lab-gate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.lab-gate-card {
+  padding: var(--s2) var(--s3);
+  background: var(--bg-2);
+  border: var(--stroke) solid var(--line);
+  border-left: var(--stroke-accent) solid var(--line);
+  border-radius: var(--r-md);
+}
+.lab-gate-card[data-status="pass"] { border-left-color: var(--perm-read); }
+.lab-gate-card[data-status="warn"] { border-left-color: var(--perm-write); }
+.lab-gate-card[data-status="fail"] { border-left-color: var(--danger); }
+.lab-gate-card[data-status="skip"] { border-left-color: var(--fg-2); opacity: 0.7; }
+.lab-gate-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.lab-gate-title { font-size: var(--text-sm); font-weight: 600; }
+.lab-gate-status {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  padding: 0 var(--s1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+}
+.lab-gate-status[data-status="pass"] { color: var(--perm-read); border-color: var(--perm-read); }
+.lab-gate-status[data-status="warn"] { color: var(--perm-write); border-color: var(--perm-write); }
+.lab-gate-status[data-status="fail"] { color: var(--danger); border-color: var(--danger); }
+.lab-gate-status[data-status="skip"] { color: var(--fg-2); }
+.lab-gate-note { font-size: var(--text-xs); color: var(--fg-2); margin-top: var(--s1); }
+.lab-gate-details summary {
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--fg-1);
+}
+.lab-findings {
+  margin: var(--s1) 0 0;
+  padding-left: var(--s4);
+  font-size: var(--text-xs);
+}
+.lab-finding[data-level="fail"] { color: var(--danger); }
+.lab-finding[data-level="warn"] { color: var(--perm-write); }
+.lab-finding[data-level="info"] { color: var(--fg-1); }
+.lab-clause { color: var(--fg-2); }
+.lab-ack {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  font-size: var(--text-sm);
+}
+.lab-promote-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) 0;
+}
+
 /* run 头"等待上级裁决"Banner(帧拿不到精确标注时的兜底,S3 §5) */
 .wb-wait { align-items: center; }
 .wb-wait .banner-main { flex: 1; }

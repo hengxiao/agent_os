@@ -413,6 +413,45 @@ export function testResultHtml(run) {
   );
 }
 
+/* Agent 助手 chat(§2.2;L4):消息气泡(用户/助手/系统提示)+ 大多行输入框 + 发送 */
+export function chatHtml(view) {
+  const msgs = (view.chat ?? [])
+    .map(
+      (m) =>
+        `<div class="lab-msg" data-role="${esc(m.role)}">` +
+        `<div class="lab-msg-body">${esc(m.text)}</div></div>`
+    )
+    .join("");
+  const log =
+    msgs ||
+    `<div class="lab-hint">${esc(copy("lab.agent.empty"))}</div>`;
+  const busy = view.chatBusy ? `<div class="lab-hint">${esc(copy("lab.chat.thinking"))}</div>` : "";
+  return (
+    `<div class="lab-chat">` +
+    `<div class="lab-chat-log" data-lab-chat-log>${log}${busy}</div>` +
+    `<textarea class="input" rows="4" data-lab-chat-input ` +
+    `placeholder="${esc(copy("lab.chat.placeholder"))}">${esc(view.chatInput ?? "")}</textarea>` +
+    `<button class="btn btn-primary" data-lab="chat-send"${view.chatBusy ? " disabled" : ""}>` +
+    `${esc(copy("lab.chat.send"))}</button>` +
+    `</div>`
+  );
+}
+
+/* manifest 顶层字段 diff(agent 改稿高亮用,§2.2"agent 改了 permissions.tools:+fs.write"行) */
+export function diffGroups(oldManifest, newManifest) {
+  const keys = new Set([
+    ...Object.keys(oldManifest ?? {}),
+    ...Object.keys(newManifest ?? {}),
+  ]);
+  return [...keys]
+    .filter((k) => k !== "name") // 目录名钉死,不算改动
+    .filter(
+      (k) =>
+        JSON.stringify(oldManifest?.[k] ?? null) !== JSON.stringify(newManifest?.[k] ?? null)
+    )
+    .sort();
+}
+
 /* ── 页面(DOM)─────────────────────────────────────────────── */
 
 let lab = null; // 当前页面状态;null = 未打开
@@ -524,6 +563,72 @@ export async function startTestRun() {
   lab.testRun = { runId: started.run_id, status: "timeout" };
   _renderTestPanel();
   return lab.testRun;
+}
+
+/* 中栏 chat(§2.2;L4):发消息 = assistant run;回复进记录区;改稿后编辑器刷新 + diff 行 */
+function _renderChat() {
+  const host = lab.root?.querySelector(".lab-agent");
+  if (host) host.innerHTML = chatHtml(lab);
+}
+
+export async function sendChat(text = null) {
+  if (!lab?.form || lab.chatBusy) return null;
+  const request = String(text ?? lab.chatInput ?? "").trim();
+  if (!request) return null;
+  lab.chat.push({ role: "user", text: request });
+  lab.chatInput = "";
+  lab.chatBusy = true;
+  _renderChat();
+  try {
+    const started = await postJson("/api/lab/assistant", {
+      request,
+      draft: lab.form.name,
+    });
+    const reply = await _pollAssistant(started.run_id);
+    lab.chat.push({ role: "assistant", text: reply });
+    await _refreshAfterAgent();
+    return reply;
+  } catch (e) {
+    lab.chat.push({ role: "assistant", text: `${copy("lab.chat.failed")}: ${e.message ?? e}` });
+    return null;
+  } finally {
+    lab.chatBusy = false;
+    _renderChat();
+  }
+}
+
+async function _pollAssistant(runId) {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+    const detail = await getJson(`/api/runs/${runId}`);
+    if (detail.status === "done") {
+      return detail.result?.reply ?? JSON.stringify(detail.result);
+    }
+    if (detail.status !== "running") {
+      throw new Error(detail.error ?? detail.status);
+    }
+  }
+  throw new Error("timeout");
+}
+
+/* 助手改稿后(§2.2):重读草稿,diff 顶层字段给一行高亮提示,编辑器以服务端为准刷新 */
+async function _refreshAfterAgent() {
+  const draft = await getJson(`/api/lab/drafts/${encodeURIComponent(lab.form.name)}`);
+  let changed = [];
+  try {
+    changed = diffGroups(formToManifest(lab.form), draft.manifest ?? {});
+  } catch {
+    changed = []; // 编辑器里 JSON 暂时不合法时跳过 diff(闸门会管)
+  }
+  if (changed.length) {
+    lab.chat.push({ role: "system", text: `${copy("lab.chat.updated")}${changed.join("、")}` });
+  }
+  lab.form = draftToForm(draft);
+  lab.draftTests = Object.keys(draft.tests ?? {});
+  _renderEditor();
+  _renderTestPanel();
+  await refreshTier();
 }
 
 /* 提交确认(§2.3 流程 5):内联确认行(version 可改,留空自动 bump)+ 确认/取消 */
@@ -674,6 +779,7 @@ function _bindEvents() {
       if (action === "save") return await saveCurrentDraft();
       if (action === "check") return await runCheck();
       if (action === "test-run") return await startTestRun();
+      if (action === "chat-send") return await sendChat();
       if (action === "promote") {
         if (!promoteReady(lab)) return; // 未点亮不响应(与 disabled 双保险)
         lab.confirming = true;
@@ -721,6 +827,10 @@ function _bindEvents() {
     }
   });
   lab.root.addEventListener("input", (e) => {
+    if (e.target.closest("[data-lab-chat-input]")) {
+      lab.chatInput = e.target.value;
+      return;
+    }
     if (e.target.closest("[data-lab-input]")) {
       lab.testInput = e.target.value;
       const hint = lab.root.querySelector('[data-json-hint="testInput"]');
@@ -765,6 +875,9 @@ export function openLab(main, name = null) {
     testInput: "",
     testRun: null, // {runId, status, result, error, check}
     traceHtml: "", // 试跑 trace(deriveTraceView/renderTrace 复用)
+    chat: [], // 中栏消息记录 {role: user|assistant|system, text}
+    chatInput: "",
+    chatBusy: false,
     root: document.createElement("div"),
   };
   lab.root.className = "lab";
@@ -772,12 +885,13 @@ export function openLab(main, name = null) {
     `<div class="lab-top-host"></div>` +
     `<div class="lab-cols">` +
     `<div class="lab-col lab-editor"></div>` +
-    `<div class="lab-col lab-agent">${emptyBlock(copy("lab.agent.empty"), "", "inbox")}</div>` +
+    `<div class="lab-col lab-agent"></div>` +
     `<div class="lab-col lab-test"></div>` +
     `</div>` +
     `<div class="lab-status"></div>`;
   main.appendChild(lab.root);
   _bindEvents();
+  _renderChat();
   (async () => {
     await Promise.all([_loadDrafts(), _loadCatalogs()]);
     _renderTop();

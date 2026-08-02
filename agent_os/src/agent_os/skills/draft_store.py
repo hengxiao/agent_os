@@ -290,17 +290,28 @@ class OverlaySkillRegistry:
     manifests),供 test-run 与 G4 的真 run 装配——跑的就是生产形态的 run
     (§2.4 所见即所得)。草稿暂不合规时透明回落生产同名——半成品影子不遮蔽
     可用版本。只读装配面:loader 的热重载/写入仍属生产 registry。
+    ``extra``(L4):额外注入的 Skill 对象(如 skill.dev.assistant meta-skill),
+    解析序 = 草稿 → extra → 生产。
     """
 
-    def __init__(self, production: Any, store: DraftStore) -> None:
+    def __init__(
+        self,
+        production: Any,
+        store: DraftStore,
+        extra: dict[str, Skill] | None = None,
+    ) -> None:
         self._production = production
         self._store = store
+        self._extra = extra or {}
 
     def get(self, ref: SkillRef) -> Skill:
         try:
             return self._store.load_skill(ref.name)
         except (FileNotFoundError, SkillLoadError, ValueError):
-            return self._production.get(ref)
+            pass
+        if ref.name in self._extra:
+            return self._extra[ref.name]
+        return self._production.get(ref)
 
     def visible_to(self, frame: Any) -> list[SkillSchema]:
         """帧白名单内子技能的伪工具 schema(同 local_file 先例;目标查找走草稿优先)。"""
@@ -326,11 +337,13 @@ class OverlaySkillRegistry:
         return build_child_frame(target, call, parent)
 
     def manifests(self) -> list[SkillManifest]:
-        """生产清单 + 草稿清单(同名草稿覆盖;不合规草稿不进清单,半成品不遮蔽生产)。"""
+        """生产清单 + 草稿清单 + extra(同名草稿覆盖;不合规草稿不进清单)。"""
         merged = {m.name: m for m in self._production.manifests()}
         for row in self._store.list():
             if _loadable(self._store, row["name"]):
                 merged[row["name"]] = self._store.load_skill(row["name"]).manifest
+        for name, skill in self._extra.items():
+            merged.setdefault(name, skill.manifest)
         ordered = [merged.pop(m.name) for m in self._production.manifests() if m.name in merged]
         return ordered + list(merged.values())  # 生产拓扑序在前,草稿新增附后
 

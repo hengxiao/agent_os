@@ -257,7 +257,19 @@ promote 后想回滚 → skills.yaml 的 .bak(promote 自动备份)+ git。
 > 5. promote 时 G4 信报告(复跑仍只 G1-G3,§1.4 原文语义);
 > 6. 压帧构建抽 `local_file.build_child_frame` 共享——overlay 与生产的
 >    子帧构建同一函数,防两套帧语义漂移(§2.4 所见即所得)。
-| L4 | Agent 助手:`skill.dev.assistant` + `skill.draft.*` 工具组 + chat 栏 | 对话式建/改 skill,助手无 promote 能力 |
+| L4 ✅ | Agent 助手:`skill.dev.assistant` + `lab.draft.*` 工具组 + chat 栏 | 对话式建/改 skill,助手无 promote 能力。已实现:五工具(档显式声明)、assistant meta-skill(overlay extra 注入)、`/api/lab/assistant`、中栏 chat + diff 行高亮;805 Python + 22 前端测试全绿 |
+
+> 实现注(L4):
+> 1. **工具组命名为 `lab.draft.*` 而非设计的 `skill.draft.*`**——`skill.`
+>    前缀会被内核 `_dispatch_call` 当子技能调用拦截(kernel/runner.py),
+>    永远到不了 Tool Registry;改名是唯一出路,语义不变;
+> 2. assistant 经 overlay `extra` 注入(解析序:草稿 → assistant → 生产),
+>    不进生产 registry;工具在 kernel_patcher 里现场注册,生产 run 不可见;
+> 3. `lab.draft.validate` 是只读报告(不落盘)——落盘版是人在 UI 点"检查",
+>    promote 只认落盘报告,助手报告不作数(与"能改不能发"同根);
+> 4. `lab.draft.test_run` 工具内限步 25(装配成本高;外圈 RunConfig 仍在);
+> 5. chat 与编辑器刷新用轮询(同 L3 注;SSE 增量打磨留 L5);改稿后编辑器
+>    以服务端草稿为准重载(L4 单用户单会话),diff 行标出改动顶层字段。
 | L5 | G5 提示词卫生 + CLI `lab validate` + 模板库 + diff 视图打磨 | 全套体验走查 |
 
 依赖说明:L2 的 G3 必填 lint 即 ESCALATION 的 E3 一部分(两份计划在此汇合);

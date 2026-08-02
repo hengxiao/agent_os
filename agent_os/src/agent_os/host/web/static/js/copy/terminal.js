@@ -48,7 +48,7 @@ export const COPY = {
   "lab.inline.blocked": "inline blocked: tier >= L2 (docs/ESCALATION.md §3.4)",
   "lab.no.selection": "no drafts",
   "lab.no.selection.hint": "create above, or copy from a production skill",
-  "lab.agent.empty": "agent assistant (L4)",
+  "lab.agent.empty": "try: write me a weather query skill",
   "lab.test.empty": "not checked yet",
   // Skill Lab 闸门(docs/SKILL-DEV.md §1.4;L2):五关/确认/过期提示
   "lab.gate.g1": "G1 metadata",
@@ -71,4 +71,9 @@ export const COPY = {
   "lab.test.run": "▶ run",
   "lab.test.outputs": "outputs check",
   "lab.test.running": "running…",
+  "lab.chat.send": "send",
+  "lab.chat.placeholder": "e.g. add trust.reversal for me",
+  "lab.chat.thinking": "working…",
+  "lab.chat.failed": "assistant error",
+  "lab.chat.updated": "agent updated ",
 };

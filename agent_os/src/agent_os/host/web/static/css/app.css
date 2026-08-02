@@ -2209,6 +2209,41 @@ th.is-sorted .us-sort { color: var(--live); }
 .lab-outputs[data-ok="false"] { color: var(--danger); }
 .lab-test-trace { max-height: 320px; overflow-y: auto; }
 
+/* Skill Lab 中栏 chat(docs/SKILL-DEV.md §2.2;L4) */
+.lab-chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  height: 100%;
+}
+.lab-chat-log {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.lab-msg { display: flex; }
+.lab-msg-body {
+  max-width: 90%;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-md);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-0);
+  border: var(--stroke) solid var(--line);
+}
+.lab-msg[data-role="user"] { justify-content: flex-end; }
+.lab-msg[data-role="user"] .lab-msg-body { border-color: var(--live); }
+.lab-msg[data-role="system"] .lab-msg-body {
+  border: none;
+  color: var(--fg-2);
+  font-size: var(--text-2xs);
+  padding: 0 var(--s1);
+}
+
 /* run 头"等待上级裁决"Banner(帧拿不到精确标注时的兜底,S3 §5) */
 .wb-wait { align-items: center; }
 .wb-wait .banner-main { flex: 1; }

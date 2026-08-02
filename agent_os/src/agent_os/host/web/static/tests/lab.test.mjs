@@ -454,4 +454,86 @@ const DRAFT = {
   closeLab();
 }
 
+/* ── L4:chat 渲染 / diffGroups / 发送流程(fetch stub)────────────────── */
+{
+  const { chatHtml, diffGroups } = await import("../js/components/lab.js");
+
+  // 渲染:气泡角色 / 空态 / busy 禁用
+  const html = chatHtml({
+    chat: [{ role: "user", text: "帮我补 reversal" }, { role: "assistant", text: "补好了" }],
+    chatBusy: false, chatInput: "",
+  });
+  assert.ok(html.includes('data-role="user"'), "用户气泡");
+  assert.ok(html.includes('data-role="assistant"'), "助手气泡");
+  assert.ok(html.includes("帮我补 reversal"));
+  assert.ok(!html.includes("disabled"), "空闲可发");
+  const busy = chatHtml({ chat: [], chatBusy: true, chatInput: "" });
+  assert.ok(busy.includes("disabled"), "busy 禁用发送");
+  const empty = chatHtml({ chat: [], chatBusy: false, chatInput: "" });
+  assert.ok(empty.length > 0, "空态文案渲染");
+
+  // diffGroups:顶层字段 diff(name 不算)
+  assert.deepEqual(
+    diffGroups({ a: 1, b: [1] }, { a: 2, b: [1], c: true }),
+    ["a", "c"],
+  );
+  assert.deepEqual(diffGroups({ name: "x" }, { name: "x" }), []);
+}
+
+/* ── L4 DOM 冒烟:sendChat → 回复进记录 → 编辑器刷新 + diff 行 ───────── */
+{
+  const { openLab, closeLab, sendChat } = await import("../js/components/lab.js");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const toastStack = doc.createElement("div");
+  toastStack.setAttribute("id", "toastStack");
+  doc.body.appendChild(toastStack);
+  doc.querySelector = (sel) => doc.body.querySelector(sel);
+
+  const DRAFT_OLD = {
+    name: "weather.query",
+    manifest: { name: "weather.query", version: "0.1.0", kind: "prompt",
+      description: "旧描述", inputs: { type: "object" }, outputs: { type: "object" },
+      permissions: { tools: [], skills: [] } },
+    prompt: "你是天气员。", handler: null, parse_error: null, tests: {},
+  };
+  const DRAFT_NEW = {
+    ...DRAFT_OLD,
+    manifest: { ...DRAFT_OLD.manifest, description: "新描述" },
+  };
+  let draftReads = 0;
+  globalThis.fetch = async (path, options = {}) => {
+    const url = String(path);
+    const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (url === "/api/lab/drafts") return reply([{ name: "weather.query" }]);
+    if (url === "/api/lab/drafts/weather.query") {
+      draftReads += 1;
+      return reply(draftReads === 1 ? DRAFT_OLD : DRAFT_NEW); // 助手"改过"后的重读
+    }
+    if (url.startsWith("/api/lab/drafts/weather.query/tier")) return reply({ tier: "none", sources: [], top: [] });
+    if (url === "/api/tools" || url === "/api/skills") return reply([]);
+    if (url === "/api/lab/assistant") return reply({ run_id: "run-chat" });
+    if (url === "/api/runs/run-chat") {
+      return reply({ status: "done", result: { reply: "已补上 description" } });
+    }
+    throw new Error(`未 stub 的请求: ${url}`);
+  };
+
+  const main = doc.createElement("main");
+  doc.body.appendChild(main);
+  const handle = openLab(main);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const reply = await sendChat("补上 description");
+  assert.equal(reply, "已补上 description");
+  const html = handle.root.innerHTML + (handle.root.querySelector(".lab-agent")?.innerHTML ?? "");
+  assert.ok(html.includes("已补上 description"), "回复进记录区");
+  assert.ok(html.includes("agent 更新了") || html.includes("更新了"), "diff 行提示");
+  assert.ok(html.includes("description"), "diff 指向改动字段");
+  assert.ok(handle.root.querySelector(".lab-editor")?.innerHTML.includes("新描述"),
+    "编辑器刷新为服务端版本");
+  closeLab();
+}
+
 console.log("lab.test.mjs: all assertions passed");

@@ -42,7 +42,7 @@ export const COPY = {
   "lab.inline.blocked": "≥L2 禁 inline(docs/ESCALATION.md §3.4)",
   "lab.no.selection": "无稿",
   "lab.no.selection.hint": "于上题名新作,或抄生产技能",
-  "lab.agent.empty": "侍者(L4)",
+  "lab.agent.empty": "试遣一句:为我作查天气之 skill",
   "lab.test.empty": "未校",
   // Skill Lab 闸门(docs/SKILL-DEV.md §1.4;L2):五关/确认/过期提示
   "lab.gate.g1": "G1 名",
@@ -65,4 +65,9 @@ export const COPY = {
   "lab.test.run": "▶ 试",
   "lab.test.outputs": "outputs 校验",
   "lab.test.running": "试行中…",
+  "lab.chat.send": "遣",
+  "lab.chat.placeholder": "如:为我补 trust.reversal",
+  "lab.chat.thinking": "执笔中…",
+  "lab.chat.failed": "笔误",
+  "lab.chat.updated": "已改 ",
 };

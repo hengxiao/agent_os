@@ -64,7 +64,9 @@ from agent_os.runtime.config import load_config
 from agent_os.skills.draft_store import DraftStore, OverlaySkillRegistry
 from agent_os.skills.gate import GateError, promote_draft
 from agent_os.skills.gate import validate_draft as validate_gate_draft
+from agent_os.skills.lab_assistant import ASSISTANT_NAME, assistant_skill
 from agent_os.skills.manifest import validate_manifest
+from agent_os.tools.lab_tools import register_lab_tools
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -206,6 +208,13 @@ class LabTestRunBody(BaseModel):
 
     input: dict[str, Any] | None = None
     case: str | None = None
+
+
+class LabAssistantBody(BaseModel):
+    """``POST /api/lab/assistant``(docs/SKILL-DEV.md §2.2;L4):中栏 chat 发消息。"""
+
+    request: str
+    draft: str
 
 
 class DebugBreakpointBody(BaseModel):
@@ -944,6 +953,46 @@ def create_app(
             "error": record.get("error"),
             "outputs_check": check,
         }
+
+    @app.post("/api/lab/assistant")
+    async def lab_assistant(body: LabAssistantBody) -> dict[str, Any]:
+        """Agent 助手(docs/SKILL-DEV.md §2.2;L4):以 skill.dev.assistant 为根技能起 run。
+
+        kernel_patcher 做两件事:overlay 注入 assistant meta-skill(草稿 → assistant →
+        生产的解析序)+ 注册 ``lab.draft.*`` 五工具。**工具面没有 promote/delete**
+        (§1.1:能改不能发);run 管理/SSE 复用现状,前端轮询 /api/runs/{id} 拿回复。
+        """
+        try:
+            lab_store.read(body.draft)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+        def _patch(kernel: Any) -> None:
+            overlay = OverlaySkillRegistry(
+                manager.shared_skills_registry(),
+                lab_store,
+                extra={ASSISTANT_NAME: assistant_skill()},
+            )
+            manager.swap_skills_overlay(kernel, overlay)
+            register_lab_tools(
+                kernel.tools,
+                store=lab_store,
+                production=manager.shared_skills_registry(),
+                tools_registry=manager.shared_tools_registry(),
+                kernel_factory=lambda: manager.assemble_lab_kernel(_lab_overlay()),
+            )
+
+        try:
+            run_id = await manager.start_run(
+                ASSISTANT_NAME,
+                {"request": body.request, "draft": body.draft},
+                kernel_patcher=_patch,
+            )
+        except (RunValidationError, SkillLoadError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"run_id": run_id}
 
     @app.post("/api/lab/drafts/{name}/promote")
     def lab_promote_draft(name: str, body: LabPromoteBody) -> dict[str, Any]:

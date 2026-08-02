@@ -41,7 +41,7 @@ export const COPY = {
   "lab.inline.blocked": "≥L2 不能 inline 哦(docs/ESCALATION.md §3.4)",
   "lab.no.selection": "还没有草稿",
   "lab.no.selection.hint": "在上方写个名字捏一个,或从生产技能复制",
-  "lab.agent.empty": "小助手(L4 再来哦)",
+  "lab.agent.empty": "说一句试试,比如:帮我写一个查天气的 skill",
   "lab.test.empty": "还没检查(点上面 检查)",
   // Skill Lab 闸门(docs/SKILL-DEV.md §1.4;L2):五关/确认/过期提示
   "lab.gate.g1": "G1 名片",
@@ -64,4 +64,9 @@ export const COPY = {
   "lab.test.run": "▶ 跑跑看",
   "lab.test.outputs": "outputs 校验",
   "lab.test.running": "跑着呐…",
+  "lab.chat.send": "发送",
+  "lab.chat.placeholder": "跟我说说想要什么,比如:帮我补 trust.reversal",
+  "lab.chat.thinking": "努力干活中…",
+  "lab.chat.failed": "呜…搞砸了",
+  "lab.chat.updated": "帮你改了 ",
 };

@@ -1,4 +1,4 @@
-/* moe 文案表(DEBUG-UI-MOE.md §6;M1 覆盖核心 key):微文案萌化,技术文本豁免。
+/* moe 文案表(docs/DEBUG-UI-MOE.md §6;M1 覆盖核心 key):微文案萌化,技术文本豁免。
    key 清单与 classic 完全一致;状态原文/错误原文由组件照常并列直渲(本表不吞)。 */
 
 export const COPY = {

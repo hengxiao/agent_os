@@ -1,4 +1,4 @@
-"""微内核(DESIGN.md §3):只做流控制 + 权限控制 + IPC。
+"""微内核(docs/DESIGN.md §3):只做流控制 + 权限控制 + IPC。
 
 async 调用链即 Skill 调用栈(§3.1)。本包为骨架,方法体一律 ``NotImplementedError``。
 """

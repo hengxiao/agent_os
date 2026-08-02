@@ -1,4 +1,4 @@
-/* pixel 文案表(DEBUG-UI-THEMES.md §3.6):8-bit 游戏腔。
+/* pixel 文案表(docs/DEBUG-UI-THEMES.md §3.6):8-bit 游戏腔。
    key 清单与 classic 完全一致;技术文本豁免——错误原文/状态原文/工具参数
    由组件照常并列直渲(本表不吞);换了说法的状态标签把技术原文并列在括号里。 */
 

@@ -1,7 +1,7 @@
 # Chapter 4《Tools》与 Agent OS 设计对比报告
 
 > 对比对象:`ai-agent-book/book-en/chapter4.md`(全书第 4 章,672 行,已分页完整通读)
-> 基准:`DESIGN.md` v0.3。引用格式:§x.y 指设计文档小节;「书 …」指章节内小节标题或术语。
+> 基准:`../DESIGN.md` v0.3。引用格式:§x.y 指设计文档小节;「书 …」指章节内小节标题或术语。
 
 ## 章节内容概要
 

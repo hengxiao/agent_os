@@ -1,4 +1,4 @@
-"""Run 契约(DESIGN.md §2.4;§14.1 冻结清单:``compression: "off"`` 消融档)。
+"""Run 契约(docs/DESIGN.md §2.4;§14.1 冻结清单:``compression: "off"`` 消融档)。
 
 Run 是预算、权限、信号的作用域边界;一个 Run 一棵帧树。
 """
@@ -32,8 +32,8 @@ class RunConfig:
     max_cost: float = 2.0  # 美元
     max_wall_time: float = 1800.0
     compression: str = "hierarchical"  # "off" = 消融档(裸模型基线)
-    orchestrate: bool = False  # 编排伪工具开关(Fail-Safe Default:显式开启,CODE-ORCHESTRATION.md)
-    inline: str = "on"  # "off" = 内联消融档:merge 技能退化为普通压帧调用(SKILL-INLINING.md §9)
+    orchestrate: bool = False  # 编排伪工具开关(Fail-Safe Default:显式开启,docs/CODE-ORCHESTRATION.md)
+    inline: str = "on"  # "off" = 内联消融档:merge 技能退化为普通压帧调用(docs/SKILL-INLINING.md §9)
     tool_policy: ToolPolicy = field(default_factory=ToolPolicy)
     logic_policy: LogicPolicy = field(default_factory=LogicPolicy)
     seed: int | None = None

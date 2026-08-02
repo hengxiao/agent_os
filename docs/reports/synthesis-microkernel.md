@@ -1,7 +1,7 @@
 # 综述:书中功能分类与 Agent OS 微内核子系统重构
 
 > 输入:10 份章节对比报告(`reports/ch00`–`ch10`,ch1 报告因中断缺失,其要点已被 ch00/ch04/ch05 覆盖)
-> 基准:DESIGN.md v0.3
+> 基准:../DESIGN.md v0.3
 > 结论先行:**新增 3 个子系统(Telemetry / Memory / Blackboard),1 个改名扩容(Context Compression → Context),内核按微内核原则瘦身为"流控制 + 权限控制 + IPC"。**
 
 ---
@@ -18,7 +18,7 @@
 
 "可缺席"同时是验收标准(呼应 ch6"消融必须架构期内置"):KernelBuilder 不挂任何子系统(仅 MockProvider + 空工具表)时,裸 loop 仍能跑通——这是微内核纯粹性的消融测试。
 
-**按此判据,当前 DESIGN.md 的内核越界两处**:① `build_request`(组装提示词是策略,不是流控);② TraceRecorder 落盘(持久化不是流控)。两者分别让渡给 §5、§4.1 的子系统。内核记账保留最小集(steps/tokens/cost 计数器)——预算是流控中止判决的依据,属 (F);记账的汇聚与导出归子系统。
+**按此判据,当前 ../DESIGN.md 的内核越界两处**:① `build_request`(组装提示词是策略,不是流控);② TraceRecorder 落盘(持久化不是流控)。两者分别让渡给 §5、§4.1 的子系统。内核记账保留最小集(steps/tokens/cost 计数器)——预算是流控中止判决的依据,属 (F);记账的汇聚与导出归子系统。
 
 ---
 

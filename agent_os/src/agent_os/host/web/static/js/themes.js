@@ -1,4 +1,4 @@
-/* 主题系统 T1(DEBUG-UI-THEMES.md §2):三层契约的注册表与切换层。
+/* 主题系统 T1(docs/DEBUG-UI-THEMES.md §2):三层契约的注册表与切换层。
    职责:
    · 契约 token 清单(CONTRACT_TOKENS,§2.1 全集;css/themes/<id>.css 必须全量定义);
    · 声明式主题注册表 {id, name, css, copy, motion, mascot, scope}(§2.5);
@@ -21,7 +21,7 @@ import { COPY as pixelCopy } from "./copy/pixel.js";
 export const DEFAULT_THEME = "classic";
 export const THEME_STORAGE_KEY = "agent-os.theme";
 
-/* 契约 token 清单(§2.1 全集 = WEB-UI.md §3 既有语义变量,一个不能少) */
+/* 契约 token 清单(§2.1 全集 = docs/WEB-UI.md §3 既有语义变量,一个不能少) */
 export const CONTRACT_TOKENS = [
   // 基底
   "--bg-0", "--bg-1", "--bg-2", "--bg-3", "--line", "--line-strong",

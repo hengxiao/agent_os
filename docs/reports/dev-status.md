@@ -1,7 +1,7 @@
 # Agent OS 开发状态盘点
 
 > 基线:git `bd0ceff`(8 个 commit),`121 tests 全绿`,ruff 干净
-> 口径:以代码事实为准(剩余 `NotImplementedError` 位置 + 各子系统实现深度),对照 DESIGN.md v0.4 与 §16 里程碑
+> 口径:以代码事实为准(剩余 `NotImplementedError` 位置 + 各子系统实现深度),对照 ../DESIGN.md v0.4 与 §16 里程碑
 
 ## 一、总览
 
@@ -87,7 +87,7 @@
 
 ## 三、契约层与设计的偏差(待回写)
 
-开发中实际发生的 3 处 api/v1 增补,DESIGN.md 尚未同步:`SkillFrame.call_id`、`LogicContext.spawn/wait/board`、`BlackboardConflict`。下次更新设计文档时回写(§2.3、§9.3、§12.1)。
+开发中实际发生的 3 处 api/v1 增补,../DESIGN.md 尚未同步:`SkillFrame.call_id`、`LogicContext.spawn/wait/board`、`BlackboardConflict`。下次更新设计文档时回写(§2.3、§9.3、§12.1)。
 
 ## 四、未开发功能汇总(按优先级)
 
@@ -104,4 +104,4 @@
 两个方向可选:
 
 1. **补安全短板**(工作量小、风险敞口大):沙箱网络隔离(unshare -n)+ credentials 注入 + source tagging 包裹 + HumanApproval——把"权限控制"半边天补齐;
-2. **进 M6 主线**(设计节奏):Memory + register() + 验证门——打通自我进化供给侧,是 DESIGN.md 规划的最后一个里程碑。
+2. **进 M6 主线**(设计节奏):Memory + register() + 验证门——打通自我进化供给侧,是 ../DESIGN.md 规划的最后一个里程碑。

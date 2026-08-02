@@ -1,4 +1,4 @@
-"""M2 锚点测试:code 技能经 Logic Kernel 执行与编排(DESIGN.md §3.1/§6/§9)。
+"""M2 锚点测试:code 技能经 Logic Kernel 执行与编排(docs/DESIGN.md §3.1/§6/§9)。
 
 固定约定:
 
@@ -132,7 +132,7 @@ def _build(skills_yaml: str, *, force_sandbox: bool = False):
         compression="off",
     )
     config.logic_policy.force_sandbox = force_sandbox
-    # 升权闸门(ESCALATION.md §3):code 技能编排高档 prompt 技能构成升权,
+    # 升权闸门(docs/ESCALATION.md §3):code 技能编排高档 prompt 技能构成升权,
     # 装配自动批准通道等价于生产宿主里人每次放行
     return assemble(config, fib_brain, skills_yaml, supervisor=auto_approve)
 

@@ -1,4 +1,4 @@
-"""递归菲波拉契 example case —— 内核纵向切片的测试锚点(DESIGN.md §3.1/§3.3/§9)。
+"""递归菲波拉契 example case —— 内核纵向切片的测试锚点(docs/DESIGN.md §3.1/§3.3/§9)。
 
 技能语义(见 ``skills/skills.yaml`` 的 ``fib`` 技能):
 

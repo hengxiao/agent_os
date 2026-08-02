@@ -1,4 +1,4 @@
-/* terminal 文案表(DEBUG-UI-THEMES.md §2.2 / §3.3):shell 腔,状态带方括号。
+/* terminal 文案表(docs/DEBUG-UI-THEMES.md §2.2 / §3.3):shell 腔,状态带方括号。
    key 清单与 classic 完全一致;技术文本豁免——状态原文/错误原文/工具参数
    由组件照常并列直渲(换了说法的状态把技术原文并列在括号里,moe 模式)。 */
 

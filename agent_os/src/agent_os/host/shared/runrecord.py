@@ -1,4 +1,4 @@
-"""RunRecord(RUNNERS.md §3.3 输出契约;coding agent 的消费面)。
+"""RunRecord(docs/RUNNERS.md §3.3 输出契约;coding agent 的消费面)。
 
 CLI 各子命令的 stdout JSON 统一经 :func:`dumps` 序列化——coding agent 只依赖
 这一个 JSON schema,版本化 ``"v": 1``(§3.5)。

@@ -1,4 +1,4 @@
-"""M5a 锚点测试:Telemetry(WAL/版本头)+ 检查点断电恢复(DESIGN.md §10、§16 M5)。
+"""M5a 锚点测试:Telemetry(WAL/版本头)+ 检查点断电恢复(docs/DESIGN.md §10、§16 M5)。
 
 固定约定:
 

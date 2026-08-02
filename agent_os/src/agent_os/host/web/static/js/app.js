@@ -1,4 +1,4 @@
-/* Agent OS Web UI 入口(WEB-UI.md §4.1 应用壳 / §5 交互与状态规范 / §6.1 结构)。
+/* Agent OS Web UI 入口(docs/WEB-UI.md §4.1 应用壳 / §5 交互与状态规范 / §6.1 结构)。
    职责:hash 路由(runs/skills/tools,§4.1 深链接含 ?frame/?signal;D6 增 ?set=)、
    Runs 侧栏(搜索/筛选/折叠;D6 set 切换器)、API 健康轮询(live 指示 + 列表 5s 刷新)、
    三态、Toast、复制。
@@ -426,7 +426,7 @@ $("#liveIndicator").addEventListener("click", () => {
   }
   poll();
 });
-// S3(SUPERVISOR.md §5):TopBar 收件箱图标 → 抽屉开关
+// S3(docs/SUPERVISOR.md §5):TopBar 收件箱图标 → 抽屉开关
 $("#inboxBtn").addEventListener("click", () => toggleInbox());
 // + New Run 主按钮(§4.3):打开 Launch Modal(不打断当前页;成功后跳 #/runs/<id> 进 live)
 $("#newRunBtn").addEventListener("click", () => openLaunchDialog());

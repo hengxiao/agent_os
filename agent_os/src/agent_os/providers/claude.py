@@ -1,4 +1,4 @@
-"""ClaudeProvider(DESIGN.md §4.3;Anthropic Messages API 独立适配器)。
+"""ClaudeProvider(docs/DESIGN.md §4.3;Anthropic Messages API 独立适配器)。
 
 Anthropic Messages API 与 OpenAI 格式差异较大,故独立实现而非复用
 OpenAICompatibleProvider(§4.3"值得独立实现"):

@@ -1,4 +1,4 @@
-"""FastAPI app(RUNNERS.md §4.3 API 契约;R3):Web UI Runner 的路由层。
+"""FastAPI app(docs/RUNNERS.md §4.3 API 契约;R3):Web UI Runner 的路由层。
 
 ``create_app(config_path, artifacts_root=..., skillsets_dir=...)`` 返回 app;路由层只调用
 host/shared 的读取层与 :class:`RunManager`,不 import 内核私有实现(§4.5)。
@@ -7,7 +7,7 @@ host/shared 的读取层与 :class:`RunManager`,不 import 内核私有实现(§
 "run 未开始"的失败统一返回 ``200 + {"status": "failed", "error": ...}``;
 ``skill_set`` 未知(D6)属请求本身非法,归 400。
 
-S2 增量(SUPERVISOR.md v2 §2.3/§5):supervisor 收件箱两个端点——
+S2 增量(docs/SUPERVISOR.md v2 §2.3/§5):supervisor 收件箱两个端点——
 ``GET /api/supervisor/pending`` 列挂起中的裁决请求,
 ``POST /api/supervisor/{question_id}/answer`` 作答结算(对应 run 恢复);
 Web 收件箱即默认宿主通道,装配即得。
@@ -71,9 +71,9 @@ _KIND_HINTS = {
 
 
 class RunOverrides(BaseModel):
-    """``POST /api/runs`` 的 ``overrides``(WEB-UI.md §4.3 高级区):合并进本次 run 的 RunConfig。
+    """``POST /api/runs`` 的 ``overrides``(docs/WEB-UI.md §4.3 高级区):合并进本次 run 的 RunConfig。
 
-    ``inline``(SKILL-INLINING.md §9 消融开关):``"on" | "off"``,其余值 422。
+    ``inline``(docs/SKILL-INLINING.md §9 消融开关):``"on" | "off"``,其余值 422。
     ``checkpoint_interval``(Debugger P5 周期 checkpoint):每 N 步覆盖写"最近现场",0=关。
     """
 
@@ -101,7 +101,7 @@ class ReloadBody(BaseModel):
 
 
 class SupervisorAnswerBody(BaseModel):
-    """``POST /api/supervisor/{question_id}/answer`` 请求体(SUPERVISOR.md §2.4;S2)。"""
+    """``POST /api/supervisor/{question_id}/answer`` 请求体(docs/SUPERVISOR.md §2.4;S2)。"""
 
     answer: str
 
@@ -256,9 +256,9 @@ def _filter_kind(rows: list[dict[str, Any]], kind: str | None) -> list[dict[str,
 
 
 def _skill_summary(manifest: Any) -> dict[str, Any]:
-    """manifest 摘要(WEB-UI.md §6.2):name/version/kind/description/permissions/inline。
+    """manifest 摘要(docs/WEB-UI.md §6.2):name/version/kind/description/permissions/inline。
 
-    ``inline``(SKILL-INLINING.md §3.1):merge 技能标记,Skills 浏览器打标数据源。
+    ``inline``(docs/SKILL-INLINING.md §3.1):merge 技能标记,Skills 浏览器打标数据源。
     """
     perms = manifest.permissions
     return {
@@ -278,7 +278,7 @@ def _skill_summary(manifest: Any) -> dict[str, Any]:
 def _skill_doc(manifest: Any) -> dict[str, Any]:
     """全量 manifest 文档(``GET /api/skills/{name}``;D3 Launch Modal 取 inputs schema)。
 
-    D4 增补(WEB-UI.md §4.6):``lint`` = description 自洽性 lint 警告列表
+    D4 增补(docs/WEB-UI.md §4.6):``lint`` = description 自洽性 lint 警告列表
     (与加载期同一套 :func:`validate_manifest`,警告不阻断;Skills 浏览器
     详情顶部横幅数据源)。
     """
@@ -313,7 +313,7 @@ def _skill_doc(manifest: Any) -> dict[str, Any]:
 
 
 def _tool_doc(spec: Any) -> dict[str, Any]:
-    """ToolSpec 摘要(WEB-UI.md §6.2,``GET /api/tools``;Tools 浏览器数据源)。
+    """ToolSpec 摘要(docs/WEB-UI.md §6.2,``GET /api/tools``;Tools 浏览器数据源)。
 
     ``examples`` 为空则省略(§6.2 契约:缺失字段省略即可);布尔执行属性
     (idempotent/cacheable/concurrency_safe/untrusted_source)恒带。
@@ -373,7 +373,7 @@ def create_app(
 
     ``skillsets_dir``(D6):一站多 skill set 根目录(``<root>/<set>/skills.yaml``)。
 
-    ``token``(RUNNERS.md §4.5):非 None 时全站要求
+    ``token``(docs/RUNNERS.md §4.5):非 None 时全站要求
     ``Authorization: Bearer <token>``(或 ``?token=`` 供 EventSource 用——SSE
     的浏览器 API 不支持自定义头)。缺省 None = 无认证,**只可用于 loopback**;
     ``serve.py`` 在绑定非 loopback 且未给 token 时拒绝启动。
@@ -395,7 +395,7 @@ def create_app(
                 supplied = request.query_params["token"]
             if not secrets.compare_digest(supplied, token):
                 return JSONResponse(
-                    {"detail": "需要 Authorization: Bearer <token>(RUNNERS.md §4.5)"},
+                    {"detail": "需要 Authorization: Bearer <token>(docs/RUNNERS.md §4.5)"},
                     status_code=401,
                 )
             return await call_next(request)
@@ -489,7 +489,7 @@ def create_app(
             # 帧上下文逐条:"模型那一步看到了什么"(§2.3 RCA 核心)
             "messages": (frame.get("context") or {}).get("messages", []),
             # 帧工作内存(checkpoint 已带,read 层透传):检视器内联能力小节
-            # 取 working._inline_caps(SKILL-INLINING.md §4.2 帧内冻结快照)
+            # 取 working._inline_caps(docs/SKILL-INLINING.md §4.2 帧内冻结快照)
             "working": (frame.get("context") or {}).get("working", {}),
         }
 
@@ -536,7 +536,7 @@ def create_app(
 
     @app.get("/api/supervisor/pending")
     def list_supervisor_pending() -> list[dict[str, Any]]:
-        """supervisor 收件箱(SUPERVISOR.md §5;S2):挂起中的裁决请求列表。
+        """supervisor 收件箱(docs/SUPERVISOR.md §5;S2):挂起中的裁决请求列表。
 
         Web 收件箱即默认宿主通道(§2.3):run 无需注入 handler,装配即得;
         每行含 question_id/run_id/frame_id/question/context/options/urgency/asked_at。
@@ -580,7 +580,7 @@ def create_app(
 
     @app.get("/api/skills")
     def list_skills(skill_set: str | None = None) -> list[dict[str, Any]]:
-        """技能清单(WEB-UI.md §6.2):共享 registry 的 manifest 摘要列表(Launch Modal 下拉)。
+        """技能清单(docs/WEB-UI.md §6.2):共享 registry 的 manifest 摘要列表(Launch Modal 下拉)。
 
         D6:``?skill_set=<name>`` 按 set 过滤(未知 set 归 400);不带参数维持全局行为。
         """
@@ -617,7 +617,7 @@ def create_app(
 
     @app.get("/api/tools")
     def list_tools() -> list[dict[str, Any]]:
-        """工具清单(WEB-UI.md §6.2):共享 tools registry 的全量 ToolSpec 摘要(Tools 浏览器)。"""
+        """工具清单(docs/WEB-UI.md §6.2):共享 tools registry 的全量 ToolSpec 摘要(Tools 浏览器)。"""
         return [_tool_doc(s) for s in manager.tools_specs()]
 
     @app.get("/api/runs/{run_id}/stream")

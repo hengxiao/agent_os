@@ -9,7 +9,7 @@ This plan designs two layered standard libraries for `agent_os`:
 - **`common.*`** — portable, reusable, policy-free capabilities that agent
   skills can compose like a standard library.
 
-The design is grounded in the naming convention in `NAMING.md` and informed by
+The design is grounded in the naming convention in `../NAMING.md` and informed by
 how Python, Go, Rust, Java, Node.js, and .NET partition their system and
 standard libraries (see `research/stdlib-research.md`).
 
@@ -356,7 +356,7 @@ skills in agent workflows.
 
 ## 6. Integration with the naming convention
 
-All names follow the convention in `NAMING.md`:
+All names follow the convention in `../NAMING.md`:
 
 - `system.<domain>.<action>` for kernel tools.
 - `common.<domain>.<action>` for standard-library skills.
@@ -446,4 +446,4 @@ Tool invocations use the dotted name directly.
 3. No `common.*` skill directly performs OS I/O; it calls `system.*` tools.
 4. The test suite passes with the new names and aliases.
 5. The directory structure under `agent_os/std/` is grouped by `common.*` domain.
-6. `NAMING.md` and `STDLIB-CATALOG.md` are updated to reflect the final hierarchy.
+6. `../NAMING.md` and `../STDLIB-CATALOG.md` are updated to reflect the final hierarchy.

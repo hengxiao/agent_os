@@ -1,4 +1,4 @@
-/* ink 文案表(DEBUG-UI-THEMES.md §3.5):极简文言腔。
+/* ink 文案表(docs/DEBUG-UI-THEMES.md §3.5):极简文言腔。
    key 清单与 classic 完全一致;技术文本豁免——状态原文/错误原文由组件
    照常并列直渲;状态标签换说法时技术原文并列在括号里(moe 模式)。 */
 

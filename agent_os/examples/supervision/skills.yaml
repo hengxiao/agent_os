@@ -1,6 +1,6 @@
 # supervision 嵌套监督示例技能包(tests/examples/test_supervision_nested.py 锚点)。
 #
-# 嵌套监督(SUPERVISOR.md v2 §2.5):内层 agent(junior_clerk)的
+# 嵌套监督(docs/SUPERVISOR.md v2 §2.5):内层 agent(junior_clerk)的
 # ask_supervisor 问题路由给它的调用方——外层应用 outer.py;外层应用自己
 # 也是 agent,它的 supervisor_handler 就是它的裁决点:再起一个外层 run
 # 问 team_lead(外层 LLM),把裁决返回内层。权威链(子 agent → 调用 agent)

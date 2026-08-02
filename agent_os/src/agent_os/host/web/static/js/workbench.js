@@ -1,4 +1,4 @@
-/* Run Workbench 页面(WEB-UI.md §4.2):run 头 + 异常 Banner + 三栏
+/* Run Workbench 页面(docs/WEB-UI.md §4.2):run 头 + 异常 Banner + 三栏
    (帧树 320px / 执行轨迹 flex / 上下文检视器 420px)+ Usage 折叠栏(§4.5)。
 
    三联动(§4.2 规则 1,共享 selection store,订阅按键拆分、只重绘受影响栏):
@@ -202,7 +202,7 @@ export function closeWorkbench() {
   wb.waitKey = "";
 }
 
-/* ── S3(SUPERVISOR.md §5):本 run 的"等待上级"标注数据源 ─────────
+/* ── S3(docs/SUPERVISOR.md §5):本 run 的"等待上级"标注数据源 ─────────
    收件箱 pending(app.js 5s 轮询写 store.inboxPending)里 run_id 匹配的问题;
    提问帧在帧树 → 帧块加"等待上级"chip(简单方式);拿不到精确帧 → run 头 Banner。 */
 
@@ -545,7 +545,7 @@ function renderHeader() {
     waitBannerHtml();
 }
 
-/* S3(SUPERVISOR.md §5):本 run 有待答问题且提问帧拿不到(不在当前帧树)→
+/* S3(docs/SUPERVISOR.md §5):本 run 有待答问题且提问帧拿不到(不在当前帧树)→
    页头"等待上级裁决"Banner(帧拿得到时走帧树 chip,见 frameExtras.waiting)。 */
 function waitBannerHtml() {
   const pending = pendingForRun();
@@ -1040,7 +1040,7 @@ function renderInspectorPanel() {
   const msgs = Array.isArray(f.messages) ? f.messages : [];
   const steps = f.usage?.steps;
   const cost = f.usage?.cost;
-  // SKILL-INLINING.md §4.2:帧内冻结的内联能力快照(帧 detail 的 working._inline_caps;
+  // docs/SKILL-INLINING.md §4.2:帧内冻结的内联能力快照(帧 detail 的 working._inline_caps;
   // 无该字段(普通帧/off 档)不显示)
   const inlineCaps = f.working?._inline_caps?.skills;
   const inlineCapsHtml =

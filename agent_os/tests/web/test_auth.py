@@ -1,4 +1,4 @@
-"""Web 鉴权锚点测试(RUNNERS.md §4.5)。
+"""Web 鉴权锚点测试(docs/RUNNERS.md §4.5)。
 
 固定约定:
 
@@ -7,7 +7,7 @@
 - 缺省 ``token=None`` = 无认证,**只可用于 loopback**;
 - ``serve.py`` 在绑定非 loopback 且未给 token 时**拒绝启动**(而非降级为无认证)。
 
-回归的是一个真实缺陷:RUNNERS.md §4.5 明写"绑定非 loopback 时要求 --token",
+回归的是一个真实缺陷:docs/RUNNERS.md §4.5 明写"绑定非 loopback 时要求 --token",
 而实现里 token/auth 出现 0 次——``--host 0.0.0.0`` 即把能跑 ``shell_exec``
 的执行面开放到网络。
 """

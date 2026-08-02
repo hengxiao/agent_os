@@ -1,4 +1,4 @@
-/* command-palette.js 纯逻辑单测(WEB-UI.md §5 ⌘K 命令条):
+/* command-palette.js 纯逻辑单测(docs/WEB-UI.md §5 ⌘K 命令条):
    COMMANDS 注册表(§5 八命令齐全)、fuzzyScore(子序列匹配 / 连续与词首加权 /
    靠前命中优先 / 不匹配 null)、fuzzyFilter(过滤 + 排序 + 空 query 原序)。
    运行:node static/tests/command-palette.test.mjs(无需 DOM、无第三方依赖)。 */

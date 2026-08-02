@@ -1,4 +1,4 @@
-/* skills-view.js / util.js 纯逻辑单测(WEB-UI.md §4.6):
+/* skills-view.js / util.js 纯逻辑单测(docs/WEB-UI.md §4.6):
    findCycles(permissions.skills 依赖图循环检测,Tarjan SCC):
      **自引用(fib 的 skills:[fib])是合法递归,必须不算循环**;
      a→b→a 算环(环上全部技能标注);链式/菱形不算;未知技能边忽略;

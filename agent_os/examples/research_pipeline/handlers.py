@@ -2,7 +2,7 @@
 
 供 ``skills.yaml`` 中 11 个 code 技能经 dotted path ``handlers:<name>`` 惰性加载;
 全部为确定性纯函数式协程(无 LLM、无 IO),便于 CLI/Web 调试时逐帧核对输入输出。
-签名约定(DESIGN.md §6.3,同 tests/code_skill_helpers.py):
+签名约定(docs/DESIGN.md §6.3,同 tests/code_skill_helpers.py):
 ``async def run(input: dict, ctx: LogicContext) -> dict``。
 """
 

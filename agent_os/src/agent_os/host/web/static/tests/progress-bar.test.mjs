@@ -1,4 +1,4 @@
-/* progress-bar.js 纯逻辑单测(WEB-UI.md §4.3 Live 进度):
+/* progress-bar.js 纯逻辑单测(docs/WEB-UI.md §4.3 Live 进度):
    deriveProgress(steps/cost 双轨派生、比例与 80% warn 阈值、usage 回退)、
    mergeSignal(SSE 增量合并:帧生长 / 帧 chips / pop / aborted / 幂等)、
    fmtElapsed(秒级时长)、liveBarHtml/endBannerHtml(渲染结构与结束态 Banner)。

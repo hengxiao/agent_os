@@ -1,6 +1,6 @@
 """travel_planner 的 code 技能 handlers:plan_route / plan_budget / format_itinerary。
 
-确定性纯函数(无 LLM、无 IO),签名约定(DESIGN.md §6.3):
+确定性纯函数(无 LLM、无 IO),签名约定(docs/DESIGN.md §6.3):
 ``async def <name>(input: dict, ctx) -> dict``;供 skills.yaml 经 dotted path
 ``travel_handlers:<name>`` 惰性加载(模块名独立,避免与其他示例的 handlers 撞名)。
 """

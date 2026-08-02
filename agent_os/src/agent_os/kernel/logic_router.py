@@ -1,4 +1,4 @@
-"""Logic Kernel 路由(DESIGN.md §9.2;M2):按 TrustLevel 索引后端并为 code 技能帧选路。
+"""Logic Kernel 路由(docs/DESIGN.md §9.2;M2):按 TrustLevel 索引后端并为 code 技能帧选路。
 
 选路规则(§9.2):``manifest.logic.mode == "sandbox"`` 或
 ``RunConfig.logic_policy.force_sandbox`` → SANDBOX;否则 TRUSTED(code 技能默认可信)。

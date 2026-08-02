@@ -1,4 +1,4 @@
-/* Agent OS 应用壳与组件样式(WEB-UI.md §4.1 线框 / §5 交互与状态规范)。
+/* Agent OS 应用壳与组件样式(docs/WEB-UI.md §4.1 线框 / §5 交互与状态规范)。
    铁律:只消费 tokens.css 的 var(--*) token——本文件不得出现十六进制颜色与像素散值。 */
 
 /* ── 布局(§4.1 应用壳)────────────────────────────────────── */
@@ -806,7 +806,7 @@ body[data-route="debug"] .sidebar { display: none; }
 }
 .ft-kind[data-kind="prompt"] { color: var(--sig-llm); }
 .ft-kind[data-kind="code"] { color: var(--sig-tool); }
-/* "等待上级"标注(S3,SUPERVISOR.md §5):挂起等上级裁决的帧;warn 色双编码 */
+/* "等待上级"标注(S3,docs/SUPERVISOR.md §5):挂起等上级裁决的帧;warn 色双编码 */
 .ft-wait {
   flex-shrink: 0;
   padding: 0 var(--s1);
@@ -1008,7 +1008,7 @@ body[data-route="debug"] .sidebar { display: none; }
 .tr-kw[data-k="tool"] { color: var(--sig-tool); }
 .tr-kw[data-k="exec"] { color: var(--sig-compress); }
 .tr-kw[data-k="obs"] { color: var(--sig-sidecar); }
-/* ⇥ inline 行(SKILL-INLINING.md §7):弱化色,不占 call/ret 语义色 */
+/* ⇥ inline 行(docs/SKILL-INLINING.md §7):弱化色,不占 call/ret 语义色 */
 .tr-kw[data-k="inline"] { color: var(--fg-2); font-style: italic; }
 .tr-name { font-weight: 600; color: var(--fg-0); }
 .tr-params {
@@ -1117,7 +1117,7 @@ body[data-route="debug"] .sidebar { display: none; }
 .insp-title { font-size: var(--text-sm); font-weight: 600; font-family: var(--font-mono); }
 .btn-mini { padding: 0 var(--s2); font-size: var(--text-xs); margin-left: auto; }
 
-/* 检视器"内联能力"小节(SKILL-INLINING.md §4.2:working._inline_caps 快照) */
+/* 检视器"内联能力"小节(docs/SKILL-INLINING.md §4.2:working._inline_caps 快照) */
 .insp-caps {
   padding: var(--s2) var(--s3);
   margin-bottom: var(--s2);
@@ -1498,7 +1498,7 @@ textarea.input {
   color: var(--fg-2);
 }
 .cycle-warn { color: var(--warn); flex-shrink: 0; } /* §4.6:循环依赖 --warn 警示 */
-/* inline 徽标(SKILL-INLINING.md §3.1):merge 技能弱色 chip(列表项 + 详情 Meta) */
+/* inline 徽标(docs/SKILL-INLINING.md §3.1):merge 技能弱色 chip(列表项 + 详情 Meta) */
 .inline-chip {
   flex-shrink: 0;
   padding: 0 var(--s1);
@@ -1891,7 +1891,7 @@ th.is-sorted .us-sort { color: var(--live); }
 }
 .sk-desc { font-size: var(--text-sm); color: var(--fg-1); }
 
-/* ── Supervisor 收件箱抽屉(S3,SUPERVISOR.md §5)────────────────
+/* ── Supervisor 收件箱抽屉(S3,docs/SUPERVISOR.md §5)────────────────
    右侧抽屉(遮罩 + 420px 面板);问题卡片:urgency 左色条(high=--danger)、
    question、context 可展开、options 按钮组 / 文本输入、错误条(重答语义)。 */
 .inbox-overlay {
@@ -1999,7 +1999,7 @@ th.is-sorted .us-sort { color: var(--live); }
 }
 .sup-actions .sup-input { flex: 1; min-width: 0; }
 
-/* 升权卡片(ESCALATION.md §3;E2):question 摘要 / reason_hint / requested 权限集 */
+/* 升权卡片(docs/ESCALATION.md §3;E2):question 摘要 / reason_hint / requested 权限集 */
 .sup-esc-q { font-size: var(--text-xs); color: var(--fg-1); word-break: break-word; }
 .sup-reason { font-size: var(--text-xs); color: var(--fg-2); }
 .sup-req {

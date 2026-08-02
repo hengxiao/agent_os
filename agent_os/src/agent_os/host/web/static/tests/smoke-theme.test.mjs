@@ -1,4 +1,4 @@
-/* 主题系统 T1 冒烟测试(DEBUG-UI-THEMES.md §2.5 / §5;DEBUG-UI-MOE.md §7 M1):
+/* 主题系统 T1 冒烟测试(docs/DEBUG-UI-THEMES.md §2.5 / §5;docs/DEBUG-UI-MOE.md §7 M1):
    1) 注册表:classic + moe 声明完整({id,name,css,copy,motion,mascot,scope}),
       主题 css 已加载且契约变量完整才注册(swatch 三色取自主题 css);
    2) 启动解析:URL(?theme=)> localStorage > classic;URL 命中同时持久化;

@@ -1,6 +1,6 @@
-"""内核 runner(DESIGN.md §3.1 语义伪码的落点;M0 单帧 runner,M2 调用栈/压栈挂起,
+"""内核 runner(docs/DESIGN.md §3.1 语义伪码的落点;M0 单帧 runner,M2 调用栈/压栈挂起,
 M4 verdict 仲裁与 sidecar 接线,M5a checkpoint/resume 断电恢复,
-S1 ask_supervisor 拦截/就地挂起/回答注入与 resume 重问,SUPERVISOR.md v2 §2/§4)。
+S1 ask_supervisor 拦截/就地挂起/回答注入与 resume 重问,docs/SUPERVISOR.md v2 §2/§4)。
 
 agent loop 顺序:safe point(run 中止标志)→ pre:step 检查点(verdict 仲裁,§5.2)
 → 强制压缩检查 → context.maintain/build → providers.chat →
@@ -109,7 +109,7 @@ _log = logging.getLogger("agent_os.kernel")
 #: 最终答案 outputs 校验连败上限(§3.2 恢复环路语义:输出修复循环独立熔断)
 _OUTPUT_VALIDATION_MAX_FAILURES = 2
 
-#: 单次沙箱执行的 syscall 默认上限(CODE-ORCHESTRATION.md §4;manifest
+#: 单次沙箱执行的 syscall 默认上限(docs/CODE-ORCHESTRATION.md §4;manifest
 #: ``limits.max_tool_calls`` 可覆盖)。限额是内核策略,故在此计数与拒绝——
 #: 传输层只管传输,跑飞脚本由 wall_time 兜底
 DEFAULT_MAX_TOOL_CALLS = 50
@@ -173,7 +173,7 @@ class Kernel:
         telemetry: Any = None,  # TelemetrySink(§10)
         memory: Any = None,  # MemoryService(§11)
         blackboard: Any = None,  # Blackboard(§12)
-        supervisor: Any = None,  # SupervisorManager(SUPERVISOR.md §2.3;S1 handler 通道)
+        supervisor: Any = None,  # SupervisorManager(docs/SUPERVISOR.md §2.3;S1 handler 通道)
         stack: FrameStack | None = None,
     ) -> None:
         self.config = config or RunConfig()
@@ -206,7 +206,7 @@ class Kernel:
     async def run(self, skill: str, input: dict[str, Any], principal: Any = None) -> Any:
         """§13 生命周期入口:解析根技能 → 构建根帧 → 跑帧树 → usage 汇总返回。
 
-        ``principal``(DATA-AUTHZ.md §2.2):宿主认证后的调用方身份,存根帧并
+        ``principal``(docs/DATA-AUTHZ.md §2.2):宿主认证后的调用方身份,存根帧并
         由子帧原样继承;缺省 None = v1 单用户语义(数据层不启用拦截)。
         """
         skill_obj = self.skills.get(SkillRef(name=skill))
@@ -231,7 +231,7 @@ class Kernel:
                     Message(role=Role.USER, content=json.dumps(input), source=Source.PARENT_INPUT)
                 ]
             ),
-            # 根帧 = 根 skill 的直接能力档(只看自己的 tools;ESCALATION.md §2.2)。
+            # 根帧 = 根 skill 的直接能力档(只看自己的 tools;docs/ESCALATION.md §2.2)。
             # 根技能由宿主直接启动不过闸——但启动只确认了根技能的直接能力面,
             # 经子技能够到更高档仍要过升权闸;若按完整推导档(含 skills 递归),
             # 白名单内调用恒不升权,闸门成为死代码
@@ -513,7 +513,7 @@ class Kernel:
             entry=entry,
             args=frame.input,
             ctx=KernelLogicContext(self, frame, manifest) if trusted else None,
-            # SANDBOX 档:ctx 经 syscall 通道跨进程构造(CODE-ORCHESTRATION.md §2.2),
+            # SANDBOX 档:ctx 经 syscall 通道跨进程构造(docs/CODE-ORCHESTRATION.md §2.2),
             # 与 TRUSTED 档契约逐字一致——同一 handler 两档运行行为等价
             dispatch_fn=None if trusted else self._syscall_dispatcher(frame, manifest),
             limits=ResourceLimits(
@@ -561,7 +561,7 @@ class Kernel:
                 ),
             }
         if call.name == ASK_SUPERVISOR_TOOL:
-            # 内核拦截式伪工具(SUPERVISOR.md §2.1,同 python_orchestrate 先例):
+            # 内核拦截式伪工具(docs/SUPERVISOR.md §2.1,同 python_orchestrate 先例):
             # 白名单照常先查,再放行到 supervisor 通道
             return await self._ask_supervisor(call, frame)
         verdicts = await self.signals.emit(
@@ -598,7 +598,7 @@ class Kernel:
         return _result_payload(result)
 
     # ------------------------------------------------------------------
-    # SUPERVISOR.md §2:ask_supervisor 伪工具——就地挂起,等本 run 调用方裁决(S1)
+    # docs/SUPERVISOR.md §2:ask_supervisor 伪工具——就地挂起,等本 run 调用方裁决(S1)
     # ------------------------------------------------------------------
 
     async def _ask_supervisor(self, call: ToolCall, frame: SkillFrame) -> dict[str, Any]:
@@ -678,7 +678,7 @@ class Kernel:
         """构造 syscall 分发回调:沙箱内 ctx 的每次调用回到同一条 ``_dispatch_call`` 闸门。
 
         脚本以**调用帧的身份**执行——可调集合 = 该帧 manifest 白名单 ∩ RunConfig
-        上限,ToolGuard/信号/记账全部沿用,**无权限提升**(CODE-ORCHESTRATION.md §2.3)。
+        上限,ToolGuard/信号/记账全部沿用,**无权限提升**(docs/CODE-ORCHESTRATION.md §2.3)。
         """
         counter = stats if stats is not None else {"calls": 0, "failed": []}
         limit = (
@@ -718,7 +718,7 @@ class Kernel:
     async def _run_orchestration(
         self, call: ToolCall, frame: SkillFrame, manifest: SkillManifest
     ) -> dict[str, Any]:
-        """``python_orchestrate``(CODE-ORCHESTRATION.md):沙箱脚本 + 工具系统调用。
+        """``python_orchestrate``(docs/CODE-ORCHESTRATION.md):沙箱脚本 + 工具系统调用。
 
         脚本以**调用帧的身份**在 SANDBOX 执行;脚本内 ``ctx.call_tool``/``ctx.invoke``
         经 syscall 通道陷入内核,由 ``_dispatch_call`` 代为分发——白名单、ToolGuard
@@ -863,7 +863,7 @@ class Kernel:
         target = self.skills.get(SkillRef(name=name))
         target_tier = derive_skill_tier(target.manifest, self.tools, self.skills)
         if tier_exceeds(target_tier, frame.tier):
-            # 升权闸门(ESCALATION.md §3):白名单检查后、make_frame 之前。
+            # 升权闸门(docs/ESCALATION.md §3):白名单检查后、make_frame 之前。
             # 原则 1 先校验后确认:参数不合被调方 inputs schema → INVALID_ARGS
             # 错误观察,**不产生确认请求**(审的就是要执行的,不存在审一套跑一套)
             try:
@@ -915,7 +915,7 @@ class Kernel:
         return {"ok": True, "value": value, "error": None}
 
     # ------------------------------------------------------------------
-    # ESCALATION.md §3:升权确认——内核判定升权后强制挂起等裁决(原则 2,
+    # docs/ESCALATION.md §3:升权确认——内核判定升权后强制挂起等裁决(原则 2,
     # 确认不由 LLM 发起);闭环复用 supervisor 通道(同 _ask_supervisor 先例)
     # ------------------------------------------------------------------
 
@@ -962,7 +962,7 @@ class Kernel:
                     ToolErrorKind.PERMISSION_DENIED,
                     f"升权调用 {name}({frame.tier} → {target_tier})需要人审,"
                     "但未装配 supervisor 确认通道",
-                    hint="用 KernelBuilder.supervisor(handler) 注入调用方通道(SUPERVISOR.md §2.3)",
+                    hint="用 KernelBuilder.supervisor(handler) 注入调用方通道(docs/SUPERVISOR.md §2.3)",
                 ),
             }
         # §3 原则 2:approve-run 仅 L2 提供(本 run 内同 skill 后续调用放行);
@@ -1132,7 +1132,7 @@ class Kernel:
 
         子帧经 ``asyncio.create_task`` 后台运行并登记在 ``self._spawned``;
         PRE/POST_SKILL_INVOKE 信号与 invoke 一致,payload 加 ``"background": True``。
-        升权(ESCALATION.md §3):构成升权时在本调用点挂起等裁决(父帧不停),
+        升权(docs/ESCALATION.md §3):构成升权时在本调用点挂起等裁决(父帧不停),
         拒绝/参数不合以 SkillLoadError 上抛(与白名单拒绝同形,交 code 技能处理)。
         """
         parent_manifest = self.skills.get(parent.skill).manifest
@@ -1151,7 +1151,7 @@ class Kernel:
         target = self.skills.get(SkillRef(name=skill))
         target_tier = derive_skill_tier(target.manifest, self.tools, self.skills)
         if tier_exceeds(target_tier, parent.tier):
-            # 升权闸(ESCALATION.md §3;E2 补 E1 遗留的绕道口子):语义与
+            # 升权闸(docs/ESCALATION.md §3;E2 补 E1 遗留的绕道口子):语义与
             # _invoke_skill 一致——先校验后确认(失败不发确认),确认等待发生在
             # spawn 调用点本身(await 裁决后才 create_task),父帧不挂起的设计不变
             try:

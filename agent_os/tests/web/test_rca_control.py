@@ -1,4 +1,4 @@
-"""R4 锚点测试:Web RCA(RUNNERS.md §4.3/§4.4;失败定位 + usage 面板 + stop/resume/reload)。
+"""R4 锚点测试:Web RCA(docs/RUNNERS.md §4.3/§4.4;失败定位 + usage 面板 + stop/resume/reload)。
 
 固定约定:
 

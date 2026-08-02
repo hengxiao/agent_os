@@ -1,4 +1,4 @@
-/* rca-panel.js 纯逻辑单测(WEB-UI.md §4.4):
+/* rca-panel.js 纯逻辑单测(docs/WEB-UI.md §4.4):
    planRcaJump(vetoed 定位被否决 pre:tool.call / tool_error 定位 ok:false post /
    aborted 回退帧最后信号 / 无对应信号回退 / first_error null / 帧缺失)、
    rcaBannerHtml(状态 + 定位与 Resume 按钮)、vetoCardHtml(裁决来源/理由/参数 JSON)。

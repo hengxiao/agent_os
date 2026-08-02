@@ -1,6 +1,6 @@
 # supervision:嵌套监督示例(调用方是另一个 agent)
 
-SUPERVISOR.md v2 §2.5 的最小可运行示例。**默认 yield 到 agent 的调用方**:
+../../../docs/SUPERVISOR.md v2 §2.5 的最小可运行示例。**默认 yield 到 agent 的调用方**:
 `ask_supervisor` 把裁决请求路由出 agent,交给启动本 run 的宿主;宿主可以
 是人(Web 收件箱 / CLI 协议)、普通程序,也可以**是另一个 agent**——
 本示例演示后者。

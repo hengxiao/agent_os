@@ -259,7 +259,7 @@ def test_tier_derivation(tmp_path):
     TIER-STANDARDS §1);修复前它只会推导出 reversible,approve-run 就能批量
     放行删除——本断言防回归。scan 的完整推导档(含 skills 递归)是 irreversible
     (它能叫到 L3),但**根帧 tier 取直接能力档**(derive_tools_tier,只看自己的
-    tools)= none——这正是根帧调子技能会撞升权闸的原因(ESCALATION.md §2.2 实现注)。
+    tools)= none——这正是根帧调子技能会撞升权闸的原因(docs/ESCALATION.md §2.2 实现注)。
     """
     skills = LocalFileSkillRegistry(str(JANITOR_DIR / "skills.yaml"))
     tools = LocalPythonToolRegistry.with_builtins()

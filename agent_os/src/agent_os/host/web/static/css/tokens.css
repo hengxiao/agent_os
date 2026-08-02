@@ -1,8 +1,8 @@
-/* Agent OS 设计系统 token(WEB-UI.md §3)——单文件 token 源。
+/* Agent OS 设计系统 token(docs/WEB-UI.md §3)——单文件 token 源。
    约束:全部样式只消费 token,不写散值;本文件只放 token 与全局基元
    (reset / focus 环 / 滚动条 / 动效 keyframes / reduced-motion 基线),不写组件样式。
 
-   主题系统 T1(DEBUG-UI-THEMES.md §2):语义 token 契约已迁移主题层
+   主题系统 T1(docs/DEBUG-UI-THEMES.md §2):语义 token 契约已迁移主题层
    (css/themes/classic.css = 本文件 :root 值的逐字抽离,行为零变化;
    css/themes/moe.css = moe 主题)。本文件 :root 变量保留作为
    无 JS / 未切换主题时的回退(fallback)与契约清单参考,值不得单独改动——
@@ -91,7 +91,7 @@
   --overlay: rgb(0 0 0 / 0.55);               /* Modal 遮罩(§3.3 Modal) */
 
   /* ── P4 追加:Web 调试台(#/debug;classic 主题,不动既有 token。
-        主题系统与 moe 主题规格见 DEBUG-UI-THEMES.md / DEBUG-UI-MOE.md)── */
+        主题系统与 moe 主题规格见 docs/DEBUG-UI-THEMES.md / docs/DEBUG-UI-MOE.md)── */
   --debug-paused-bg: rgb(217 160 63 / 0.14); /* 暂停行底色(--warn 低透明铺底) */
   --debug-bp: #e5534b;                       /* 断点 gutter 圆点(同 --danger 语义) */
 }

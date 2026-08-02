@@ -1,4 +1,4 @@
-"""SupervisorManager(SUPERVISOR.md v2 §2.3 handler 通道 / §3 超时与兜底 / §5 信号;S1)。
+"""SupervisorManager(docs/SUPERVISOR.md v2 §2.3 handler 通道 / §3 超时与兜底 / §5 信号;S1)。
 
 内核在 ``_dispatch_call`` 拦截 ``ask_supervisor`` 后调用 :meth:`SupervisorManager.ask`;
 本类负责:构造 ``Question`` → 发 ``supervisor.ask`` 信号 → 调调用方 handler
@@ -39,7 +39,7 @@ _log = logging.getLogger("agent_os.supervisor")
 #: 答案不合 options 的重问上限(§3):初问 + 1 次重问 = 至多 2 次 handler 调用
 _MAX_ASK_ATTEMPTS = 2
 
-#: 超时 fail 的错误观察(SUPERVISOR.md §3,逐字 hint)
+#: 超时 fail 的错误观察(docs/SUPERVISOR.md §3,逐字 hint)
 _TIMEOUT_HINT = "上级未回答,可降级处理或重新询问"
 
 
@@ -83,7 +83,7 @@ class SupervisorManager:
             urgency=str(args.get("urgency") or "normal"),
             frame_id=frame.frame_id,
             run_id=frame.run_id,
-            # 结构化请求(ESCALATION.md §3):kind="escalation" 时 context 携带
+            # 结构化请求(docs/ESCALATION.md §3):kind="escalation" 时 context 携带
             # 升权载荷(skill/tier/params/requested/reason_hint),闭环逻辑不变
             kind=str(args.get("kind") or "question"),
         )

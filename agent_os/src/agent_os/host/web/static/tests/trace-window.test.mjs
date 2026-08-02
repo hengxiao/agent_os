@@ -1,4 +1,4 @@
-/* trace.js 窗口化纯逻辑单测(WEB-UI.md §6.3:>500 渲染行窗口化渲染):
+/* trace.js 窗口化纯逻辑单测(docs/WEB-UI.md §6.3:>500 渲染行窗口化渲染):
    windowRange(边界:空 / 顶部 / 底部 / 超滚 / 零视窗 / 自定义行高与 buffer)、
    flattenTraceRows(折叠隐藏行不出 / payload 展开加高)、findRowPosition(合并行
    区间定位与偏移)、renderTrace window 切片(只渲染子集 + 上下占位行"还有 N 行")。

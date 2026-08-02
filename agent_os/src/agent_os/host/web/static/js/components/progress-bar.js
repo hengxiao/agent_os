@@ -1,4 +1,4 @@
-/* Live 进度区(WEB-UI.md §4.3):进行中 run 的 Workbench 顶部变体——
+/* Live 进度区(docs/WEB-UI.md §4.3):进行中 run 的 Workbench 顶部变体——
    live 脉冲点、已用时长(秒级走动)、steps 与 cost 双 ProgressBar(占
    max_steps/max_cost 比例;>80% 转 --warn 色,与 BudgetGuard 阈值语义一致)、
    右侧常驻 Stop 按钮(确认条 → loading → 结束态替换为结果 Banner)。

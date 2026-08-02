@@ -1,4 +1,4 @@
-/* blueprint 主题(DEBUG-UI-THEMES.md §3.4):工程图纸——蓝图蓝底 + 白/青细线,
+/* blueprint 主题(docs/DEBUG-UI-THEMES.md §3.4):工程图纸——蓝图蓝底 + 白/青细线,
    24px 方格网 + 虚线图框 + 图章式结束横幅。克制系,无 emoji,无 mascot。
    契约变量按 §2.1 全量定义(字面 hex——契约测试直接解析 css 源做 WCAG
    对比度计算,var() 引用无法求值);--blueprint-* 是内部调色板,只供装饰层

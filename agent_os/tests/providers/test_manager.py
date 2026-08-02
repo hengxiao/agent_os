@@ -1,4 +1,4 @@
-"""ProviderManager 弹性锚点测试(DESIGN.md §4.4/§8.4;重试、限流、流式看门狗、fallback 链)。
+"""ProviderManager 弹性锚点测试(docs/DESIGN.md §4.4/§8.4;重试、限流、流式看门狗、fallback 链)。
 
 固定约定:
 

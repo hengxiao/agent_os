@@ -1,4 +1,4 @@
-"""信号总线(DESIGN.md §5.1;M0 InProcessSignalBus)。
+"""信号总线(docs/DESIGN.md §5.1;M0 InProcessSignalBus)。
 
 命名 ``<阶段>:<事件>``;``pre:`` 同步可否决、``post:`` 异步观察(§5.1)。
 SYNC sidecar 在关键路径有超时、默认 fail-closed;ASYNC 永不拖垮 run(§5.3)。

@@ -1,4 +1,4 @@
-"""Web 目录端点锚点测试:skills/tools 列表 + run overrides(RUNNERS.md §4.3/WEB-UI.md §6.2)。
+"""Web 目录端点锚点测试:skills/tools 列表 + run overrides(docs/RUNNERS.md §4.3/WEB-UI.md §6.2)。
 
 固定约定:
 

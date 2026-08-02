@@ -1,4 +1,4 @@
-"""ResourceLimits 应用辅助(DESIGN.md §9.1/§9.2;M5 沙箱限额)。
+"""ResourceLimits 应用辅助(docs/DESIGN.md §9.1/§9.2;M5 沙箱限额)。
 
 setrlimit 映射:cpu_time → RLIMIT_CPU、memory_mb → RLIMIT_AS、
 stdout_bytes → RLIMIT_FSIZE;wall_time 由父进程 watchdog 兜底。

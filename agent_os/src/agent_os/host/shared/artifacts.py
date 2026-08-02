@@ -1,4 +1,4 @@
-"""产物组织与读取层(RUNNERS.md §2.2 产物布局;两个 runner 共用)。
+"""产物组织与读取层(docs/RUNNERS.md §2.2 产物布局;两个 runner 共用)。
 
 每次运行落 ``<artifacts_root>/runs/<run_id>/``::
 
@@ -103,7 +103,7 @@ def execute_run(
     (error = ``"Type: message"``)。run 未开始(无 run_id)的异常原样上抛。
     ``RunConfig.checkpoint_interval > 0`` 时挂载周期 checkpoint 订阅者
     (Debugger P5;覆盖写"最近现场",kernel/checkpoint.py)。
-    ``principal``(DATA-AUTHZ.md §2.2):宿主认证后的调用方身份,透传给
+    ``principal``(docs/DATA-AUTHZ.md §2.2):宿主认证后的调用方身份,透传给
     ``Kernel.run``;缺省 None = v1 单用户语义。
     """
     started: list[str] = []

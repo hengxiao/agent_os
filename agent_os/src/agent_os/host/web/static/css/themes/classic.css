@@ -1,7 +1,7 @@
-/* classic 主题(DEBUG-UI-THEMES.md §3.1):契约的参考实现——现状即主题。
+/* classic 主题(docs/DEBUG-UI-THEMES.md §3.1):契约的参考实现——现状即主题。
    值**逐字搬**自 css/tokens.css :root(行为零变化,像素级不动);
    tokens.css 保留全部变量作为无 JS/未切换时的回退与契约清单参考。
-   契约清单(CONTRACT_TOKENS,见 js/themes.js)= DEBUG-UI-THEMES.md §2.1 全集。 */
+   契约清单(CONTRACT_TOKENS,见 js/themes.js)= docs/DEBUG-UI-THEMES.md §2.1 全集。 */
 
 [data-theme="classic"] {
   /* ── §3.1 色板(dark-first):基底 ───────────────────────────── */

@@ -1,4 +1,4 @@
-"""InProcessLogicKernel(DESIGN.md §9.7;M2)。
+"""InProcessLogicKernel(docs/DESIGN.md §9.7;M2)。
 
 ``trust = TRUSTED``;进程内 ``await asyncio.wait_for(handler(args, ctx), wall_time)``;
 stdout/stderr 捕获(``contextlib.redirect_stdout/stderr`` → StringIO);

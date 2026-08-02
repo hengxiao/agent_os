@@ -1,4 +1,4 @@
-"""LocalFileMemoryService(DESIGN.md §11.2 baseline;M6)。
+"""LocalFileMemoryService(docs/DESIGN.md §11.2 baseline;M6)。
 
 Markdown 文件 + frontmatter(tags/created/freshness)+ 检索工具(grep/BM25 即可),
 即 ``MEMORY.md`` 路线:可人读人改、保序、Git 可版本化。

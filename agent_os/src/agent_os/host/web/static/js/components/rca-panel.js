@@ -1,4 +1,4 @@
-/* RCA 模式(WEB-UI.md §4.4):异常 run 的一键定位动线规划 + veto 归因卡片 + 异常 Banner。
+/* RCA 模式(docs/WEB-UI.md §4.4):异常 run 的一键定位动线规划 + veto 归因卡片 + 异常 Banner。
 
    纯函数(不碰 DOM,node 单测可载):
      planRcaJump(rca, frames, signals)  定位动线规划 → { frameId, signalIndex, messageIndex, step, reason }

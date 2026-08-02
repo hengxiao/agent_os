@@ -1,4 +1,4 @@
-"""S2 锚点测试:supervisor 宿主通道(SUPERVISOR.md v2 §2.3/§5)。
+"""S2 锚点测试:supervisor 宿主通道(docs/SUPERVISOR.md v2 §2.3/§5)。
 
 固定约定:
 

@@ -1,4 +1,4 @@
-"""v1 契约层(DESIGN.md §14.1):全部跨边界类型与 Protocol 的唯一所在地。
+"""v1 契约层(docs/DESIGN.md §14.1):全部跨边界类型与 Protocol 的唯一所在地。
 
 内核与各子系统只依赖本层;契约的破坏性变更只允许跨大版本。
 本模块 re-export 全部契约,子系统可 ``from agent_os.api.v1 import ...``。

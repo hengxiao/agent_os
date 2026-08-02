@@ -1,8 +1,8 @@
 # Chapter 10《Multi-Agent Collaboration》与 Agent OS 设计对比报告
 
 > 评审对象:`ai-agent-book/book-en/chapter10.md`(740 行,已通读全文)
-> 对照基线:`DESIGN.md` v0.3
-> 说明:小节号(§x.y)均指 DESIGN.md;Table 10-x 指书中表格。
+> 对照基线:`../DESIGN.md` v0.3
+> 说明:小节号(§x.y)均指 ../DESIGN.md;Table 10-x 指书中表格。
 
 ## 章节内容概要
 

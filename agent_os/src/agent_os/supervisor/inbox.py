@@ -1,4 +1,4 @@
-"""InboxChannel(SUPERVISOR.md v2 §2.3 宿主默认通道 / §5 收件箱;S2)。
+"""InboxChannel(docs/SUPERVISOR.md v2 §2.3 宿主默认通道 / §5 收件箱;S2)。
 
 挂起式收件箱:``__call__`` 即 SupervisorHandler 契约——Question 进 pending 表
 (``asked_at`` 由本通道打戳)并挂起一个 ``asyncio.Future``;宿主(Web 路由 /
@@ -71,7 +71,7 @@ class InboxChannel:
                 "previous_error": q.previous_error,
                 "asked_at": entry["asked_at"],
             }
-            # 升权确认(ESCALATION.md §3):kind 与结构化载荷(在 context 里,原样直通)
+            # 升权确认(docs/ESCALATION.md §3):kind 与结构化载荷(在 context 里,原样直通)
             # 透出给宿主;普通问答行形状不变(E1 无 UI 专卡,pending JSON 直渲即可用)
             if q.kind != "question":
                 row["kind"] = q.kind

@@ -1,4 +1,4 @@
-/* 共享纯工具(WEB-UI.md §5/§6.1):esc、时间/cost/skill 格式化、复制、Toast。
+/* 共享纯工具(docs/WEB-UI.md §5/§6.1):esc、时间/cost/skill 格式化、复制、Toast。
    函数级 DOM 访问(toast/copyText 调用时才碰 document),import 无副作用,node 单测可载。 */
 
 export const esc = (s) =>

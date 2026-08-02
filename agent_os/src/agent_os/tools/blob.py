@@ -1,4 +1,4 @@
-"""blob store 基础版(DESIGN.md §8.4/§7.2 spill;M3)。
+"""blob store 基础版(docs/DESIGN.md §8.4/§7.2 spill;M3)。
 
 运行目录下的文件存储;ref 采用 ``blob://<run_id>/<sha>`` URI 形态
 (为跨 run 记忆层留命名空间)。spill 替换串一经生成永久冻结(§7.2)。

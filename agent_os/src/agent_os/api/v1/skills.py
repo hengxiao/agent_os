@@ -1,4 +1,4 @@
-"""Skill 契约(DESIGN.md §2.1、§6.2;§14.1 冻结清单:manifest verifier 槽位、register() 签名)。
+"""Skill 契约(docs/DESIGN.md §2.1、§6.2;§14.1 冻结清单:manifest verifier 槽位、register() 签名)。
 
 Skill = 统一执行单元,prompt / code 两种形态对内核透明;
 子技能在父帧 LLM 眼里呈现为带类型签名的伪工具 ``skill.<name>``(§3.3)。
@@ -71,13 +71,13 @@ class SkillLimits:
     max_steps: int | None = None
     timeout: float | None = None
     retry: int = 0
-    #: 单次编排/沙箱执行的 syscall 上限(CODE-ORCHESTRATION.md §4;None 用内核默认)
+    #: 单次编排/沙箱执行的 syscall 上限(docs/CODE-ORCHESTRATION.md §4;None 用内核默认)
     max_tool_calls: int | None = None
 
 
 @dataclass
 class SkillTrust:
-    """``trust:`` 块(ESCALATION.md §2.1;additive):确认策略覆盖项。
+    """``trust:`` 块(docs/ESCALATION.md §2.1;additive):确认策略覆盖项。
 
     tier **不**在本块声明——skill 的档由权限面推导(白名单 tools/skills 取 max),
     作者只能上调确认强度,不能把自己说低。
@@ -110,8 +110,8 @@ class SkillManifest:
     prompt: str | None = None  # 单文件形态(§6.3 skills.yaml)内联提示词模板
     handler: str | None = None  # 单文件形态 code 技能入口(dotted path,如 "my_skills.handlers:run")
     logic: dict[str, Any] | None = None  # {"mode": "trusted" | "sandbox"}(§9.2)
-    inline: bool = False  # 预展开(merge):prompt 并入调用方 SYSTEM,不生成伪工具(SKILL-INLINING.md)
-    trust: SkillTrust | None = None  # 升权确认策略覆盖项(ESCALATION.md §2.1;缺省按推导档)
+    inline: bool = False  # 预展开(merge):prompt 并入调用方 SYSTEM,不生成伪工具(docs/SKILL-INLINING.md)
+    trust: SkillTrust | None = None  # 升权确认策略覆盖项(docs/ESCALATION.md §2.1;缺省按推导档)
 
 
 #: code 技能入口签名(§6.3):``async def run(input, ctx)``

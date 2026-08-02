@@ -1,8 +1,8 @@
 # 第 2 章《Context Engineering》对比评审报告
 
 > 评审对象:`ai-agent-book/book-en/chapter2.md`(1102 行,已全文通读,含 9 个实验与全部脚注)
-> 对照基准:`DESIGN.md` v0.3(Agent OS 内核与子系统设计)
-> 总体判断:**关联度高**。该章是六个子系统中 Context Compression(§7)的直接理论底座,同时对 Kernel Runner(§3.1)、Providers(§4)、Tool Registry(§8)、Sidecars(§5)提出了多项 DESIGN.md 尚未覆盖的工程约束。章末"Isolation Over Compression"一节与我们的帧隔离语义(§2.3)互为独立殊途同归的印证。
+> 对照基准:`../DESIGN.md` v0.3(Agent OS 内核与子系统设计)
+> 总体判断:**关联度高**。该章是六个子系统中 Context Compression(§7)的直接理论底座,同时对 Kernel Runner(§3.1)、Providers(§4)、Tool Registry(§8)、Sidecars(§5)提出了多项 ../DESIGN.md 尚未覆盖的工程约束。章末"Isolation Over Compression"一节与我们的帧隔离语义(§2.3)互为独立殊途同归的印证。
 
 ---
 

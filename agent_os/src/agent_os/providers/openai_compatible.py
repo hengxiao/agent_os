@@ -1,4 +1,4 @@
-"""OpenAICompatibleProvider(DESIGN.md §4.4;M1,唯一必须的真适配器)。
+"""OpenAICompatibleProvider(docs/DESIGN.md §4.4;M1,唯一必须的真适配器)。
 
 一个类覆盖所有 OpenAI 兼容端点(官方/Azure/vLLM/Ollama/网关);依赖仅 httpx。
 错误映射:429→RATE_LIMIT(读 Retry-After)、401/403→AUTH、400 且 context length→

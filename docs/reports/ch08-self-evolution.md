@@ -1,7 +1,7 @@
-# 对比报告:book-en/chapter8.md(Agent Self-Evolution)× Agent OS DESIGN.md
+# 对比报告:book-en/chapter8.md(Agent Self-Evolution)× Agent OS ../DESIGN.md
 
 > 评审对象:《Agent Self-Evolution》全章(323 行,已通读)
-> 对照基准:DESIGN.md v0.3(§1-§14)
+> 对照基准:../DESIGN.md v0.3(§1-§14)
 > 总体判断:**关联度中等偏高**。该章不讲内核机制,讲"Agent 如何不动权重地持续变强"的方法论与工程实践;但它产出的每一类"经验产物"(Skill 文档、代码工具、工作流程序、经验条目)恰好都是我们内核各注册表的"写入方",而我们的设计目前只有"加载/分发"视角,没有"生成/演化"视角。该章为 Skill Registry、Tool Registry、Sidecars、Logic Kernel 提供了明确的需求来源和验证依据。
 
 ---

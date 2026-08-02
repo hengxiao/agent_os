@@ -1,4 +1,4 @@
-"""嵌套监督示例(SUPERVISOR.md v2 §2.5):调用方是另一个 agent。
+"""嵌套监督示例(docs/SUPERVISOR.md v2 §2.5):调用方是另一个 agent。
 
 外层应用(本脚本)启动内层 run(``junior_clerk``,报销文员);内层
 ``ask_supervisor`` 的问题经 ``KernelBuilder.supervisor(handler)`` 注入的

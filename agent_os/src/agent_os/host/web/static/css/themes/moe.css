@@ -1,6 +1,6 @@
-/* moe 主题(DEBUG-UI-MOE.md;M1 静态 + T1.2 sakura pastel 重构):
+/* moe 主题(docs/DEBUG-UI-MOE.md;M1 静态 + T1.2 sakura pastel 重构):
    奶油粉底 pastel + 大圆角贴纸化 + Mochi 精灵。
-   契约变量按 DEBUG-UI-THEMES.md §2.1 全量定义(字面 hex——契约测试直接解析
+   契约变量按 docs/DEBUG-UI-THEMES.md §2.1 全量定义(字面 hex——契约测试直接解析
    css 源做 WCAG 对比度计算,var() 引用无法求值);--moe-* 是内部调色板,
    只供装饰层(边框/渐变/光晕),不承担文本色职责。
    可访问性红线(§3):文本/状态色与基底关键配对 ≥4.5:1(弱化层级 ≥3:1),

@@ -1,4 +1,4 @@
-/* frame-tree.js 纯逻辑单测(WEB-UI.md §4.2 左栏):
+/* frame-tree.js 纯逻辑单测(docs/WEB-UI.md §4.2 左栏):
    buildFrameTree(depth 平表 → 树;pushOrder 修正同 depth 交叠的兄弟归属)、
    defaultCollapsedIds(depth>3 且有子帧)、findPath(联动展开祖先)、
    frameDurations(帧首末信号 ts 差)、spanBlockModel(块头视图模型 / metadata 省略规则)、

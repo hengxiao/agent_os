@@ -1,4 +1,4 @@
-/* SchemaView(WEB-UI.md §3.3/§4.6/§4.7):JSON Schema → 可读字段表。
+/* SchemaView(docs/WEB-UI.md §3.3/§4.6/§4.7):JSON Schema → 可读字段表。
    字段名 / 类型 / required(加粗)/ 约束(minimum 等,灰注);嵌套对象按 depth 缩进。
    纯函数组件:schemaToRows 不碰 DOM(node 单测可载);schemaView 只拼 HTML 字符串,
    样式由 app.css 按 .schema-view 消费 token。

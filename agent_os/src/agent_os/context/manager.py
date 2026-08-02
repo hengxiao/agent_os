@@ -1,4 +1,4 @@
-"""ContextManager 基础实现(DESIGN.md §7.5/§7.6;M3)。
+"""ContextManager 基础实现(docs/DESIGN.md §7.5/§7.6;M3)。
 
 组装(build:指令 + 帧上下文 + 可见 schema + 状态注入 + 来源标注)与压缩(maintain)
 一家管;前缀逐字节稳定(§7.4 不变量 5,golden-file 断言相邻步前缀 diff 为空)。
@@ -34,14 +34,14 @@ from agent_os.skills.loader import render_prompt
 #: 预算剩余低于该比例时,hint 切换为收敛策略(§7.3:读数 + 操作策略)
 LOW_BUDGET_RATIO = 0.2
 
-#: ask_supervisor 伪工具对 LLM 的呈现文案(SUPERVISOR.md §2.1;参数 schema 在契约层)
+#: ask_supervisor 伪工具对 LLM 的呈现文案(docs/SUPERVISOR.md §2.1;参数 schema 在契约层)
 _ASK_SUPERVISOR_DESCRIPTION = (
     "请求上级(本 run 的调用方)裁决。Use when 决策超出自主权限(审批/放行/降级兜底);"
     "Do not use when 可自行判断的常规步骤。调用后本帧挂起,答案作为 tool result 返回;"
     "提供 options 时上级须从中选择作答。"
 )
 
-#: 内联能力段快照在帧工作内存的键(SKILL-INLINING.md §4.2:帧首次 build 冻结,
+#: 内联能力段快照在帧工作内存的键(docs/SKILL-INLINING.md §4.2:帧首次 build 冻结,
 #: 随帧入 checkpoint——前缀稳定 + 热重载钉版本 + resume 确定性一举解决)
 INLINE_CAPS_KEY = "_inline_caps"
 
@@ -57,7 +57,7 @@ class ContextManager:
       跨步固定,§7.4 不变量 5),另在 ``status_bar`` 开启时尾部追加状态元消息(§7.3);
       伪工具面的两个开关:``python_orchestrate`` 随 ``RunConfig.orchestrate`` 消融档,
       ``ask_supervisor`` 随构造参数 ``supervisor``(S2:内核是否装了 supervisor 通道,
-      SUPERVISOR.md §2.1);
+      docs/SUPERVISOR.md §2.1);
     - ``maintain``:超 cap 时经 compressor 压到 ``int(cap * target_ratio)``,
       前后发 ``pre/post:compress`` 信号(§7.4 不变量 4);``compression == "off"``
       (RunConfig 或 manifest ``context_policy.compress``)时全部短路(§7.1 消融档)。
@@ -86,7 +86,7 @@ class ContextManager:
         self._status_bar = status_bar
         self._default_max_tokens = default_max_tokens
         self._target_ratio = target_ratio
-        #: S2(SUPERVISOR.md §2.1):manifest 声明 ``ask_supervisor`` 且内核装了
+        #: S2(docs/SUPERVISOR.md §2.1):manifest 声明 ``ask_supervisor`` 且内核装了
         #: supervisor 通道时,伪工具 schema 才补进可见工具面;KernelBuilder 按
         #: 装配结果显式传入,独立使用(未经 builder)默认按声明呈现
         self._supervisor = supervisor
@@ -110,11 +110,11 @@ class ContextManager:
         )
         tools = self._tools.schemas_for(manifest.permissions.tools)
         if ORCHESTRATE_TOOL in manifest.permissions.tools and self._config.orchestrate:
-            # 编排伪工具不在 registry(内核拦截,CODE-ORCHESTRATION.md §2.1),
+            # 编排伪工具不在 registry(内核拦截,docs/CODE-ORCHESTRATION.md §2.1),
             # 由此处按声明 + 消融开关补进可见工具面
             tools.append(dict(ORCHESTRATE_SCHEMA))
         if ASK_SUPERVISOR_TOOL in manifest.permissions.tools and self._supervisor:
-            # ask_supervisor 伪工具同样不进 registry(SUPERVISOR.md §2.1 内核拦截);
+            # ask_supervisor 伪工具同样不进 registry(docs/SUPERVISOR.md §2.1 内核拦截);
             # 仅在内核装了 supervisor 通道时呈现(S2)——无通道时模型调了也只能
             # 吃 not_found,不如不呈现
             tools.append(
@@ -152,7 +152,7 @@ class ContextManager:
         )
 
     async def _inline_caps(self, frame: SkillFrame, manifest: Any) -> dict[str, Any] | None:
-        """内联能力段快照(SKILL-INLINING.md §4)。
+        """内联能力段快照(docs/SKILL-INLINING.md §4)。
 
         - 消融档(``RunConfig.inline == "off"``)→ None:不并入、不过滤伪工具,
           merge 技能退化为普通压帧调用;

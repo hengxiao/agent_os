@@ -1,4 +1,4 @@
-/* Usage 视图(WEB-UI.md §4.5):Workbench 底部可折叠栏——按帧表格
+/* Usage 视图(docs/WEB-UI.md §4.5):Workbench 底部可折叠栏——按帧表格
    (frame 短码/skill/depth/steps/prompt/completion/cache_read/cache_write/thinking/cost)、
    数字列点击排序、cost 列内联条形、cache 读写分色、合计行固定底部;
    标题行(折叠态也可见)显示 run 合计 steps/cost。

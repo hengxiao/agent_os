@@ -1,7 +1,7 @@
-# STDLIB.md × 《AI Agent Book》逐章对比分析报告
+# ../STDLIB.md × 《AI Agent Book》逐章对比分析报告
 
 > 方法:三路并行精读 book-en 全部 10 章 + 前言后记(约 7000 行),每路对照
-> [STDLIB.md](../STDLIB.md) 逐章分析;本报告在三份分析之上做交叉汇总,并补上
+> [../STDLIB.md](../STDLIB.md) 逐章分析;本报告在三份分析之上做交叉汇总,并补上
 > 子分析不掌握的一层信息:**agent_os 引擎已实现的机制**(sidecar、信号、
 > checkpoint、SKILL-INLINING v1),把书中指出的"缺口"重新归类为
 > 引擎已有 / std 已覆盖 / 真缺口 / 需拍板的设计冲突。

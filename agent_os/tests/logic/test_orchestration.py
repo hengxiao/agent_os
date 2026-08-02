@@ -1,4 +1,4 @@
-"""代码编排锚点测试(CODE-ORCHESTRATION.md):沙箱脚本 + 工具系统调用。
+"""代码编排锚点测试(docs/CODE-ORCHESTRATION.md):沙箱脚本 + 工具系统调用。
 
 固定约定:
 

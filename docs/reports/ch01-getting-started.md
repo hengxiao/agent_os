@@ -1,6 +1,6 @@
-# 对比报告:book-en/chapter1.md《Getting Started with AI Agents》 × Agent OS DESIGN.md
+# 对比报告:book-en/chapter1.md《Getting Started with AI Agents》 × Agent OS ../DESIGN.md
 
-> 评审对象:全书第 1 章(导论章,467 行)。对照基线:DESIGN.md v0.3。
+> 评审对象:全书第 1 章(导论章,467 行)。对照基线:../DESIGN.md v0.3。
 > 总体关联度:**高**。本章是全书的"概念地图",提出 Agent = LLM + Context + Tools 与 Agent = Model + Harness 两个公式,以及 Harness 五要素(Context / Tools / Constrain / Verify / Correct)。Agent OS 整个内核就是一个 Harness 的系统化实现,本章几乎每个概念都能映射到我们的子系统或公理。
 
 ## 章节内容概要
@@ -57,7 +57,7 @@
 1. **缺 Circuit Breaker(熔断)机制**。本书把熔断列为 Correct 层标配("连续失败后 fallback 到人工"),Claude Code 实践中也单列。我们只有:幂等工具的调用内重试(§8.1)、同签名重复的 LoopDetector、全局预算的 BudgetGuard。**没有"同一工具连续失败 N 次(参数不同)即跳闸"的机制**——一个系统性故障的工具(如 API 持续 500)会让 LLM 每步都拿到错误观察、空耗步数与预算直到 max_steps。价值:把"可靠性缺口"从预算兜底提前到步数层面,实现成本低(一个订阅 `post:tool.call` 的 ASYNC sidecar + 滑窗失败计数),应入 §5.4 内置 sidecar 清单。
 2. **缺用户通信工具与"优雅移交控制权"通道**。本书工具五分类中的 User Communication 与 Collaboration(请求人工确认)在我们这里只有 HumanApproval sidecar 的"挂起等批准"(§5.4),且它是被动的闸门;**Agent 无法主动发起提问/澄清/汇报/移交**——GPT-5.6 的意图澄清、本书 HITL 的"hand over control gracefully"都需要一个 `ask_user` / `handoff_to_human` 内置工具,其结果就是挂起帧等待外部输入。这与我们的暂停语义(SUSPENDED,§2.3)天然兼容,值得纳入 §8.3 内置工具。
 3. **缺 Event Trigger(事件驱动激活)**。本书把 webhook/定时/邮件触发列为工具系统的一翼;我们的 Run 只能由调用方同步发起(§2.4),信号总线是内向的。v1 可在非目标中显式标注(§14 已部分覆盖),但建议在 `run.started` 语义上预留"外部事件作为根帧 input"的通道,避免将来事件源接入时破契约。
-4. **消息模型未显式包含 `reasoning`**。本书明确 assistant 消息有 reasoning/content/tool_calls 三部分,且消融实验证明去掉 reasoning 会导致决策自相矛盾。DESIGN.md 的 `Message`(§2.3)与 `ChatResponse.message`(§4.1)未规定推理痕迹的承载与保留策略;压缩时 reasoning 是否随原子组一起驱逐也未说明(§7.5)。这是契约层 `api/v1/messages` 必须钉死的细节,否则跨 provider(Anthropic thinking blocks / OpenAI reasoning)会丢一致性。
+4. **消息模型未显式包含 `reasoning`**。本书明确 assistant 消息有 reasoning/content/tool_calls 三部分,且消融实验证明去掉 reasoning 会导致决策自相矛盾。../DESIGN.md 的 `Message`(§2.3)与 `ChatResponse.message`(§4.1)未规定推理痕迹的承载与保留策略;压缩时 reasoning 是否随原子组一起驱逐也未说明(§7.5)。这是契约层 `api/v1/messages` 必须钉死的细节,否则跨 provider(Anthropic thinking blocks / OpenAI reasoning)会丢一致性。
 5. **Guardrails 缺输入侧与输出侧**。本书三类护栏中,执行侧我们覆盖良好(ToolGuard/CodeScanner/HumanApproval),但**输入侧**(relevance/safety classifier、注入检测)与**输出侧**(PII 过滤、内容校验)没有对应信号挂点:`run.started` 是异步观察语义,没有 `pre:run.input` 这种可否决信号;输出只有 schema 校验(§2.1),没有内容级检查挂点。建议信号目录补 `pre:run.input`、`pre:frame.output`(§5.1),自定义 sidecar 即可承载分类器,内核零成本。
 6. **tool risk rating 比我们的权限等级多维**。本书按**可逆性、权限、财务影响**三维评级,且思考题 7 点出"同工具不同参数风险不同"(delete 普通文件 vs 系统文件)需要动态评级。我们的 `Permission` 是一维四级(§2.2),参数相关风险只能靠 ToolGuard 正则(§5.4)逐条手写。可借鉴:ToolSpec 增加 `reversible: bool`(`idempotent` 已有一半语义),HumanApproval 的触发条件支持"等级 + 参数模式"组合——我们已有信号与 Veto 通道,只是缺声明式配置。
 7. **服务端内置工具(Model as Agent)是审计盲区**。Kimi K3 的 `web_search`、GPT-5.6 的 `code_runner` 在 provider 服务端闭环执行,**不经过 Tool Registry,没有 `pre:tool.call` 信号,ToolGuard 与三层权限全部失效**。本书指出这是行业趋势("编排循环移到服务端"),不能装作不存在。建议 `ProviderCaps`(§4.1)增加 `server_side_tools: list[str]` 声明,ProviderManager 在响应中透传服务端工具调用记录,至少让 TraceRecorder 可审计、BudgetGuard 可记账;权限语义上标记为"已出网,内核不可拦截"。

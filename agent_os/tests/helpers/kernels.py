@@ -20,7 +20,7 @@ FIB_SKILLS_YAML = PROJECT_ROOT / "skills" / "skills.yaml"
 
 
 async def auto_approve(question) -> dict:
-    """升权闸门的测试通道(ESCALATION.md §3;E1):一律 approve-once。
+    """升权闸门的测试通道(docs/ESCALATION.md §3;E1):一律 approve-once。
 
     生产宿主(Web 收件箱 / CLI 协议)恒有 supervisor 通道;在闸门出现前写成的
     用例装配本 handler,等价于"人每次都批准本次调用",原有断言语义不变。
@@ -50,7 +50,7 @@ def assemble(
     """标准组装链:MockProvider(brain) + sandbox 工具 + 双 Logic Kernel。
 
     ``brain`` 可以是应答函数,也可以是现成 Provider 实例。
-    ``supervisor`` 给定时装配 supervisor 通道(升权闸门需要确认通道,ESCALATION.md §3)。
+    ``supervisor`` 给定时装配 supervisor 通道(升权闸门需要确认通道,docs/ESCALATION.md §3)。
     """
     provider = brain if hasattr(brain, "chat") else MockProvider(brain)
     builder = (

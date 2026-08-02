@@ -1,4 +1,4 @@
-"""DockerPythonSandboxLogicKernel(DESIGN.md §9.2 隔离阶梯:容器层)。
+"""DockerPythonSandboxLogicKernel(docs/DESIGN.md §9.2 隔离阶梯:容器层)。
 
 与 subprocess 沙箱(:mod:`agent_os.logic.python_sandbox`)同一 ``LogicKernel`` 契约、
 后端替换。``docker run --rm`` 一次性容器,默认加固:

@@ -1,4 +1,4 @@
-"""Run 运行时(DESIGN.md §2.4;M0)。
+"""Run 运行时(docs/DESIGN.md §2.4;M0)。
 
 Run 是预算、权限、信号的作用域边界;一个 Run 一棵帧树。
 故障致死性分层:max_steps / max_cost / max_wall_time 才是长任务熔断器(§2.4)。
@@ -15,7 +15,7 @@ class Run:
 
     def __init__(self, run_id: str = "", config: RunConfig | None = None) -> None:
         self.state = RunContract(run_id=run_id, config=config or RunConfig())
-        #: 升权批准台账(ESCALATION.md §4;E2):approve-run 的 run 档 Grant 在此存放,
+        #: 升权批准台账(docs/ESCALATION.md §4;E2):approve-run 的 run 档 Grant 在此存放,
         #: 随 run 死亡,不跨 run 持久;checkpoint 序列化保证 resume/replay 判定一致
         self.grants: list[Grant] = []
 

@@ -1,4 +1,4 @@
-"""agent-os CLI(RUNNERS.md §3;R1 核心:run/trace/inspect/resume;R2 复现:replay/diff/skills)。
+"""agent-os CLI(docs/RUNNERS.md §3;R1 核心:run/trace/inspect/resume;R2 复现:replay/diff/skills)。
 
 面向 coding agent 的薄宿主:stdout = RunRecord JSON(``--json`` 时唯一输出;
 缺省人读摘要 + 末行 JSON,§3.3),stderr 人类可读日志。退出码(§3.3):
@@ -10,7 +10,7 @@
 | 3 | run 失败或中止(技能返回错误、OutputValidationError、RunAborted) |
 | 4 | 宿主/基础设施错误(配置缺失、provider 装配失败、docker 不可用) |
 
-S2 增量(SUPERVISOR.md v2 §2.3):CLI 宿主通道——run/resume 装配时注入
+S2 增量(docs/SUPERVISOR.md v2 §2.3):CLI 宿主通道——run/resume 装配时注入
 ``_cli_supervisor`` handler,run 挂起时把 question JSON 写 stderr(coding agent
 可解析),从 stdin 读一行作答,单命令进程内闭环;跨进程 pending/answer 子命令
 在单进程 CLI 下无收件箱可查,异步收件箱形态由 Web 宿主承载。replay 不注入
@@ -55,7 +55,7 @@ def _parse_input(raw: str) -> Any:
 
 
 async def _cli_supervisor(question: Question) -> dict[str, Any]:
-    """CLI 宿主通道(SUPERVISOR.md §2.3;S2 简化形态):stderr 打印 + stdin 作答。
+    """CLI 宿主通道(docs/SUPERVISOR.md §2.3;S2 简化形态):stderr 打印 + stdin 作答。
 
     run 挂起时把 question 以单行 JSON 写 stderr(coding agent 可解析的协议行),
     随后从 stdin 读一行作为回答,run 进程内闭环;``previous_error`` 透传
@@ -72,7 +72,7 @@ async def _cli_supervisor(question: Question) -> dict[str, Any]:
         "options": question.options,
         "urgency": question.urgency,
     }
-    # 升权确认(ESCALATION.md §3):kind 透传给 coding agent 区分渲染/作答;
+    # 升权确认(docs/ESCALATION.md §3):kind 透传给 coding agent 区分渲染/作答;
     # 结构化载荷(skill/tier/params/requested)本就在 context 里直通
     if question.kind != "question":
         row["kind"] = question.kind
@@ -95,7 +95,7 @@ def _build_kernel(
 ) -> Any:
     """build_kernel 的退出码归类包装:SkillLoadError → 2,其余装配失败 → 4。
 
-    ``inline``(``--inline on|off``,SKILL-INLINING.md §9 消融开关):覆盖本次 run 的
+    ``inline``(``--inline on|off``,docs/SKILL-INLINING.md §9 消融开关):覆盖本次 run 的
     ``[run].inline``;缺省用配置文件值。改动只落在本次装配私有的 dict 副本上。
 
     ``checkpoint_interval``(``--checkpoint-interval``,Debugger P5):覆盖本次 run 的
@@ -159,7 +159,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     try:
         record = execute_run(
             kernel, args.skill, run_input, artifacts_root=Path(args.artifacts), host="cli",
-            # 数据层身份(DATA-AUTHZ.md §2.2):CLI 本机用户即身份
+            # 数据层身份(docs/DATA-AUTHZ.md §2.2):CLI 本机用户即身份
             principal=cli_principal(),
         )
     except SkillLoadError as e:
@@ -375,7 +375,7 @@ def _cmd_debug(args: argparse.Namespace) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-os",
-        description="Agent OS CLI runner(RUNNERS.md §3):跑技能、拿结构化 debug 数据",
+        description="Agent OS CLI runner(docs/RUNNERS.md §3):跑技能、拿结构化 debug 数据",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -388,7 +388,7 @@ def _parser() -> argparse.ArgumentParser:
         "--inline",
         choices=["on", "off"],
         default=None,
-        help="merge 消融开关(SKILL-INLINING.md §9):off 时 inline 技能退化为压帧调用;缺省用配置值",
+        help="merge 消融开关(docs/SKILL-INLINING.md §9):off 时 inline 技能退化为压帧调用;缺省用配置值",
     )
     p_run.add_argument(
         "--checkpoint-interval",

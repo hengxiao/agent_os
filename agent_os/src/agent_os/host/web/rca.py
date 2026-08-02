@@ -1,4 +1,4 @@
-"""失败定位(RUNNERS.md §4.4 "Jump to first error";R4):从产物读首个错误的结构化位置。
+"""失败定位(docs/RUNNERS.md §4.4 "Jump to first error";R4):从产物读首个错误的结构化位置。
 
 数据源是该 run 产物目录的 ``result.json`` + ``checkpoint.json``(§2.2;checkpoint
 帧的完整上下文是 RCA 核心,§2.3)。检测顺序:

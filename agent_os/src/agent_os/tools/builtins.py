@@ -1,4 +1,4 @@
-"""内置工具(DESIGN.md §8.3;M1 四个基础件已实现,M5 补 system.file.edit/system.python.exec 等;
+"""内置工具(docs/DESIGN.md §8.3;M1 四个基础件已实现,M5 补 system.file.edit/system.python.exec 等;
 STDLIB-CATALOG §W0:统一路径解析器/错误 hint/if_match 乐观锁/system.shell.exec 结构化返回)。
 
 docstring 倡导"何时用/边界/负例"(§8.4);签名即 schema 推导来源。fs/shell 工具经

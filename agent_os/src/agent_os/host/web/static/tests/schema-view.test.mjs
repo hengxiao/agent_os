@@ -1,4 +1,4 @@
-/* schema-view.js 纯逻辑单测(WEB-UI.md §4.6/§4.7 SchemaView):
+/* schema-view.js 纯逻辑单测(docs/WEB-UI.md §4.6/§4.7 SchemaView):
    schemaToRows(扁平 / required 标记 / 约束灰注:minimum·minLength·enum 等 /
    嵌套对象缩进 / array<object> 展开)、typeLabel(array<items>)、
    schemaView HTML(required 加粗类 / 约束 span / esc)。

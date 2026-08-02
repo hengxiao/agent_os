@@ -1,4 +1,4 @@
-/* D3 DOM-stub 冒烟测试(WEB-UI.md §4.3):
+/* D3 DOM-stub 冒烟测试(docs/WEB-UI.md §4.3):
    1) Launch Modal 校验交互:技能下拉填充 → 骨架预填放行 → 非法 JSON 禁用 Run →
       schema 违例禁用 → 合法放行 → Run 提交(overrides 进 body)→ 关 Modal 跳
       #/runs/<id>;POST 失败进底部错误条;Esc 关闭 + 焦点管理。

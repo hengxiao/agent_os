@@ -1,4 +1,4 @@
-"""Skill 物化/加载锚点测试(DESIGN.md §6.1/§6.3;materialize + dotted path + 模板渲染)。
+"""Skill 物化/加载锚点测试(docs/DESIGN.md §6.1/§6.3;materialize + dotted path + 模板渲染)。
 
 固定约定:
 
@@ -104,7 +104,7 @@ def test_render_prompt_bare_braces_rejected():
 
 
 def test_legacy_skill_aliases_resolve_to_canonical_names():
-    """旧扁平技能名仍可通过 LocalFileSkillRegistry 解析到新的点分名(§NAMING.md)。"""
+    """旧扁平技能名仍可通过 LocalFileSkillRegistry 解析到新的点分名(§docs/NAMING.md)。"""
     from pathlib import Path
 
     from agent_os.skills.local_file import LocalFileSkillRegistry

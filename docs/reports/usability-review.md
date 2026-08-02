@@ -57,7 +57,7 @@
 
 ### P1 — CLI
 
-5. **`agent-os run` 补覆盖参数**(`--model/--max-cost/--max-steps`,RUNNERS.md 已列未实现),与 Web 的 overrides 对齐。
+5. **`agent-os run` 补覆盖参数**(`--model/--max-cost/--max-steps`,../RUNNERS.md 已列未实现),与 Web 的 overrides 对齐。
 6. **错误消息给修复动作**:如 "无法加载 dotted path 'brains:fib_brain'(它应位于 PYTHONPATH 上;把配置目录加入 PYTHONPATH,或将模块放到配置文件旁并升级装配器)"。
 
 ### P1 — Web UI

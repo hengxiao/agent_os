@@ -1,4 +1,4 @@
-"""Inline skill(merge)Runner 整合锚点测试(SKILL-INLINING.md §4.3/§9)。
+"""Inline skill(merge)Runner 整合锚点测试(docs/SKILL-INLINING.md §4.3/§9)。
 
 固定约定:
 

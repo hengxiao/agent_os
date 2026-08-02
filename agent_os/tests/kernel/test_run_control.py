@@ -1,4 +1,4 @@
-"""RunControl 锚点测试(DESIGN.md §5.2;sidecar 操控运行的唯一通道)。
+"""RunControl 锚点测试(docs/DESIGN.md §5.2;sidecar 操控运行的唯一通道)。
 
 固定约定:
 

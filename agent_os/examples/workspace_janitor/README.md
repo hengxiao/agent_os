@@ -49,7 +49,7 @@ agent-os run --config demo.toml --skill ops.scan.workspace \
 
 每次升权(L1→L2/L3)run 挂起,stderr 打一行 `supervisor.ask` JSON
 (`kind: "escalation"`,带 skill/tier/params/options);CLI 通道从 **stdin
-读一行**作为回答(SUPERVISOR.md §2.3)——在 run 所在终端键入答案回车即可
+读一行**作为回答(../../../docs/SUPERVISOR.md §2.3)——在 run 所在终端键入答案回车即可
 (也可以 `echo approve-once | agent-os run ...` 管道喂答案):
 
 - L2(写计划)第一次:`approve-run` —— 第二次写日志**不再问**(Grant 命中,
@@ -72,7 +72,7 @@ agent-os-web --config demo.toml
   带参数)、`post:skill.escalate`(decision/scope/decided_by)、
   `skill.escalation.denied`(拒绝);
 - 点开升权子帧:context 只有一条 `USER(参数 JSON)`——父帧的巡检对话、
-  文件清单观察**物理上不在**子帧里(干净 context 不变量,ESCALATION.md §3)。
+  文件清单观察**物理上不在**子帧里(干净 context 不变量,../../../docs/ESCALATION.md §3)。
 
 ## 玩法 c:崩溃恢复
 

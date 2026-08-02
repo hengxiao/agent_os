@@ -1,4 +1,4 @@
-/* inline skill(merge)DOM-stub 冒烟测试(SKILL-INLINING.md §4.2/§7/§9):
+/* inline skill(merge)DOM-stub 冒烟测试(docs/SKILL-INLINING.md §4.2/§7/§9):
    1) Skills 浏览器:列表项 inline 徽标(⇥ inline chip)+ 详情 Meta 区 inline 行;
    2) debug trace:post:context.inline 信号 → ⇥ inline 专门行(弱化色,payload 可展开);
    3) 帧检视器:帧 detail working._inline_caps 存在 → "内联能力"小节

@@ -1,4 +1,4 @@
-/* PermBadge(WEB-UI.md §3.3/§4.7):工具权限等级徽标。
+/* PermBadge(docs/WEB-UI.md §3.3/§4.7):工具权限等级徽标。
    四级(§3.1 --perm-* 色板):READ / WRITE / NET / EXEC;颜色 + 文字双编码(§3.1 约束)。
    纯函数组件:返回 HTML 字符串,不碰 DOM;颜色由 app.css 按 data-perm 消费 token。 */
 

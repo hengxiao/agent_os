@@ -1,4 +1,4 @@
-# Agent OS 本地部署示例配置(RUNNERS.md §2.1)
+# Agent OS 本地部署示例配置(docs/RUNNERS.md §2.1)
 # 用法:cp agent-os.example.toml agent-os.toml,按需修改
 
 [run]

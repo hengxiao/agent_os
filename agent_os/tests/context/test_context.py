@@ -1,4 +1,4 @@
-"""M3 锚点测试:Context 子系统(DESIGN.md §7;估算器 + RollingWindowCompressor + 状态注入 + 前缀稳定性)。
+"""M3 锚点测试:Context 子系统(docs/DESIGN.md §7;估算器 + RollingWindowCompressor + 状态注入 + 前缀稳定性)。
 
 固定约定:
 

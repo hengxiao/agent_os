@@ -1,4 +1,4 @@
-"""token 估算器(DESIGN.md §7.6;M3)。
+"""token 估算器(docs/DESIGN.md §7.6;M3)。
 
 char/4 粗估 + 按 provider 校准系数 + 多模态口径(图像按分辨率公式);
 接口预留精确 tokenizer(provider ``token_counter`` 优先,§4.2 口径唯一)。

@@ -1,4 +1,4 @@
-/* REST 封装(WEB-UI.md §6.1):同源相对路径,getJson / postJson + 统一错误处理。 */
+/* REST 封装(docs/WEB-UI.md §6.1):同源相对路径,getJson / postJson + 统一错误处理。 */
 
 export class ApiError extends Error {
   constructor(message, status) {

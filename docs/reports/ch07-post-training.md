@@ -1,7 +1,7 @@
 # 第 7 章《Model Post-Training》对比报告
 
 > 评审对象:`ai-agent-book/book-en/chapter7.md`(771 行,已全文通读)
-> 对照文档:`DESIGN.md` v0.3(Agent OS 内核与子系统设计)
+> 对照文档:`../DESIGN.md` v0.3(Agent OS 内核与子系统设计)
 > 总体判断:**关联度中等偏低,但有三个高价值接口点。**
 > 本章主体(SFT/RL 算法、RLHF、LoRA、PPO/GRPO 推导)是模型训练侧内容,与运行时内核设计基本正交;
 > 但**奖励工程(RLVP)、环境工程(仿真沙箱)、轨迹数据(rollout 与 loss masking)** 三节与内核存在具体、可操作的映射,值得吸收。

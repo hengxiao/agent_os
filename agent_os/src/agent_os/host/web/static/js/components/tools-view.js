@@ -1,4 +1,4 @@
-/* Tools 浏览器页面(WEB-UI.md §4.7):左列表(搜索 + 权限筛选 chips:全部/READ/WRITE/
+/* Tools 浏览器页面(docs/WEB-UI.md §4.7):左列表(搜索 + 权限筛选 chips:全部/READ/WRITE/
    NET/EXEC;每项 name + PermBadge)+ 右详情(头部 name + 大 PermBadge,EXEC 级附
    "危险操作,受 sidecar/人工闸门约束"提示行 / Spec description 路由规则渲染 /
    Parameters SchemaView / 执行属性 chips:timeout·idempotent·concurrency_safe·

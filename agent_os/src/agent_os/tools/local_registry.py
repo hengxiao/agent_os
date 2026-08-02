@@ -1,4 +1,4 @@
-"""LocalPythonToolRegistry(DESIGN.md §8.4;M1;STDLIB-CATALOG §W0-1 workdir 分区)。
+"""LocalPythonToolRegistry(docs/DESIGN.md §8.4;M1;STDLIB-CATALOG §W0-1 workdir 分区)。
 
 函数即工具:decorator 注册,schema 从签名推导(str/int/float/bool → JSON 基本型;
 list[X]/dict[str, X] → array/object;有默认值 → 非 required;docstring 首段 → description)。
@@ -93,7 +93,7 @@ class LocalPythonToolRegistry:
         self._run_states: dict[str, dict[str, Any]] = {}
         #: §W1-5 skill_search 的技能数据源(KernelBuilder 装配时经 bind_skills 注入)
         self._skills: Any = None
-        #: 数据域边界表(DATA-AUTHZ.md §3.1;D1):(路径前缀, 域),最长前缀优先;
+        #: 数据域边界表(docs/DATA-AUTHZ.md §3.1;D1):(路径前缀, 域),最长前缀优先;
         #: 空表 = 只有内置默认域 fs.workdir(public),其余路径按现状沙箱不拦截
         self._fs_domains: list[tuple[Path, DataDomain]] = []
         # §W4-3 std/web:fetch_page 构造器注册(为什么不在 with_builtins:
@@ -141,7 +141,7 @@ class LocalPythonToolRegistry:
         return name in self._tools
 
     def specs(self) -> list[ToolSpec]:
-        """全部已注册工具的 ToolSpec(注册序;WEB-UI.md §6.2 Tools 浏览器数据源)。"""
+        """全部已注册工具的 ToolSpec(注册序;docs/WEB-UI.md §6.2 Tools 浏览器数据源)。"""
         return [tool.spec for tool in self._tools.values()]
 
     def get(self, name: str) -> Tool:
@@ -181,7 +181,7 @@ class LocalPythonToolRegistry:
     async def dispatch(self, call: ToolCall, frame_ctx: ToolDispatchContext) -> ToolResult:
         """§8.1 分发流水线(本切片实现到超时执行为止;信号由内核 runner 收发):
 
-        schema 校验(fail fast,禁止"智能纠正")→ 数据层 authZ(DATA-AUTHZ.md §3.3,
+        schema 校验(fail fast,禁止"智能纠正")→ 数据层 authZ(docs/DATA-AUTHZ.md §3.3,
         未配置不拦截)→ 三层权限(帧白名单 ∩ RunConfig 上限;
         工具自报等级随 spec;§W0-1 起 READ 档不占帧白名单)→ 构造 ToolContext
         (§W0-1 workdir/read_paths 分区注入;principal 随帧透传)→ ``wait_for`` 超时执行 → 结果归一化。
@@ -208,7 +208,7 @@ class LocalPythonToolRegistry:
                     retryable=False,
                 ),
             )
-        # 数据层 authZ(DATA-AUTHZ.md §5.2 双闸串联):在三层权限交集**之前**——
+        # 数据层 authZ(docs/DATA-AUTHZ.md §5.2 双闸串联):在三层权限交集**之前**——
         # 数据闸管"碰不碰得到",权限闸管"允不允许",各自独立失败
         denied = self._check_data_access(call, spec, frame_ctx)
         if denied is not None:
@@ -252,7 +252,7 @@ class LocalPythonToolRegistry:
         ctx = ToolContext(
             run_id=frame_ctx.frame.run_id,
             frame_id=frame_ctx.frame.frame_id,
-            principal=frame_ctx.frame.principal,  # DATA-AUTHZ.md §2.3:身份随帧透传(预留变实填)
+            principal=frame_ctx.frame.principal,  # docs/DATA-AUTHZ.md §2.3:身份随帧透传(预留变实填)
             workdir=workdir,
             read_paths=[str(p.expanduser().resolve()) for p in frame_ctx.read_paths],
             blob=self._blob,
@@ -306,7 +306,7 @@ class LocalPythonToolRegistry:
     def _check_data_access(
         self, call: ToolCall, spec: ToolSpec, frame_ctx: ToolDispatchContext
     ) -> ToolResult | None:
-        """数据层 authZ(DATA-AUTHZ.md §3.3;D1 仅 fs 域):拒绝 → DATA_ACCESS_DENIED,放行 → None。
+        """数据层 authZ(docs/DATA-AUTHZ.md §3.3;D1 仅 fs 域):拒绝 → DATA_ACCESS_DENIED,放行 → None。
 
         D1 兼容策略(§8 D1 实现注):工具未声明 ``data_domains``、principal 未注入
         (v1 单用户语义)、目标落不进任何已配置域——三种情况都不拦截,行为与引入

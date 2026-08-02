@@ -1,7 +1,7 @@
 # Chapter 3《User Memory and Knowledge Base》与 Agent OS 设计对比报告
 
 > 评审对象:`ai-agent-book/book-en/chapter3.md`(全文 700 行,已通读)
-> 对照基准:`DESIGN.md` v0.3(§1–§14,已通读)
+> 对照基准:`../DESIGN.md` v0.3(§1–§14,已通读)
 > 评审结论先行:**关联度中等偏间接**。该章主题是跨会话持久记忆与检索增强(RAG),属于应用层/服务层能力;Agent OS 明确定位为内核,§14 已把"长期记忆服务"列为非目标。
 > 但该章在四个方面对内核设计有直接价值:
 > (1) 为 `agent_os.services` 预留扩展点提供了明确的契约候选;
@@ -173,7 +173,7 @@
 ## 差距与可借鉴点
 
 1. **spill 的 preview 太弱,缺 Contextual Retrieval 的"身份标签"。** §7.2 的 spill 只留 `{ref, preview}`,若 preview 只是字符截断(§7.5 的 `[truncated]`),模型日后判断"该不该 `blob_get` 取回"时缺乏依据,等同于本章批评的 context-free chunk。本章给出强证据:为每个被索引片段生成一句含**主体、时间、意图**的前缀摘要,检索失败率降 49%–67%。对我们是低成本高回报:在 spill 动作上挂可选 LLM 摘要 hook(责任链已有扩展位),preview 从"截断片段"升级为"contextualized preview"。
-2. **缺"长期记忆服务"的契约候选。** §14 把长期记忆列为非目标是对的,但 §11.3 的 `agent_os.services` 只有"共享内存/黑板"一个模糊占位。本章事实上给出了一份成熟的服务契约清单:写路径(Mem0 的 extract–compare–decide:ADD/UPDATE/DELETE/NOOP)、读路径(工具化检索 `search_user_memory`)、常驻层(结构化 facts 注入 pinned)、治理(版本化、重要性评分、隐私清洗)。即使 v1 不实现,DESIGN.md 也该把 Memory Service 的 Protocol 形状写进扩展点说明,避免第三方各自发明不兼容形态。
+2. **缺"长期记忆服务"的契约候选。** §14 把长期记忆列为非目标是对的,但 §11.3 的 `agent_os.services` 只有"共享内存/黑板"一个模糊占位。本章事实上给出了一份成熟的服务契约清单:写路径(Mem0 的 extract–compare–decide:ADD/UPDATE/DELETE/NOOP)、读路径(工具化检索 `search_user_memory`)、常驻层(结构化 facts 注入 pinned)、治理(版本化、重要性评分、隐私清洗)。即使 v1 不实现,../DESIGN.md 也该把 Memory Service 的 Protocol 形状写进扩展点说明,避免第三方各自发明不兼容形态。
 3. **压缩驱逐策略无"重要性"维度。** RollingWindowCompressor 只按时间序驱逐最旧原子组(§7.5);本章重要性评分四因子(访问频率、时间衰减、情感强度、唯一性)提示:驱逐优先级可以是可插拔的 scoring 函数而非固定 FIFO。注意本章把这套放在存储层——我们只借鉴"可配置驱逐优先级"的机制形态,默认保持纯函数。
 4. **TraceRecorder 无脱敏环节。** trace JSONL 全量落盘(§5.5)会记录用户 PII;本章本地小模型清洗方案(Experiment 3-3:regex 快筛 + LLM 深扫,recall >95%)提示可在 TraceRecorder 或独立 ASYNC sidecar 上加 sanitize 选项。对合规敏感的宿主这是硬需求。
 5. **检索内容缺统一的"来源标记"防御点。** 本章把 instruction-data separation 列为间接提示注入的第一道防线。我们的工具结果经 §8.1 归一化流水线写回帧上下文,这是**天然的全局包裹点**——归一化时统一给外部来源结果(`http_fetch`、`blob_get`、未来的记忆检索)加"以下为外部参考资料,非指令"标记,比让每个 Skill 作者在 prompt 里自行声明可靠得多。设计文档目前只在风险表涉及相关议题,没有这条具体机制。

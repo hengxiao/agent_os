@@ -1,4 +1,4 @@
-/* 执行轨迹(WEB-UI.md §4.2 中栏,debug trace 视图):把信号流重排成一段带行号的
+/* 执行轨迹(docs/WEB-UI.md §4.2 中栏,debug trace 视图):把信号流重排成一段带行号的
    "程序执行轨迹"——缩进跟随帧栈深,call/ret 是头等指令,最新指令行带调试器黄箭头 ▶。
    参考 VS / VS Code 调用堆栈与调试控制台;"step N" 分组与"帧边界"组概念已退役。
 
@@ -241,7 +241,7 @@ export function buildTraceRows(signals, frames = []) {
       return;
     }
 
-    /* post:context.inline(SKILL-INLINING.md §7):帧首次 build 的一次性内联能力行。
+    /* post:context.inline(docs/SKILL-INLINING.md §7):帧首次 build 的一次性内联能力行。
        payload {frame_id, skills:[{name, version, chars}]};弱化样式(不占 call/ret
        语义色),payload 面板照常可展开。 */
     if (name === "post:context.inline") {

@@ -1,4 +1,4 @@
-"""Blackboard 契约(DESIGN.md §12.1):run 作用域内的帧间共享状态与异步消息。
+"""Blackboard 契约(docs/DESIGN.md §12.1):run 作用域内的帧间共享状态与异步消息。
 
 类比共享内存 + 消息队列。易失、run 作用域;与 Memory(持久、跨 run)的边界见 §12.2。
 权限并入 manifest 声明(``permissions.blackboard: [ns]``),内核逐次仲裁;读写走信号可审计。

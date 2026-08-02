@@ -1,4 +1,4 @@
-"""MockProvider(DESIGN.md §4.4;M0,测试基石)。
+"""MockProvider(docs/DESIGN.md §4.4;M0,测试基石)。
 
 脚本化应答(静态 list 或 callable)、请求录制供 golden-file 断言、
 可注入故障(429/500/超时/流式停滞)。所有 loop 测试不碰真实 API(§16 测试策略)。

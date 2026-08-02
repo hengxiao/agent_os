@@ -1,4 +1,4 @@
-/* message-card.js 纯逻辑单测(WEB-UI.md §4.2 规则 3):
+/* message-card.js 纯逻辑单测(docs/WEB-UI.md §4.2 规则 3):
    pairMessages(tool_call/tool_result 成对、双 call、孤儿 tool result 容错、
    id 缺失按名兜底)、parseToolResult(veto 识别)、focusMessageIndex(时间线 → 消息映射)。
    运行:node static/tests/message-card.test.mjs(无需 DOM、无第三方依赖)。 */

@@ -1,4 +1,4 @@
-/* trace.js 纯逻辑单测(WEB-UI.md §4.2 中栏,debug trace 视图):
+/* trace.js 纯逻辑单测(docs/WEB-UI.md §4.2 中栏,debug trace 视图):
    mergePairs(llm/tool/exec 配对、veto 未配对、帧隔离)、
    buildTraceRows(call/ret 配对与行号/depth 缩进/step 跟踪/skill. 调用名/
    帧 input 参数/未配对容错:未返回 call 与孤儿 ret/post:context.inline 内联能力行)、
@@ -336,7 +336,7 @@ const signals = makeSignals();
   assert.equal(rowForSignal([], 3), null);
 }
 
-/* ── buildTraceRows:post:context.inline 内联能力行(SKILL-INLINING.md §7)── */
+/* ── buildTraceRows:post:context.inline 内联能力行(docs/SKILL-INLINING.md §7)── */
 {
   /* 帧首次 build 的一次性信号:专门行 kind=inline,弱化色(不占 call/ret 语义) */
   const sigs = [

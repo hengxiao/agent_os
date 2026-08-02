@@ -1,4 +1,4 @@
-"""Telemetry 契约(DESIGN.md §10.1):信号流的可持久化汇聚点(类比 journald/auditd)。
+"""Telemetry 契约(docs/DESIGN.md §10.1):信号流的可持久化汇聚点(类比 journald/auditd)。
 
 非 sidecar:WAL/检查点要求保证落盘的 durability 语义(§10)。内核不等待 IO(内部队列)。
 """

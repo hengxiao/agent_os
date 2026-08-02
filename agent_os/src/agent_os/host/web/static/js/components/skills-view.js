@@ -1,4 +1,4 @@
-/* Skills 浏览器页面(WEB-UI.md §4.6):左列表(搜索过滤 / name+version+kind chip /
+/* Skills 浏览器页面(docs/WEB-UI.md §4.6):左列表(搜索过滤 / name+version+kind chip /
    循环依赖 --warn 警示)+ 右详情(Meta / description 路由规则渲染 / Inputs·Outputs
    SchemaView / Permissions 三组(skills 可点击跳链)/ Model & Limits / Prompt 模板
    mono 只读+复制)+ lint 警告横幅(--warn,技能作者自检入口)+ 操作(↻ Reload →
@@ -486,7 +486,7 @@ function detailHtml(d) {
     kv("kind", esc(d.kind ?? "—")) +
       kv("version", esc(d.version || "—")) +
       kv("namespace", "local(LocalFile registry)") +
-      // SKILL-INLINING.md §3.1:merge 技能标记(无则不显示;语义见 lint 横幅)
+      // docs/SKILL-INLINING.md §3.1:merge 技能标记(无则不显示;语义见 lint 横幅)
       (d.inline
         ? kv("inline", `<span class="inline-chip" title="merge:指令并入调用方 SYSTEM,不产生调用帧">⇥ true</span>`)
         : "") +

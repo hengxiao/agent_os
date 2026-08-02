@@ -1,4 +1,4 @@
-/* D4 DOM-stub 冒烟测试(WEB-UI.md §4.6/§4.7):
+/* D4 DOM-stub 冒烟测试(docs/WEB-UI.md §4.6/§4.7):
    1) Skills 浏览器:三态(loading 骨架 / error+重试 / empty 引导)→ 列表
       (自引用 fib 不标循环,cyc_a↔cyc_b 互环标 ⚠)→ 搜索过滤 → 选中渲染详情
       (lint --warn 横幅 / Meta / 路由规则 desc-seg / Inputs·Outputs SchemaView /

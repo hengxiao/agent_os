@@ -1,7 +1,7 @@
 # Chapter 6《Evaluating Agents》与 Agent OS 设计对比报告
 
 > 来源:`ai-agent-book/book-en/chapter6.md`(728 行,已通读全文)
-> 对照:`DESIGN.md` v0.3(741 行,已通读全文)
+> 对照:`../DESIGN.md` v0.3(741 行,已通读全文)
 > 总体关联度:**中等偏高**。
 
 本章不是内核机制章节,而是"如何科学验证与迭代一个 Agent 系统(模型 + Harness)"的方法论章节。
@@ -130,7 +130,7 @@ Agent OS 的定位恰恰是本章所称的 Harness,因此本章对内核设计�
 
 ## 差距与可借鉴点
 
-1. **评测子系统整体缺位——本章最大提醒**。DESIGN.md 只有内核自身测试策略(§13),没有"评测跑在内核上的 Skill/Agent"的任何设施。本章立场:消融、flag、prompt 回归必须架构期内置,事后加装代价高。我们虽不必照搬产品级 feature flag,但 M5 之后"评测模式"缺位会立刻显现。
+1. **评测子系统整体缺位——本章最大提醒**。../DESIGN.md 只有内核自身测试策略(§13),没有"评测跑在内核上的 Skill/Agent"的任何设施。本章立场:消融、flag、prompt 回归必须架构期内置,事后加装代价高。我们虽不必照搬产品级 feature flag,但 M5 之后"评测模式"缺位会立刻显现。
 2. **Usage 记账字段不足以支撑成本归因**。本章要求区分:input/output 分开计价、**cache read/write**(约 0.1×/1.25× 输入价)、**thinking tokens**(不可见但计费)、TTFT 与总延迟、每个工具返回的 token 体量。我们的 `Usage(steps, tokens, cost)`(§2.3)与 `ChatResponse.usage{prompt, completion, cost}`(§4.1)过粗,`ProviderCaps`(§4.1)也未声明 cache/thinking 能力。没有这组字段,"哪个 Skill/工具是成本大头"无从回答,本章实验 6-7 的成本基线无法建立。
 3. **Trace 未对齐标准协议**。本章明确 OpenTelemetry + OpenInference 的价值在采集/分析解耦、避免厂商锁定;TraceRecorder 目前是私有 JSONL(§5.5)。帧树本就是 span 树,补 OTLP/OpenInference 映射成本极低,收益是直接接入 LangSmith/Phoenix 生态与"trace 回流评测资产"通道。
 4. **过程指标无汇聚点**。action legality rate、path efficiency、回溯频率都能从信号流算出,但设计中没有任何指标汇聚定义(哪怕一个 ASYNC MetricsCollector)。LoopDetector(§5.4)已是 path efficiency 的在线特例,说明信息足够,只差汇聚语义。

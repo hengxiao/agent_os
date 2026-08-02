@@ -1,4 +1,4 @@
-"""R1 锚点测试:CLI Runner 核心(RUNNERS.md §2/§3)。
+"""R1 锚点测试:CLI Runner 核心(docs/RUNNERS.md §2/§3)。
 
 固定约定:
 

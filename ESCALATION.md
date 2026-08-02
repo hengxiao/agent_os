@@ -226,10 +226,10 @@ INVALID_ARGS 错误观察(现状行为)。确认请求里展示的参数就是�
 - `deny`:父帧收到 PERMISSION_DENIED 错误观察(与现状白名单拒绝同形,
   LLM 可据此改道,但重试同样的调用会再次挂起确认——防"磨到批准")。
 
-Web 收件箱(SUPERVISOR.md §2.2 的 InboxChannel)与 CLI
-(`agent-os supervisor answer`)天然承接——pending 项多一个 `kind` 和
+Web 收件箱(SUPERVISOR.md §2.2 的 InboxChannel)与 CLI 协议
+(stderr 协议行 + stdin 作答,§2.3)天然承接——pending 项多一个 `kind` 和
 结构化载荷,UI 对 `kind == "escalation"` 渲染专门卡片(参数 JSON、权限集
-徽标、三个选项),普通问答现状不变。
+徽标、选项按钮),普通问答现状不变。
 
 > 实现注(E2):`spawn_frame`(§3.4 后台帧)同样过闸——语义与 `_invoke_skill`
 > 一致(预校验 → 判定 → 挂起/Grant/放行/拒绝),确认等待发生在 spawn 调用点

@@ -91,8 +91,8 @@ supervisor 子系统把问题(含 context/options/urgency)送达调用方通道:
 
 | 调用方 | 通道 |
 |---|---|
-| Web UI 开发者 | 收件箱:pending 列表 + 回答表单(`GET /api/runs/{id}/supervisor/pending`、`POST .../answer`) |
-| CLI 用户 / coding agent | JSON 问题写 stderr;作答:`agent-os supervisor answer <run_id> <question_id> --answer '...'`(或答案文件) |
+| Web UI 开发者 | 收件箱:pending 列表 + 回答表单(`GET /api/supervisor/pending`、`POST /api/supervisor/{question_id}/answer`) |
+| CLI 用户 / coding agent | 单命令进程内闭环:run 挂起时 question 以单行 JSON 写 stderr(`{"type":"supervisor.ask", ...}` 协议行,coding agent 可解析),随后从 stdin 读一行作答;答案不合 options 由 SupervisorManager 带 `previous_error` 重问。跨进程 pending/answer 子命令不存在——单进程 CLI 无收件箱可查,异步收件箱形态由 Web 宿主承载 |
 | 嵌入方应用 | 装配/启动 run 时注入的 `supervisor_handler: Callable[[Question], Awaitable[Answer]]`(默认通道) |
 
 通道选择顺序:run 级注入的 handler → 装配级 handler → 宿主默认通道
@@ -194,7 +194,7 @@ manifest 侧只需 `permissions.tools` 声明 `ask_supervisor`。
 | `kernel/runner.py` | 拦截 `ask_supervisor`;future 挂起/回答注入/重入;run 完成判定 |
 | `kernel/checkpoint.py` | working 已带,无需改(验证 `_pending_ask` 序列化) |
 | `runtime/builder.py` + `runtime/config.py` | `KernelBuilder.supervisor(handler)`;`[supervisor]` 段加载 |
-| `host/cli/main.py` | `agent-os supervisor answer` 子命令 + stderr JSON 协议 |
+| `host/cli/main.py` | stderr JSON 协议行 + stdin 作答(进程内闭环;无跨进程子命令) |
 | `host/web/app.py` | pending/answer 两个端点(S2) |
 
 **不动**:checkpoint schema、replay 对齐逻辑、sidecar 体系、权限模型本体。

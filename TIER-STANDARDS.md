@@ -163,3 +163,7 @@
 | L3 | 通配符展开后静默执行 | "删 `tmp/*`"在错误目录下就是灾难;通配必须报错或显式 confirm 文本 |
 | L3 | 把 L3 工具包进 L2 skill 里"降级" | 推导档取 max,包不住;lint 会抓到,reviewer 也不要放过 |
 | 任意 | 用 prompt 叮嘱代替机制("请模型先问用户") | prompt 叮嘱可被注入绕过;闸门必须在 runner,不在自然语言里 |
+
+> 逐档落地示例(L1 巡检 / L2 幂等写入 + approve-run / L3 指名目标 +
+> dry_run 一致性 + 每次人审,全真工具零 mock)见
+> `agent_os/examples/workspace_janitor`。

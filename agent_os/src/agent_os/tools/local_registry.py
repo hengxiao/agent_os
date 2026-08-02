@@ -441,6 +441,9 @@ class LocalPythonToolRegistry:
         reg.tool(
             name="system.shell.exec",
             permission=Permission.EXEC,
+            # TIER-STANDARDS §1:shell/exec 按最坏情况 L3(EXEC 默认推导已是
+            # irreversible,显式写明增强可读,防推导规则变动时静默降档)
+            side_effect="irreversible",
             cost_hint="~100ms 起,取决于命令",
         )(shell_exec)
         reg.register_alias("shell_exec", "system.shell.exec")
@@ -512,11 +515,14 @@ class LocalPythonToolRegistry:
             concurrency_safe=True,
             cost_hint="~5ms",
         )(fs_stat)
-        # 高危删除:声明 confirm(两阶段语义),WRITE 档受帧白名单约束
+        # 高危删除:声明 confirm(两阶段语义),WRITE 档受帧白名单约束;
+        # TIER-STANDARDS §1 命名规则:delete/kill/stop/remove 类必须显式标
+        # irreversible(WRITE 默认推导只是 reversible——删除不可挽回,属漏标)
         reg.tool(
             name="system.file.delete",
             data_domains=["fs.*"],
             permission=Permission.WRITE,
+            side_effect="irreversible",
             confirm=True,
             cost_hint="~5ms",
         )(fs_delete)

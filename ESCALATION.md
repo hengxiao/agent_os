@@ -348,6 +348,9 @@ Web 调试台的时间线(`.dbg-row`)为 escalation 行加 kind=`escalation`,
 | E2 ✅ | L2 的 approve-run Grant + 信号三枚 + Web 升权卡片 + CLI 答案透传 + `spawn_frame` 升权闸(E1 遗留的绕道口子)。已实现:内核 `Run.grants` 随 checkpoint 往返、`_consume_grant` 消费点(双保险仅 L2)、options 按档区分(L2 三枚/L3 两枚)、inbox.js `escalationCardHtml`(copy 六主题同步)、CLI `kind` 透传;746 Python + 21 前端测试全绿 |
 | E3 | 审计面板(按 run 列升权事件)+ lint 严格化(reversal/blast_radius 必填)+ 文档(DESIGN.md §8 引用更新) |
 
+> 完整示例(全真工具、零 mock,三档剧情:approve-run / L3 每次必问 / deny /
+> 崩溃恢复)见 `agent_os/examples/workspace_janitor`。
+
 ## 8. 不做
 
 - 不做自动升权/策略引擎自动批准(策略批 = 没人批,违背原则 2;将来要加也是

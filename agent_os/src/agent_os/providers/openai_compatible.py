@@ -4,6 +4,8 @@
 错误映射:429→RATE_LIMIT(读 Retry-After)、401/403→AUTH、400 且 context length→
 CONTEXT_OVERFLOW、5xx/超时→UNAVAILABLE;自身不重试(重试在 ProviderManager);
 reasoning 字段 round-trip(请求带 ``reasoning_content``,响应映射回 ``Message.reasoning``)。
+线格式:工具/函数名发出时经 ``naming.mangle_name``(``.``→``__``)编码,响应解析时反向解码——
+OpenAI 兼容端点不接受点分函数名。
 """
 
 from __future__ import annotations
@@ -26,6 +28,8 @@ from agent_os.api.v1 import (
     Role,
     ToolCall,
 )
+
+from .naming import mangle_name, unmangle_name
 
 
 class OpenAICompatibleProvider:
@@ -96,7 +100,10 @@ class OpenAICompatibleProvider:
             "messages": [self._message_to_openai(m) for m in req.messages],
         }
         if req.tools:
-            body["tools"] = [{"type": "function", "function": t} for t in req.tools]
+            body["tools"] = [
+                {"type": "function", "function": {**t, "name": mangle_name(t.get("name", ""))}}
+                for t in req.tools
+            ]
         if req.temperature is not None:
             body["temperature"] = req.temperature
         if req.max_tokens is not None:
@@ -113,7 +120,7 @@ class OpenAICompatibleProvider:
                 {
                     "id": tc.id,
                     "type": "function",
-                    "function": {"name": tc.name, "arguments": json.dumps(tc.args, ensure_ascii=False)},
+                    "function": {"name": mangle_name(tc.name), "arguments": json.dumps(tc.args, ensure_ascii=False)},
                 }
                 for tc in m.tool_calls
             ]
@@ -132,7 +139,7 @@ class OpenAICompatibleProvider:
         tool_calls = [
             ToolCall(
                 id=tc.get("id", ""),
-                name=(tc.get("function") or {}).get("name", ""),
+                name=unmangle_name((tc.get("function") or {}).get("name", "")),
                 args=_parse_arguments((tc.get("function") or {}).get("arguments")),
             )
             for tc in msg.get("tool_calls") or []

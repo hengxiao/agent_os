@@ -1,0 +1,330 @@
+/* moe 主题(DEBUG-UI-MOE.md;M1 静态 + T1.2 sakura pastel 重构):
+   奶油粉底 pastel + 大圆角贴纸化 + Mochi 精灵。
+   契约变量按 DEBUG-UI-THEMES.md §2.1 全量定义(字面 hex——契约测试直接解析
+   css 源做 WCAG 对比度计算,var() 引用无法求值);--moe-* 是内部调色板,
+   只供装饰层(边框/渐变/光晕),不承担文本色职责。
+   可访问性红线(§3):文本/状态色与基底关键配对 ≥4.5:1(弱化层级 ≥3:1),
+   实测表见 tests/themes-contract.test.mjs,改色即时报红。M1 不做动效(§5
+   动效归 M2;breathe/pulse 仅 2 处克制的呼吸,GPU 友好的 opacity/box-shadow)。 */
+
+[data-theme="moe"] {
+  color-scheme: light;
+
+  /* 基底:樱花奶油粉(T1.2;原 beige 奶油底 #fdf6f0 系退役) */
+  --bg-0: #fff5f7;   /* 应用底色 */
+  --bg-1: #ffffff;   /* 面板/卡片面 */
+  --bg-2: #ffe4e9;   /* 悬浮/选中 */
+  --bg-3: #ffd9e2;   /* 悬停加深 */
+  --line: #f8d7e0;
+  --line-strong: #e8aab8;
+  /* 文本:暖调玫瑰棕(替代纯黑);fg-1/fg-2 降明度保对比度 */
+  --fg-0: #5c3d47;
+  --fg-1: #86586a;
+  --fg-2: #a98090;
+
+  /* 语义色:pastel 色相锚点不变(绿=ok/黄=warn/红=danger/紫=aborted),
+     live 改锚珊瑚粉(= moe 主色的文本态);明度逐个压到关键配对 ≥4.5:1 */
+  --ok:      #1b7355;
+  --warn:    #8a5e0e;
+  --danger:  #b83747;
+  --aborted: #7650b8;
+  --live:    #c2245c;
+
+  /* 语义:信号类型(与语义色同锚点) */
+  --sig-llm:      #3a63c8;
+  --sig-tool:     #1b7355;
+  --sig-sidecar:  #8a5e0e;
+  --sig-compress: #6a4fd0;
+  --sig-budget:   #b83747;
+  --sig-frame:    #a98090;
+
+  /* 语义:工具权限等级 */
+  --perm-read:  #a98090;
+  --perm-write: #8a5e0e;
+  --perm-net:   #3a63c8;
+  --perm-exec:  #b83747;
+
+  /* 排版:圆体优先的显示链(Nunito 圆润但克制,零依赖不内嵌 webfont);
+     mono 不换——代码和 JSON 是工作区,不萌化 */
+  --font-ui: "Hiragino Maru Gothic ProN", "Varela Round", "Nunito",
+    "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  --s1: 4px; --s1-5: 6px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+
+  /* 形状:大圆角贴纸化(sakura 形状语言核心) */
+  --r-sm: 12px; --r-conn: 14px; --r-md: 16px; --r-lg: 24px;
+
+  /* 阴影:粉色光晕系(覆盖 tokens.css 全局阴影,装饰层全面生效) */
+  --shadow-sm: 0 2px 8px rgba(255, 143, 163, 0.10);
+  --shadow-md: 0 4px 16px rgba(255, 143, 163, 0.14);
+
+  /* ── 内部调色板(装饰层专用:边框/渐变/光晕/徽章底色,不作文本色)── */
+  --moe-primary:       #ff8fa3;   /* 珊瑚粉主色(装饰) */
+  --moe-primary-hover: #ff6b85;
+  --moe-primary-light: #ffe4e9;
+  --moe-primary-glow:  rgba(255, 143, 163, 0.25);
+  --moe-bg-deep:       #fff0f3;   /* 渐变收边色 */
+  --moe-accent-mint:      #a8e6cf;
+  --moe-accent-lavender:  #dda0dd;
+  --moe-blush:   #ffd9e0;   /* 腮红/高亮 */
+  --moe-paw:     #f7b8c4;   /* 爪印/断点(M2 gutter) */
+  --moe-cream:   #fff3d6;   /* 暂停行底色 */
+  --moe-sky:     #d6ecff;   /* SSE live 呼吸(M2) */
+  --debug-paused-bg: #fff3d6; /* 暂停行奶油底(= --moe-cream;§4 暂停行高亮) */
+}
+
+/* ── 贴纸化组件样式(§4 静态部分;只加 override,不改组件)─────────
+   装饰全部消费 token;真实类名挂钩(app.css/dbg-*/dh-*),规格书的
+   .theme-moe 前缀与 :has-text() 等伪类在此适配为 [data-theme="moe"]。 */
+
+/* 卡片:奶油渐变面 + 柔和粉晕阴影(r-lg=24 已由 token 生效) */
+[data-theme="moe"] .card {
+  background: linear-gradient(135deg, var(--bg-1) 0%, var(--moe-bg-deep) 100%);
+  border-color: var(--bg-2);
+}
+
+/* 按钮:全圆角 + 弹性过渡(cubic-bezier 回弹是 sakura 手感核心) */
+[data-theme="moe"] .btn {
+  border-radius: 999px;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* 主按钮:珊瑚粉渐变 + 顶部高光 + 粉色光晕;hover 上浮放大,active 压回 */
+[data-theme="moe"] .btn-primary {
+  background: linear-gradient(180deg, #ff9eb0 0%, var(--moe-primary) 100%);
+  border-color: transparent;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow:
+    0 4px 12px rgba(255, 143, 163, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+[data-theme="moe"] .btn-primary:hover {
+  background: linear-gradient(180deg, #ffb0c0 0%, var(--moe-primary-hover) 100%);
+  border-color: transparent;
+  transform: translateY(-2px) scale(1.03);
+  box-shadow:
+    0 6px 20px rgba(255, 143, 163, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+[data-theme="moe"] .btn-primary:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: 0 2px 6px rgba(255, 143, 163, 0.3);
+}
+[data-theme="moe"] .btn-primary[disabled],
+[data-theme="moe"] .btn-primary[disabled]:hover {
+  background: linear-gradient(180deg, #f0c0cc 0%, #e0a8b8 100%);
+  transform: none;
+  box-shadow: none;
+  filter: none;
+}
+
+/* 输入:2px 粉边 + focus 光晕 */
+[data-theme="moe"] .input {
+  border: var(--stroke-strong) solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--bg-1);
+}
+[data-theme="moe"] .input:focus {
+  border-color: var(--moe-primary);
+  box-shadow: 0 0 12px var(--moe-primary-glow);
+  outline: none;
+}
+
+/* 导航:选中项粉色气泡(替代 classic 下划线);hover 浅粉 */
+[data-theme="moe"] .nav-item { border-radius: 999px; }
+[data-theme="moe"] .nav-item:hover { background: var(--moe-primary-light); }
+[data-theme="moe"] .nav-item[aria-current="page"] {
+  background: linear-gradient(180deg, #ff9eb0 0%, var(--moe-primary) 100%);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+[data-theme="moe"] .nav-item[aria-current="page"]::after { content: none; }
+
+/* 顶栏:奶油面 + 粉色虚线下边(手账感) */
+[data-theme="moe"] .app-topbar {
+  background: var(--bg-1);
+  border-bottom: 1px dashed var(--moe-primary-light);
+}
+
+/* StatusPill → 贴纸徽章(文字状态保留,双编码不豁免) */
+[data-theme="moe"] .status-pill { border-radius: 999px; }
+
+/* 状态色点 → 猫咪表情(§MOE 化身表:pill 通道;文字/颜色钩子原样保留):
+   running 😺 转圈 / done 😸 / failed 😿 / aborted 🙀 / unknown(未开始)😴 /
+   paused 🐾(抓到啦=断点命中)。双编码不豁免:data-status 钩子与文字通道不动 */
+[data-theme="moe"] .status-pill .pill-dot {
+  width: auto;
+  height: auto;
+  background: none;
+  box-shadow: none;
+}
+[data-theme="moe"] .status-pill .pill-dot::before { display: inline-block; }
+[data-theme="moe"] .status-pill[data-status="running"] .pill-dot::before {
+  content: "😺";
+  animation: moe-spin 1.2s linear infinite;
+}
+[data-theme="moe"] .status-pill[data-status="done"] .pill-dot::before { content: "😸"; }
+[data-theme="moe"] .status-pill[data-status="failed"] .pill-dot::before { content: "😿"; }
+[data-theme="moe"] .status-pill[data-status="aborted"] .pill-dot::before { content: "🙀"; }
+[data-theme="moe"] .status-pill[data-status="unknown"] .pill-dot::before { content: "😴"; }
+[data-theme="moe"] .status-pill[data-status="paused"] .pill-dot::before { content: "🐾"; }
+@keyframes moe-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 调试控制条:奶油渐变 + 粉色虚线边(标题卡) */
+[data-theme="moe"] .dbg-bar {
+  background: linear-gradient(135deg, var(--bg-1) 0%, var(--moe-bg-deep) 100%);
+  border: 1px dashed var(--moe-primary-light);
+}
+/* 控制条按钮 → 手柄按键感:厚底边 */
+[data-theme="moe"] .dbg-cmd {
+  border-bottom-width: var(--stroke-accent);
+  border-bottom-color: var(--line-strong);
+}
+/* SSE 连接点:在线时薄荷绿光晕脉冲 */
+[data-theme="moe"] .dbg-conn[data-state="ok"] {
+  background: var(--moe-accent-mint);
+  animation: moe-pulse 1.6s ease-in-out infinite;
+}
+@keyframes moe-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(168, 230, 207, 0.6); }
+  50%      { box-shadow: 0 0 12px rgba(168, 230, 207, 0.9); }
+}
+
+/* 结束横幅:手账贴纸(虚线边) + ● 图标换猫咪表情(文字 aria 由 banner 主体承担) */
+[data-theme="moe"] .dbg-end { border-style: dashed; }
+[data-theme="moe"] .banner .banner-icon { font-size: 0; } /* 藏 ●,emoji 上场 */
+[data-theme="moe"] .banner .banner-icon::before { font-size: var(--text-lg); }
+[data-theme="moe"] .banner[data-tone="done"] .banner-icon::before { content: "😸"; }
+[data-theme="moe"] .banner[data-tone="danger"] .banner-icon::before { content: "😿"; }
+[data-theme="moe"] .banner[data-tone="aborted"] .banner-icon::before { content: "🙀"; }
+
+/* 调用栈帧:hover 右移 + 左缘主色;当前帧腮红包围 */
+[data-theme="moe"] .dbg-frame {
+  border-radius: var(--r-md);
+  border-left: 3px solid transparent;
+  transition: all 0.2s ease;
+}
+[data-theme="moe"] .dbg-frame:hover {
+  background: var(--moe-primary-light);
+  transform: translateX(4px);
+  border-left-color: var(--moe-primary);
+}
+[data-theme="moe"] .dbg-frame[data-current="true"] {
+  background: var(--moe-blush);
+  border-left-color: var(--moe-primary);
+}
+
+/* 主题切换器:主色描边小胶囊 */
+[data-theme="moe"] .theme-picker-btn {
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--moe-primary-light) 0%, var(--moe-bg-deep) 100%);
+  border: var(--stroke-strong) solid var(--moe-primary);
+  color: var(--live);
+}
+[data-theme="moe"] .theme-picker-btn:hover {
+  transform: rotate(3deg) scale(1.05);
+  box-shadow: 0 0 12px var(--moe-primary-glow);
+}
+
+/* Mochi 精灵层(MascotLayer;mascot.html 只出结构,色彩全在此) */
+[data-theme="moe"] .mascot-layer { display: inline-flex; align-items: center; }
+[data-theme="moe"] .mascot-svg .mb { fill: var(--bg-1); stroke: var(--fg-0); stroke-width: 1.6; }
+[data-theme="moe"] .mascot-svg .me { fill: var(--fg-0); }
+[data-theme="moe"] .mascot-svg .mm { fill: none; stroke: var(--fg-0); stroke-width: 1.4; stroke-linecap: round; }
+[data-theme="moe"] .mascot-svg .mm2 { fill: var(--fg-0); }
+[data-theme="moe"] .mascot-svg .mp { fill: none; stroke: var(--fg-0); stroke-width: 1.5; stroke-linecap: round; }
+[data-theme="moe"] .mascot-svg .mp2 { fill: var(--bg-1); stroke: var(--fg-0); stroke-width: 1.4; }
+[data-theme="moe"] .mascot-svg .mbh { fill: var(--moe-blush); }
+[data-theme="moe"] .mascot-svg .mbh2 { fill: var(--bg-1); }
+[data-theme="moe"] .mascot-svg .cf1 { fill: var(--live); }
+[data-theme="moe"] .mascot-svg .cf2 { fill: var(--warn); }
+[data-theme="moe"] .mascot-svg .cf3 { fill: var(--ok); }
+[data-theme="moe"] .mascot-svg .cf4 { fill: var(--aborted); }
+/* 表情状态色(MOE §2 化身表:running=--live / paused=--warn / done=--ok) */
+[data-theme="moe"] .mascot-layer[data-expr="running"] .mascot-svg .mb { stroke: var(--live); }
+[data-theme="moe"] .mascot-layer[data-expr="paused"] .mascot-svg .mb { stroke: var(--warn); }
+[data-theme="moe"] .mascot-layer[data-expr="done"] .mascot-svg .mb { stroke: var(--ok); }
+
+[data-theme="moe"] .mascot-layer[data-expr="failed"] .mascot-svg .mb { stroke: var(--danger); }
+/* 哭脸泪滴:LLM 蓝(契约 token,不做 --moe-* 变体) */
+[data-theme="moe"] .mascot-svg .mt { fill: var(--sig-llm); }
+
+/* ── P2 时间线:粉色虚线竖轨 + 圆徽章行号 + 类型 emoji ─────────── */
+[data-theme="moe"] .dbg-trace-list { position: relative; }
+[data-theme="moe"] .dbg-trace-list::before {
+  content: "";
+  position: absolute;
+  left: 28px;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--moe-primary-light) 0px,
+    var(--moe-primary-light) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  pointer-events: none;
+}
+[data-theme="moe"] .dbg-trace-list .tr-gutter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--moe-primary-light);
+  color: var(--live);
+  border-radius: 999px;
+  padding: 0 6px;
+  margin-right: 4px;
+  position: relative; /* 压过 ::before 竖轨 */
+  z-index: 1;
+}
+/* 行类型 emoji(双编码:图标只是装饰,正文文字通道不变) */
+[data-theme="moe"] .dbg-row[data-kind="run"]  .tr-body::before { content: "🚀 "; }
+[data-theme="moe"] .dbg-row[data-kind="call"] .tr-body::before { content: "📞 "; }
+[data-theme="moe"] .dbg-row[data-kind="ret"]  .tr-body::before { content: "↩️ "; }
+[data-theme="moe"] .dbg-row[data-kind="llm"]  .tr-body::before { content: "🧠 "; }
+[data-theme="moe"] .dbg-row[data-kind="tool"] .tr-body::before { content: "🔧 "; }
+[data-theme="moe"] .dbg-row[data-kind="exec"] .tr-body::before { content: "💻 "; }
+
+/* ── P3 检视面板:小节标题 🌸 + 干预区手账虚线 ──────────────────── */
+[data-theme="moe"] .dbg-sec-title::before { content: "🌸 "; }
+[data-theme="moe"] .dbg-intervene {
+  border: var(--stroke) dashed var(--moe-primary-light);
+  border-radius: var(--r-lg);
+  padding: var(--s2);
+}
+
+/* ── P4 入场动画 + reduced-motion 兜底 ─────────────────────────── */
+@keyframes moe-pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+[data-theme="moe"] .card { animation: moe-pop-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="moe"] *,
+  [data-theme="moe"] *::before,
+  [data-theme="moe"] *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ── 背景图案:散落樱花(大小两株五瓣花平铺,data-URI SVG, pastel 低饱和)── */
+[data-theme="moe"] body {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Cg fill='%23ffc9d6' fill-opacity='.45'%3E%3Ccircle cx='48' cy='42' r='7'/%3E%3Ccircle cx='57' cy='49' r='7'/%3E%3Ccircle cx='53' cy='59' r='7'/%3E%3Ccircle cx='43' cy='59' r='7'/%3E%3Ccircle cx='39' cy='49' r='7'/%3E%3C/g%3E%3Ccircle cx='48' cy='50' r='3.5' fill='%23ff9eb0' fill-opacity='.55'/%3E%3Cg fill='%23ffd9e2' fill-opacity='.5'%3E%3Ccircle cx='144' cy='138' r='5'/%3E%3Ccircle cx='150' cy='143' r='5'/%3E%3Ccircle cx='147' cy='150' r='5'/%3E%3Ccircle cx='141' cy='150' r='5'/%3E%3Ccircle cx='138' cy='143' r='5'/%3E%3C/g%3E%3Ccircle cx='144' cy='144' r='2.5' fill='%23ffb3c2' fill-opacity='.6'/%3E%3C/svg%3E");
+}

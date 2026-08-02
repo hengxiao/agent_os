@@ -12,6 +12,8 @@ OpenAICompatibleProvider(§4.3"值得独立实现"):
 - usage 含 ``cache_read_input_tokens``/``cache_creation_input_tokens`` → cache_read/write;
 - 错误映射:429 → RATE_LIMIT(读 retry-after);401/403 → AUTH;400 且 prompt too long →
   CONTEXT_OVERFLOW;529(overloaded)/5xx → UNAVAILABLE(retryable);自身不重试(重试在 Manager)。
+- 线格式:工具名发出时经 ``naming.mangle_name``(``.``→``__``)编码,响应解析时反向解码——
+  Anthropic 函数名仅允许 ``[a-zA-Z0-9_-]``。
 """
 
 from __future__ import annotations
@@ -34,6 +36,8 @@ from agent_os.api.v1 import (
     Role,
     ToolCall,
 )
+
+from .naming import mangle_name, unmangle_name
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 _DEFAULT_MAX_TOKENS = 4096
@@ -113,7 +117,7 @@ class ClaudeProvider:
         if req.tools:
             body["tools"] = [
                 {
-                    "name": t.get("name", ""),
+                    "name": mangle_name(t.get("name", "")),
                     "description": t.get("description", ""),
                     "input_schema": t.get("parameters", {}),
                 }
@@ -146,7 +150,7 @@ class ClaudeProvider:
                 if m.content:
                     blocks.append({"type": "text", "text": m.content})
                 blocks.extend(
-                    {"type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.args}
+                    {"type": "tool_use", "id": tc.id, "name": mangle_name(tc.name), "input": tc.args}
                     for tc in m.tool_calls
                 )
                 out.append({"role": "assistant", "content": blocks})
@@ -168,7 +172,7 @@ class ClaudeProvider:
             None,
         )
         tool_calls = [
-            ToolCall(id=b.get("id", ""), name=b.get("name", ""), args=b.get("input") or {})
+            ToolCall(id=b.get("id", ""), name=unmangle_name(b.get("name", "")), args=b.get("input") or {})
             for b in blocks
             if b.get("type") == "tool_use"
         ]

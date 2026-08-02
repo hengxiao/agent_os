@@ -31,7 +31,7 @@ from agent_os.runtime.builder import KernelBuilder
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.builtins import python_exec_tool
 from agent_os.tools.local_registry import LocalPythonToolRegistry
-from tests.helpers.kernels import PROJECT_ROOT, load_example_module
+from tests.helpers.kernels import PROJECT_ROOT, auto_approve, load_example_module
 
 RESEARCH_DIR = PROJECT_ROOT / "examples" / "research_pipeline"
 S100_DIR = PROJECT_ROOT / "examples" / "skills_100"
@@ -53,6 +53,9 @@ def _build(brain, skills_path: Path):
         .tools(tools)
         .skills(LocalFileSkillRegistry(str(skills_path)))
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
+        # 升权闸门(ESCALATION.md §3):流水线跨档调用构成升权,自动批准通道
+        # 等价于生产宿主里人每次放行
+        .supervisor(auto_approve)
         .build()
     )
 

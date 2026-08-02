@@ -1,0 +1,245 @@
+/* ink 主题(DEBUG-UI-THEMES.md §3.5,水墨;T3 克制系亮色主题):
+   宣纸底 + 墨色文本 + 全主题唯一强调色朱砂(只给暂停/失败强调与印章)。
+   契约变量按 §2.1 全量定义(字面 hex——契约测试直接解析 css 源做 WCAG
+   对比度计算,var() 引用无法求值);亮色主题对比度余量最紧,改色先跑
+   /tmp/check-theme.mjs。无阴影、无 emoji、动效只有 300ms opacity 淡入。
+   其余状态色/信号色全部用不同深浅的"墨色"(靛/松/赭/檀/黛),都压得够深。 */
+
+[data-theme="ink"] {
+  color-scheme: light;
+
+  /* 基底:宣纸系(亮→暗:bg-1 纸心最亮,bg-3 沉下去的纸纹) */
+  --bg-0: #faf7f0;   /* 应用底色 */
+  --bg-1: #fffdf8;   /* 面板/卡片面 */
+  --bg-2: #f3eee0;   /* 悬浮/选中 */
+  --bg-3: #e9e1cd;   /* 悬停加深 */
+  --line: #d8d0bc;
+  --line-strong: #b8ad93;
+  /* 文本:墨色三段(浓墨正文 / 中墨次要 / 淡墨弱化) */
+  --fg-0: #2b2b2b;
+  --fg-1: #555049;
+  --fg-2: #8a8578;
+
+  /* 语义:run/frame 状态。朱砂 #c0392b 是全主题唯一强调色,只给
+     warn(paused)/danger(failed) 与印章;其余状态=不同深浅墨色(均深,
+     对纸底对比度 6.2:1 起) */
+  --ok:      #2f5d3f;   /* 松烟墨(绿) */
+  --warn:    #c0392b;   /* 朱砂(暂停) */
+  --danger:  #a93226;   /* 深朱砂(失败) */
+  --aborted: #4a4a44;   /* 灰墨 */
+  --live:    #2e4a6b;   /* 靛墨(进行) */
+
+  /* 语义:信号类型(同墨色谱系) */
+  --sig-llm:      #2e4a6b;
+  --sig-tool:     #2f5d3f;
+  --sig-sidecar:  #6b4a2f;
+  --sig-compress: #5a3d5a;
+  --sig-budget:   #c0392b;
+  --sig-frame:    #8a8578;
+
+  /* 语义:工具权限等级 */
+  --perm-read:  #8a8578;
+  --perm-write: #6b4a2f;
+  --perm-net:   #2e4a6b;
+  --perm-exec:  #c0392b;
+
+  /* 排版:衬线 CJK 显示链;mono 不换——代码与 JSON 是工作区,不书法化 */
+  --font-ui: "Noto Serif SC", "Songti SC", "STSong", "SimSun",
+    "Source Han Serif SC", serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  /* 留白:比 classic 大一号(§3.5,s 系列 ×1.25) */
+  --s1: 5px; --s1-5: 8px; --s2: 10px; --s3: 15px; --s4: 20px; --s6: 30px; --s8: 40px;
+
+  /* 形状:近方微圆(印章/册页的边) */
+  --r-sm: 2px; --r-conn: 2px; --r-md: 3px; --r-lg: 4px;
+
+  /* 水墨无阴影:覆盖 tokens.css 全局阴影基元 */
+  --shadow-sm: none;
+  --shadow-md: none;
+
+  /* P4 调试台追加 token(对齐 tokens.css §P4):
+     暂停行不铺底色(改左侧墨线,见装饰层);句读断点=朱砂小红点 */
+  --debug-paused-bg: #fffdf8;
+  --debug-bp: #c0392b;
+
+  /* focus 环:靛墨低透明(替代 tokens.css 的 dark 版 ring) */
+  --ring-live: rgb(46 74 107 / 0.18);
+  --ring-warn: rgb(192 57 43 / 0.20);
+}
+
+/* ── 内部调色板(装饰层专用,不承担文本色职责)────────────────── */
+[data-theme="ink"] {
+  --ink-cinnabar: #c0392b;   /* 朱砂(印章/暂停强调) */
+  --ink-cinnabar-deep: #a93226;
+  --ink-black: #2b2b2b;      /* 浓墨 */
+  --ink-paper: #fffdf8;      /* 白文(章上字) */
+  --ink-wash: #f3eee0;       /* 淡墨晕染底 */
+}
+
+/* ── 装饰层(全部消费契约 token / --ink-*;双编码不豁免:
+     data-status 钩子与文字通道一律不动,克制系无 emoji)────────── */
+
+/* 卡片:纸面 + 一道墨边,无阴影(半径已由 token 收到 4px) */
+[data-theme="ink"] .card {
+  background: var(--bg-1);
+  border-color: var(--line-strong);
+  box-shadow: none;
+}
+
+/* 按钮:方边墨钮;hover 沉纸,active 不做位移(禅不动) */
+[data-theme="ink"] .btn {
+  border-radius: var(--r-sm);
+  border-color: var(--line-strong);
+  background: var(--bg-1);
+}
+[data-theme="ink"] .btn:hover {
+  background: var(--bg-3);
+  border-color: var(--fg-2);
+}
+
+/* 主按钮:浓墨方章(落笔);hover 化朱砂——全主题仅有的两处朱砂之一 */
+[data-theme="ink"] .btn-primary {
+  background: var(--ink-black);
+  border-color: var(--ink-black);
+  color: var(--ink-paper);
+  font-weight: 600;
+}
+[data-theme="ink"] .btn-primary:hover {
+  background: var(--ink-cinnabar);
+  border-color: var(--ink-cinnabar);
+  filter: none;
+}
+[data-theme="ink"] .btn-primary:active {
+  background: var(--ink-cinnabar-deep);
+  border-color: var(--ink-cinnabar-deep);
+}
+[data-theme="ink"] .btn-primary[disabled],
+[data-theme="ink"] .btn-primary[disabled]:hover {
+  background: var(--bg-3);
+  border-color: var(--line);
+  color: var(--fg-2);
+  filter: none;
+}
+
+/* 输入:纸面墨边;focus 只换墨色边,不光晕(键盘 focus 环由基元 :focus-visible 承担) */
+[data-theme="ink"] .input {
+  background: var(--bg-1);
+  border-color: var(--line-strong);
+  border-radius: var(--r-sm);
+}
+[data-theme="ink"] .input:hover { border-color: var(--fg-2); }
+[data-theme="ink"] .input:focus {
+  border-color: var(--fg-1);
+  box-shadow: none;
+  outline: none;
+}
+
+/* StatusPill → 印章(§3.5):方形小章,文字状态保留(双编码不豁免) */
+[data-theme="ink"] .status-pill { border-radius: var(--r-sm); }
+/* pill 圆点 → 小方块(章面) */
+[data-theme="ink"] .status-pill .pill-dot {
+  border-radius: 0;
+  box-shadow: none;
+}
+/* 暂停/失败 = 朱砂白文章(章底朱砂,字与点反白) */
+[data-theme="ink"] .status-pill[data-status="paused"],
+[data-theme="ink"] .status-pill[data-status="failed"] {
+  background: var(--ink-cinnabar);
+  border-color: var(--ink-cinnabar);
+  color: var(--ink-paper);
+}
+[data-theme="ink"] .status-pill[data-status="failed"] {
+  background: var(--ink-cinnabar-deep);
+  border-color: var(--ink-cinnabar-deep);
+}
+[data-theme="ink"] .status-pill[data-status="paused"] .pill-dot,
+[data-theme="ink"] .status-pill[data-status="failed"] .pill-dot {
+  background: var(--ink-paper);
+}
+
+/* 横幅:册页题跋(方边 + 左缘一道粗墨;色调仍走 token 色,双编码不变) */
+[data-theme="ink"] .banner {
+  border-radius: var(--r-sm);
+  border-left-width: var(--stroke-accent);
+}
+/* 结束横幅"墨尽":四周收一道墨边,如卷末落款 */
+[data-theme="ink"] .dbg-end.banner,
+[data-theme="ink"] .dbg-end {
+  border-color: var(--line-strong);
+}
+
+/* 调用栈帧:方边;当前帧不铺底,左侧一道墨线(同暂停行的笔意) */
+[data-theme="ink"] .dbg-frame { border-radius: var(--r-sm); }
+[data-theme="ink"] .dbg-frame:hover { background: var(--bg-2); }
+[data-theme="ink"] .dbg-frame[data-current="true"] {
+  background: var(--debug-paused-bg);
+  box-shadow: inset var(--stroke-accent) 0 0 var(--ink-black);
+}
+
+/* 轨迹行:暂停行无底色,改左侧一道墨线(书法竖划,向下渐隐似提笔直收) */
+[data-theme="ink"] .dbg-row[data-paused="true"],
+[data-theme="ink"] .dbg-row[data-paused="true"]:hover {
+  background: var(--debug-paused-bg);
+}
+[data-theme="ink"] .dbg-row[data-paused="true"]::before {
+  width: var(--stroke-accent);
+  border-radius: 0;
+  background: linear-gradient(to bottom, var(--ink-black) 0%, transparent 100%);
+}
+/* gutter 行号:淡墨小字 */
+[data-theme="ink"] .dbg-trace-list .tr-gutter { color: var(--fg-2); }
+
+/* 小节标题:加宽字距 + 下方一道墨线(卷内小题) */
+[data-theme="ink"] .dbg-sec-title {
+  letter-spacing: 0.14em;
+  border-bottom: var(--stroke) solid var(--line);
+}
+
+/* 干预区:墨线方框(手批区) */
+[data-theme="ink"] .dbg-intervene {
+  border: var(--stroke) solid var(--line-strong);
+  border-radius: var(--r-sm);
+  padding: var(--s2);
+}
+
+/* 主题切换器:方边小印,hover 点朱砂 */
+[data-theme="ink"] .theme-picker-btn {
+  border-radius: var(--r-sm);
+  border: var(--stroke) solid var(--line-strong);
+  background: var(--bg-1);
+}
+[data-theme="ink"] .theme-picker-btn:hover {
+  border-color: var(--ink-cinnabar);
+  color: var(--ink-cinnabar);
+}
+
+/* ── 入场动画:仅 300ms opacity 淡入(墨色晕染式;不动位置不缩放)── */
+@keyframes ink-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+[data-theme="ink"] .card { animation: ink-fade-in 0.3s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="ink"] *,
+  [data-theme="ink"] *::before,
+  [data-theme="ink"] *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ── 背景图案:宣纸纹理(feTurbulence 细噪点,墨 5%)+ 右上角淡墨晕染 ── */
+[data-theme="ink"] body {
+  background-image:
+    radial-gradient(ellipse 60% 45% at 88% -4%, rgb(43 43 43 / 0.04), transparent 70%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.17 0 0 0 0 0.16 0 0 0 0 0.13 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
+}

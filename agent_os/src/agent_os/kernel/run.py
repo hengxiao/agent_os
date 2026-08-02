@@ -6,8 +6,8 @@ Run 是预算、权限、信号的作用域边界;一个 Run 一棵帧树。
 
 from __future__ import annotations
 
+from agent_os.api.v1 import Grant, RunConfig, RunStatus, Usage
 from agent_os.api.v1 import Run as RunContract
-from agent_os.api.v1 import RunConfig, RunStatus, Usage
 
 
 class Run:
@@ -15,6 +15,9 @@ class Run:
 
     def __init__(self, run_id: str = "", config: RunConfig | None = None) -> None:
         self.state = RunContract(run_id=run_id, config=config or RunConfig())
+        #: 升权批准台账(ESCALATION.md §4;E2):approve-run 的 run 档 Grant 在此存放,
+        #: 随 run 死亡,不跨 run 持久;checkpoint 序列化保证 resume/replay 判定一致
+        self.grants: list[Grant] = []
 
     @property
     def run_id(self) -> str:

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -17,6 +18,7 @@ from agent_os.api.v1 import (
     ProviderError,
     ProviderErrorKind,
     Role,
+    ToolCall,
 )
 from agent_os.providers.openai_compatible import OpenAICompatibleProvider
 
@@ -76,3 +78,60 @@ def test_openai_compatible_error_mapping():
         assert err.retryable is retryable, (status, err.retryable)
         if retry_after is not None:
             assert err.retry_after == retry_after, (status, err.retry_after)
+
+
+def test_tool_name_wire_format_mangle_round_trip():
+    """线格式(providers/naming.py):tools schema 与 assistant 历史发出时 ``.``→``__``;
+    响应里 mangled 名解析回点分 canonical。"""
+    seen: dict = {}
+    payload = {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "skill__demo__fib", "arguments": '{"n": 5}'},
+                }],
+            },
+            "finish_reason": "tool_calls",
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json=payload)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    p = OpenAICompatibleProvider(base_url="https://api.example.com/v1", api_key="k", client=client)
+
+    async def main():
+        history = [
+            Message(role=Role.USER, content="q"),
+            Message(
+                role=Role.ASSISTANT,
+                content="",
+                tool_calls=[ToolCall(id="c0", name="system.file.read", args={"path": "a.txt"})],
+            ),
+            Message(role=Role.TOOL, content="A", tool_call_id="c0", name="system.file.read"),
+        ]
+        return await p.chat(
+            ChatRequest(
+                model="openai/gpt-x",
+                messages=history,
+                tools=[{"name": "skill.demo.fib", "description": "", "parameters": {}}],
+            )
+        )
+
+    resp = asyncio.run(main())
+
+    body = seen["body"]
+    # 出方向:tools schema 与 assistant 历史 tool_calls 都是 mangled
+    assert body["tools"][0]["function"]["name"] == "skill__demo__fib"
+    assistant = body["messages"][1]
+    assert assistant["tool_calls"][0]["function"]["name"] == "system__file__read"
+    # 入方向:mangled 响应名解析回点分
+    assert resp.message.tool_calls[0].name == "skill.demo.fib"
+    assert resp.message.tool_calls[0].args == {"n": 5}

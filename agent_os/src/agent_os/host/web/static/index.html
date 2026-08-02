@@ -6,6 +6,12 @@
 <title>Agent OS</title>
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/themes/classic.css">
+<link rel="stylesheet" href="/static/css/themes/moe.css">
+<link rel="stylesheet" href="/static/css/themes/terminal.css">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css">
+<link rel="stylesheet" href="/static/css/themes/ink.css">
+<link rel="stylesheet" href="/static/css/themes/pixel.css">
 </head>
 <body data-route="runs">
 <header class="app-topbar">
@@ -14,8 +20,10 @@
     <a class="nav-item" href="#/runs" data-nav="runs" aria-current="page">Runs</a>
     <a class="nav-item" href="#/skills" data-nav="skills">Skills</a>
     <a class="nav-item" href="#/tools" data-nav="tools">Tools</a>
+    <a class="nav-item" href="#/debug" data-nav="debug">Debug</a>
   </nav>
   <div class="topbar-side">
+    <div id="themePicker"></div>
     <button class="icon-btn sup-btn" id="inboxBtn" data-tip="Supervisor 收件箱"
             aria-label="Supervisor 收件箱">
       <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor"

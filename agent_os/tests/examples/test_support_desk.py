@@ -21,7 +21,7 @@ from agent_os.providers.mock import MockProvider
 from agent_os.runtime.builder import KernelBuilder
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.local_registry import LocalPythonToolRegistry
-from tests.helpers.kernels import PROJECT_ROOT, load_example_module
+from tests.helpers.kernels import PROJECT_ROOT, auto_approve, load_example_module
 
 DESK_DIR = PROJECT_ROOT / "examples" / "support_desk"
 
@@ -47,6 +47,9 @@ def _build(brain):
         .tools(tools)
         .skills(LocalFileSkillRegistry(str(DESK_DIR / "skills.yaml")))
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
+        # 升权闸门(ESCALATION.md §3):票据流跨档调用构成升权,自动批准通道
+        # 等价于生产宿主里人每次放行
+        .supervisor(auto_approve)
         .build()
     )
 

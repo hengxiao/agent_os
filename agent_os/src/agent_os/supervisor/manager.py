@@ -83,6 +83,9 @@ class SupervisorManager:
             urgency=str(args.get("urgency") or "normal"),
             frame_id=frame.frame_id,
             run_id=frame.run_id,
+            # 结构化请求(ESCALATION.md §3):kind="escalation" 时 context 携带
+            # 升权载荷(skill/tier/params/requested/reason_hint),闭环逻辑不变
+            kind=str(args.get("kind") or "question"),
         )
         await self._signals.emit(
             Signal(
@@ -96,6 +99,7 @@ class SupervisorManager:
                     "options": question.options,
                     "urgency": question.urgency,
                     "channel": self._channel,  # §5:问题走了哪条通道(inbox|cli|handler)
+                    "kind": question.kind,  # 升权确认与普通问答在信号流里可区分
                 },
             )
         )

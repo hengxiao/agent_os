@@ -59,23 +59,60 @@ S2 增量(SUPERVISOR.md v2 §2.3/§5;tests/web/test_supervisor_channel.py 锚点
   (``GET /api/supervisor/pending`` / ``POST /api/supervisor/{id}/answer``
   数据源);options 校验在结算前,不匹配归 ``ValueError``(路由 400,
   问题保持挂起,§3:格式错误返回调用方重答)。
+
+P3 增量(Agent OS Debugger;tests/web/test_debug_api.py 锚点):
+
+- 共享一个 :class:`DebugController`(kernel/debug.py;``_debug``),经
+  ``start_run(..., debug_session=...)`` 挂到该 run 内核的总线上——订阅序在
+  hub(``_fan``)之后、``_cap`` 之前:暂停前信号已落 hub/trace,且
+  ``start_run`` 返回时会话已绑定 run;每 run 至多一个活跃会话
+  (``start_debug_session`` 冲突归 :class:`DebugConflictError`,路由 409);
+- **跨线程命令桥**:``DebugSession`` 的 ``asyncio.Event`` 绑在 run worker
+  线程的事件循环上,REST 线程直接 ``set()`` 会撞 ``loop.call_soon`` 的
+  线程检查;``_debug_loops`` 逐会话记录 worker 循环(run.started 时捕获),
+  resume/modify/inject/detach 一律经 ``run_coroutine_threadsafe`` 投递过去
+  执行并等结果(``_in_debug_loop``)。
+
+P5 增量(时间旅行):``start_debug_replay_session``——``POST /api/debug/sessions``
+的 ``{replay_run_id, until_step?}`` 形态;``start_run(..., replay_script=...)``
+在装配后 ``replace_providers`` 换回放内核(host/shared/replay.py 边界:
+LLM Mock 回放,工具真实重跑);``overrides`` 增 ``checkpoint_interval``
+(周期 checkpoint,RunConfig 同名字段,0=关)。
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import sys
 import threading
+import time
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from agent_os.api.v1 import RUN_STARTED, Allow, Mode, RunControl, Signal
+from agent_os.api.v1 import (
+    PRE_TOOL_CALL,
+    RUN_STARTED,
+    Allow,
+    Message,
+    Mode,
+    RunControl,
+    Signal,
+    web_single_user_principal,
+)
 from agent_os.host.shared.artifacts import execute_resume, execute_run
+from agent_os.host.shared.replay import build_mock_script, replace_providers
 from agent_os.host.shared.runrecord import STATUS_FAILED
+from agent_os.kernel.debug import RESUME_COMMANDS as DEBUG_RESUME_COMMANDS
+from agent_os.kernel.debug import DebugController
+from agent_os.kernel.errors import AgentOSError
 from agent_os.runtime.config import build_kernel, load_config, load_skillsets
+
+#: rerun 等 stop verdict 落地的兜底(秒):超时按 best-effort 收尾,不悬挂
+_RERUN_STOP_TIMEOUT = 10.0
 from agent_os.supervisor import InboxChannel
 
 #: hub 关闭时投递给订阅者的哨兵(§4.2:run 结束后 SSE 发终止事件并关闭)
@@ -85,8 +122,9 @@ HUB_CLOSED: Any = object()
 BUFFER_MAXLEN = 2000
 
 #: ``POST /api/runs`` 的 ``overrides`` 允许覆盖的 RunConfig 字段(WEB-UI.md §4.3 高级区;
-#: ``inline`` = SKILL-INLINING.md §9 消融开关,写入 ``cfg["run"]["inline"]``)
-OVERRIDE_FIELDS = ("model", "max_cost", "max_steps", "inline")
+#: ``inline`` = SKILL-INLINING.md §9 消融开关,写入 ``cfg["run"]["inline"]``;
+#: ``checkpoint_interval`` = Debugger P5 周期 checkpoint,0=关)
+OVERRIDE_FIELDS = ("model", "max_cost", "max_steps", "inline", "checkpoint_interval")
 
 
 class _StopBridge:
@@ -117,6 +155,10 @@ class RunValidationError(RuntimeError):
 
 class ResumeConflictError(RuntimeError):
     """resume 与在途 run 冲突(§4.3:在跑的 run 不能 resume,先 stop);路由层归 409。"""
+
+
+class DebugConflictError(RuntimeError):
+    """已有活跃调试会话(P3:每 run 至多一个活跃会话);路由层归 409。"""
 
 
 def _jsonable(value: Any) -> Any:
@@ -179,6 +221,24 @@ def signal_row(sig: Signal) -> dict[str, Any]:
         "ts": sig.ts,
         "payload": _jsonable(sig.payload),
     }
+
+
+def message_row(msg: Message) -> dict[str, Any]:
+    """Message → JSON 安全 dict(与 checkpoint.json 的 messages 行同形,P3 帧检视用)。"""
+    return _jsonable(
+        {
+            "role": msg.role.value,
+            "content": msg.content,
+            "tool_calls": [
+                {"id": tc.id, "name": tc.name, "args": tc.args} for tc in msg.tool_calls
+            ],
+            "tool_call_id": msg.tool_call_id,
+            "name": msg.name,
+            "reasoning": msg.reasoning,
+            "source": msg.source.value,
+            "meta": msg.meta,
+        }
+    )
 
 
 class SignalHub:
@@ -276,6 +336,11 @@ class RunManager:
         self._set_registries: dict[str, Any] = {}  # 每 set 惰性装配的共享 registry
         #: 串行化"钉 sys.path + 逐出模块 + build_kernel"(跨 set 装配/并发 run 防串模块)
         self._assemble_lock = threading.Lock()
+        #: P3 调试会话(Agent OS Debugger):共享一个 DebugController(每 run 至多一个
+        #: 活跃会话);逐会话记录 run worker 的事件循环,REST 侧命令经
+        #: run_coroutine_threadsafe 投递(asyncio.Event 无跨线程亲和性)
+        self._debug = DebugController()
+        self._debug_loops: dict[str, asyncio.AbstractEventLoop] = {}
 
     def skillsets(self) -> dict[str, Path]:
         """全部 set(name → 目录,按名字序;``GET /api/skillsets`` 数据源,D6)。"""
@@ -362,6 +427,18 @@ class RunManager:
                 cfg, extra_sidecars=[_StopBridge()], supervisor_handler=handler
             )
 
+    def _principal(self) -> Any:
+        """数据层身份(DATA-AUTHZ.md §2.2):Web 单用户模式 = 部署者。
+
+        登录名取宿主配置 ``[web].user``(缺省本机用户);配置读取失败不拖垮 run
+        (退化为本机用户)。多用户会话映射(api-token / 逐会话身份)属 D3。
+        """
+        try:
+            login = (load_config(self._config_path).get("web") or {}).get("user")
+        except Exception:  # noqa: BLE001 — 身份构造失败退化为缺省,不阻断 run
+            login = None
+        return web_single_user_principal(login)
+
     async def start_run(
         self,
         skill: str,
@@ -370,6 +447,8 @@ class RunManager:
         overrides: dict[str, Any] | None = None,
         skill_set: str | None = None,
         supervisor_handler: Any = None,
+        debug_session: Any = None,
+        replay_script: Any = None,
     ) -> str:
         """启动一个 run 并返回 run_id;``wait=True`` 时阻塞到 run 结束。
 
@@ -380,6 +459,11 @@ class RunManager:
         (内存态 + meta.json/result.json)带 ``skill_set``(全局 run 记 ``"default"``)。
         ``supervisor_handler``(S2):run 级注入的 supervisor 通道(§2.3 选择顺序
         第一级;REST 层传不了可调用,供嵌入方程序化调用),缺省见 :meth:`_assemble_kernel`。
+        ``debug_session``(P3):给了就把共享 DebugController 挂到本 run 内核的
+        总线上(订阅序:hub ``_fan`` 之后、``_cap`` 之前——暂停前信号已落
+        hub/trace,且本方法返回时会话已绑定 run)。
+        ``replay_script``(P5 时间旅行):给了就 ``replace_providers`` 把内核
+        provider 面换成回放脚本(LLM Mock 回放,工具真实重跑;replay.py 边界)。
         """
         effective = self._resolve_set(skill_set)
         tag = effective or "default"
@@ -410,6 +494,10 @@ class RunManager:
                 kernel = self._assemble_kernel(
                     overrides, skill_set=effective, supervisor_handler=supervisor_handler
                 )
+                if replay_script is not None:
+                    # P5 时间旅行:回放内核——provider 面换成 Mock 脚本(§3.4 边界:
+                    # LLM 按 trace 重放,工具副作用真实重跑)
+                    replace_providers(kernel, replay_script)
                 state["kernel"] = kernel
 
                 async def _fan(sig: Signal) -> None:
@@ -419,9 +507,20 @@ class RunManager:
                     _register(sig.run_id)
 
                 kernel.signals.subscribe("*", _fan)
+                if debug_session is not None:
+                    # P3:调试控制器在 hub 之后订阅(暂停前信号已落 hub/trace),
+                    # 在 _cap 之前订阅(start_run 返回时会话已绑定 run)
+                    self._debug.attach(kernel.signals, kernel.ctl)
+
+                    async def _cap_loop(sig: Signal) -> None:
+                        # 调试命令桥:worker 事件循环句柄(REST 侧跨线程投递用)
+                        self._debug_loops[debug_session.id] = asyncio.get_running_loop()
+
+                    kernel.signals.subscribe(RUN_STARTED, _cap_loop)
                 kernel.signals.subscribe(RUN_STARTED, _cap)
                 record = execute_run(
-                    kernel, skill, input, artifacts_root=self._artifacts_root, host="web"
+                    kernel, skill, input, artifacts_root=self._artifacts_root, host="web",
+                    principal=self._principal(),  # 数据层身份(DATA-AUTHZ.md §2.2)
                 )
                 record["skill_set"] = tag
                 self._tag_artifacts(record["run_id"], tag)
@@ -541,6 +640,258 @@ class RunManager:
             "error": None,
             "started_at": meta.get("started_at") or datetime.now(UTC).isoformat(),
             "kernel": None,
+        }
+
+    # ------------------------------------------------------------------
+    # P3 调试会话(Agent OS Debugger;tests/web/test_debug_api.py 锚点)
+    # ------------------------------------------------------------------
+
+    async def start_debug_session(
+        self,
+        skill: str,
+        input: dict[str, Any],
+        skill_set: str | None = None,
+        breakpoints: list[tuple[str, str]] | None = None,
+    ) -> tuple[str, str]:
+        """``POST /api/debug/sessions``:开调试会话并以其装配起 run,返回 ``(session_id, run_id)``。
+
+        每 run 至多一个活跃会话:已有未结束(state != detached)的会话 →
+        :class:`DebugConflictError`(路由层归 409)。``breakpoints``(kind, match)
+        在 run 启动**之前**注册到待绑定会话——调试启动即断是确定性的(mock brain
+        的 run 毫秒级推进,起 run 后再加断点会竞态错过早期信号);未知 kind →
+        ``ValueError``(路由层归 400)。run 未开始的校验错照常抛
+        :class:`RunValidationError`,并收回待绑定会话(不留 armed 残渣)。
+        """
+        if any(s.state != "detached" for s in self._debug.sessions):
+            raise DebugConflictError(
+                "已有活跃调试会话(每 run 至多一个;先 stop 或 DELETE 结束当前会话)"
+            )
+        session = self._debug.open_session()
+        try:
+            for kind, match in breakpoints or ():
+                session.add_breakpoint(kind, match)  # ValueError(未知 kind)向外抛
+            run_id = await self.start_run(
+                skill, input, skill_set=skill_set, debug_session=session
+            )
+        except Exception:
+            # close_session 已根治待绑定指针(P1):会话未绑定 run 就被收回时
+            # _armed 一并摘除,后续 open_session 不受残留影响
+            self._debug.close_session(session.id)
+            self._debug_loops.pop(session.id, None)
+            raise
+        # rerun 依据:同参数重开(replay 形态无 origin——回放参数在产物 meta,
+        # 语义上应走 replay 端点而非 live 重跑)
+        session.origin = {
+            "skill": skill,
+            "input": input,
+            "skill_set": skill_set,
+            "breakpoints": [{"kind": k, "match": m} for k, m in breakpoints or ()],
+        }
+        return session.id, run_id
+
+    async def rerun_debug_session(self, session_id: str) -> tuple[str, str]:
+        """``POST .../rerun``:以创建参数(skill/input/启动断点)重开新会话。
+
+        旧会话仍活跃时先收尾:paused → ``stop`` 命令(走正常中止路径,
+        checkpoint 落盘);running → ``stop_run`` 置中止标志;随后 detach +
+        清注册表(同 DELETE)。无 origin(replay/CLI 会话)→ ``ValueError``
+        (路由层归 400);其余错误语义同 :meth:`start_debug_session`。
+        """
+        session = self.debug_session(session_id)  # KeyError → 404
+        origin = session.origin
+        if origin is None:
+            raise ValueError("该会话没有创建参数(replay/CLI 会话),不支持 rerun")
+        if session.state != "detached":
+            if session.state == "paused":
+                await self._in_debug_loop(session, lambda: session.resume("stop"))
+                # 等 stop verdict 落地(run 中止 → controller 自动 detach)再收尾:
+                # 立即 detach 会让 _resume_verdict 先见 DETACHED 吞掉 stop,
+                # 旧 run 变成跑完而不是中止(时序竞争)
+                deadline = time.monotonic() + _RERUN_STOP_TIMEOUT
+                while session.state != "detached" and time.monotonic() < deadline:
+                    await asyncio.sleep(0.01)
+            elif session.run_id:
+                await self.stop_run(session.run_id)  # best-effort:已结束则 False
+            if session.state != "detached":
+                await self._in_debug_loop(session, session.detach)
+            self._debug.close_session(session.id)
+            self._debug_loops.pop(session.id, None)
+        return await self.start_debug_session(
+            origin["skill"],
+            origin["input"],
+            skill_set=origin.get("skill_set"),
+            breakpoints=[(bp["kind"], bp["match"]) for bp in origin.get("breakpoints", [])],
+        )
+
+    async def start_debug_replay_session(
+        self,
+        replay_run_id: str,
+        until_step: int | None = None,
+        breakpoints: list[tuple[str, str]] | None = None,
+        skill_set: str | None = None,
+    ) -> tuple[str, str]:
+        """``POST /api/debug/sessions`` 的 replay 形态(P5 时间旅行):回放指定 run
+        并挂调试会话,返回 ``(session_id, run_id)``。
+
+        从产物目录读 meta/trace/checkpoint,``build_mock_script`` 重建 Mock 脚本
+        (回放边界:LLM Mock 回放 + 工具真实重跑,replay.py 模块 docstring);
+        skill/input 取 meta.json。``until_step`` 注册一次性步数断点
+        (``Breakpoint.until``:run 直达第 N 条 ``pre:step`` 才暂停)。
+        产物缺失 → ``FileNotFoundError``(路由 404);产物畸形/未知断点
+        kind/非法 until_step → ``ValueError``(400);会话冲突同 live(409)。
+        """
+        if any(s.state != "detached" for s in self._debug.sessions):
+            raise DebugConflictError(
+                "已有活跃调试会话(每 run 至多一个;先 stop 或 DELETE 结束当前会话)"
+            )
+        run_dir = self._artifacts_root / "runs" / replay_run_id
+        for name in ("meta.json", "trace.jsonl", "checkpoint.json"):
+            if not (run_dir / name).is_file():
+                raise FileNotFoundError(f"找不到 run 产物目录: {run_dir}")
+        meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+        script = build_mock_script(run_dir)  # ValueError(产物畸形)向外抛
+        session = self._debug.open_session()
+        try:
+            for kind, match in breakpoints or ():
+                session.add_breakpoint(kind, match)  # ValueError(未知 kind)向外抛
+            if until_step is not None:
+                session.add_breakpoint("step", until=until_step)
+            run_id = await self.start_run(
+                meta.get("skill"),
+                meta.get("input") or {},
+                skill_set=skill_set,
+                debug_session=session,
+                replay_script=script,
+            )
+        except Exception:
+            self._debug.close_session(session.id)
+            self._debug_loops.pop(session.id, None)
+            raise
+        return session.id, run_id
+
+    def debug_session(self, session_id: str) -> Any:
+        """按 id 取会话;不存在 → ``KeyError``(路由层归 404)。"""
+        session = self._debug.get(session_id)
+        if session is None:
+            raise KeyError(f"找不到调试会话: {session_id}")
+        return session
+
+    def debug_add_breakpoint(self, session_id: str, kind: str, match: str = "*") -> Any:
+        """加断点;会话已结束 → :class:`AgentOSError`(409),未知 kind → ``ValueError``(400)。"""
+        session = self.debug_session(session_id)
+        if session.state == "detached":
+            raise AgentOSError(f"调试会话 {session_id} 已结束,不能加断点")
+        return session.add_breakpoint(kind, match)
+
+    def debug_remove_breakpoint(self, session_id: str, bp_id: str) -> None:
+        """删断点;断点不存在 → ``KeyError``(路由层归 404)。"""
+        session = self.debug_session(session_id)
+        if not session.remove_breakpoint(bp_id):
+            raise KeyError(f"找不到断点: {bp_id}")
+
+    async def _in_debug_loop(self, session: Any, fn: Any) -> None:
+        """把调试命令投递到 run worker 的事件循环执行并等它落地(跨线程命令桥)。
+
+        ``DebugSession`` 的 ``asyncio.Event`` 绑在 worker 循环上,REST 线程直接
+        ``set()`` 会在 ``loop.call_soon`` 的线程检查处炸掉;经
+        ``run_coroutine_threadsafe`` 在 worker 循环内执行,异常原样带回。
+        worker 循环已不在(run 结束)时直接调用:此时没有阻塞中的 wait,
+        ``Event.set()`` 无 waiter 是纯内存操作,安全。
+        """
+        loop = self._debug_loops.get(session.id)
+        if loop is None or not loop.is_running():
+            fn()
+            return
+
+        async def _wrap() -> None:
+            fn()
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_wrap(), loop)
+        except RuntimeError:
+            # 竞态:``is_running`` 检查与投递之间 loop 已关闭(run 刚结束)——
+            # 此时没有阻塞中的 wait,直接调用是纯内存操作,安全
+            fn()
+            return
+        await asyncio.wrap_future(fut)
+
+    async def debug_command(self, session_id: str, command: str) -> None:
+        """恢复命令(仅 paused):continue/三种单步/stop;状态不对 → :class:`AgentOSError`(409)。"""
+        session = self.debug_session(session_id)
+        if command not in DEBUG_RESUME_COMMANDS:
+            raise ValueError(f"未知恢复命令: {command!r}(可选 {DEBUG_RESUME_COMMANDS})")
+        if session.state != "paused":
+            raise AgentOSError(f"调试会话 {session_id} 不在 paused 状态,无法 resume")
+        await self._in_debug_loop(session, lambda: session.resume(command))
+
+    async def debug_pause(self, session_id: str) -> None:
+        """随时暂停(仅 running;GDB SIGINT 语义):run 在下一个可仲裁信号挂起。"""
+        session = self.debug_session(session_id)
+        await self._in_debug_loop(session, session.pause)  # 非 running → AgentOSError(409)
+
+    async def debug_modify(self, session_id: str, patch: dict[str, Any]) -> None:
+        """改本次工具调用参数(仅暂停在 pre:tool.call 时有效;改完即放行)。"""
+        session = self.debug_session(session_id)
+        if (
+            session.state != "paused"
+            or not session.pause_point
+            or session.pause_point["signal"] != PRE_TOOL_CALL
+        ):
+            raise AgentOSError("modify 仅在暂停于 pre:tool.call 时有效")
+        await self._in_debug_loop(session, lambda: session.modify_tool_args(dict(patch)))
+
+    async def debug_inject(
+        self, session_id: str, frame_id: str | None, text: str
+    ) -> str:
+        """向指定帧注入 USER/INJECTED 消息(``frame_id=None`` 缺省=暂停帧;注入后放行)。
+
+        返回实际注入的 frame_id。
+        """
+        session = self.debug_session(session_id)
+        if session.state != "paused":
+            raise AgentOSError(f"调试会话 {session_id} 不在 paused 状态,无法 inject")
+        fid = frame_id or (session.pause_point or {}).get("frame_id")
+        if fid is None:
+            raise AgentOSError("无暂停帧,inject 需要显式 frame_id")
+        loop = self._debug_loops.get(session.id)
+        if loop is None or not loop.is_running():
+            raise AgentOSError("run worker 已结束,无法 inject")
+        # inject_message 是协程(经 ctl 落地 + 放行):直接在 worker 循环跑并等结果
+        await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(session.inject_message(fid, text), loop)
+        )
+        return fid
+
+    async def debug_close(self, session_id: str) -> None:
+        """``DELETE`` 会话:detach 放行(run 继续跑完),摘除注册表与循环句柄。"""
+        session = self.debug_session(session_id)
+        if session.state != "detached":
+            await self._in_debug_loop(session, session.detach)
+        self._debug.close_session(session_id)  # detach 幂等;pop 注册表记录
+        self._debug_loops.pop(session_id, None)
+
+    def debug_frame(self, session_id: str, frame_id: str) -> dict[str, Any] | None:
+        """live 帧检视(kernel.stack 内存态;调试暂停时 checkpoint 尚未落盘)。
+
+        帧树全量登记(含已结束帧),run 结束后仍可读;找不到 → ``None``(路由层归 404)。
+        """
+        session = self.debug_session(session_id)
+        state = self.state_of(session.run_id) if session.run_id else None
+        kernel = (state or {}).get("kernel")
+        frame = kernel.stack.get(frame_id) if kernel is not None else None
+        if frame is None:
+            return None
+        return {
+            "frame_id": frame.frame_id,
+            "skill": str(frame.skill),
+            "status": frame.status.value,
+            "usage": dataclasses.asdict(frame.usage),
+            "input": _jsonable(frame.input),
+            "result": _jsonable(frame.result),
+            "error": _jsonable(frame.error),
+            # 帧上下文逐条:"模型那一步看到了什么"(与 checkpoint 行同形)
+            "messages": [message_row(m) for m in frame.context.messages],
+            "working": _jsonable(frame.context.working),
         }
 
     # ------------------------------------------------------------------

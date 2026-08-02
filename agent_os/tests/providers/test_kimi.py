@@ -47,7 +47,7 @@ def _kimi_payload():
                 "tool_calls": [{
                     "id": "call_1",
                     "type": "function",
-                    "function": {"name": "system.python.exec", "arguments": '{"code": "print(42)"}'},
+                    "function": {"name": "system__python__exec", "arguments": '{"code": "print(42)"}'},
                 }],
             },
             "finish_reason": "tool_calls",
@@ -77,7 +77,8 @@ def test_kimi_chat_request_and_response_mapping():
     assert seen["url"] == f"{DEFAULT_BASE_URL}/chat/completions"
     assert seen["auth"] == "Bearer test-key"
     assert seen["body"]["model"] == "kimi-k2-thinking"
-    assert seen["body"]["tools"][0]["function"]["name"] == "system.python.exec"
+    # 线格式(providers/naming.py):发出时 mangle 为 __ 分隔,响应解析回点分
+    assert seen["body"]["tools"][0]["function"]["name"] == "system__python__exec"
 
     assert resp.message.tool_calls[0].name == "system.python.exec"
     assert resp.message.tool_calls[0].args == {"code": "print(42)"}

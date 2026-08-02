@@ -22,7 +22,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_os.api.v1 import ASK_SUPERVISOR_TOOL, ORCHESTRATE_TOOL, RunConfig
+from agent_os.api.v1 import (
+    ASK_SUPERVISOR_TOOL,
+    ORCHESTRATE_TOOL,
+    RunConfig,
+    derive_skill_tier,
+)
 from agent_os.context.manager import ContextManager
 from agent_os.context.rolling_window import RollingWindowCompressor
 from agent_os.kernel import Kernel
@@ -33,6 +38,7 @@ from agent_os.kernel.signals import InProcessSignalBus
 from agent_os.kernel.stack import FrameStack
 from agent_os.providers.manager import ProviderManager
 from agent_os.sidecars.supervisor import SidecarSupervisor
+from agent_os.skills.manifest import validate_escalation_gates
 from agent_os.supervisor import SupervisorManager
 from agent_os.tools.local_registry import LocalPythonToolRegistry
 
@@ -52,6 +58,7 @@ class KernelBuilder:
         self._memory: Any = None
         self._blackboard: Any = None
         self._supervisor: dict[str, Any] | None = None
+        self._debug_controller: Any = None
         self._retry: dict[str, Any] = {}
 
     def providers(self, *providers: Any) -> KernelBuilder:
@@ -134,6 +141,11 @@ class KernelBuilder:
             self._retry["backoff_base"] = backoff_base
         return self
 
+    def debug_controller(self, controller: Any) -> KernelBuilder:
+        """注入调试控制器(kernel/debug.py;缺省 None 时零开销、零行为变化)。"""
+        self._debug_controller = controller
+        return self
+
     def build(self) -> Kernel:
         """组装 Kernel(注入信号总线 / FrameStack / Dispatcher / RunControl 等内核件)。
 
@@ -146,6 +158,7 @@ class KernelBuilder:
         blackboard(M5b)接线到 kernel.blackboard(§12:StatusBoard 与帧间消息);
         supervisor(S1)有 handler 才装配 SupervisorManager 挂到 kernel.supervisor
         (SUPERVISOR.md §2.3;仅预置策略字段时不装配,运行时按"未装配"报 not_found);
+        debug_controller(P1)给了就把它挂到信号总线(直接订阅,见 kernel/debug.py);
         装配期权限闸门(§6.1):manifest 声明的工具必须在注册表中,缺失即拒绝加载。
         """
         unsupported: list[str] = []
@@ -174,6 +187,11 @@ class KernelBuilder:
             )
             if missing:
                 raise SkillLoadError(f"manifest 声明的工具未注册(§6.1 权限闸门): {missing}")
+            # 升权分档硬闸门(ESCALATION.md §2.1/§3.4):推导档 ≥L2 禁 inline、
+            # L3 禁 confirm: first。推导需要 Tool Registry,loader 单跑时不经过——
+            # 装配是 tools 与 skills 同时在场的唯一加载期检查点
+            for m in skills.manifests():
+                validate_escalation_gates(m, derive_skill_tier(m, tools, skills))
         sup_manager = None
         if self._supervisor is not None and self._supervisor["handler"] is not None:
             # SUPERVISOR.md §2.3:装配级 handler 通道(S2 宿主通道——Web 收件箱 /
@@ -219,4 +237,11 @@ class KernelBuilder:
                 supervisor.register(sidecar)
             kernel.sidecars = supervisor
             kernel.ctl = ctl
+        if self._debug_controller is not None:
+            # 调试原语(P1):直接订阅总线(不经 SidecarSupervisor,绕开 SYNC 2s
+            # 超时 fail-closed);订阅在 Telemetry/sidecar 之后,暂停前信号已落
+            # trace/SSE。无 sidecar 时补装 RunControlImpl,供 inject_message 落地
+            if kernel.ctl is None:
+                kernel.ctl = RunControlImpl(kernel)
+            self._debug_controller.attach(bus, kernel.ctl)
         return kernel

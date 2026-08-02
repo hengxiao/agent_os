@@ -531,8 +531,9 @@ const CHEV_SVG =
   ` stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
   `<path d="M6 3 L11 8 L6 13"/></svg>`;
 
-/* 深度彩虹轨:depth 条 2px 竖条,颜色按层取 6 色循环(token --trace-d0..d5) */
-const indentHtml = (depth) => {
+/* 深度彩虹轨:depth 条 2px 竖条,颜色按层取 6 色循环(token --trace-d0..d5)
+   (导出:P4 调试台 debug-view 的执行轨迹复用同一行语言) */
+export const indentHtml = (depth) => {
   const d = Math.max(0, Math.floor(Number(depth) || 0));
   if (!d) return `<span class="tr-indent" aria-hidden="true"></span>`;
   let s = `<span class="tr-indent" aria-hidden="true">`;
@@ -542,11 +543,12 @@ const indentHtml = (depth) => {
 
 const OK_MARK = { done: `<span class="tr-ok">✓</span>`, failed: `<span class="tr-bad">✗</span>` };
 
-/* 行主体:kind 分派(debugger 控制台风:箭头/关键字着色 + 名 600 + 参数弱色) */
+/* 行主体:kind 分派(debugger 控制台风:箭头/关键字着色 + 名 600 + 参数弱色)
+   (导出:P4 调试台 debug-view 的执行轨迹复用同一行语言) */
 const paramsHtml = (detail) =>
   detail ? `<span class="tr-params">(${esc(detail)})</span>` : "";
 
-function bodyHtml(r) {
+export function bodyHtml(r) {
   const detail = r.detail ? `<span class="tr-args">${esc(r.detail)}</span>` : "";
   switch (r.kind) {
     case "run":

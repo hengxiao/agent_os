@@ -1,0 +1,220 @@
+/* terminal 主题(DEBUG-UI-THEMES.md §3.3):90 年代主机房。
+   磷光绿 #33ff66 on 近黑深绿底,UI/mono 双 mono 栈,body 叠加 2% 扫描线,
+   面板 double 边框,暂停行反色(底色/文字互换)而非改底色。
+   契约变量按 §2.1 全量定义(字面 hex——契约测试直接解析 css 源做 WCAG
+   对比度计算);--terminal-* 是主题私有装饰变量,只供装饰层,不承担文本色。
+   克制主题:无 emoji 装饰,动效全 subtle,不做 amber 变体(§6 不做清单)。 */
+
+[data-theme="terminal"] {
+  color-scheme: dark;
+
+  /* ── 基底:近黑深绿(磷光屏底) ─────────────────────────────── */
+  --bg-0: #0a0f0a;   /* 应用底色 */
+  --bg-1: #101a12;   /* 面板 */
+  --bg-2: #15251a;   /* 悬浮/选中 */
+  --bg-3: #1d3020;   /* 悬停 */
+  --line: #1e3a26;   /* 分割线 */
+  --line-strong: #2e5a3a; /* 强调描边 */
+  /* 文本:磷光绿三档 */
+  --fg-0: #33ff66;   /* 主文本(磷光绿) */
+  --fg-1: #7fe89a;   /* 次文本 */
+  --fg-2: #4a8a56;   /* 弱化/占位 */
+
+  /* 语义:run/frame 状态(状态永远"颜色 + 文字"双编码;无 emoji) */
+  --ok:      #33ff66;   /* done / success */
+  --warn:    #ffc857;   /* paused / degraded(琥珀警告) */
+  --danger:  #ff5555;   /* failed / error */
+  --aborted: #c678dd;   /* aborted */
+  --live:    #40d0ff;   /* running / live */
+
+  /* 语义:信号类型 */
+  --sig-llm:      #66aaff;
+  --sig-tool:     #33ff66;
+  --sig-sidecar:  #ffc857;
+  --sig-compress: #c678dd;
+  --sig-budget:   #ff5555;
+  --sig-frame:    #4a8a56;
+
+  /* 语义:工具权限等级 */
+  --perm-read:  #4a8a56;
+  --perm-write: #ffc857;
+  --perm-net:   #66aaff;
+  --perm-exec:  #ff5555;
+
+  /* 排版:终端 = UI 也走 mono 栈 */
+  --font-ui: "JetBrains Mono", "SF Mono", "IBM Plex Mono", Consolas,
+    "Courier New", monospace;
+  --font-mono: "JetBrains Mono", "SF Mono", "IBM Plex Mono", Consolas,
+    "Courier New", monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  --s1: 4px; --s1-5: 6px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+
+  /* 形状:近方角(终端无圆角文化,留 2px 防爆边) */
+  --r-sm: 2px; --r-conn: 2px; --r-md: 3px; --r-lg: 4px;
+
+  /* 暂停行相关(app.css 消费;反色由装饰层显式规则接管,此值只兜底) */
+  --debug-paused-bg: #16301e;
+}
+
+/* ── 主题私有装饰变量(只供装饰层,不作文本色)────────────────── */
+[data-theme="terminal"] {
+  --terminal-glow:       rgba(51, 255, 102, 0.16);  /* 磷光晕 */
+  --terminal-glow-strong: rgba(51, 255, 102, 0.30);
+  --terminal-scanline:   rgba(51, 255, 102, 0.02);  /* 扫描线 ~2% */
+  --terminal-prompt:     #33ff66;                   /* $ 提示符色(= --ok) */
+  --terminal-btn-bg:     #33ff66;                   /* 主按钮底(磷光绿) */
+  --terminal-btn-fg:     #0a0f0a;                   /* 主按钮字(反色近黑) */
+}
+
+/* ── 装饰层(只加 override,不改组件;全部消费契约 token)───────── */
+
+/* CRT 扫描线 + 磷光点阵:body 全屏叠加,扫描线 ~2% / 点阵 4.5% 透明度 */
+[data-theme="terminal"] body {
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      var(--terminal-scanline) 0px,
+      var(--terminal-scanline) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    radial-gradient(circle, rgba(51, 255, 102, 0.045) 1px, transparent 1.5px);
+  background-size: auto, 12px 12px;
+}
+
+/* 卡片:double 边框 + 极轻磷光晕(终端窗口感) */
+[data-theme="terminal"] .card {
+  border-style: double;
+  border-width: 3px;
+  border-color: var(--line-strong);
+  box-shadow: 0 0 10px var(--terminal-glow);
+}
+
+/* 按钮:近方角;hover 加亮描边,active 压暗 */
+[data-theme="terminal"] .btn {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+[data-theme="terminal"] .btn:hover { border-color: var(--ok); }
+
+/* 主按钮:磷光绿底 + 近黑字(反色块);hover 出光晕,active 收光 */
+[data-theme="terminal"] .btn-primary {
+  background: var(--terminal-btn-bg);
+  border-color: var(--terminal-btn-bg);
+  color: var(--terminal-btn-fg);
+  font-weight: 600;
+}
+[data-theme="terminal"] .btn-primary:hover {
+  border-color: var(--terminal-btn-bg);
+  box-shadow: 0 0 14px var(--terminal-glow-strong);
+}
+[data-theme="terminal"] .btn-primary:active {
+  box-shadow: 0 0 4px var(--terminal-glow);
+}
+[data-theme="terminal"] .btn-primary[disabled],
+[data-theme="terminal"] .btn-primary[disabled]:hover {
+  background: var(--bg-3);
+  border-color: var(--line);
+  color: var(--fg-2);
+  box-shadow: none;
+}
+
+/* 输入:focus 磷光绿描边 + 光晕 */
+[data-theme="terminal"] .input:focus {
+  border-color: var(--ok);
+  box-shadow: 0 0 8px var(--terminal-glow);
+  outline: none;
+}
+
+/* StatusPill:方角 + double 描边(文字状态保留,双编码不豁免) */
+[data-theme="terminal"] .status-pill { border-style: double; }
+/* running 的 pill-dot:步进闪烁(光标块感;subtle) */
+[data-theme="terminal"] .status-pill[data-status="running"] .pill-dot {
+  animation: terminal-blink 1.1s steps(2, jump-none) infinite;
+}
+@keyframes terminal-blink {
+  50% { opacity: 0.25; }
+}
+
+/* 结束横幅:左缘 double 强调条(tone 色由 app.css 既有规则供给) */
+[data-theme="terminal"] .banner { border-left-width: 3px; border-left-style: double; }
+
+/* SSE 连接点:在线时方角块闪烁(代替脉冲,CRT 光标感) */
+[data-theme="terminal"] .dbg-conn { border-radius: 0; }
+[data-theme="terminal"] .dbg-conn[data-state="ok"] {
+  animation: terminal-blink 1.1s steps(2, jump-none) infinite;
+}
+
+/* 轨迹区:gutter 保持等宽字符位;暂停行**反色**(底色/文字互换,§3.3) */
+[data-theme="terminal"] .dbg-trace-list .tr-gutter { font-family: var(--font-mono); }
+[data-theme="terminal"] .dbg-row[data-paused="true"],
+[data-theme="terminal"] .dbg-row[data-paused="true"]:hover {
+  background: var(--fg-0);
+  color: var(--bg-0);
+}
+/* 反色行内所有子元素统一继承反色文字色(仅视觉;data-* 钩子与文字通道不动) */
+[data-theme="terminal"] .dbg-row[data-paused="true"] * { color: inherit; }
+/* 反色行的 warn 色左条换成近黑(在绿底上保持可见) */
+[data-theme="terminal"] .dbg-row[data-paused="true"]::before {
+  background: var(--bg-0);
+}
+
+/* 调用栈帧:hover 磷光描边;当前帧同样反色 */
+[data-theme="terminal"] .dbg-frame:hover {
+  background: var(--bg-3);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+[data-theme="terminal"] .dbg-frame[data-current="true"] {
+  background: var(--fg-0);
+  color: var(--bg-0);
+  box-shadow: none;
+}
+[data-theme="terminal"] .dbg-frame[data-current="true"] * { color: inherit; }
+
+/* 小节标题:$ shell 提示符前缀(CSS 生成装饰字符,非 emoji) */
+[data-theme="terminal"] .dbg-sec-title::before {
+  content: "$";
+  color: var(--terminal-prompt);
+}
+
+/* 干预区:虚线磷光框(待输入区) */
+[data-theme="terminal"] .dbg-intervene {
+  border: var(--stroke) dashed var(--line-strong);
+  border-radius: var(--r-md);
+  padding: var(--s2);
+}
+
+/* 主题切换器:方角描边小按钮 */
+[data-theme="terminal"] .theme-picker-btn {
+  border-radius: var(--r-sm);
+  border: var(--stroke) solid var(--line-strong);
+  background: var(--bg-1);
+  color: var(--fg-1);
+  font-family: var(--font-mono);
+}
+[data-theme="terminal"] .theme-picker-btn:hover {
+  border-color: var(--ok);
+  color: var(--fg-0);
+  box-shadow: 0 0 8px var(--terminal-glow);
+}
+
+/* ── 入场动画(subtle;§3.3 可省,仅 150ms 淡入) + reduced-motion 兜底 ── */
+@keyframes terminal-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+[data-theme="terminal"] .card { animation: terminal-fade-in 0.15s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="terminal"] *,
+  [data-theme="terminal"] *::before,
+  [data-theme="terminal"] *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

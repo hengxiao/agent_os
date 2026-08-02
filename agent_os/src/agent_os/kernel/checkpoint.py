@@ -10,7 +10,7 @@ WAL 原则:"trajectory 是 Agent 的全部状态"——帧 transcript 完整入�
      "run": {"run_id", "status", "usage": {...}, "result", "error",
              "run_state"(§W1-4 run 级工具状态,additive,schema v1 不变)},
      "frames": [{"frame_id", "skill", "parent_id", "input", "depth", "status",
-                 "result", "error", "call_id", "usage": {...},
+                 "result", "error", "call_id", "tier", "usage": {...},
                  "context": {"messages": [...], "working", "pinned", "token_estimate"}}]}
 
 ``status`` 是检查点视角的进展标签:``"done"`` = 帧已完成,或一步 LLM 调用都未
@@ -31,23 +31,31 @@ WAL 原则:"trajectory 是 Agent 的全部状态"——帧 transcript 完整入�
 例外(SUPERVISOR.md §4):``ask_supervisor`` 调用无工具结果且帧 ``working`` 含
 ``_pending_ask`` 时**不是**"分发到一半断电"——恢复时先经
 ``Kernel._settle_pending_ask`` 重新向调用方提问并写回真实答案,
-再进入上面三条规则结算其余调用。
+再进入上面三条规则结算其余调用。升权确认(ESCALATION.md §3)同理:
+``_pending_escalation`` 在档时经 ``Kernel._settle_pending_escalation``
+重走升权闸门(重问 → 批准则当场补建子帧跑完,拒绝则写 PERMISSION_DENIED),
+不落 interrupted 占位。
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from agent_os.api.v1 import (
     POST_FRAME_POP,
+    POST_STEP,
     RUN_ABORTED,
     RUN_FINISHED,
+    RUN_STARTED,
     FrameContext,
     FrameStatus,
+    Grant,
     Message,
+    Principal,
     Role,
     RunStatus,
     Signal,
@@ -63,6 +71,8 @@ from agent_os.kernel.run import Run
 
 #: checkpoint JSON schema 版本(§10.2 schema 版本化)
 CHECKPOINT_VERSION = 1
+
+_log = logging.getLogger("agent_os.kernel.checkpoint")
 
 _USAGE_KEYS = {f.name for f in dataclasses.fields(Usage)}
 
@@ -127,6 +137,8 @@ def dump_checkpoint(kernel: Any, run_id: str, path: str) -> None:
             "error": run.state.error,
             # §W1-4:run 级工具状态(todo 清单等)随 checkpoint 落盘(additive,schema v1 不变)
             "run_state": getattr(kernel.tools, "run_states", {}).get(run_id, {}),
+            # ESCALATION.md §4(E2):升权批准台账随 checkpoint 落盘(resume 后 Grant 命中一致)
+            "grants": [dataclasses.asdict(g) for g in getattr(run, "grants", [])],
         },
         "frames": [
             {
@@ -139,6 +151,9 @@ def dump_checkpoint(kernel: Any, run_id: str, path: str) -> None:
                 "result": f.result,
                 "error": str(f.error) if f.error is not None else None,
                 "call_id": f.call_id,
+                "tier": f.tier,  # 帧信任档(ESCALATION.md §2.2;additive,schema v1 不变)
+                # 数据层身份(DATA-AUTHZ.md §2.3;additive):随帧落盘,resume 身份不变
+                "principal": dataclasses.asdict(f.principal) if f.principal is not None else None,
                 "usage": _usage_to_dict(f.usage),
                 "context": {
                     "messages": [_message_to_dict(m) for m in f.context.messages],
@@ -157,13 +172,66 @@ def dump_checkpoint(kernel: Any, run_id: str, path: str) -> None:
     )
 
 
+class PeriodicCheckpointer:
+    """周期 checkpoint 订阅者(Debugger P5;``RunConfig.checkpoint_interval``,0=关)。
+
+    内核装配期挂到信号总线:``run.started`` 捕获 run_id,每 N 条 ``post:step``
+    调 :func:`dump_checkpoint` **覆盖写** ``<root>/runs/<run_id>/checkpoint.json``
+    —— 该文件语义是"最近现场"(不回溯保留历史快照),崩溃恢复点从终态提前到
+    最近 N 步;run 收尾的终态快照仍由宿主产物路径(artifacts.py)写同一文件。
+    落盘失败捕获 + log,不拖垮 run(与总线错误隔离同旨,§5.3)。
+    """
+
+    def __init__(self, kernel: Any, interval: int, artifacts_root: str | Path) -> None:
+        if interval < 1:
+            raise ValueError(f"checkpoint_interval 须 >= 1,得到: {interval!r}")
+        self._kernel = kernel
+        self._interval = interval
+        self._root = Path(artifacts_root)
+        self._counts: dict[str, int] = {}  # run_id → 已见 post:step 数
+
+    def attach(self) -> None:
+        """订阅 run 生命周期与 post:step(host 装配内核后、run 启动前调用)。"""
+        bus = self._kernel.signals
+        bus.subscribe(RUN_STARTED, self._on_started)
+        bus.subscribe(POST_STEP, self._on_step)
+        for name in (RUN_FINISHED, RUN_ABORTED):
+            bus.subscribe(name, self._on_end)
+
+    async def _on_started(self, sig: Signal) -> None:
+        self._counts[sig.run_id] = 0
+
+    async def _on_end(self, sig: Signal) -> None:
+        self._counts.pop(sig.run_id, None)
+
+    async def _on_step(self, sig: Signal) -> None:
+        count = self._counts.get(sig.run_id)
+        if count is None:
+            return
+        count += 1
+        self._counts[sig.run_id] = count
+        if count % self._interval != 0:
+            return
+        try:
+            dump_checkpoint(
+                self._kernel,
+                sig.run_id,
+                str(self._root / "runs" / sig.run_id / "checkpoint.json"),
+            )
+        except Exception:  # noqa: BLE001 — 周期落盘失败不得拖垮 run
+            _log.exception("周期 checkpoint 落盘失败(跳过):run=%s step=%s", sig.run_id, count)
+
+
 def _frame_from_dict(run_id: str, data: dict[str, Any]) -> SkillFrame:
+    principal_raw = data.get("principal")
     return SkillFrame(
         frame_id=data["frame_id"],
         run_id=run_id,
         skill=SkillRef.parse(data["skill"]),
         parent_id=data.get("parent_id"),
         input=data.get("input", {}),
+        # 旧 checkpoint 无此字段:None = v1 单用户语义(不启用拦截,不放大身份)
+        principal=Principal(**principal_raw) if principal_raw else None,
         context=FrameContext(
             messages=[_message_from_dict(m) for m in data["context"]["messages"]],
             working=data["context"].get("working", {}),
@@ -175,6 +243,7 @@ def _frame_from_dict(run_id: str, data: dict[str, Any]) -> SkillFrame:
         error=data.get("error"),
         usage=_usage_from_dict(data.get("usage", {})),
         call_id=data.get("call_id"),
+        tier=data.get("tier", "none"),  # 旧 checkpoint 无此字段:按最低档恢复(不放大权限)
     )
 
 
@@ -266,6 +335,8 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
     run = Run(run_id=doc["run"]["run_id"], config=kernel.config)
     run.state.usage = _usage_from_dict(doc["run"]["usage"])
     run.state.status = RunStatus.RUNNING
+    # ESCALATION.md §4(E2):恢复升权批准台账(approve-run 的 run 档 Grant 跨断电有效)
+    run.grants = [Grant(**g) for g in doc["run"].get("grants", [])]
     kernel._runs[run.run_id] = run
     # §W1-4:恢复 run 级工具状态(todo 清单等),恢复后状态栏与工具读到同一份
     saved_run_state = doc["run"].get("run_state")
@@ -289,6 +360,8 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
             # pending ask(SUPERVISOR.md §4):重新向调用方提问结算,
             # 先于未配对结算——不得落入 interrupted 占位
             await kernel._settle_pending_ask(frame)
+            # pending 升权确认(ESCALATION.md §3):重走升权闸门(重问/带答案重入)
+            await kernel._settle_pending_escalation(frame)
             _settle_unpaired_calls(kernel, frame)
             skill_obj = kernel.skills.get(frame.skill)
             try:

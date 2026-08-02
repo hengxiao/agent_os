@@ -1,0 +1,251 @@
+/* blueprint 主题(DEBUG-UI-THEMES.md §3.4):工程图纸——蓝图蓝底 + 白/青细线,
+   24px 方格网 + 虚线图框 + 图章式结束横幅。克制系,无 emoji,无 mascot。
+   契约变量按 §2.1 全量定义(字面 hex——契约测试直接解析 css 源做 WCAG
+   对比度计算,var() 引用无法求值);--blueprint-* 是内部调色板,只供装饰层
+   (网格/图框/图章描边),不承担文本色职责。
+   可访问性红线(§4):文本/状态色与基底关键配对 ≥4.5:1(弱化层级 ≥3:1),
+   实测表见 tests/themes-contract.test.mjs,改色即时报红。动效全 subtle。 */
+
+[data-theme="blueprint"] {
+  color-scheme: dark;
+
+  /* 基底:蓝图蓝(晒图纸) */
+  --bg-0: #10203f;   /* 应用底色(图纸底) */
+  --bg-1: #1a3a6b;   /* 面板/卡片面 */
+  --bg-2: #234a85;   /* 悬浮/选中 */
+  --bg-3: #2b5a9d;   /* 悬停加深 */
+  --line: #3d6cb0;
+  --line-strong: #5b8fd6;
+  /* 文本:白/青墨线 */
+  --fg-0: #eef4ff;
+  --fg-1: #b8cdec;
+  --fg-2: #7e97c0;
+
+  /* 语义:run/frame 状态(明度逐个压到关键配对 ≥4.5:1;状态永远
+     "颜色 + 文字"双编码) */
+  --ok:      #57e6a8;   /* done / APPROVED 薄荷绿 */
+  --warn:    #f5d061;   /* paused / HALT 图签金 */
+  --danger:  #ffada0;   /* failed / REJECT 制图红(浅化保对比度) */
+  --aborted: #d4b8ff;   /* aborted / VOID 淡紫 */
+  --live:    #7fd6ff;   /* running / 晒图青 */
+
+  /* 语义:信号类型(与语义色同锚点) */
+  --sig-llm:      #9cc3ff;
+  --sig-tool:     #57e6a8;
+  --sig-sidecar:  #f5d061;
+  --sig-compress: #d4b8ff;
+  --sig-budget:   #ffada0;
+  --sig-frame:    #7e97c0;
+
+  /* 语义:工具权限等级 */
+  --perm-read:  #7e97c0;
+  --perm-write: #f5d061;
+  --perm-net:   #9cc3ff;
+  --perm-exec:  #ffada0;
+
+  /* 排版:工程无衬线显示链;mono 不换——代码和 JSON 是工作区 */
+  --font-ui: "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei",
+    system-ui, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  --s1: 4px; --s1-5: 6px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
+
+  /* 形状:制图直角语言(小圆角) */
+  --r-sm: 2px; --r-conn: 2px; --r-md: 4px; --r-lg: 6px;
+
+  /* 阴影:硬直偏移(墨线复印感,无柔光) */
+  --shadow-sm: 2px 2px 0 rgba(6, 14, 30, 0.5);
+  --shadow-md: 4px 4px 0 rgba(6, 14, 30, 0.5);
+
+  /* 共享调试 token 重映射(tokens.css 默认值的蓝图版) */
+  --debug-paused-bg: rgba(255, 173, 160, 0.10); /* 暂停行:淡红铺底 + 装饰层云线圈 */
+  --debug-bp: #ffada0;                          /* 断点 gutter 点(= 制图红) */
+}
+
+/* ── 内部调色板(装饰层专用:网格/图框/图章,不作文本色)── */
+[data-theme="blueprint"] {
+  --blueprint-grid:    rgba(255, 255, 255, 0.05);  /* 24px 方格网线 */
+  --blueprint-grid-major: rgba(255, 255, 255, 0.10); /* 120px 主格线 */
+  --blueprint-accent:  #2f6fd0;   /* 主按钮晒图蓝(白字 4.88:1) */
+  --blueprint-accent-hover: #3d82ec;
+  --blueprint-ink:     #ffada0;   /* 图章/修订云线红(= --danger) */
+}
+
+/* ── 图框化组件样式(§3.4;只加 override,不改组件)─────────────
+   装饰全部消费契约 token 或 --blueprint-*;真实类名挂钩(app.css/dbg-*)。 */
+
+/* 图纸底:24px 细方格网 + 120px 主格线 + 主格交点十字规线(制图坐标网) */
+[data-theme="blueprint"] body {
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cpath d='M60 54v12M54 60h12' stroke='%23ffffff' stroke-opacity='.09' stroke-width='1'/%3E%3C/svg%3E"),
+    linear-gradient(var(--blueprint-grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--blueprint-grid-major) 1px, transparent 1px),
+    linear-gradient(var(--blueprint-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--blueprint-grid) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+}
+
+/* 卡片/调试控制条:虚线"图框"(制图边框) */
+[data-theme="blueprint"] .card {
+  border-style: dashed;
+  border-color: var(--line-strong);
+}
+[data-theme="blueprint"] .dbg-bar {
+  border: 1px dashed var(--line-strong);
+}
+
+/* 按钮:直角图签(letter-spacing 拉开,active 压一格) */
+[data-theme="blueprint"] .btn {
+  border-radius: var(--r-sm);
+  letter-spacing: 0.04em;
+  transition: all 0.15s ease;
+}
+[data-theme="blueprint"] .btn-primary {
+  background: var(--blueprint-accent);
+  border-color: transparent;
+  color: #ffffff;
+  font-weight: 600;
+}
+[data-theme="blueprint"] .btn-primary:hover {
+  background: var(--blueprint-accent-hover);
+  border-color: transparent;
+}
+[data-theme="blueprint"] .btn-primary:active { transform: translateY(1px); }
+[data-theme="blueprint"] .btn-primary[disabled],
+[data-theme="blueprint"] .btn-primary[disabled]:hover {
+  background: var(--bg-3);
+  color: var(--fg-2);
+  transform: none;
+  filter: none;
+}
+
+/* 输入:focus 青色双线环(描图笔感) */
+[data-theme="blueprint"] .input:focus {
+  border-color: var(--live);
+  box-shadow: 0 0 0 1px var(--live);
+  outline: none;
+}
+
+/* 顶栏:图签栏下边线(虚线) */
+[data-theme="blueprint"] .app-topbar { border-bottom: 1px dashed var(--line-strong); }
+
+/* StatusPill → 图签章(文字状态保留,双编码不豁免):
+   矩形虚线描边 + 大写字距;色点改"标注圈"(虚线空心圆) */
+[data-theme="blueprint"] .status-pill {
+  border-radius: var(--r-sm);
+  border: 1px dashed currentColor;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+[data-theme="blueprint"] .status-pill .pill-dot {
+  background: none;
+  box-shadow: none;
+  border: 1.5px dashed currentColor;
+  border-radius: 50%;
+}
+
+/* 结束横幅 → 图章:rotate(-6deg) + 双线描边 + 大写字距(§3.4);
+   章色随 tone(done=APPROVED 绿 / danger=REJECT 红 / aborted=VOID 紫) */
+[data-theme="blueprint"] .dbg-end .banner {
+  transform: rotate(-6deg);
+  border: 3px double var(--fg-1);
+  border-radius: var(--r-sm);
+  box-shadow: none;
+}
+[data-theme="blueprint"] .dbg-end .banner[data-tone="done"]    { border-color: var(--ok); }
+[data-theme="blueprint"] .dbg-end .banner[data-tone="danger"]  { border-color: var(--danger); }
+[data-theme="blueprint"] .dbg-end .banner[data-tone="aborted"] { border-color: var(--aborted); }
+[data-theme="blueprint"] .dbg-end .banner-title {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+}
+/* 其余横幅:双线左缘(图签引线;结束横幅的四周双线章已整边覆盖) */
+[data-theme="blueprint"] .banner { border-left-style: double; border-left-width: 4px; }
+
+/* 调用栈帧:当前帧虚线框标注(剖面层级) */
+[data-theme="blueprint"] .dbg-frame[data-current="true"] {
+  background: var(--bg-2);
+  outline: 1px dashed var(--live);
+  outline-offset: -1px;
+}
+
+/* 主题切换器:小图签(虚线描边 + 大写) */
+[data-theme="blueprint"] .theme-picker-btn {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--live);
+}
+[data-theme="blueprint"] .theme-picker-btn:hover {
+  border-color: var(--live);
+  color: var(--fg-0);
+}
+
+/* ── P2 时间线:标尺 gutter + 虚线竖轨(无 emoji,行类型靠既有文字通道)── */
+[data-theme="blueprint"] .dbg-trace-list { position: relative; }
+[data-theme="blueprint"] .dbg-trace-list::before {
+  content: "";
+  position: absolute;
+  left: 28px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--line) 0px,
+    var(--line) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+  pointer-events: none;
+}
+[data-theme="blueprint"] .dbg-trace-list .tr-gutter {
+  color: var(--sig-frame);
+  border-right: 1px dashed var(--line);
+  margin-right: var(--s1);
+  position: relative; /* 压过 ::before 竖轨 */
+  z-index: 1;
+  background: var(--bg-0);
+}
+/* 轨迹行:图纸横线分隔(极弱点线) */
+[data-theme="blueprint"] .dbg-row { border-bottom: 1px dotted rgba(255, 255, 255, 0.06); }
+/* 暂停行:修订"云线"——虚线描边圈代替纯填色(§3.4;底色 token 仍留淡红双编码) */
+[data-theme="blueprint"] .dbg-row[data-paused="true"],
+[data-theme="blueprint"] .dbg-row[data-paused="true"]:hover {
+  outline: 1px dashed var(--blueprint-ink);
+  outline-offset: -2px;
+}
+
+/* ── P3 检视面板:小节标题字距拉开 + 虚线题下划线;干预区虚线批注框 ── */
+[data-theme="blueprint"] .dbg-sec-title {
+  letter-spacing: 0.18em;
+  border-bottom: 1px dashed var(--line);
+}
+[data-theme="blueprint"] .dbg-intervene {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-md);
+  padding: var(--s2);
+}
+
+/* ── P4 入场动画(subtle)+ reduced-motion 兜底 ─────────────────── */
+@keyframes blueprint-sheet-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+[data-theme="blueprint"] .card { animation: blueprint-sheet-in 0.25s ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="blueprint"] *,
+  [data-theme="blueprint"] *::before,
+  [data-theme="blueprint"] *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

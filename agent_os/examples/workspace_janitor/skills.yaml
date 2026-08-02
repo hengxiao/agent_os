@@ -1,0 +1,166 @@
+# workspace_janitor(工作区大扫除)——升权系统全真示例(ESCALATION.md §7 指针)。
+# 四技能三档剧情:L1 巡检 → L2 写计划(连调多次,演示 approve-run)
+# → L3 真删文件(每次必问)→ L3 真停进程。工具全是内置真工具,零 mock;
+# 爆炸半径由 run 的 workdir 沙箱圈住(fixture scratch 树 + 演示进程)。
+skills:
+- name: ops.scan.workspace
+  version: 1.0.0
+  kind: prompt
+  description: 工作区大扫除入口,端到端巡检并清理 scratch 目录。Use when 需要盘点并清理
+    工作区里的陈旧日志/临时文件与僵死演示进程;Do not use when 只读单个文件内容。
+  inputs:
+    type: object
+    properties:
+      scratch_dir:
+        type: string
+      pid:
+        type: integer
+    required:
+    - scratch_dir
+    - pid
+  outputs:
+    type: object
+    properties:
+      status:
+        type: string
+      stale_found:
+        type: integer
+      deleted:
+        type: integer
+      process_stopped:
+        type: boolean
+    required:
+    - status
+    - stale_found
+    - deleted
+    - process_stopped
+  permissions:
+    tools:
+    - system.file.list
+    - system.file.stat
+    - system.file.read
+    - system.file.search
+    skills:
+    - ops.plan.write
+    - ops.cleanup.execute
+    - ops.service.stop
+  model:
+    prefer:
+    - mock/janitor
+  limits:
+    max_steps: 16
+    timeout: 120
+  prompt: "# skill: ops.scan.workspace\n你是工作区大扫除的巡检员(L1 只读档)。scratch 目录:{scratch_dir},演示进程 pid:{pid}\n严格按以下流程执行,每步只发一个调用:\n1. 调用 system.file.list 递归列举 {scratch_dir},找出陈旧/临时文件(后缀 .log/.tmp/.cache,或 logs/ tmp/ 目录下的文件);\n2. 调用 skill.ops.plan.write 把清理计划写入 workdir(plan.md:将删清单 + 保留清单);\n3. 再调用 skill.ops.plan.write 补记巡检日志(inspect-log.md:扫描到的事实);\n4. 调用 skill.ops.cleanup.execute 先 dry_run 预览,再真实删除找出的陈旧文件;\n5. 调用 skill.ops.service.stop 停掉演示进程 {pid};\n6. 最终答案 JSON 含 status/stale_found/deleted/process_stopped 四字段,不要输出其他文字。\n任何一步被拒绝(permission_denied)都不要重试同一调用,记录后继续后续步骤,最终 status 记 partial。\n"
+- name: ops.plan.write
+  version: 1.0.0
+  kind: prompt
+  description: 把清理计划/巡检日志写进 run 工作目录(L2 可逆写入)。Use when 需要落盘计划、
+    日志、摘要等可覆盖重写的文档;Do not use when 要删除文件或停止进程。
+  inputs:
+    type: object
+    properties:
+      path:
+        type: string
+      content:
+        type: string
+    required:
+    - path
+    - content
+  outputs:
+    type: object
+    properties:
+      written:
+        type: string
+    required:
+    - written
+  permissions:
+    tools:
+    - system.file.write
+    skills: []
+  model:
+    prefer:
+    - mock/janitor
+  limits:
+    max_steps: 4
+    timeout: 60
+  prompt: "# skill: ops.plan.write\n你是计划书记员(L2 可逆档)。调用 system.file.write 把 content 原样写入 path(相对 workdir),然后以最终答案 JSON 返回 written 字段(值即 path),不要输出其他文字。\n"
+- name: ops.cleanup.execute
+  version: 1.0.0
+  kind: prompt
+  description: 按指名清单真删文件(L3 不可逆档,每次调用必须人审)。Use when 清理计划已获批准、
+    需要删除指名文件;Do not use when 目标未指名或是目录树通配删除。
+  inputs:
+    type: object
+    properties:
+      targets:
+        type: array
+        items:
+          type: string
+        minItems: 1
+        maxItems: 20
+      dry_run:
+        type: boolean
+    required:
+    - targets
+    - dry_run
+  outputs:
+    type: object
+    properties:
+      destroyed:
+        type: array
+        items:
+          type: string
+      would_destroy:
+        type: array
+        items:
+          type: string
+    required:
+    - destroyed
+    - would_destroy
+  permissions:
+    tools:
+    - system.file.delete
+    skills: []
+  model:
+    prefer:
+    - mock/janitor
+  limits:
+    max_steps: 24
+    timeout: 60
+  prompt: "# skill: ops.cleanup.execute\n你是清理执行员(L3 不可逆档)。输入的 targets 就是人将看到并批准的清单——dry_run=true 时一个都不删,直接返回 destroyed 为空、would_destroy 等于 targets 的 JSON;dry_run=false 时对 targets 逐个调用 system.file.delete(不得增删目标),全部完成后返回 destroyed 为实际删除成功清单、would_destroy 为空的 JSON。最终答案只输出该 JSON。\n"
+- name: ops.service.stop
+  version: 1.0.0
+  kind: prompt
+  description: 停掉指名 pid 的演示进程(L3 不可逆档,每次调用必须人审)。Use when 需要停止
+    指名 pid 的僵死演示进程;Do not use when pid 未知或要批量杀进程。
+  inputs:
+    type: object
+    properties:
+      pid:
+        type: integer
+      dry_run:
+        type: boolean
+    required:
+    - pid
+    - dry_run
+  outputs:
+    type: object
+    properties:
+      stopped:
+        type: boolean
+      pid:
+        type: integer
+    required:
+    - stopped
+    - pid
+  permissions:
+    tools:
+    - system.shell.exec
+    skills: []
+  model:
+    prefer:
+    - mock/janitor
+  limits:
+    max_steps: 4
+    timeout: 60
+  prompt: "# skill: ops.service.stop\n你是进程管理员(L3 不可逆档)。dry_run=true 时不执行,直接返回 stopped=false 与 pid 的 JSON;dry_run=false 时调用 system.shell.exec 执行 `kill <pid>`(只停这一个指名 pid),然后返回 stopped=true 与 pid 的 JSON。最终答案只输出该 JSON。\n"

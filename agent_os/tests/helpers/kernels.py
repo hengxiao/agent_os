@@ -19,6 +19,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIB_SKILLS_YAML = PROJECT_ROOT / "skills" / "skills.yaml"
 
 
+async def auto_approve(question) -> dict:
+    """升权闸门的测试通道(ESCALATION.md §3;E1):一律 approve-once。
+
+    生产宿主(Web 收件箱 / CLI 协议)恒有 supervisor 通道;在闸门出现前写成的
+    用例装配本 handler,等价于"人每次都批准本次调用",原有断言语义不变。
+    """
+    return {"answer": "approve-once", "decided_by": "test:auto-approve"}
+
+
 def sandbox_tools(*, builtins: bool = False) -> LocalPythonToolRegistry:
     """注册了 system.python.exec(子进程沙箱)的工具注册表。"""
     reg = LocalPythonToolRegistry.with_builtins() if builtins else LocalPythonToolRegistry()
@@ -35,10 +44,13 @@ def assemble(
     sidecars=(),
     blackboard=None,
     telemetry_dir: str | Path | None = None,
+    debug_controller=None,
+    supervisor=None,
 ):
     """标准组装链:MockProvider(brain) + sandbox 工具 + 双 Logic Kernel。
 
     ``brain`` 可以是应答函数,也可以是现成 Provider 实例。
+    ``supervisor`` 给定时装配 supervisor 通道(升权闸门需要确认通道,ESCALATION.md §3)。
     """
     provider = brain if hasattr(brain, "chat") else MockProvider(brain)
     builder = (
@@ -48,12 +60,16 @@ def assemble(
         .skills(LocalFileSkillRegistry(str(skills)))
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
     )
+    if supervisor is not None:
+        builder = builder.supervisor(supervisor)
     if sidecars:
         builder = builder.sidecars(*sidecars)
     if blackboard is not None:
         builder = builder.blackboard(blackboard)
     if telemetry_dir is not None:
         builder = builder.telemetry(JsonlTelemetrySink(str(telemetry_dir)))
+    if debug_controller is not None:
+        builder = builder.debug_controller(debug_controller)
     return builder.build()
 
 

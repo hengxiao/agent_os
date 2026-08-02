@@ -4,7 +4,8 @@
 
     [run]        → RunConfig 各字段(model/max_depth/max_steps/max_cost/
                    max_wall_time/compression/seed/temperature,§2.4;
-                   workdir/read_paths §W0-1 工作目录分区)
+                   workdir/read_paths §W0-1 工作目录分区;
+                   checkpoint_interval Debugger P5 周期 checkpoint,0=关)
     [providers.*]→ kimi/anthropic/openai(兼容端点)/mock(dotted path 应答函数)
     [tools]      → builtins 内置工具;python_exec = docker|subprocess|off;
                    python_orchestrate = true|false(编排伪工具,缺省 false)
@@ -69,6 +70,7 @@ _RUN_FIELDS = (
     "temperature",
     "workdir",
     "read_paths",
+    "checkpoint_interval",
 )
 
 

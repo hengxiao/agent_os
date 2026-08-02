@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 import jsonschema
 
 from agent_os.api.v1 import (
+    PUBLIC,
+    DataDomain,
     Permission,
     Tool,
     ToolCall,
@@ -45,6 +47,8 @@ from agent_os.api.v1 import (
     ToolErrorKind,
     ToolResult,
     ToolSpec,
+    allow,
+    clearance_of,
 )
 from agent_os.tools.blob import InMemoryBlobStore
 
@@ -89,6 +93,9 @@ class LocalPythonToolRegistry:
         self._run_states: dict[str, dict[str, Any]] = {}
         #: §W1-5 skill_search 的技能数据源(KernelBuilder 装配时经 bind_skills 注入)
         self._skills: Any = None
+        #: 数据域边界表(DATA-AUTHZ.md §3.1;D1):(路径前缀, 域),最长前缀优先;
+        #: 空表 = 只有内置默认域 fs.workdir(public),其余路径按现状沙箱不拦截
+        self._fs_domains: list[tuple[Path, DataDomain]] = []
         # §W4-3 std/web:fetch_page 构造器注册(为什么不在 with_builtins:
         # 见 tools/std_web.py 模块 docstring 的 §6.1 闸门联动说明)
         from agent_os.tools.std_web import fetch_page_tool
@@ -174,9 +181,10 @@ class LocalPythonToolRegistry:
     async def dispatch(self, call: ToolCall, frame_ctx: ToolDispatchContext) -> ToolResult:
         """§8.1 分发流水线(本切片实现到超时执行为止;信号由内核 runner 收发):
 
-        schema 校验(fail fast,禁止"智能纠正")→ 三层权限(帧白名单 ∩ RunConfig 上限;
+        schema 校验(fail fast,禁止"智能纠正")→ 数据层 authZ(DATA-AUTHZ.md §3.3,
+        未配置不拦截)→ 三层权限(帧白名单 ∩ RunConfig 上限;
         工具自报等级随 spec;§W0-1 起 READ 档不占帧白名单)→ 构造 ToolContext
-        (§W0-1 workdir/read_paths 分区注入)→ ``wait_for`` 超时执行 → 结果归一化。
+        (§W0-1 workdir/read_paths 分区注入;principal 随帧透传)→ ``wait_for`` 超时执行 → 结果归一化。
         """
         tool = self._tools.get(call.name)
         if tool is None:
@@ -200,6 +208,11 @@ class LocalPythonToolRegistry:
                     retryable=False,
                 ),
             )
+        # 数据层 authZ(DATA-AUTHZ.md §5.2 双闸串联):在三层权限交集**之前**——
+        # 数据闸管"碰不碰得到",权限闸管"允不允许",各自独立失败
+        denied = self._check_data_access(call, spec, frame_ctx)
+        if denied is not None:
+            return denied
         # §W0-1:READ 档工具不占帧白名单(只读无副作用,fs 边界由 resolve_work_path 分区保证);
         # 帧白名单约束 WRITE 及以上档。内核 runner 在分发前另有 manifest 白名单闸门(§8.2),
         # 此豁免只影响直接使用 registry 的嵌入方,生产路径权限语义不变。
@@ -239,6 +252,7 @@ class LocalPythonToolRegistry:
         ctx = ToolContext(
             run_id=frame_ctx.frame.run_id,
             frame_id=frame_ctx.frame.frame_id,
+            principal=frame_ctx.frame.principal,  # DATA-AUTHZ.md §2.3:身份随帧透传(预留变实填)
             workdir=workdir,
             read_paths=[str(p.expanduser().resolve()) for p in frame_ctx.read_paths],
             blob=self._blob,
@@ -270,6 +284,71 @@ class LocalPythonToolRegistry:
         if isinstance(result, ToolResult):
             return result
         return ToolResult(ok=True, value=result)
+
+    def register_fs_domain(self, domain: DataDomain, path_prefix: str | Path) -> None:
+        """注册 fs 数据域边界(宿主 API;agent-os.toml ``[data]`` 配置段接线属 D2)。
+
+        最长前缀优先(注册即排序),嵌套域(如 fs.shared ⊂ workdir)按更具体者判。
+        """
+        self._fs_domains.append((Path(path_prefix).expanduser().resolve(), domain))
+        self._fs_domains.sort(key=lambda item: len(str(item[0])), reverse=True)
+
+    def _resolve_fs_domain(self, path: Path, workdir: Path) -> DataDomain | None:
+        """路径 → 数据域:宿主注册域(已按最长前缀排序)优先;其后内置默认域
+        ``fs.workdir``(public,D1 内置);都不沾 → None(未配置,D1 不拦截)。"""
+        for prefix, domain in self._fs_domains:
+            if path.is_relative_to(prefix):
+                return domain
+        if path.is_relative_to(workdir):
+            return DataDomain(name="fs.workdir", sensitivity=PUBLIC)
+        return None
+
+    def _check_data_access(
+        self, call: ToolCall, spec: ToolSpec, frame_ctx: ToolDispatchContext
+    ) -> ToolResult | None:
+        """数据层 authZ(DATA-AUTHZ.md §3.3;D1 仅 fs 域):拒绝 → DATA_ACCESS_DENIED,放行 → None。
+
+        D1 兼容策略(§8 D1 实现注):工具未声明 ``data_domains``、principal 未注入
+        (v1 单用户语义)、目标落不进任何已配置域——三种情况都不拦截,行为与引入
+        本系统前完全一致("未配置 = 不启用数据层拦截");**默认拒绝只作用于已配置域**
+        (内置 fs.workdir=public + ``register_fs_domain`` 注册的域)。拒绝消息只带
+        域名/敏感度/clearance,不回显路径与域内内容(不泄漏)。
+        """
+        if not spec.data_domains:
+            return None
+        principal = frame_ctx.frame.principal
+        if principal is None:
+            return None
+        if "fs.*" not in spec.data_domains:
+            return None  # db/net 域的声明与判定属 D2
+        raw = call.args.get("path")
+        if not isinstance(raw, str):
+            return None  # 无路径参数可解析(D1:按未配置语义,不拦截)
+        workdir = (
+            str(frame_ctx.workdir.expanduser().resolve())
+            if frame_ctx.workdir is not None
+            else self._workdir(frame_ctx.frame.run_id)
+        )
+        resolved = resolve_work_path(
+            workdir, [str(p.expanduser().resolve()) for p in frame_ctx.read_paths], raw
+        )
+        if isinstance(resolved, ToolResult):
+            return None  # 越界路径由工具自身按沙箱语义报错(resolve_work_path),数据层不重复判
+        domain = self._resolve_fs_domain(resolved, Path(workdir))
+        if domain is None or allow(principal, domain):
+            return None
+        return ToolResult(
+            ok=False,
+            error=ToolError(
+                kind=ToolErrorKind.DATA_ACCESS_DENIED,
+                message=(
+                    f"数据域 {domain.name}(敏感度 {domain.sensitivity})拒绝 "
+                    f"{principal.subject}(clearance {clearance_of(principal)})访问"
+                ),
+                retryable=False,
+                hint="数据层 authZ 拒绝:需要更高 clearance 的 principal(本消息不含域内任何内容)",
+            ),
+        )
 
     def release_run(self, run_id: str) -> None:
         """run 收尾:删掉该 run 的临时工作目录并忘掉登记。
@@ -335,6 +414,7 @@ class LocalPythonToolRegistry:
         reg = cls()
         reg.tool(
             name="system.file.read",
+            data_domains=["fs.*"],
             permission=Permission.READ,
             idempotent=True,
             cacheable=True,
@@ -345,12 +425,14 @@ class LocalPythonToolRegistry:
         reg.register_alias("fs_read", "system.file.read")
         reg.tool(
             name="system.file.write",
+            data_domains=["fs.*"],
             permission=Permission.WRITE,
             cost_hint="~10ms",
         )(fs_write)
         reg.register_alias("fs_write", "system.file.write")
         reg.tool(
             name="system.file.edit",
+            data_domains=["fs.*"],
             permission=Permission.WRITE,
             timeout=10.0,
             cost_hint="~10ms",
@@ -359,6 +441,9 @@ class LocalPythonToolRegistry:
         reg.tool(
             name="system.shell.exec",
             permission=Permission.EXEC,
+            # TIER-STANDARDS §1:shell/exec 按最坏情况 L3(EXEC 默认推导已是
+            # irreversible,显式写明增强可读,防推导规则变动时静默降档)
+            side_effect="irreversible",
             cost_hint="~100ms 起,取决于命令",
         )(shell_exec)
         reg.register_alias("shell_exec", "system.shell.exec")
@@ -379,6 +464,7 @@ class LocalPythonToolRegistry:
         # —— §W1 核心工具(契约字段同 READ 档统一声明,门槛见 tests/test_std_gate.py)——
         reg.tool(
             name="system.file.list",
+            data_domains=["fs.*"],
             permission=Permission.READ,
             idempotent=True,
             cacheable=True,
@@ -389,6 +475,7 @@ class LocalPythonToolRegistry:
         reg.register_alias("fs_list", "system.file.list")
         reg.tool(
             name="system.file.search",
+            data_domains=["fs.*"],
             permission=Permission.READ,
             idempotent=True,
             cacheable=True,
@@ -420,6 +507,7 @@ class LocalPythonToolRegistry:
         # —— Phase 3 补齐(library-design-plan §4.2/§4.4;新工具无旧名,不设别名)——
         reg.tool(
             name="system.file.stat",
+            data_domains=["fs.*"],
             permission=Permission.READ,
             idempotent=True,
             cacheable=True,
@@ -427,16 +515,21 @@ class LocalPythonToolRegistry:
             concurrency_safe=True,
             cost_hint="~5ms",
         )(fs_stat)
-        # 高危删除:声明 confirm(两阶段语义),WRITE 档受帧白名单约束
+        # 高危删除:声明 confirm(两阶段语义),WRITE 档受帧白名单约束;
+        # TIER-STANDARDS §1 命名规则:delete/kill/stop/remove 类必须显式标
+        # irreversible(WRITE 默认推导只是 reversible——删除不可挽回,属漏标)
         reg.tool(
             name="system.file.delete",
+            data_domains=["fs.*"],
             permission=Permission.WRITE,
+            side_effect="irreversible",
             confirm=True,
             cost_hint="~5ms",
         )(fs_delete)
         # exist_ok 语义天然幂等
         reg.tool(
             name="system.file.mkdir",
+            data_domains=["fs.*"],
             permission=Permission.WRITE,
             idempotent=True,
             cost_hint="~5ms",

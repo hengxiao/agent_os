@@ -143,6 +143,15 @@ Examples:
 
 Tools that are registered directly with the tool registry use the hierarchical name as their tool name, with no prefix.
 
+### Provider wire format
+
+The dot-separated form is the internal canonical name. OpenAI-compatible and Anthropic APIs reject dots in function names (Anthropic allows only `^[a-zA-Z0-9_-]{1,64}$`), so providers translate at the API boundary only:
+
+- Outbound (requests): tool schemas and assistant-history `tool_calls` names are mangled `.` → `__` (`system.file.read` → `system__file__read`).
+- Inbound (responses): model-returned `tool_calls` names are un-mangled `__` → `.`; names without `__` pass through unchanged (legacy flat aliases, hallucinated names).
+
+Implementation: `agent_os/src/agent_os/providers/naming.py` (`mangle_name` / `unmangle_name`), applied by `openai_compatible.py` (and its subclass `kimi.py`) and `claude.py`. Mapping is collision-safe because canonical names and aliases never contain `__`.
+
 ## 6. Migration Rules
 
 1. All new skills and tools must use the hierarchical naming convention.

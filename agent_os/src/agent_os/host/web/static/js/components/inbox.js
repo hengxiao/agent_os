@@ -13,10 +13,14 @@
    纯函数(不碰 DOM,node 单测可载):
      sortedPending(rows)          防御排序:high 在前,其余先问先排(同后端语义)
      badgeModel(rows)             TopBar 徽标视图模型 { count, hasHigh }
-     questionCardHtml(q, err)     问题卡片 HTML(err = 本地提交被拒错误条文本) */
+     questionCardHtml(q, err)     问题卡片 HTML(err = 本地提交被拒错误条文本);
+                                  kind == "escalation" 转升权卡片
+     escalationCardHtml(q, err)   升权卡片(ESCALATION.md §3;E2):档位徽标 + skill 名
+                                  + reason_hint + params JSON + 权限集 + 选项按钮 */
 
 import { getJson, postJson } from "../api.js";
 import { store } from "../store.js";
+import { copy } from "../themes.js";
 import { absTs, emptyBlock, esc, relTime, shortId, toast } from "../util.js";
 
 /* ── 纯函数 ─────────────────────────────────────────────────── */
@@ -39,8 +43,10 @@ export function badgeModel(rows) {
 
 /* 问题卡片 HTML:urgency 色条(data-urgency 驱动)+ question + run/帧链接 +
    context 可展开 + 错误条(previous_error / 本地提交被拒)+ 作答区(options 按钮组
-   或文本输入)。err 为本地提交被拒错误条文本(优先于 previous_error 呈现)。 */
+   或文本输入)。err 为本地提交被拒错误条文本(优先于 previous_error 呈现)。
+   kind === "escalation" 转升权卡片(escalationCardHtml),普通问答行为不变。 */
 export function questionCardHtml(q, err = null) {
+  if (q?.kind === "escalation") return escalationCardHtml(q, err);
   const qid = String(q?.question_id ?? "");
   const urgency = q?.urgency === "high" ? "high" : "normal";
   const runId = String(q?.run_id ?? "");
@@ -76,6 +82,84 @@ export function questionCardHtml(q, err = null) {
     (ctx
       ? `<details class="sup-ctx"><summary>context</summary>` +
         `<pre class="mono">${esc(JSON.stringify(ctx, null, 2))}</pre></details>`
+      : "") +
+    (errText ? `<div class="sup-error" role="alert">${esc(errText)}</div>` : "") +
+    (options
+      ? `<div class="sup-actions">` +
+        options
+          .map((o) => `<button class="btn" data-answer="${esc(o)}">${esc(o)}</button>`)
+          .join("") +
+        `</div>`
+      : `<div class="sup-actions">` +
+        `<input class="input sup-input" type="text" placeholder="输入回答,回车提交"` +
+        ` aria-label="回答">` +
+        `<button class="btn btn-primary" data-submit>提交</button>` +
+        `</div>`) +
+    `</div>`
+  );
+}
+
+/* 档位 → perm 色板槽位(与 Permission 缺省推导同一梯度:L1↔READ,L2↔WRITE,L3↔EXEC)。
+   颜色走 --perm-* 契约 token;档名/参数/权限名是技术文本,直渲不进 copy 表。 */
+const TIER_PERM = { none: "READ", reversible: "WRITE", irreversible: "EXEC" };
+
+/* 升权卡片(ESCALATION.md §3;E2):档位徽标(perm-badge 风格)+ skill 名 + question +
+   reason_hint + params JSON(可折叠)+ requested 权限集 chips + 选项按钮。
+   选项枚数由后端 options 决定(L2 三枚/L3 两枚),UI 不自判;作答走同一 data-answer 通道。 */
+export function escalationCardHtml(q, err = null) {
+  const qid = String(q?.question_id ?? "");
+  const urgency = q?.urgency === "high" ? "high" : "normal";
+  const runId = String(q?.run_id ?? "");
+  const frameId = String(q?.frame_id ?? "");
+  const ctx = q?.context && typeof q.context === "object" ? q.context : {};
+  const tier = Object.hasOwn(TIER_PERM, ctx.tier) ? String(ctx.tier) : "none";
+  const skill = String(ctx.skill ?? "");
+  const reason = String(ctx.reason_hint ?? "");
+  const params = ctx.params && typeof ctx.params === "object" ? ctx.params : null;
+  const req = ctx.requested && typeof ctx.requested === "object" ? ctx.requested : {};
+  const reqTools = Array.isArray(req.tools) ? req.tools : [];
+  const reqSkills = Array.isArray(req.skills) ? req.skills : [];
+  const options = Array.isArray(q?.options) && q.options.length ? q.options : null;
+  const errText = err || q?.previous_error || null;
+  const askedAt = Number(q?.asked_at);
+  const timeHtml = Number.isFinite(askedAt) && askedAt > 0
+    ? `<span class="sup-time" title="${esc(absTs(askedAt))}">` +
+      `${esc(relTime(new Date(askedAt * 1000).toISOString()))}</span>`
+    : "";
+  return (
+    `<div class="sup-card" data-urgency="${urgency}" data-qid="${esc(qid)}" data-kind="escalation">` +
+    `<div class="sup-card-top">` +
+    `<span class="perm-badge" data-perm="${TIER_PERM[tier]}" title="tier: ${esc(tier)}">` +
+    `<span class="perm-dot" aria-hidden="true"></span>${esc(tier)}</span>` +
+    `<span class="sup-q mono">${esc(skill)}</span>` +
+    (urgency === "high"
+      ? `<span class="sup-urg" title="urgency: high">高优</span>`
+      : "") +
+    `</div>` +
+    `<div class="sup-esc-q">${esc(q?.question ?? "")}</div>` +
+    `<div class="sup-meta">` +
+    (runId
+      ? `<a class="sup-link" href="#/runs/${encodeURIComponent(runId)}"` +
+        ` title="查看 run ${esc(runId)}">run ${esc(shortId(runId))}</a>`
+      : "") +
+    (runId && frameId
+      ? `<a class="sup-link" href="#/runs/${encodeURIComponent(runId)}` +
+        `?frame=${encodeURIComponent(frameId)}" title="查看提问帧 ${esc(frameId)}">` +
+        `帧 f-${esc(shortId(frameId))}</a>`
+      : "") +
+    timeHtml +
+    `</div>` +
+    (reason ? `<div class="sup-reason mono">${esc(reason)}</div>` : "") +
+    (params
+      ? `<details class="sup-ctx"><summary>${esc(copy("escalation.params"))}</summary>` +
+        `<pre class="mono">${esc(JSON.stringify(params, null, 2))}</pre></details>`
+      : "") +
+    (reqTools.length || reqSkills.length
+      ? `<div class="sup-req">` +
+        `<span class="sup-req-label">${esc(copy("escalation.requested"))}</span>` +
+        reqTools.map((t) => `<span class="chip mono">${esc(t)}</span>`).join("") +
+        reqSkills.map((s) => `<span class="chip mono">skill:${esc(s)}</span>`).join("") +
+        `</div>`
       : "") +
     (errText ? `<div class="sup-error" role="alert">${esc(errText)}</div>` : "") +
     (options

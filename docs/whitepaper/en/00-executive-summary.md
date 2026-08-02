@@ -1,7 +1,7 @@
 # Agent OS Technical Whitepaper
 
 > Version: v1.0 (2026-08)
-> Form: technical whitepaper (English edition; Chinese edition: [WHITEPAPER.md](WHITEPAPER.md))
+> Form: executive summary (English; per-system deep chapters follow in this directory; 中文: [../zh/00-executive-summary.md](../zh/00-executive-summary.md))
 > Scope: prototype, core philosophy, architecture, subsystems, problems solved, status & roadmap
 > Basis: every claim herein is grounded in the repository's implemented code and
 >   design documents (see Appendix A). "Implemented" and "designed but not yet
@@ -304,8 +304,12 @@ parent (lower tier)   kernel                        caller (human)
   │                    │ ⑧a approve → isolated frame  │ approve-once /
   │                    │    (clean-context invariant) │ approve-run (L2 only) / deny
   │                    │ ⑧b deny → PERMISSION_DENIED  │
-  │◀── child result (tagged [ESCALATED:...])          │
+  │◀── child result (folded into a tool result)         │
 ```
+
+> Note: the `[ESCALATED:...]` provenance tag on the return path is designed
+> (ESCALATION.md §3) but not yet implemented — the escalated child's result
+> currently looks like any other tool result (see chapter 09, §6).
 
 Key properties:
 
@@ -369,9 +373,10 @@ environment — that is the boundary).
 ### 6.2 Debugger (GDB Semantics)
 
 The Web debug console treats a run as a process: breakpoints (pre:tool.call /
-step / error, glob-matched), stepping (into/over/out), pause at any time
-(SIGINT semantics), frame inspection, and intervention (modify arguments /
-inject a message, then resume). Debug sessions use the same suspend-resume
+skill.invoke / step / error, glob-matched), stepping (into/over/out), pause
+at any time (SIGINT semantics), frame inspection, and intervention (modify
+arguments / inject a message, then resume). Debug sessions use the same
+suspend-resume
 loop; a breakpoint hit is a pending.
 
 ### 6.3 Theme System (Six Themes, Zero Component Branches)
@@ -392,8 +397,8 @@ from production) → a seven-group full-field editor (live derived-tier badge)
 (test runs ride the same assembly line as production) → the five-gate
 pipeline → a human clicks promote (three defenses: report hash bound to
 content, hard fail rejection, server-side re-run of G1-G3) → production hot
-reload. The CLI exposes the same gate (`agent-os lab validate`, exit codes
-0/2/4), consumable headlessly by coding agents.
+reload. The CLI exposes the same gate (`agent-os lab validate`, exit code 0
+for pass/warn, 2 for fail), consumable headlessly by coding agents.
 
 ## 7. Problems Solved (Mapping Revisited)
 

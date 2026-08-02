@@ -1,7 +1,7 @@
 # Agent OS 技术白皮书
 
 > 版本:v1.0(2026-08)
-> 文体:技术白皮书(中文版本;英文版见 [WHITEPAPER.en.md](WHITEPAPER.en.md))
+> 文体:执行摘要(中文;分项目深度章节见本目录后续章节;English: [../en/00-executive-summary.md](../en/00-executive-summary.md))
 > 范围:项目原型、核心理念、架构设计、子系统、解决的问题、现状与路线
 > 依据:本文件全部论述以仓库已实现代码与既有设计文档为准(见附录 A 引用清单),
 >   区分"已实现"与"已设计未实现"两个状态,不做超出实现的承诺。
@@ -259,8 +259,11 @@ EXEC→irreversible);**skill 推导不声明**(白名单 tools/skills 递归
   │                   │ ⑧a 批准→隔离新帧         │
   │                   │    (干净 context 不变量) │
   │                   │ ⑧b 拒绝→PERMISSION_DENIED│
-  │◀── 子帧结果(带 [ESCALATED:...] 标记)       │
+  │◀── 子帧结果(折叠为 tool result)            │
 ```
+
+> 注:返回路径的 `[ESCALATED:...]` provenance 标记已设计(ESCALATION.md §3)
+> 未实现——升权子帧结果目前与普通 tool result 同形(见第 09 章 §6)。
 
 关键性质:
 
@@ -309,8 +312,8 @@ schema)、G5 提示词卫生(注入诱导检测)。任何 fail 不能进生产�
 
 ### 6.2 调试器(GDB 语义)
 
-Web 调试台把 run 当进程调试:断点(pre:tool.call / step / error 三类,
-glob 匹配)、单步(into/over/out)、随时 pause(SIGINT 语义)、
+Web 调试台把 run 当进程调试:断点(pre:tool.call / skill.invoke / step /
+error 四类,glob 匹配)、单步(into/over/out)、随时 pause(SIGINT 语义)、
 帧检视与干预(modify args / inject message 后放行)。调试会话同样
 走挂起-恢复闭环,断点命中即 pending。
 
@@ -329,7 +332,7 @@ skill 的开发闭环:DraftStore 草稿层(与生产物理分离)→ 七组全�
 只有 `lab.draft.*` 五件工具,**能改不能发**)→ 测试面板(试跑走
 生产同一装配线)→ 五关闸门 → 人点提交(promote 三重防:报告哈希
 绑内容、fail 硬拒、服务端复跑 G1-G3)→ 生产热重载。CLI 提供同一
-闸门(`agent-os lab validate`,退出码 0/2/4),coding agent 可头less 消费。
+闸门(`agent-os lab validate`,退出码 pass/warn=0、fail=2),coding agent 可头less 消费。
 
 ## 7. 解决的问题(映射回顾)
 

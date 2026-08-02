@@ -23,9 +23,17 @@ from typing import Any
 
 import yaml
 
-from agent_os.api.v1 import Skill, SkillManifest, SkillRef
+from agent_os.api.v1 import (
+    Skill,
+    SkillCall,
+    SkillFrame,
+    SkillManifest,
+    SkillRef,
+    SkillSchema,
+)
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.skills.loader import materialize
+from agent_os.skills.local_file import build_child_frame
 from agent_os.skills.manifest import parse_manifest
 
 #: 草稿名合法面(docs/NAMING.md §2):≥2 段点分,段内小写 snake_case——
@@ -278,9 +286,10 @@ class DraftStore:
 class OverlaySkillRegistry:
     """生产 registry + 草稿层,**草稿优先**(docs/SKILL-DEV.md §1.1)。
 
-    L1 只服务推导档与读取面(``derive_skill_tier`` 的 skills 参数);test-run
-    装配(试跑用草稿优先的真 run)属 L3,这期不接线。草稿暂不合规时透明回落
-    生产同名 skill——半成品影子不遮蔽可用版本。
+    L1 服务推导档;L3 起补齐 SkillRegistry 协议面(get/visible_to/make_frame/
+    manifests),供 test-run 与 G4 的真 run 装配——跑的就是生产形态的 run
+    (§2.4 所见即所得)。草稿暂不合规时透明回落生产同名——半成品影子不遮蔽
+    可用版本。只读装配面:loader 的热重载/写入仍属生产 registry。
     """
 
     def __init__(self, production: Any, store: DraftStore) -> None:
@@ -292,6 +301,47 @@ class OverlaySkillRegistry:
             return self._store.load_skill(ref.name)
         except (FileNotFoundError, SkillLoadError, ValueError):
             return self._production.get(ref)
+
+    def visible_to(self, frame: Any) -> list[SkillSchema]:
+        """帧白名单内子技能的伪工具 schema(同 local_file 先例;目标查找走草稿优先)。"""
+        caller = self.get(frame.skill)
+        schemas: list[SkillSchema] = []
+        for name in caller.manifest.permissions.skills:
+            try:
+                target = self.get(SkillRef(name=name))
+            except SkillLoadError:
+                continue  # 引用存在性由闸门判;此处防御性跳过(与 visible_to 同姿势)
+            schemas.append(
+                SkillSchema(
+                    name=f"skill.{name}",
+                    description=target.manifest.description,
+                    parameters=target.manifest.inputs,
+                )
+            )
+        return schemas
+
+    def make_frame(self, call: SkillCall, parent: SkillFrame) -> SkillFrame:
+        """压帧(草稿优先解析目标);构建走与生产同一函数(§2.4 所见即所得)。"""
+        target = self.get(SkillRef(name=call.name))
+        return build_child_frame(target, call, parent)
+
+    def manifests(self) -> list[SkillManifest]:
+        """生产清单 + 草稿清单(同名草稿覆盖;不合规草稿不进清单,半成品不遮蔽生产)。"""
+        merged = {m.name: m for m in self._production.manifests()}
+        for row in self._store.list():
+            if _loadable(self._store, row["name"]):
+                merged[row["name"]] = self._store.load_skill(row["name"]).manifest
+        ordered = [merged.pop(m.name) for m in self._production.manifests() if m.name in merged]
+        return ordered + list(merged.values())  # 生产拓扑序在前,草稿新增附后
+
+
+def _loadable(store: DraftStore, name: str) -> bool:
+    """草稿当前可解析(不合规的草稿不进清单,半成品不遮蔽生产)。"""
+    try:
+        store.load_skill(name)
+    except (FileNotFoundError, SkillLoadError, ValueError):
+        return False
+    return True
 
 
 def _write_with_bak(path: Path, text: str) -> None:

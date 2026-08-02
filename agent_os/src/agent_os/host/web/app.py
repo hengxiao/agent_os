@@ -28,18 +28,28 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
 
+import jsonschema
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent_os.api.v1 import SkillRef, explain_skill_tier
+from agent_os.api.v1 import (
+    ChatResponse,
+    ChatUsage,
+    Message,
+    Role,
+    SkillRef,
+    ToolCall,
+    explain_skill_tier,
+)
 from agent_os.host.shared.artifacts import (
     frame_tree,
     read_checkpoint,
     read_result,
     read_trace,
 )
+from agent_os.host.shared.replay import replace_providers
 from agent_os.host.web.rca import locate_first_error, usage_panel
 from agent_os.host.web.run_manager import (
     HUB_CLOSED,
@@ -87,6 +97,40 @@ def _lab_store(config_path: str | Path, artifacts_root: Path) -> DraftStore:
     except Exception:  # noqa: BLE001 — Lab 存储配置失败不阻断 Web 启动
         drafts_root = None
     return DraftStore(drafts_root or (Path(artifacts_root) / "drafts"))
+
+
+def _lab_replace_providers(kernel: Any, script: list[dict[str, Any]]) -> None:
+    """用例的 ``mock_script``(dict 形态)→ MockProvider 回放(docs/RUNNERS.md §3.4 同机制;
+
+    docs/SKILL-DEV.md §1.5:确定性重放优先,无 mock 才用装配的真实 provider)。
+    """
+    responses = []
+    for item in script:
+        msg = item.get("message") or {}
+        usage = item.get("usage") or {}
+        responses.append(
+            ChatResponse(
+                message=Message(
+                    role=Role(msg.get("role", "assistant")),
+                    content=msg.get("content", ""),
+                    tool_calls=[
+                        ToolCall(
+                            id=str(tc.get("id", "")),
+                            name=str(tc.get("name", "")),
+                            args=dict(tc.get("args") or {}),
+                        )
+                        for tc in msg.get("tool_calls") or []
+                    ],
+                ),
+                finish_reason=item.get("finish_reason", "stop"),
+                usage=ChatUsage(
+                    prompt=usage.get("prompt", 0),
+                    completion=usage.get("completion", 0),
+                    cost=usage.get("cost", 0.0),
+                ),
+            )
+        )
+    replace_providers(kernel, responses)
 
 
 class RunOverrides(BaseModel):
@@ -151,6 +195,17 @@ class LabPromoteBody(BaseModel):
     report_id: str
     version: str | None = None
     warnings_ack: bool = False
+
+
+class LabTestRunBody(BaseModel):
+    """``POST /api/lab/drafts/{name}/test-run``(docs/SKILL-DEV.md §1.5;L3)。
+
+    ``input`` 直给,或 ``case`` 指名 tests/ 下的用例文件({input, expect?, mock_script?});
+    二者都给时 case 优先。
+    """
+
+    input: dict[str, Any] | None = None
+    case: str | None = None
 
 
 class DebugBreakpointBody(BaseModel):
@@ -775,7 +830,11 @@ def create_app(
 
     @app.post("/api/lab/drafts/{name}/validate")
     def lab_validate_draft(name: str) -> dict[str, Any]:
-        """跑提交闸门(docs/SKILL-DEV.md §1.4;L2):五关报告,落盘 ``gate/<ts>.json``。"""
+        """跑提交闸门(docs/SKILL-DEV.md §1.4;L2/L3):五关报告,落盘 ``gate/<ts>.json``。
+
+        G4 冒烟执行器(L3):与 test-run 同逻辑的真 run(overlay 装配,同步跑,
+        RunConfig 即预算封顶)——outputs 必须过草稿 outputs schema。
+        """
         try:
             draft = lab_store.read(name)
         except ValueError as e:
@@ -787,10 +846,104 @@ def create_app(
                 draft,
                 production=manager.shared_skills_registry(),
                 tools=manager.shared_tools_registry(),
+                smoke_runner=_lab_smoke_runner(name, draft),
             )
         except RunValidationError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return lab_store.save_gate_report(name, report)
+
+    def _lab_smoke_runner(name: str, draft: dict[str, Any]) -> Any:
+        """构造 G4 冒烟执行器:overlay 装配(草稿优先)→ 真 run → outputs 校验。
+
+        结果形态 ``{"ok": bool, "error": str}``(gate.py 消费);mock_script 用例
+        走 replay MockProvider(确定性重放,§1.5;无 mock 用装配的真实 provider)。
+        """
+        outputs = (draft.get("manifest") or {}).get("outputs") or {}
+
+        def _run(case: dict[str, Any]) -> dict[str, Any]:
+            try:
+                kernel = manager.assemble_lab_kernel(_lab_overlay())
+                script = case.get("mock_script")
+                if script:
+                    _lab_replace_providers(kernel, script)
+                result = asyncio.run(kernel.run(name, case.get("input") or {}))
+            except Exception as e:  # noqa: BLE001 — 冒烟失败归 G4 finding,不炸 validate
+                return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return _lab_outputs_check(outputs, result)
+
+        return _run
+
+    def _lab_outputs_check(outputs: dict[str, Any], result: Any) -> dict[str, Any]:
+        """outputs schema 校验(§1.4 G4/test-run 结果区共用);空 schema 恒过。"""
+        if outputs:
+            try:
+                jsonschema.validate(result, outputs)
+            except jsonschema.ValidationError as e:
+                return {"ok": False, "error": f"outputs 校验失败: {e.message}"}
+        return {"ok": True, "error": None}
+
+    @app.post("/api/lab/drafts/{name}/test-run")
+    async def lab_test_run(name: str, body: LabTestRunBody) -> dict[str, Any]:
+        """试跑(§1.5;L3):input 直给或 tests/case 文件;返回 run_id(SSE/记录复用现状)。
+
+        装配走 kernel_patcher:生产内核 + overlay(草稿优先)——跑的就是生产形态的
+        run(§2.4 所见即所得),生产 run 不受影响(overlay 仅本请求作用域)。
+        """
+        try:
+            draft = lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        mock_script = None
+        if body.case is not None:
+            raw = draft["tests"].get(body.case)
+            if raw is None:
+                raise HTTPException(status_code=404, detail=f"草稿无用例: {body.case}")
+            try:
+                case = json.loads(raw) if isinstance(raw, str) else raw
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"用例 {body.case} 不是合法 JSON: {e}") from e
+            run_input = case.get("input") or {}
+            mock_script = case.get("mock_script")
+        else:
+            run_input = body.input or {}
+
+        def _patch(kernel: Any) -> None:
+            manager.swap_skills_overlay(kernel, _lab_overlay())
+            if mock_script:
+                _lab_replace_providers(kernel, mock_script)
+
+        try:
+            run_id = await manager.start_run(name, run_input, kernel_patcher=_patch)
+        except (RunValidationError, SkillLoadError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"run_id": run_id}
+
+    @app.get("/api/lab/drafts/{name}/runs/{run_id}/check")
+    def lab_test_run_check(name: str, run_id: str) -> dict[str, Any]:
+        """试跑结果 + outputs 校验(§1.5;L3):状态/result/校验结论,前端轮询用。"""
+        try:
+            draft = lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        state = manager.state_of(run_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail=f"找不到 run: {run_id}")
+        record = state.get("record") or {}
+        outputs = (draft.get("manifest") or {}).get("outputs") or {}
+        check = {"ok": None, "error": None}
+        if state.get("status") == "done":
+            check = _lab_outputs_check(outputs, record.get("result"))
+        return {
+            "run_id": run_id,
+            "status": state.get("status"),
+            "result": record.get("result"),
+            "error": record.get("error"),
+            "outputs_check": check,
+        }
 
     @app.post("/api/lab/drafts/{name}/promote")
     def lab_promote_draft(name: str, body: LabPromoteBody) -> dict[str, Any]:

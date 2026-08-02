@@ -240,7 +240,23 @@ promote 后想回滚 → skills.yaml 的 .bak(promote 自动备份)+ git。
 > 5. promoted_by 取 Web 单用户 principal(RunManager.principal());
 > 6. G1 的 prompt 缺失 lint 以打过 prompt 补丁的 manifest 判定(prompt.md
 >    即指令体,不误报)。
-| L3 | 测试面板:test-run + trace 复用 + outputs 校验 + G4 冒烟入闸 | tests/case 驱动试跑,失败 trace 可见 |
+| L3 ✅ | 测试面板:test-run + trace 复用 + outputs 校验 + G4 冒烟入闸 | tests/case 驱动试跑,失败 trace 可见。已实现:OverlaySkillRegistry 全协议面(get/visible_to/make_frame/manifests)、`/test-run` + `/check` 端点、G4 实关(无用例 warn)、右栏测试面板(trace 复用 deriveTraceView/renderTrace);800 Python + 22 前端测试全绿 |
+
+> 实现注(L3):
+> 1. **overlay 接线方式**:RunManager `swap_skills_overlay` 把 overlay 接进
+>    kernel.skills / ContextManager._skills / tools._skills 三个引用点;
+>    test-run 经 `start_run(kernel_patcher=)` 走,run 管理/SSE/记录全复用;
+>    G4 经 `assemble_lab_kernel` 同步小跑(RunConfig 即预算封顶,不另设上限);
+> 2. **前端结果区用轮询**(500ms,120s 封顶)而非 SSE 增量渲染——面板是低频
+>    人工动作,SSE 已随 start_run 自动存在,增量渲染打磨留 L5;
+> 3. **outputs 校验是双保险**:内核帧结束已按同一 schema 判(outputs 不合
+>    → run failed),`/check` 的 outputs_check 是给面板/闸门的显式结论;
+> 4. **mock_script 形态**:case 文件里 dict 形态的 ChatResponse 列表
+>    `{message, finish_reason?, usage?}`,服务端转 ChatResponse 走
+>    `replace_providers`(RUNNERS §3.4 同机制);
+> 5. promote 时 G4 信报告(复跑仍只 G1-G3,§1.4 原文语义);
+> 6. 压帧构建抽 `local_file.build_child_frame` 共享——overlay 与生产的
+>    子帧构建同一函数,防两套帧语义漂移(§2.4 所见即所得)。
 | L4 | Agent 助手:`skill.dev.assistant` + `skill.draft.*` 工具组 + chat 栏 | 对话式建/改 skill,助手无 promote 能力 |
 | L5 | G5 提示词卫生 + CLI `lab validate` + 模板库 + diff 视图打磨 | 全套体验走查 |
 

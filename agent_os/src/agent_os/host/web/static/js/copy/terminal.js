@@ -49,7 +49,7 @@ export const COPY = {
   "lab.no.selection": "no drafts",
   "lab.no.selection.hint": "create above, or copy from a production skill",
   "lab.agent.empty": "agent assistant (L4)",
-  "lab.test.empty": "test panel (L3)",
+  "lab.test.empty": "not checked yet",
   // Skill Lab 闸门(docs/SKILL-DEV.md §1.4;L2):五关/确认/过期提示
   "lab.gate.g1": "G1 metadata",
   "lab.gate.g2": "G2 schema",
@@ -66,4 +66,9 @@ export const COPY = {
   "lab.promote.version": "version (empty = auto bump)",
   "lab.cancel": "abort",
   "lab.status.stale": "dirty since last check ⚠",
+  "lab.test.input": "input JSON",
+  "lab.test.case": "case (optional)",
+  "lab.test.run": "▶ run",
+  "lab.test.outputs": "outputs check",
+  "lab.test.running": "running…",
 };

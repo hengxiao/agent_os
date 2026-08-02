@@ -365,4 +365,93 @@ const DRAFT = {
   closeLab();
 }
 
+/* ── L3:测试面板渲染 / 试跑流程 / 结果与 outputs 校验(§2.1 右栏)──────── */
+{
+  const { testPanelHtml, testResultHtml } = await import("../js/components/lab.js");
+
+  // 面板骨架:输入框 / 用例下拉 / 试跑按钮
+  const panel = testPanelHtml({
+    draftTests: ["case1.json", "bad.json"],
+    testCase: "bad.json",
+    testInput: '{"city": "北京"}',
+    testRun: null,
+  });
+  assert.ok(panel.includes("data-lab-input"), "输入 JSON 编辑框");
+  assert.ok(panel.includes('value="bad.json" selected'), "用例下拉选中");
+  assert.ok(panel.includes('data-lab="test-run"'), "试跑按钮");
+
+  // 结果区:running / done + outputs ✓ / ✗
+  assert.match(testResultHtml({ status: "running" }), /试跑中|running|LOADING|试行中/);
+  const done = testResultHtml({
+    status: "done", result: { answer: "ok" },
+    check: { ok: true, error: null },
+  });
+  assert.ok(done.includes("&quot;answer&quot;"), "result 摘要(esc 后实体)");
+  assert.ok(done.includes('data-ok="true"'), "outputs 校验绿");
+  const bad = testResultHtml({
+    status: "done", result: { wrong: 1 },
+    check: { ok: false, error: "outputs 校验失败: 缺 answer" },
+  });
+  assert.ok(bad.includes('data-ok="false"'), "outputs 校验红");
+  assert.ok(bad.includes("缺 answer"), "失败原因透出");
+  assert.equal(testResultHtml(null), "", "未跑为空");
+}
+
+/* ── L3 DOM 冒烟:试跑全流程(fetch stub:POST → 轮询 check → signals)───── */
+{
+  const { openLab, closeLab, startTestRun } = await import("../js/components/lab.js");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const toastStack = doc.createElement("div");
+  toastStack.setAttribute("id", "toastStack");
+  doc.body.appendChild(toastStack);
+  doc.querySelector = (sel) => doc.body.querySelector(sel);
+
+  const calls = [];
+  const DRAFT_MIN = {
+    name: "weather.query",
+    manifest: { name: "weather.query", version: "0.1.0", kind: "prompt",
+      description: "x", inputs: { type: "object" }, outputs: { type: "object" },
+      permissions: { tools: [], skills: [] } },
+    prompt: "你是天气员。", handler: null, parse_error: null,
+    tests: { "case1.json": '{"input": {}}' },
+  };
+  const SIGNALS = [
+    { v: 1, type: "signal", name: "run.started", run_id: "run-1", ts: 1, payload: {} },
+    { v: 1, type: "signal", name: "post:llm.response", run_id: "run-1", frame_id: "f1",
+      ts: 2, payload: {} },
+  ];
+  globalThis.fetch = async (path, options = {}) => {
+    const url = String(path);
+    calls.push({ url, method: options.method ?? "GET", body: options.body });
+    const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (url === "/api/lab/drafts") return reply([{ name: "weather.query" }]);
+    if (url === "/api/lab/drafts/weather.query") return reply(DRAFT_MIN);
+    if (url.startsWith("/api/lab/drafts/weather.query/tier")) return reply({ tier: "none", sources: [], top: [] });
+    if (url === "/api/tools" || url === "/api/skills") return reply([]);
+    if (url === "/api/lab/drafts/weather.query/test-run") return reply({ run_id: "run-1" });
+    if (url === "/api/lab/drafts/weather.query/runs/run-1/check") {
+      return reply({ run_id: "run-1", status: "done", result: { answer: "ok" },
+        error: null, outputs_check: { ok: true, error: null } });
+    }
+    if (url === "/api/runs/run-1/signals") return reply(SIGNALS);
+    throw new Error(`未 stub 的请求: ${url}`);
+  };
+
+  const main = doc.createElement("main");
+  doc.body.appendChild(main);
+  openLab(main);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const run = await startTestRun();
+  assert.equal(run.status, "done");
+  assert.deepEqual(run.result, { answer: "ok" });
+  assert.equal(run.check.ok, true);
+  const post = calls.find((c) => c.url.endsWith("/test-run"));
+  assert.deepEqual(JSON.parse(post.body), { input: {} },
+    "未选用例时走输入框 JSON(空输入回落 {})");
+  closeLab();
+}
+
 console.log("lab.test.mjs: all assertions passed");

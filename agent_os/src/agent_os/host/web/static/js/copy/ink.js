@@ -43,7 +43,7 @@ export const COPY = {
   "lab.no.selection": "无稿",
   "lab.no.selection.hint": "于上题名新作,或抄生产技能",
   "lab.agent.empty": "侍者(L4)",
-  "lab.test.empty": "试帖(L3)",
+  "lab.test.empty": "未校",
   // Skill Lab 闸门(docs/SKILL-DEV.md §1.4;L2):五关/确认/过期提示
   "lab.gate.g1": "G1 名",
   "lab.gate.g2": "G2 约",
@@ -60,4 +60,9 @@ export const COPY = {
   "lab.promote.version": "version(空则自增)",
   "lab.cancel": "罢",
   "lab.status.stale": "校后又改 ⚠",
+  "lab.test.input": "入参 JSON",
+  "lab.test.case": "用例(可选)",
+  "lab.test.run": "▶ 试",
+  "lab.test.outputs": "outputs 校验",
+  "lab.test.running": "试行中…",
 };

@@ -18,6 +18,7 @@
 
 import { deleteJson, getJson, postJson, putJson } from "../api.js";
 import { copy } from "../themes.js";
+import { deriveTraceView, renderTrace } from "./trace.js";
 import { emptyBlock, esc, toast } from "../util.js";
 import { TIER_PERM } from "./inbox.js";
 
@@ -359,6 +360,59 @@ export function statusLine(view) {
   return parts.join(" · ");
 }
 
+/* 测试面板(§2.1 右栏;L3):输入 JSON + 用例下拉 + ▶ 试跑 + 结果/outputs 校验 + trace 区 */
+export function testPanelHtml(view) {
+  const cases = view.draftTests ?? [];
+  const caseOpts = [`<option value="">${esc(copy("lab.test.case"))}</option>`]
+    .concat(
+      cases.map(
+        (c) =>
+          `<option value="${esc(c)}"${c === view.testCase ? " selected" : ""}>${esc(c)}</option>`
+      )
+    )
+    .join("");
+  const running = view.testRun?.status === "running";
+  return (
+    `<div class="lab-test-panel">` +
+    `<textarea class="input mono" rows="4" data-lab-input spellcheck="false"` +
+    ` placeholder='{"city": "北京"}'>${esc(view.testInput ?? "")}</textarea>` +
+    `<span class="lab-hint" data-json-hint="testInput"></span>` +
+    `<div class="lab-test-bar">` +
+    `<select class="input" data-lab-case>${caseOpts}</select>` +
+    `<button class="btn btn-primary" data-lab="test-run"${running ? " disabled" : ""}>` +
+    `${esc(copy("lab.test.run"))}</button>` +
+    `</div>` +
+    `<div class="lab-test-result" data-lab-result>${testResultHtml(view.testRun)}</div>` +
+    `<div class="lab-test-trace" data-lab-trace>${view.traceHtml ?? ""}</div>` +
+    `</div>`
+  );
+}
+
+/* 试跑结果区:status / result 摘要 / outputs 校验(绿 ✓ / 红 ✗ + 失败原因) */
+export function testResultHtml(run) {
+  if (!run) return "";
+  if (run.status === "running") {
+    return `<div class="lab-hint">${esc(copy("lab.test.running"))}</div>`;
+  }
+  const check = run.check ?? {};
+  const outputs =
+    check.ok === null || check.ok === undefined
+      ? ""
+      : `<div class="lab-outputs" data-ok="${check.ok}">${esc(copy("lab.test.outputs"))}: ` +
+        (check.ok ? "✓" : `✗ ${esc(check.error ?? "")}`) +
+        `</div>`;
+  return (
+    `<div class="lab-test-summary" data-status="${esc(run.status ?? "")}">` +
+    `<span class="mono">${esc(run.status ?? "")}</span>` +
+    (run.error ? `<div class="lab-hint">${esc(run.error)}</div>` : "") +
+    (run.result !== null && run.result !== undefined
+      ? `<pre class="mono">${esc(JSON.stringify(run.result, null, 2))}</pre>`
+      : "") +
+    outputs +
+    `</div>`
+  );
+}
+
 /* ── 页面(DOM)─────────────────────────────────────────────── */
 
 let lab = null; // 当前页面状态;null = 未打开
@@ -405,7 +459,7 @@ export async function runCheck() {
 }
 
 function _renderGate() {
-  const host = lab.root?.querySelector(".lab-test");
+  const host = lab.root?.querySelector(".lab-gate-host");
   if (!host) return;
   if (!lab.report) {
     host.innerHTML = emptyBlock(copy("lab.test.empty"), "", "inbox");
@@ -417,6 +471,59 @@ function _renderGate() {
         `<span>${esc(copy("lab.gate.ack"))}</span></label>`
       : "";
   host.innerHTML = gateCardsHtml(lab.report) + ackRow;
+}
+
+/* 右栏整体(§2.1;L3):测试面板 + 闸门报告区 */
+function _renderTestPanel() {
+  const host = lab.root?.querySelector(".lab-test");
+  if (!host) return;
+  host.innerHTML = testPanelHtml(lab) + `<div class="lab-gate-host"></div>`;
+  _renderGate();
+}
+
+/* 试跑(§1.5/§2.3 流程 3;L3):POST test-run → 轮询 check → 结果 + trace 渲染。
+   轮询而非 SSE 增量(实现注:面板是低频人工动作,SSE 增量渲染留 L5 打磨);
+   trace 复用调试台 deriveTraceView/renderTrace,不新写一套。 */
+export async function startTestRun() {
+  if (!lab?.form) return null;
+  const err = jsonError(lab.testInput);
+  if (err) {
+    toast(`${copy("lab.json.invalid")}: ${err}`, "error");
+    return null;
+  }
+  const name = lab.form.name;
+  lab.testRun = { status: "running" };
+  lab.traceHtml = "";
+  _renderTestPanel();
+  const body = lab.testCase
+    ? { case: lab.testCase }
+    : { input: JSON.parse(lab.testInput || "{}") };
+  const started = await postJson(
+    `/api/lab/drafts/${encodeURIComponent(name)}/test-run`,
+    body
+  );
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+    const check = await getJson(
+      `/api/lab/drafts/${encodeURIComponent(name)}/runs/${started.run_id}/check`
+    );
+    if (check.status === "running") continue;
+    const signals = await getJson(`/api/runs/${started.run_id}/signals`).catch(() => []);
+    lab.traceHtml = renderTrace(deriveTraceView(Array.isArray(signals) ? signals : [], null, {}));
+    lab.testRun = {
+      runId: started.run_id,
+      status: check.status,
+      result: check.result,
+      error: check.error,
+      check: check.outputs_check,
+    };
+    _renderTestPanel();
+    return lab.testRun;
+  }
+  lab.testRun = { runId: started.run_id, status: "timeout" };
+  _renderTestPanel();
+  return lab.testRun;
 }
 
 /* 提交确认(§2.3 流程 5):内联确认行(version 可改,留空自动 bump)+ 确认/取消 */
@@ -502,8 +609,12 @@ async function _selectDraft(name) {
   lab.report = null; // 换草稿:旧报告不属于新对象
   lab.ackWarn = false;
   lab.confirming = false;
+  lab.draftTests = Object.keys(draft.tests ?? {}); // 用例下拉数据源(tests/*.json)
+  lab.testCase = null;
+  lab.testRun = null;
+  lab.traceHtml = "";
   _renderEditor();
-  _renderGate();
+  _renderTestPanel();
   await refreshTier();
   _renderStatus();
 }
@@ -562,6 +673,7 @@ function _bindEvents() {
       if (action === "delete") return await _deleteDraft(btn);
       if (action === "save") return await saveCurrentDraft();
       if (action === "check") return await runCheck();
+      if (action === "test-run") return await startTestRun();
       if (action === "promote") {
         if (!promoteReady(lab)) return; // 未点亮不响应(与 disabled 双保险)
         lab.confirming = true;
@@ -584,6 +696,10 @@ function _bindEvents() {
     }
   });
   lab.root.addEventListener("change", async (e) => {
+    if (e.target.closest("[data-lab-case]")) {
+      lab.testCase = e.target.value || null; // 选了用例 → 随 case 跑(mock_script 可带)
+      return;
+    }
     if (e.target.closest("[data-lab-ack]")) {
       lab.ackWarn = Boolean(e.target.checked);
       return _renderTop(); // warn 勾选门:提交按钮随勾选亮灭(§1.4)
@@ -605,6 +721,15 @@ function _bindEvents() {
     }
   });
   lab.root.addEventListener("input", (e) => {
+    if (e.target.closest("[data-lab-input]")) {
+      lab.testInput = e.target.value;
+      const hint = lab.root.querySelector('[data-json-hint="testInput"]');
+      if (hint) {
+        const err = jsonError(e.target.value);
+        hint.textContent = err ? `${copy("lab.json.invalid")}: ${err}` : "";
+      }
+      return;
+    }
     const field = e.target.closest("[data-field]")?.dataset.field;
     if (!field || !lab.form) return;
     lab.form[field] = e.target.value;
@@ -635,6 +760,11 @@ export function openLab(main, name = null) {
     report: null, // 最近一次闸门报告(§1.4;保存后过期)
     ackWarn: false, // warn 报告的"我已阅读警告"勾选
     confirming: false, // promote 内联确认行开关
+    draftTests: [], // 当前草稿的用例文件名列表(tests/*.json)
+    testCase: null, // 试跑选中的用例(null = 用输入框 JSON)
+    testInput: "",
+    testRun: null, // {runId, status, result, error, check}
+    traceHtml: "", // 试跑 trace(deriveTraceView/renderTrace 复用)
     root: document.createElement("div"),
   };
   lab.root.className = "lab";
@@ -643,7 +773,7 @@ export function openLab(main, name = null) {
     `<div class="lab-cols">` +
     `<div class="lab-col lab-editor"></div>` +
     `<div class="lab-col lab-agent">${emptyBlock(copy("lab.agent.empty"), "", "inbox")}</div>` +
-    `<div class="lab-col lab-test">${emptyBlock(copy("lab.test.empty"), "", "inbox")}</div>` +
+    `<div class="lab-col lab-test"></div>` +
     `</div>` +
     `<div class="lab-status"></div>`;
   main.appendChild(lab.root);
@@ -653,7 +783,10 @@ export function openLab(main, name = null) {
     _renderTop();
     const target = name ?? lab.drafts[0]?.name ?? null;
     if (target) await _selectDraft(target);
-    else _renderEditor();
+    else {
+      _renderEditor();
+      _renderTestPanel();
+    }
   })().catch((e) => toast(e.message ?? String(e), "error"));
   return { root: lab.root };
 }

@@ -49,7 +49,7 @@ export const COPY = {
   "lab.no.selection": "NO SAVE DATA",
   "lab.no.selection.hint": "name a draft above, or copy from production",
   "lab.agent.empty": "sidekick (L4)",
-  "lab.test.empty": "test arena (L3)",
+  "lab.test.empty": "not checked",
   // Skill Lab 闸门(docs/SKILL-DEV.md §1.4;L2):五关/确认/过期提示
   "lab.gate.g1": "G1 ID",
   "lab.gate.g2": "G2 STATS",
@@ -66,4 +66,9 @@ export const COPY = {
   "lab.promote.version": "version (empty = +1)",
   "lab.cancel": "B-BUTTON",
   "lab.status.stale": "changed after check ⚠",
+  "lab.test.input": "input JSON",
+  "lab.test.case": "case (opt)",
+  "lab.test.run": "▶ GO",
+  "lab.test.outputs": "outputs check",
+  "lab.test.running": "LOADING…",
 };

@@ -2178,6 +2178,37 @@ th.is-sorted .us-sort { color: var(--live); }
   padding: var(--s2) 0;
 }
 
+/* Skill Lab 测试面板(docs/SKILL-DEV.md §2.1 右栏;L3) */
+.lab-test-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding-bottom: var(--s3);
+  border-bottom: var(--stroke) solid var(--line);
+  margin-bottom: var(--s3);
+}
+.lab-test-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.lab-test-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  font-size: var(--text-xs);
+}
+.lab-test-summary pre {
+  margin: 0;
+  padding: var(--s2);
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  overflow-x: auto;
+}
+.lab-outputs[data-ok="true"] { color: var(--perm-read); }
+.lab-outputs[data-ok="false"] { color: var(--danger); }
+.lab-test-trace { max-height: 320px; overflow-y: auto; }
+
 /* run 头"等待上级裁决"Banner(帧拿不到精确标注时的兜底,S3 §5) */
 .wb-wait { align-items: center; }
 .wb-wait .banner-main { flex: 1; }

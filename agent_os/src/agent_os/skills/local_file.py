@@ -124,6 +124,40 @@ def _topo_sort(manifests: list[SkillManifest]) -> list[str]:
     return order
 
 
+def build_child_frame(target: Skill, call: SkillCall, parent: SkillFrame) -> SkillFrame:
+    """make_frame 的构建部分(input 校验 + 新帧;local_file 与 OverlaySkillRegistry 共用)。
+
+    抽取理由(docs/SKILL-DEV.md §1.1;L3):overlay 装配的 test-run 压帧必须走
+    与生产完全相同的构建路径(§2.4 所见即所得),不允许两套帧语义漂移。
+    """
+    try:
+        jsonschema.validate(call.args, target.manifest.inputs)
+    except jsonschema.ValidationError as e:
+        raise SkillLoadError(
+            f"子技能 {call.name} 的调用参数不合 inputs schema: {e.message}"
+        ) from e
+    return SkillFrame(
+        frame_id=uuid.uuid4().hex,
+        run_id=parent.run_id,
+        skill=target.ref,
+        parent_id=parent.frame_id,
+        input=dict(call.args),
+        depth=parent.depth + 1,
+        # 身份不变量(docs/DATA-AUTHZ.md §2.3):子帧原样继承父帧 principal——
+        # skill 嵌套/升权/code 沙箱都不改变身份(升权改的是副作用许可)
+        principal=parent.principal,
+        context=FrameContext(
+            messages=[
+                Message(
+                    role=Role.USER,
+                    content=json.dumps(call.args),
+                    source=Source.PARENT_INPUT,
+                )
+            ]
+        ),
+    )
+
+
 class LocalFileSkillRegistry:
     """``agent_os.api.v1.SkillRegistry`` 协议实现(M2)。"""
 
@@ -248,32 +282,7 @@ class LocalFileSkillRegistry:
         由内核 runner 转为父帧的错误观察);帧输入以首条 USER 消息进入帧上下文。
         """
         target = self.get(SkillRef(name=call.name))
-        try:
-            jsonschema.validate(call.args, target.manifest.inputs)
-        except jsonschema.ValidationError as e:
-            raise SkillLoadError(
-                f"子技能 {call.name} 的调用参数不合 inputs schema: {e.message}"
-            ) from e
-        return SkillFrame(
-            frame_id=uuid.uuid4().hex,
-            run_id=parent.run_id,
-            skill=target.ref,
-            parent_id=parent.frame_id,
-            input=dict(call.args),
-            depth=parent.depth + 1,
-            # 身份不变量(docs/DATA-AUTHZ.md §2.3):子帧原样继承父帧 principal——
-            # skill 嵌套/升权/code 沙箱都不改变身份(升权改的是副作用许可)
-            principal=parent.principal,
-            context=FrameContext(
-                messages=[
-                    Message(
-                        role=Role.USER,
-                        content=json.dumps(call.args),
-                        source=Source.PARENT_INPUT,
-                    )
-                ]
-            ),
-        )
+        return build_child_frame(target, call, parent)
 
     async def register(self, artifact: SkillArtifact, provenance: Provenance) -> SkillRef:
         """运行期写入路径(§6.2):默认不信任——code 强制 SANDBOX、CodeScanner 扫描、

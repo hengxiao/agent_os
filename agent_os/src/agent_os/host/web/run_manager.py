@@ -443,6 +443,26 @@ class RunManager:
         """本宿主的单用户 principal(docs/SKILL-DEV.md §1.2:promote 记录的 promoted_by)。"""
         return self._principal()
 
+    def assemble_lab_kernel(self, overlay: Any) -> Any:
+        """装配"生产 + 草稿层"内核(docs/SKILL-DEV.md §1.1;L3):Lab test-run/G4 专用。
+
+        **生产 run 不受影响**——overlay 只活在返回的这个内核里(Lab 请求作用域,§1.1)。
+        """
+        kernel = self._assemble_kernel()
+        self.swap_skills_overlay(kernel, overlay)
+        return kernel
+
+    @staticmethod
+    def swap_skills_overlay(kernel: Any, overlay: Any) -> None:
+        """把 overlay 接进内核的全部 skills 引用点(kernel.skills / ContextManager /
+        tools.bind_skills 的 skill_search 数据源);start_run 的 kernel_patcher 同款接线。
+        """
+        kernel.skills = overlay
+        if getattr(kernel.context, "_skills", None) is not None:
+            kernel.context._skills = overlay
+        if getattr(kernel.tools, "_skills", None) is not None:
+            kernel.tools._skills = overlay
+
     async def start_run(
         self,
         skill: str,
@@ -453,6 +473,7 @@ class RunManager:
         supervisor_handler: Any = None,
         debug_session: Any = None,
         replay_script: Any = None,
+        kernel_patcher: Any = None,
     ) -> str:
         """启动一个 run 并返回 run_id;``wait=True`` 时阻塞到 run 结束。
 
@@ -468,6 +489,8 @@ class RunManager:
         hub/trace,且本方法返回时会话已绑定 run)。
         ``replay_script``(P5 时间旅行):给了就 ``replace_providers`` 把内核
         provider 面换成回放脚本(LLM Mock 回放,工具真实重跑;replay.py 边界)。
+        ``kernel_patcher``(docs/SKILL-DEV.md §1.1;L3):装配后调用 ``kernel_patcher(kernel)``
+        (Lab 用它在生产内核上接 overlay / 替换 provider),run 管理/SSE/记录全复用。
         """
         effective = self._resolve_set(skill_set)
         tag = effective or "default"
@@ -502,6 +525,9 @@ class RunManager:
                     # P5 时间旅行:回放内核——provider 面换成 Mock 脚本(§3.4 边界:
                     # LLM 按 trace 重放,工具副作用真实重跑)
                     replace_providers(kernel, replay_script)
+                if kernel_patcher is not None:
+                    # Lab(docs/SKILL-DEV.md §1.1;L3):overlay 接线等请求作用域改造
+                    kernel_patcher(kernel)
                 state["kernel"] = kernel
 
                 async def _fan(sig: Signal) -> None:

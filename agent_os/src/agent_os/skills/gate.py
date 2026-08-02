@@ -71,11 +71,19 @@ def _status_of(findings: list[dict[str, str]]) -> str:
     return "pass"
 
 
-def validate_draft(draft: dict[str, Any], *, production: Any, tools: Any) -> dict[str, Any]:
+def validate_draft(
+    draft: dict[str, Any],
+    *,
+    production: Any,
+    tools: Any,
+    smoke_runner: Any = None,
+) -> dict[str, Any]:
     """跑提交闸门(§1.4 五关),返回报告 dict(不落盘;落盘见 DraftStore)。
 
     ``draft`` 为 :meth:`DraftStore.read` 的形态(含 parse_error 容错);
     ``production``/``tools`` 是生产 skills/tools registry(推导档与引用检查用)。
+    ``smoke_runner``(L3,G4):``callable(case: dict) -> {"ok": bool, "error": str}``
+    的冒烟执行器(test-run 同逻辑,同步小预算);None 时 G4 按 skip(单测/嵌入路径)。
     """
     gates: dict[str, Any] = {}
     raw = draft.get("manifest") if isinstance(draft.get("manifest"), dict) else None
@@ -181,14 +189,45 @@ def validate_draft(draft: dict[str, Any], *, production: Any, tools: Any) -> dic
             )
     gates["g3"] = {"status": _status_of(g3), "findings": g3}
 
-    # —— G4/G5:占位(L3/L5;结构先稳定,卡片渲染灰档)——
-    gates["g4"] = {"status": "skip", "note": "冒烟试跑,L3 实现", "findings": []}
+    # —— G4 冒烟试跑(§1.4;L3):草稿自带 tests/*.json 逐例跑真 run,outputs 必须过 schema ——
+    if smoke_runner is None:
+        gates["g4"] = {"status": "skip", "note": "冒烟试跑执行器未注入(嵌入路径)", "findings": []}
+    else:
+        cases = draft.get("tests") or {}
+        if not cases:
+            # 无用例不 fail(§2.3:warn 后可 ack 提交)——但冒烟是质量面的主要证据,值得黄
+            gates["g4"] = {
+                "status": "warn",
+                "findings": [
+                    _finding("warn", "SKILL-DEV.md §1.4 G4", "无冒烟用例(tests/*.json):建议至少一个")
+                ],
+            }
+        else:
+            g4: list[dict[str, str]] = []
+            for fname, text in cases.items():
+                try:
+                    case = json.loads(text) if isinstance(text, str) else text
+                except (json.JSONDecodeError, TypeError) as e:
+                    g4.append(_finding("fail", "SKILL-DEV.md §1.4 G4", f"用例 {fname} 不是合法 JSON: {e}"))
+                    continue
+                outcome = smoke_runner(case) or {}
+                if outcome.get("ok"):
+                    g4.append(_finding("info", "SKILL-DEV.md §1.4 G4", f"用例 {fname}: 冒烟通过"))
+                else:
+                    g4.append(
+                        _finding(
+                            "fail",
+                            "SKILL-DEV.md §1.4 G4",
+                            f"用例 {fname} 冒烟失败: {outcome.get('error') or '未知错误'}",
+                        )
+                    )
+            gates["g4"] = {"status": _status_of(g4), "findings": g4}
     gates["g5"] = {"status": "skip", "note": "提示词卫生,L5 实现", "findings": []}
 
     overall = "pass"
-    if any(gates[g]["status"] == "fail" for g in ("g1", "g2", "g3")):
+    if any(gates[g]["status"] == "fail" for g in ("g1", "g2", "g3", "g4")):
         overall = "fail"
-    elif any(gates[g]["status"] == "warn" for g in ("g1", "g2", "g3")):
+    elif any(gates[g]["status"] == "warn" for g in ("g1", "g2", "g3", "g4")):
         overall = "warn"
     return {
         "report_id": "",  # 落盘时由 DraftStore 赋值(ts + hash)

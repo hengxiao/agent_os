@@ -7,6 +7,7 @@ drafts_root 取 ``[lab].drafts_root``(本文件用 tmp_path 钉死,不碰实例�
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 
@@ -218,6 +219,24 @@ def _save_manifest(client: TestClient, manifest: dict, prompt: str = "你是天�
     assert r.status_code == 200, r.text
 
 
+def _put_smoke_case(tmp_path: Path) -> None:
+    """落一个 mock_script 冒烟用例(G4 通过形;outputs 与 _good_weather_manifest 同形)。"""
+    tests_dir = tmp_path / "drafts" / "weather.query" / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "case1.json").write_text(
+        json.dumps(
+            {
+                "input": {},
+                "mock_script": [
+                    {"message": {"role": "assistant", "content": "{}"}, "finish_reason": "stop"}
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _good_weather_manifest(**over):
     m = {
         "name": "weather.query",
@@ -232,17 +251,19 @@ def _good_weather_manifest(**over):
 
 
 def test_validate_endpoint_report_shape(tmp_path):
-    """validate:五关结构 + G4/G5 skip 占位;报告落盘 drafts/<name>/gate/。"""
+    """validate:五关结构 + G4 冒烟实跑(L3);报告落盘 drafts/<name>/gate/。"""
     client = _client(tmp_path)
     _create(client)
     _save_manifest(client, _good_weather_manifest())
+    # G4(L3):带一个 mock_script 冒烟用例,报告才全绿(无用例是 warn)
+    _put_smoke_case(tmp_path)
     r = client.post("/api/lab/drafts/weather.query/validate")
     assert r.status_code == 200, r.text
     report = r.json()
     assert report["report_id"]
     assert report["status"] == "pass"
     assert set(report["gates"]) == {"g1", "g2", "g3", "g4", "g5"}
-    assert report["gates"]["g4"]["status"] == "skip"
+    assert report["gates"]["g4"]["status"] == "pass"
     assert report["gates"]["g5"]["status"] == "skip"
     assert report["manifest_hash"]
     gate_dir = tmp_path / "drafts" / "weather.query" / "gate"
@@ -290,6 +311,7 @@ def test_promote_end_to_end_and_stale_report(tmp_path):
     client = _client(tmp_path)
     _create(client)
     _save_manifest(client, _good_weather_manifest())
+    _put_smoke_case(tmp_path)  # G4 全绿才不需要 ack(无用例 = warn)
     report = client.post("/api/lab/drafts/weather.query/validate").json()
 
     r = client.post(

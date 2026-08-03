@@ -85,4 +85,10 @@ export const COPY = {
   "lab.promote.disabled.ack": "有警示需批阅",
   "lab.dirty": "有墨未落",
   "lab.no.selection.cta": "起新稿 →",
+  "lab.pkg.title": "函",
+  "lab.pkg.draft": "草",
+  "lab.pkg.production": "正",
+  "lab.pkg.external": "外",
+  "lab.pkg.missing": "阙",
+  "lab.pkg.create": "补此草",
 };

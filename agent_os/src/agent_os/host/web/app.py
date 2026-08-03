@@ -61,6 +61,7 @@ from agent_os.host.web.run_manager import (
 )
 from agent_os.kernel.errors import AgentOSError, SkillLoadError
 from agent_os.runtime.config import load_config
+from agent_os.skills.closure import compute_closure
 from agent_os.skills.draft_store import DraftStore, OverlaySkillRegistry
 from agent_os.skills.gate import GateError, promote_draft
 from agent_os.skills.gate import validate_draft as validate_gate_draft
@@ -857,6 +858,7 @@ def create_app(
                 production=manager.shared_skills_registry(),
                 tools=manager.shared_tools_registry(),
                 smoke_runner=_lab_smoke_runner(name, draft),
+                store=lab_store,  # P1:G2 引用完整性(草稿 ∪ 生产全量)
             )
         except RunValidationError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -954,6 +956,29 @@ def create_app(
             "error": record.get("error"),
             "outputs_check": check,
         }
+
+    @app.get("/api/lab/packages/{root}/closure")
+    def lab_package_closure(root: str) -> dict[str, Any]:
+        """包闭包(docs/SKILL-PACKAGES.md §3.1/§4.2;P1):成员表 + 状态四态 + 环 errors。"""
+        return _lab_closure(root)
+
+    @app.get("/api/lab/drafts/{name}/closure")
+    def lab_draft_closure(name: str) -> dict[str, Any]:
+        """= /api/lab/packages/{name}/closure 的别名(§4.2,平滑过渡)。"""
+        return _lab_closure(name)
+
+    def _lab_closure(root: str) -> dict[str, Any]:
+        try:
+            return compute_closure(
+                root,
+                lab_store,
+                manager.shared_skills_registry(),
+                manager.shared_tools_registry(),
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @app.post("/api/lab/assistant")
     async def lab_assistant(body: LabAssistantBody) -> dict[str, Any]:

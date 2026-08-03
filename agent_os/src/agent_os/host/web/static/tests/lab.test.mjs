@@ -687,4 +687,104 @@ const DRAFT = {
   closeLab();
 }
 
+/* ── P1:包面板渲染(四态徽标/根高亮/悬空成稿按钮)──────────────── */
+{
+  const { packagePanelHtml } = await import("../js/components/lab.js");
+  const view = {
+    form: { name: "ops.inspect.fleet" },
+    pkg: {
+      root: "ops.inspect.fleet",
+      root_tier: "irreversible",
+      members: [
+        { name: "ops.inspect.fleet", ref_by: null, status: "draft", tier: "none", depth: 0 },
+        { name: "ops.plan.write", ref_by: "ops.inspect.fleet", status: "draft", tier: "reversible", depth: 1 },
+        { name: "weather.query", ref_by: "ops.inspect.fleet", status: "external", tier: "none", depth: 1 },
+        { name: "ops.ghost", ref_by: "ops.plan.write", status: "missing", tier: null, depth: 2 },
+      ],
+      errors: [],
+    },
+  };
+  const html = packagePanelHtml(view);
+  assert.ok(html.includes('data-perm="EXEC"'), "根推导档徽标(L3 → EXEC 槽位)");
+  assert.ok(html.includes('data-root="true"'), "根节点高亮");
+  assert.ok(html.includes('data-status="draft"'), "草稿徽标");
+  assert.ok(html.includes('data-status="external"'), "外链徽标");
+  assert.ok(html.includes('data-status="missing"'), "悬空徽标");
+  assert.ok(html.includes('data-pkg-select="ops.plan.write"'), "草稿节点可点进编辑器");
+  assert.ok(html.includes('data-pkg-create="ops.ghost"'), "悬空一键成稿按钮");
+  assert.ok(html.includes("#/skills/weather.query"), "外链跳 Skills 页");
+  assert.ok(html.includes("--ns-depth:2"), "缩进随闭包深度");
+  assert.equal(packagePanelHtml({ form: null, pkg: null }), "", "未选草稿空态");
+}
+
+/* ── P1 DOM 冒烟:包面板加载 / 点草稿节点 / 悬空一键成稿 ─────────────── */
+{
+  const { openLab, closeLab } = await import("../js/components/lab.js");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const toastStack = doc.createElement("div");
+  toastStack.setAttribute("id", "toastStack");
+  doc.body.appendChild(toastStack);
+  doc.querySelector = (sel) => doc.body.querySelector(sel);
+
+  const calls = [];
+  const mkDraft = (name, desc) => ({
+    name,
+    manifest: { name, version: "0.1.0", kind: "prompt", description: desc,
+      inputs: { type: "object" }, outputs: { type: "object" },
+      permissions: { tools: [], skills: [] } },
+    prompt: "p", handler: null, parse_error: null, tests: {},
+  });
+  const CLOSURE = {
+    root: "ops.root", root_tier: "none",
+    members: [
+      { name: "ops.root", ref_by: null, status: "draft", tier: "none", depth: 0 },
+      { name: "ops.ghost", ref_by: "ops.root", status: "missing", tier: null, depth: 1 },
+    ],
+    errors: [],
+  };
+  globalThis.fetch = async (path, options = {}) => {
+    const url = String(path);
+    calls.push({ url, method: options.method ?? "GET", body: options.body });
+    const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (url === "/api/lab/drafts") return reply([{ name: "ops.root" }]);
+    if (url === "/api/lab/drafts/ops.root") return reply(mkDraft("ops.root", "根"));
+    if (url === "/api/lab/drafts/ops.ghost") return reply(mkDraft("ops.ghost", "新补的"));
+    if (url.startsWith("/api/lab/drafts/ops.root/closure") || url.startsWith("/api/lab/drafts/ops.ghost/closure")) {
+      return reply(CLOSURE);
+    }
+    if (url.startsWith("/api/lab/drafts/ops.root/tier") || url.startsWith("/api/lab/drafts/ops.ghost/tier")) {
+      return reply({ tier: "none", sources: [], top: [] });
+    }
+    if (url === "/api/tools" || url === "/api/skills") return reply([]);
+    if (url === "/api/lab/drafts" && options.method === "POST") return reply({});
+    throw new Error(`未 stub 的请求: ${options.method ?? "GET"} ${url}`);
+  };
+
+  const main = doc.createElement("main");
+  doc.body.appendChild(main);
+  const handle = openLab(main);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const pkgHtml = handle.root.querySelector(".lab-pkg")?.innerHTML ?? "";
+  assert.ok(pkgHtml.includes('data-status="missing"'), "悬空节点渲染");
+  assert.ok(pkgHtml.includes('data-pkg-create="ops.ghost"'), "一键成稿按钮在");
+
+  // 悬空一键成稿:POST 创建 → 重载列表 → 选中新草稿
+  const btn = new (await import("./dom-stub.mjs")).StubEl("button");
+  btn.dataset.pkgCreate = "ops.ghost";
+  btn.parentNode = handle.root;
+  handle.root.trigger("click", { target: btn });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  const created = calls.find((c) => c.method === "POST" && c.url === "/api/lab/drafts");
+  assert.ok(created, "POST 创建草稿");
+  assert.deepEqual(JSON.parse(created.body), { name: "ops.ghost" });
+  const editorHtmlNow = handle.root.querySelector(".lab-editor")?.innerHTML ?? "";
+  assert.ok(editorHtmlNow.includes("ops.ghost"), "新草稿被选中进编辑器");
+  closeLab();
+}
+
 console.log("lab.test.mjs: all assertions passed");

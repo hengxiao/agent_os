@@ -91,4 +91,10 @@ export const COPY = {
   "lab.promote.disabled.ack": "[locked] acknowledge warnings first",
   "lab.dirty": "unsaved changes",
   "lab.no.selection.cta": "new from template →",
+  "lab.pkg.title": "pkg",
+  "lab.pkg.draft": "draft",
+  "lab.pkg.production": "prod",
+  "lab.pkg.external": "ext",
+  "lab.pkg.missing": "dangling",
+  "lab.pkg.create": "create draft",
 };

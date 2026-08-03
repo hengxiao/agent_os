@@ -471,6 +471,51 @@ export function diffGroups(oldManifest, newManifest) {
     .sort();
 }
 
+/* 包面板(docs/SKILL-PACKAGES.md §3.1;P1):标题行(包名 + 根推导档)+ 成员行
+   (缩进 = 闭包深度;末段名 + tier 徽标 + 状态徽标;根高亮)。
+   状态四态:draft=草稿(可点进编辑器)/ production=同空间生产 / external=外链(跳 Skills 页)/
+   missing=悬空(行内"创建该草稿",断点 1.1-B 的前端面)。 */
+export function packagePanelHtml(view) {
+  const pkg = view.pkg;
+  if (!view.form || !pkg) return "";
+  const rows = (pkg.members ?? [])
+    .map((m) => {
+      const lastSeg = m.name.split(".").pop();
+      const isRoot = m.name === pkg.root;
+      const tier = m.tier ? tierBadgeHtml(m.tier) : `<span class="lab-pkg-tier-none">—</span>`;
+      const status = `<span class="lab-pkg-status" data-status="${esc(m.status)}">` +
+        `${esc(copy(`lab.pkg.${m.status}`))}</span>`;
+      let action = "";
+      if (m.status === "draft" && !isRoot) {
+        action = `<button class="lab-pkg-act" data-pkg-select="${esc(m.name)}">${esc(lastSeg)}</button>`;
+      } else if (m.status === "missing") {
+        action =
+          `<button class="lab-pkg-act" data-pkg-create="${esc(m.name)}">` +
+          `${esc(copy("lab.pkg.create"))}</button>`;
+      } else {
+        action =
+          `<a class="lab-pkg-link mono" href="#/skills/${encodeURIComponent(m.name)}">${esc(lastSeg)}</a>`;
+      }
+      const refBy = m.ref_by ? `<span class="lab-pkg-refby mono">← ${esc(m.ref_by)}</span>` : "";
+      return (
+        `<div class="lab-pkg-row" style="--ns-depth:${m.depth ?? 0}" data-root="${isRoot}">` +
+        `${tier}${action}${status}${refBy}</div>`
+      );
+    })
+    .join("");
+  const errors = (pkg.errors ?? [])
+    .map((e) => `<div class="lab-pkg-error">⚠ ${esc(e.message ?? "")}</div>`)
+    .join("");
+  return (
+    `<div class="lab-pkg">` +
+    `<div class="lab-pkg-head"><span class="lab-pkg-title">${esc(copy("lab.pkg.title"))}: ` +
+    `${esc(pkg.root)}</span>${tierBadgeHtml(pkg.root_tier ?? "none")}</div>` +
+    rows +
+    errors +
+    `</div>`
+  );
+}
+
 /* ── 页面(DOM)─────────────────────────────────────────────── */
 
 let lab = null; // 当前页面状态;null = 未打开
@@ -646,7 +691,11 @@ async function _refreshAfterAgent() {
   }
   lab.form = draftToForm(draft);
   lab.draftTests = Object.keys(draft.tests ?? {});
+  // P1:助手可能改了白名单(引用面变了)→ 包闭包同步刷新
+  lab.pkg = await getJson(`/api/lab/drafts/${encodeURIComponent(lab.form.name)}/closure`)
+    .catch(() => lab.pkg);
   _renderEditor();
+  _renderPkg();
   _renderTestPanel();
   await refreshTier();
 }
@@ -760,13 +809,23 @@ async function _selectDraft(name) {
   lab.testCase = null;
   lab.testRun = null;
   lab.traceHtml = "";
+  // P1 包闭包(docs/SKILL-PACKAGES.md §3.1):根不存在/解析失败 → 面板空态
+  lab.pkg = await getJson(`/api/lab/drafts/${encodeURIComponent(name)}/closure`)
+    .catch(() => null);
   // F11:试跑输入预填由当前草稿 inputs schema 生成(默认必成功的合法样例,
   // 不再用与 schema 无关的静态占位)
   lab.testInput = JSON.stringify(skeletonFromSchema(draft.manifest?.inputs ?? null), null, 2);
   _renderEditor();
+  _renderPkg();
   _renderTestPanel();
   await refreshTier();
   _renderStatus();
+}
+
+/* 包面板渲染(docs/SKILL-PACKAGES.md §3.1;P1):编辑器上方的包视图 */
+function _renderPkg() {
+  const host = lab.root?.querySelector(".lab-pkg");
+  if (host) host.innerHTML = packagePanelHtml(lab);
 }
 
 function _renderEditor() {
@@ -861,6 +920,21 @@ function _bindEvents() {
       }
     } catch (err) {
       toast(err.message ?? String(err), "error");
+    }
+    // 包面板(docs/SKILL-PACKAGES.md §3.1;P1):草稿节点进编辑器;悬空一键成稿
+    const pkgSelect = e.target.closest?.("[data-pkg-select]");
+    if (pkgSelect) return _selectDraft(pkgSelect.dataset.pkgSelect);
+    const pkgCreate = e.target.closest?.("[data-pkg-create]");
+    if (pkgCreate) {
+      try {
+        const name = pkgCreate.dataset.pkgCreate;
+        await postJson("/api/lab/drafts", { name });
+        await _loadDrafts();
+        _renderTop();
+        await _selectDraft(name);
+      } catch (err) {
+        toast(err.message ?? String(err), "error");
+      }
     }
     const remove = e.target.closest("[data-chip-remove]");
     if (remove) {
@@ -964,13 +1038,17 @@ export function openLab(main, name = null) {
     chat: [], // 中栏消息记录 {role: user|assistant|system, text}
     chatInput: "",
     chatBusy: false,
+    pkg: null, // 包闭包(docs/SKILL-PACKAGES.md §3.1;P1 包面板数据源)
     root: document.createElement("div"),
   };
   lab.root.className = "lab";
   lab.root.innerHTML =
     `<div class="lab-top-host"></div>` +
     `<div class="lab-cols">` +
-    `<div class="lab-col lab-editor"></div>` +
+    `<div class="lab-col lab-left">` +
+    `<div class="lab-pkg"></div>` + // 包面板(编辑器上方,§3.1)
+    `<div class="lab-editor"></div>` +
+    `</div>` +
     `<div class="lab-col lab-agent"></div>` +
     `<div class="lab-col lab-test"></div>` +
     `</div>` +

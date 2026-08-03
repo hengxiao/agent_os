@@ -92,4 +92,10 @@ export const COPY = {
   "lab.promote.disabled.ack": "存在警告,需勾选「我已阅读警告」",
   "lab.dirty": "有未保存的修改",
   "lab.no.selection.cta": "从模板新建 →",
+  "lab.pkg.title": "包",
+  "lab.pkg.draft": "草稿",
+  "lab.pkg.production": "生产",
+  "lab.pkg.external": "外链",
+  "lab.pkg.missing": "悬空",
+  "lab.pkg.create": "创建该草稿",
 };

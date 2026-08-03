@@ -207,6 +207,41 @@ def test_tier_endpoints_errors(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# P1:closure API(docs/SKILL-PACKAGES.md §4.2)
+# ---------------------------------------------------------------------------
+
+
+def test_closure_api_statuses_and_alias(tmp_path):
+    """closure:四态成员 + 根推导档;drafts 别名端点同构;根不存在 404。"""
+    client = _client(tmp_path)
+    # 根草稿引用:生产同空间(common.text.word_count,同 common? 否——根是 lab.*,
+    # 故生产引用全部 external)+ 悬空
+    draft = _create(client)
+    manifest = draft["manifest"] | {
+        "description": "巡检。Use when x;Do not use when y(凑长度过 lint)",
+        "permissions": {"tools": ["system.file.read"], "skills": ["common.text.word_count", "lab.ghost"]},
+    }
+    r = client.put("/api/lab/drafts/weather.query",
+                   json={"manifest": manifest, "prompt": "p", "handler": None})
+    assert r.status_code == 200
+
+    for path in ("/api/lab/packages/weather.query/closure", "/api/lab/drafts/weather.query/closure"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        body = r.json()
+        assert body["root"] == "weather.query"
+        by_name = {m["name"]: m for m in body["members"]}
+        assert by_name["weather.query"]["status"] == "draft"
+        assert by_name["weather.query"]["depth"] == 0
+        assert by_name["common.text.word_count"]["status"] == "external"  # 跨第一段命名空间
+        assert by_name["lab.ghost"]["status"] == "missing"
+        assert by_name["lab.ghost"]["tier"] is None
+        assert body["errors"] == []
+
+    assert client.get("/api/lab/packages/no.such/closure").status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # L2:validate + promote(docs/SKILL-DEV.md §1.4/§1.5)
 # ---------------------------------------------------------------------------
 

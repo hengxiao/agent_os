@@ -207,6 +207,58 @@ def test_g5_positive_phrasing_passes(production, tools):
 
 
 # ---------------------------------------------------------------------------
+# G2 引用完整性(docs/SKILL-PACKAGES.md §3.4 G2 行;P1)
+# ---------------------------------------------------------------------------
+
+
+def test_g2_dangling_skill_and_tool_refs(production, tools, tmp_path):
+    """G2:悬空 skill 引用 fail(指明谁引用了谁);悬空 tool 引用 fail;合法通过。"""
+    from agent_os.skills.draft_store import DraftStore
+
+    store = DraftStore(tmp_path / "drafts")
+    dangling = _good_manifest(
+        permissions={"tools": ["system.file.read", "no.such.tool"], "skills": ["no.such.skill"]}
+    )
+    report = validate_draft(_draft("lab.weather", dangling), production=production, tools=tools,
+                            store=store)
+    messages = [f["message"] for f in report["gates"]["g2"]["findings"]]
+    assert report["gates"]["g2"]["status"] == "fail"
+    assert any("no.such.skill" in m and "悬空引用" in m for m in messages)
+    assert any("no.such.tool" in m and "悬空工具引用" in m for m in messages)
+
+    # 合法:引用生产技能 + 真实工具;自引用合法递归
+    ok = _good_manifest(
+        permissions={"tools": ["system.file.read"], "skills": ["lab.weather"]}
+    )
+    report2 = validate_draft(_draft("lab.weather", ok), production=production, tools=tools,
+                             store=store)
+    assert report2["gates"]["g2"]["status"] == "pass"
+
+
+def test_g2_cross_draft_refs_and_cycle(production, tools, tmp_path):
+    """G2:跨草稿引用可解析(包语义);草稿间成环 → fail(loader 语义沿用)。"""
+    from agent_os.skills.draft_store import DraftStore
+
+    store = DraftStore(tmp_path / "drafts")
+    store.create("lab.child")
+    store.save("lab.child", manifest=_good_manifest(name="lab.child"), prompt="p")
+
+    root = _good_manifest(permissions={"tools": [], "skills": ["lab.child"]})
+    report = validate_draft(_draft("lab.weather", root), production=production, tools=tools,
+                            store=store)
+    assert report["gates"]["g2"]["status"] == "pass", "跨草稿引用(草稿 ∪ 生产)必须可解析"
+
+    store.create("lab.ring_a")
+    store.save("lab.ring_a", manifest=_good_manifest(
+        name="lab.ring_a", permissions={"tools": [], "skills": ["lab.weather"]}), prompt="p")
+    cyclic = _good_manifest(permissions={"tools": [], "skills": ["lab.ring_a"]})
+    report2 = validate_draft(_draft("lab.weather", cyclic), production=production, tools=tools,
+                             store=store)
+    assert report2["gates"]["g2"]["status"] == "fail"
+    assert any("循环依赖" in f["message"] for f in report2["gates"]["g2"]["findings"])
+
+
+# ---------------------------------------------------------------------------
 # promote 编排(单测层;API 层见 tests/web/test_lab_api.py)
 # ---------------------------------------------------------------------------
 

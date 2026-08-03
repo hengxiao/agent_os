@@ -383,7 +383,8 @@ def _cmd_lab(args: argparse.Namespace) -> int:
                 return {"ok": False, "error": f"outputs 校验失败: {e.message}"}
         return {"ok": True, "error": None}
 
-    report = validate_draft(draft, production=kernel.skills, tools=kernel.tools, smoke_runner=smoke)
+    report = validate_draft(draft, production=kernel.skills, tools=kernel.tools,
+                            smoke_runner=smoke, store=store)
     report = store.save_gate_report(args.name, report)
     ok = report["status"] != "fail"
     _emit_report(

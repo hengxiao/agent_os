@@ -85,4 +85,10 @@ export const COPY = {
   "lab.promote.disabled.ack": "存在批注警告,需确认已阅",
   "lab.dirty": "图面有未落图改动",
   "lab.no.selection.cta": "开新图 →",
+  "lab.pkg.title": "整幅",
+  "lab.pkg.draft": "草图",
+  "lab.pkg.production": "归档",
+  "lab.pkg.external": "外链",
+  "lab.pkg.missing": "缺幅",
+  "lab.pkg.create": "补开此幅",
 };

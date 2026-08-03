@@ -84,4 +84,10 @@ export const COPY = {
   "lab.promote.disabled.ack": "有警告要勾选「我明白啦」才能提交",
   "lab.dirty": "有改动还没存哦",
   "lab.no.selection.cta": "捏一个新技能 →",
+  "lab.pkg.title": "一整包",
+  "lab.pkg.draft": "草稿",
+  "lab.pkg.production": "生产",
+  "lab.pkg.external": "外链",
+  "lab.pkg.missing": "还缺着",
+  "lab.pkg.create": "补上它",
 };

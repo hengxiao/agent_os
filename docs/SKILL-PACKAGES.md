@@ -7,6 +7,10 @@
 >   的设计,后端需要如何配合。
 > 关系:Skill Lab 方案见 `SKILL-DEV.md`;命名空间见 `NAMING.md`;依赖与加载
 >   见 `DESIGN.md` §6;升权推导档(闭包取 max)见 `ESCALATION.md` §2.1。
+> **后续**:本报告的洞察成立,但作为工程方案留了七个洞(授时闭包不完整、
+>   闭包边界、原子性、包级防错位、多入口、冒烟覆盖率、助手信任面)。
+>   详细设计、业界对照与四份可选方案见 `SKILL-PACKAGES-V2.md`;
+>   两文冲突时**以 V2 为准**(V2 §2 有经实测复现的现状修正)。
 
 ---
 
@@ -221,7 +225,16 @@ L2 时 promote 只支持单文件 skills.yaml(多文件归并报错留 L5)。包
 
 | 期 | 内容 | 关闭的断点 |
 |---|---|---|
-| P1 | `compute_closure` + closure API + 包视图(含悬空节点/一键成稿)+ G2 引用完整性 | 1.1-B |
+| P1 ✅ | `compute_closure` + closure API + 包视图(含悬空节点/一键成稿)+ G2 引用完整性 | 1.1-B。已实现:`skills/closure.py`(四态/环/外链不下传)、`/api/lab/packages/{root}/closure` + drafts 别名、G2 悬空引用(tool/skill)与环判、Lab 包面板(四态徽标/根高亮/一键成稿);819 Python + 24 前端测试全绿 |
+
+> 实现注(P1):
+> 1. "不引用不存在的 skill/tool"归 G2 而非 G5(gate.py 注释同改):它查的是
+>    契约面不是辞卫;SKILL-DEV §1.4 的 G2/G5 两行已同步;
+> 2. G2 环检测用 `_DraftAwareStore`(store + 当前草稿):校验中的草稿可能
+>    还没保存,裸 store 查不到根会让闭包计算 404 漏报环;
+> 3. closure 的 tier 用完整推导档(derive_skill_tier),与包档语义一致;
+> 4. 包面板点击草稿节点仅切换选中(不重拉 closure);悬空一键成稿走空模板,
+>    模板化成稿(P3 功能包模板)再升级。
 | P2 | 原子提交(批量写入 + 单 reload + .bak + promotions 记录) | 1.1-C |
 | P3 | 助手包级化(create/closure 工具 + prompt)+ 功能包模板两件 | 1.1-A |
 | P4 | 目录形态 set 落盘 + Skills 树包徽标 + G4 包级报告分组呈现 | 打磨 |

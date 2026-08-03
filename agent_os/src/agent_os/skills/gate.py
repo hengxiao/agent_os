@@ -28,6 +28,7 @@ from agent_os.api.v1 import (
     tier_rank,
 )
 from agent_os.kernel.errors import SkillLoadError
+from agent_os.skills.closure import compute_closure
 from agent_os.skills.draft_store import OverlaySkillRegistry
 from agent_os.skills.loader import materialize
 from agent_os.skills.manifest import parse_manifest, validate_manifest
@@ -125,6 +126,7 @@ def validate_draft(
     production: Any,
     tools: Any,
     smoke_runner: Any = None,
+    store: Any = None,
 ) -> dict[str, Any]:
     """跑提交闸门(§1.4 五关),返回报告 dict(不落盘;落盘见 DraftStore)。
 
@@ -132,6 +134,8 @@ def validate_draft(
     ``production``/``tools`` 是生产 skills/tools registry(推导档与引用检查用)。
     ``smoke_runner``(L3,G4):``callable(case: dict) -> {"ok": bool, "error": str}``
     的冒烟执行器(test-run 同逻辑,同步小预算);None 时 G4 按 skip(单测/嵌入路径)。
+    ``store``(P1,G2 引用完整性):DraftStore——给了它,skills 引用在 草稿 ∪ 生产
+    全量检查;不给则只查生产(嵌入路径,跨草稿引用查不到会被误报,调用方自酌)。
     """
     gates: dict[str, Any] = {}
     raw = draft.get("manifest") if isinstance(draft.get("manifest"), dict) else None
@@ -204,6 +208,41 @@ def validate_draft(
                             f"L2+ 技能的 inputs 参数 {prop!r} 必须有 type",
                         )
                     )
+        # 引用完整性(docs/SKILL-PACKAGES.md §3.4 G2 行;P1 落地,实现注:校勘记里
+        # "G5 不引用不存在的 skill/tool 未实现"归入本关——它查的是契约面,不是辞卫)
+        draft_name = str(draft.get("name") or (raw or {}).get("name") or "")
+        for tool_name in (raw.get("permissions") or {}).get("tools", []):
+            if not tools.has(tool_name) and tool_name not in (
+                "python_orchestrate",
+                "ask_supervisor",
+            ):
+                g2.append(
+                    _finding(
+                        "fail",
+                        "SKILL-PACKAGES.md §3.4 G2",
+                        f"悬空工具引用: {draft_name} 声明了不存在的工具 {tool_name}",
+                    )
+                )
+        for dep in (raw.get("permissions") or {}).get("skills", []):
+            if not _skill_resolvable(dep, draft_name, store, production):
+                g2.append(
+                    _finding(
+                        "fail",
+                        "SKILL-PACKAGES.md §3.4 G2",
+                        f"悬空引用: {draft_name} 引用了不存在的子技能 {dep}",
+                    )
+                )
+        if store is not None:
+            # 环沿用 loader 语义(自引用剔边,经他人回边才算;closure.py 是同一数据源)。
+            # 根用草稿视图而非裸 store——校验中的草稿可能还没保存(store 里查无此名)
+            try:
+                closure = compute_closure(
+                    draft_name, _DraftAwareStore(store, draft), production, tools
+                )
+                for error in closure["errors"]:
+                    g2.append(_finding("fail", "SKILL-PACKAGES.md §3.4 G2", error["message"]))
+            except FileNotFoundError:
+                pass  # 根不可解析已由上面的悬空检查覆盖
     gates["g2"] = {"status": _status_of(g2), "findings": g2}
 
     # —— G3 分档合规(docs/ESCALATION.md §2.1/§3.4 + docs/TIER-STANDARDS.md §4/§5)——
@@ -290,6 +329,23 @@ def validate_draft(
     }
 
 
+def _skill_resolvable(dep: str, self_name: str, store: Any, production: Any) -> bool:
+    """引用完整性判定(§3.4 G2):dep 在 草稿 ∪ 生产 中存在(自引用合法递归恒真)。"""
+    if dep == self_name:
+        return True
+    if store is not None:
+        try:
+            store.load_skill(dep)
+            return True
+        except (FileNotFoundError, SkillLoadError, ValueError):
+            pass
+    try:
+        production.get(SkillRef(name=dep))
+        return True
+    except SkillLoadError:
+        return False
+
+
 class _SingleDraftStore:
     """把单个草稿伪装成 DraftStore(overlay 的 skills 参数只看 get(),§1.1)。"""
 
@@ -303,6 +359,25 @@ class _SingleDraftStore:
                 manifest.prompt = self._draft["prompt"]
             return materialize(manifest)
         raise FileNotFoundError(name)
+
+
+class _DraftAwareStore:
+    """store + 当前草稿(G2 环检测用):校验中的草稿可能还没保存,
+
+    裸 store 查不到根会导致闭包计算直接 404 漏报环——先查草稿本身再回落 store。
+    """
+
+    def __init__(self, store: Any, draft: dict[str, Any]) -> None:
+        self._store = store
+        self._draft = draft
+
+    def load_skill(self, name: str) -> Any:
+        if name == self._draft.get("name"):
+            manifest = parse_manifest(self._draft["manifest"])
+            if self._draft.get("prompt"):
+                manifest.prompt = self._draft["prompt"]
+            return materialize(manifest)
+        return self._store.load_skill(name)
 
 
 # ----------------------------------------------------------------------

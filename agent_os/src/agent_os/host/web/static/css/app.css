@@ -2259,6 +2259,65 @@ th.is-sorted .us-sort { color: var(--live); }
   padding: 0 var(--s1);
 }
 
+/* Skill Lab 包面板(docs/SKILL-PACKAGES.md §3.1;P1):左栏上方的包视图 */
+.lab-left {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.lab-left .lab-editor {
+  flex: 1;
+  overflow-y: auto;
+}
+.lab-pkg {
+  flex-shrink: 0;
+  padding-bottom: var(--s2);
+  margin-bottom: var(--s2);
+  border-bottom: var(--stroke) solid var(--line);
+}
+.lab-pkg:empty { display: none; } /* 未选草稿/无闭包时不占位(面板空态) */
+.lab-pkg-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s1);
+}
+.lab-pkg-title { font-size: var(--text-sm); font-weight: 600; }
+.lab-pkg-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 0 var(--s2);
+  padding-left: calc(var(--s2) + var(--ns-depth, 0) * var(--s4));
+  font-size: var(--text-xs);
+}
+.lab-pkg-row[data-root="true"] { background: var(--bg-0); border-radius: var(--r-sm); }
+.lab-pkg-act {
+  border: none;
+  background: none;
+  color: var(--live);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 0;
+}
+.lab-pkg-act:hover { text-decoration: underline; }
+.lab-pkg-link { color: var(--live); text-decoration: none; }
+.lab-pkg-link:hover { text-decoration: underline; }
+.lab-pkg-status {
+  font-size: var(--text-2xs);
+  padding: 0 var(--s1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+}
+.lab-pkg-status[data-status="draft"] { color: var(--live); border-color: var(--live); }
+.lab-pkg-status[data-status="missing"] { color: var(--danger); border-color: var(--danger); }
+.lab-pkg-status[data-status="external"] { color: var(--perm-net); border-color: var(--perm-net); }
+.lab-pkg-refby { color: var(--fg-2); font-size: var(--text-2xs); }
+.lab-pkg-tier-none { color: var(--fg-2); }
+.lab-pkg-error { color: var(--danger); font-size: var(--text-xs); }
+
 /* 命名空间树(docs/NAMING.md §2;Skills/Tools 浏览器共用):折叠箭头 + 计数,
    缩进走 --ns-depth(结构行为,零主题分支,只消费 token) */
 .ns-row {

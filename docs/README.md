@@ -17,6 +17,7 @@
 - [DEBUG-UI-MOE.md](DEBUG-UI-MOE.md) — 萌系(moe)主题策划:文案腔调与吉祥物层的个例规范。
 - [WEB-UI.md](WEB-UI.md) — Web UI 总体设计:页面结构、权限徽标色板(--perm-*)、收件箱与 run 详情契约。
 - [WEB-UI-BLOCKS.md](WEB-UI-BLOCKS.md) — Web UI 组件块清单:各视图块的职责与拼装约束。
+- [WEB-A11Y.md](WEB-A11Y.md) — 无障碍审计报告与执行标准(WCAG 2.2 AA):现状盘点(对比度/双编码已机检)、P0-P2 问题清单(焦点陷阱/焦点可见/状态播报)、三层标准(token 契约 / 组件不变量静态扫描 / 交互模式库)、PR checklist、分期 A0-A4。
 
 ## 架构与规范
 

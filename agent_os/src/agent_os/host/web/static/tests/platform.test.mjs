@@ -15,7 +15,7 @@ await register("./platform-loader.mjs", import.meta.url); // "/static/js/" → �
 
 const { makeDocument, StubEl } = await import("./dom-stub.mjs");
 const { cardHtml, summaryHtml } = await import("../../../web_platform/static/cards.js");
-const { gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml, diffDetailHtml } =
+const { gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml, diffDetailHtml, escDetailHtml } =
   await import("../../../web_platform/static/details.js");
 
 /* ── 两层边界工具 ─────────────────────────────────────────────
@@ -316,6 +316,52 @@ const assertClean = (html, who) => {
   assert.ok(!s.includes("data-detail-kind"), "通用表不带详情链接");
 }
 
+{
+  // escalation(W2)摘要:人话 + 三按钮;L3 两枚(L2 才有"本次都批");禁忌词纪律
+  const l3 = summaryHtml({
+    type: "escalation", v: 1,
+    data: { question_id: "esc-1", skill: "ops.janitor", tier: "irreversible",
+      reason_hint: "none → irreversible", params: { path: "/tmp/x" },
+      requested: { tools: ["fs.write"], skills: [] },
+      options: ["approve-once", "deny"], asked_at: 1 },
+    actions: [],
+  });
+  const t = assertClean(l3, "escalation");
+  assert.ok(t.includes("ops.janitor"), "升权摘要带 skill 名");
+  assert.ok(t.includes("需要你批准"), "人话决策请求");
+  assert.ok(!t.includes("approve-once") && !t.includes("/tmp/x"), "协议串/参数不进摘要");
+  const buttons = l3.match(/data-decision="esc-1"/g) ?? [];
+  assert.equal(buttons.length, 2, "L3 两枚按钮(无 approve-run)");
+  assert.ok(!l3.includes('data-answer="approve-run"'), "L3 不出\"本次都批\"");
+  assert.ok(l3.includes('data-detail-kind="esc"'), "esc 详情链接");
+
+  const l2 = summaryHtml({
+    type: "escalation", v: 1,
+    data: { question_id: "esc-2", skill: "ops.janitor", tier: "reversible",
+      reason_hint: "none → reversible", params: {}, requested: {},
+      options: ["approve-once", "approve-run", "deny"], asked_at: 1 },
+    actions: [],
+  });
+  assert.ok(l2.includes('data-answer="approve-run"'), "L2 有\"本次都批\"");
+
+  const resolved = summaryHtml({
+    type: "escalation", v: 1,
+    data: { question_id: "esc-1", skill: "ops.janitor", tier: "irreversible",
+      options: ["approve-once", "deny"], asked_at: 1, resolved: "approve-once" },
+    actions: [],
+  });
+  assert.ok(resolved.includes("已批准"), "已决状态字");
+  assert.ok(resolved.includes("disabled"), "已决按钮置灰");
+
+  const dt = escDetailHtml({
+    skill: "ops.janitor", reason_hint: "none → irreversible",
+    params: { path: "/tmp/x" }, requested: { tools: ["fs.write"], skills: [] },
+  });
+  assert.ok(dt.includes("none → irreversible"), "详情层保留 reason_hint 原文");
+  assert.ok(dt.includes("/tmp/x"), "详情层保留参数 JSON");
+  assert.ok(dt.includes("fs.write"), "详情层保留请求权限集");
+}
+
 /* ── app.js 对话流(fetch stub)───────────────────────────────── */
 
 {
@@ -343,6 +389,7 @@ const assertClean = (html, who) => {
 
   const calls = [];
   let badRunFail = true; // bad-run 首轮加载炸,重试后成功
+  let presentCalls = 0;  // 决策轮询:首轮炸(静默)→ 次轮插入 → 之后幂等
   globalThis.fetch = async (path, options = {}) => {
     const url = String(path);
     calls.push({ url, method: options.method ?? "GET", body: options.body });
@@ -392,6 +439,25 @@ const assertClean = (html, who) => {
       return reply({ id: "bad-run", skill: "ops.janitor", status: "ok", result: { x: 1 } });
     }
     if (url === "/api/runs/bad-run/signals") return reply([]);
+    if (url === "/platform/api/decisions/esc-1" && options.method === "POST") {
+      return reply({ ok: true });
+    }
+    if (url === "/platform/api/decisions/esc-gone" && options.method === "POST") {
+      return { ok: false, status: 404, json: async () => ({ detail: "找不到 supervisor 问题: esc-gone" }) };
+    }
+    if (url === "/platform/api/sessions/s1/decisions/present") {
+      presentCalls += 1;
+      if (presentCalls === 1) throw new Error("net down"); // 首轮失败:静默
+      if (presentCalls === 2) {
+        return reply({ presented: [{ id: "m-esc", role: "agent", text: "「ops.janitor」请求批准", ts: 9,
+          cards: [{ type: "escalation", v: 1,
+            data: { question_id: "esc-1", skill: "ops.janitor", tier: "irreversible",
+              reason_hint: "none → irreversible", params: { path: "/tmp/x" },
+              requested: { tools: ["fs.write"] }, options: ["approve-once", "deny"], asked_at: 1 },
+            actions: [] }] }] });
+      }
+      return reply({ presented: [] });
+    }
     throw new Error(`未 stub 的请求: ${options.method ?? "GET"} ${url}`);
   };
 
@@ -568,6 +634,61 @@ const assertClean = (html, who) => {
   assert.ok(!tabsHtml().includes("d:run:bad-run"), "已关 tab 下条");
   assert.ok(!doc.querySelector("#log").hidden, "对话流恢复可见");
   assert.ok(doc.querySelector("#detailHost").hidden, "详情宿主隐藏");
+
+  /* ── 升权决策(W2):轮询汇聚 → 就地作答 → 已决置灰 ────────────── */
+
+  // 轮询失败:静默(不炸、不加错误气泡、消息数不变)
+  const before = probe.state.messages.length;
+  await probe.pollDecisions();
+  assert.equal(probe.state.messages.length, before, "拉取失败静默,不打断对话");
+
+  // 轮询成功:新 pending 以 agent 消息 + escalation 卡插进当前会话(服务端持久化)
+  await probe.pollDecisions();
+  await tick();
+  assert.equal(probe.state.messages.length, before + 1, "主动汇报插入会话");
+  assert.ok(logHtml().includes('data-card="escalation"'), "escalation 卡渲染");
+  assert.ok(logHtml().includes("需要你批准"), "人话决策请求上屏");
+  assert.ok(!visibleText(logHtml()).includes("none → irreversible"), "reason_hint 不上屏(收详情)");
+
+  // 轮询幂等:再拉无新插入
+  await probe.pollDecisions();
+  assert.equal(probe.state.messages.length, before + 1, "重复轮询不重复插入");
+
+  // 就地作答:批准一次 → POST 转发 → 卡片标记已决(置灰 + 状态字)
+  const approveBtn = new StubEl("button");
+  approveBtn.dataset.decision = "esc-1";
+  approveBtn.dataset.answer = "approve-once";
+  approveBtn.parentNode = doc.body;
+  doc.trigger("click", { target: approveBtn });
+  await tick();
+  const decPost = calls.find((c) => c.url === "/platform/api/decisions/esc-1");
+  assert.ok(decPost, "decisions 作答请求发出");
+  assert.deepEqual(JSON.parse(decPost.body), { answer: "approve-once" });
+  assert.ok(logHtml().includes("已批准"), "已决状态字");
+  const escCard = probe.state.messages.at(-1).cards[0];
+  assert.equal(escCard.data.resolved, "approve-once", "卡数据标记已决(重渲仍置灰)");
+
+  // 已被别处处理(404):状态字 = 已被处理,不算错误
+  const goneBtn = new StubEl("button");
+  goneBtn.dataset.decision = "esc-gone";
+  goneBtn.dataset.answer = "deny";
+  goneBtn.parentNode = doc.body;
+  doc.trigger("click", { target: goneBtn });
+  await tick();
+  assert.ok(!logHtml().includes("找不到 supervisor"), "404 不以错误气泡呈现");
+
+  // esc 详情 tab:参数/权限/reason_hint 全量
+  const escLink = new StubEl("button");
+  escLink.dataset.detailKind = "esc";
+  escLink.dataset.detailRef = "esc-1";
+  escLink.dataset.detail = JSON.stringify({ skill: "ops.janitor", reason_hint: "none → irreversible",
+    params: { path: "/tmp/x" }, requested: { tools: ["fs.write"] } });
+  escLink.parentNode = doc.body;
+  doc.trigger("click", { target: escLink });
+  await tick();
+  assert.equal(probe.state.active, "d:esc:esc-1", "esc tab 激活");
+  assert.ok(detailHtml().includes("/tmp/x"), "esc 详情参数渲染");
+  assert.ok(detailHtml().includes("none → irreversible"), "esc 详情 reason_hint 渲染");
 }
 
 console.log("platform.test.mjs: all assertions passed");

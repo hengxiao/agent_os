@@ -16,7 +16,7 @@ import time
 from typing import Any
 
 #: 卡型注册表(v1;新增卡型 = 加一行 + 一个 build 函数 + schema 校验分支)
-CARD_TYPES = ("plan", "skill_pack", "gate_report", "diff", "publish", "table")
+CARD_TYPES = ("plan", "skill_pack", "gate_report", "diff", "publish", "table", "escalation")
 
 #: action 白名单:action id → (method, endpoint 模板)。只允许指向既有端点
 #: (Lab / iterate / packages / candidate / versions),不引入新的 promote 路径。
@@ -155,14 +155,59 @@ def build_publish_card(
 
 
 def build_table_card(
-    *, title: str, columns: list[str], rows: list[list[Any]], ref: dict[str, Any] | None = None
+    *,
+    title: str,
+    columns: list[str],
+    rows: list[list[Any]],
+    ref: dict[str, Any] | None = None,
+    row_refs: list[dict[str, Any] | None] | None = None,
 ) -> dict[str, Any]:
     """table 卡:通用筛选表(RCA 摘要/失败 run 列表/help 引导都复用它)。
 
-    ``ref``(可选):详情链接的锚(run 摘要卡 = {kind: "run", id}——前端据以
+    ``ref``(可选):整卡详情链接的锚(run 摘要卡 = {kind: "run", id}——前端据以
     开详情 tab,不必从截断的展示文本里反推 id)。
+    ``row_refs``(可选,W2 browse 意图):逐行详情锚(与 rows 对齐;多 run 列表
+    每行各开各的详情 tab)。
     """
     data: dict[str, Any] = {"title": title, "columns": columns, "rows": rows}
     if ref:
         data["ref"] = ref
+    if row_refs:
+        data["row_refs"] = row_refs
     return _card("table", data)
+
+
+def build_escalation_card(
+    *,
+    question_id: str,
+    skill: str,
+    tier: str,
+    reason_hint: str = "",
+    params: dict[str, Any] | None = None,
+    requested: dict[str, Any] | None = None,
+    options: list[str] | None = None,
+    asked_at: float = 0.0,
+) -> dict[str, Any]:
+    """escalation 卡(W2,docs/ESCALATION.md §3):升权请求就地决策。
+
+    data 形态 = EscalationRequest 的展示面(question_id/skill/tier/params/
+    requested/reason_hint/options/asked_at)。``options`` 原样携带内核的按档
+    选项(L2 三枚含 approve-run,L3 两枚——卡不自己造选项,语义裁决在内核)。
+    按钮不走 cards/action 白名单:作答是 supervisor 闭环,前端直调
+    ``POST /platform/api/decisions/{question_id}``(纯转发,零新权限通道)。
+    """
+    if not question_id or not skill:
+        raise ValueError("escalation 卡必须有 question_id 与 skill")
+    return _card(
+        "escalation",
+        {
+            "question_id": question_id,
+            "skill": skill,
+            "tier": tier,
+            "reason_hint": reason_hint,
+            "params": params or {},
+            "requested": requested or {},
+            "options": list(options or ["approve-once", "deny"]),
+            "asked_at": asked_at,
+        },
+    )

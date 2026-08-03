@@ -9,7 +9,7 @@
 import { copy, initTheme } from "/static/js/themes.js";
 import { esc, toast } from "/static/js/util.js";
 import { summaryHtml } from "./cards.js";
-import { diffDetailHtml, gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml } from "./details.js";
+import { diffDetailHtml, escDetailHtml, gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml } from "./details.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -241,6 +241,7 @@ const _DETAIL_META = {
   plan: { title: copy("platform.detail.plan") },
   run: { title: copy("platform.detail.run") },
   diff: { title: copy("platform.detail.diff") },
+  esc: { title: copy("platform.detail.esc") },
 };
 
 function activateTab(id) {
@@ -274,6 +275,7 @@ async function _loadDetail(kind, ref, data) {
     if (kind === "gate") return { kind, ref, html: gateDetailHtml(data) };
     if (kind === "plan") return { kind, ref, html: planDetailHtml(data) };
     if (kind === "diff") return { kind, ref, html: diffDetailHtml(data) };
+    if (kind === "esc") return { kind, ref, html: escDetailHtml(data) };
     if (kind === "pack") {
       const closure = await (
         await fetch(`/api/lab/packages/${encodeURIComponent(ref)}/closure?mode=runtime`)
@@ -303,6 +305,62 @@ function closeDetail(id) {
   if (state.active === "conv") state.detail = null;
   renderTabs();
   renderMain();
+}
+
+/* ── 升权决策(W2):就地作答 + 轮询汇聚(系统主动开口)───────────── */
+
+/* 把某 question_id 的卡标记为已决(改 state 里的卡数据,重渲即置灰) */
+function _markResolved(questionId, resolved) {
+  for (const m of state.messages) {
+    for (const card of m.cards ?? []) {
+      if (card.type === "escalation" && card.data?.question_id === questionId) {
+        card.data.resolved = resolved;
+      }
+    }
+  }
+}
+
+async function answerDecision(btn) {
+  const qid = btn.dataset.decision;
+  const answer = btn.dataset.answer;
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/platform/api/decisions/${encodeURIComponent(qid)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer }),
+    });
+    if (!res.ok) {
+      // 404 = 已被别处处理(旧收件箱/另一标签页);400 = 答案不合(协议串没变,按已处理提示)
+      _markResolved(qid, "gone");
+    } else {
+      _markResolved(qid, answer);
+    }
+  } catch (e) {
+    toast(`${copy("platform.error")}: ${e.message ?? e}`, "error");
+    btn.disabled = false; // 网络失败不算已决,允许重试
+    return;
+  }
+  renderMain();
+}
+
+/* 轮询汇聚:新 pending 以 agent 消息 + escalation 卡进当前会话(服务端持久化);
+   拉取失败静默——决策通道永远不能打断对话 */
+async function pollDecisions() {
+  if (!state.current) return;
+  try {
+    const res = await fetch(`/platform/api/sessions/${state.current}/decisions/present`, {
+      method: "POST",
+    });
+    if (!res.ok) return;
+    const { presented } = await res.json();
+    if (presented?.length) {
+      state.messages.push(...presented);
+      renderMain();
+    }
+  } catch {
+    /* 静默:下一周期再试 */
+  }
 }
 
 /* ── 事件 ─────────────────────────────────────────────────────── */
@@ -335,6 +393,8 @@ function bind() {
     if (e.target.closest("[data-it-retry]") && state.detail) {
       return openDetail(state.detail.kind, state.detail.ref, null);
     }
+    const decision = e.target.closest("[data-decision]");
+    if (decision) return answerDecision(decision);
     const act = e.target.closest("[data-card-act]");
     if (act) return cardAction(act);
     const example = e.target.closest("[data-example]");
@@ -366,8 +426,11 @@ renderStaticCopy();
 renderTabs();
 renderMain();
 loadSessions().catch((e) => toast(e.message ?? String(e), "error"));
+// 升权决策轮询(W2;unref 让 node 测试进程可退出,浏览器无此方法)
+const _decisionTimer = setInterval(pollDecisions, 5000);
+_decisionTimer.unref?.();
 
 // 测试探针(node 冒烟用;浏览器无副作用)
 if (typeof globalThis !== "undefined") {
-  globalThis.__platform = { state, renderTabs, renderMain, loadSessions, openDetail, closeDetail };
+  globalThis.__platform = { state, renderTabs, renderMain, loadSessions, openDetail, closeDetail, pollDecisions };
 }

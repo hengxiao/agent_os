@@ -301,18 +301,65 @@ function publishSummary(d) {
   );
 }
 
-/* table 摘要:仅 run 摘要卡(带 ref)双层化——隐去 run id 列,一行一个
+/* table 摘要:仅 run 摘要卡(带 ref/row_refs)双层化——隐去 run id 列,一行一个
    「技能」:人话错误;通用表(help/空表)本身即摘要,保持原样。 */
 function tableSummary(card) {
   const d = card.data ?? {};
-  if (d.ref?.kind !== "run") return tableCard(card);
+  const isRunTable = d.ref?.kind === "run" || (d.row_refs ?? []).some((r) => r?.kind === "run");
+  if (!isRunTable) return tableCard(card);
   const rows = (d.rows ?? [])
+    .map((r, i) => {
+      const rowRef = d.row_refs?.[i];
+      const link =
+        rowRef?.kind === "run" && rowRef?.id
+          ? ` ` + _detailLink("run", rowRef.id, copy("platform.detail.run"), { id: rowRef.id })
+          : "";
+      return (
+        `<div class="pf-card-sub">${_t("platform.sum.run.row", { skill: esc(r[1] ?? ""), msg: esc(humanError(r[2])) })}${link}</div>`
+      );
+    })
+    .join("");
+  const lead = d.title ? esc(d.title) : esc(copy("platform.sum.run.lead"));
+  return `<div class="pf-card-lead">${lead}</div>` + rows;
+}
+
+/* 升权选项 → 人话按钮文案(选项 id 是协议串,永不上屏) */
+const _OPTION_LABEL = {
+  "approve-once": "platform.esc.approve.once",
+  "approve-run": "platform.esc.approve.run",
+  deny: "platform.esc.deny",
+};
+
+/* escalation 摘要(W2):「skill」想执行操作(tier 人话),需要你批准 +
+   就地三按钮(approve-run 仅 L2 选项里有才出现——选项面是内核给的,卡不造)。
+   已决(data.resolved)按钮置灰 + 状态字。 */
+function escalationSummary(d) {
+  const tierKey = { none: "none", reversible: "reversible", irreversible: "irreversible" }[d.tier];
+  const resolved = d.resolved;
+  const status = resolved
+    ? `<div class="pf-card-sub">${esc(
+        copy(resolved === "gone" ? "platform.esc.gone"
+          : resolved === "deny" ? "platform.esc.resolved.deny" : "platform.esc.resolved.approve")
+      )}</div>`
+    : "";
+  const buttons = (d.options ?? [])
     .map(
-      (r) =>
-        `<div class="pf-card-sub">${_t("platform.sum.run.row", { skill: esc(r[1] ?? ""), msg: esc(humanError(r[2])) })}</div>`
+      (opt) =>
+        `<button class="btn" data-decision="${esc(d.question_id ?? "")}" data-answer="${esc(opt)}"` +
+        `${resolved ? " disabled" : ""}>${esc(copy(_OPTION_LABEL[opt] ?? "platform.esc.deny"))}</button>`
     )
     .join("");
-  return `<div class="pf-card-lead">${esc(copy("platform.sum.run.lead"))}</div>` + rows;
+  return (
+    `<div class="pf-card-lead">${_t("platform.esc.lead", { skill: esc(d.skill ?? "") })}</div>` +
+    `<div class="pf-card-sub">` +
+    (tierKey ? `${esc(copy(`platform.sum.pack.tier.${tierKey}`))},` : "") +
+    `${esc(copy("platform.esc.need"))}</div>` +
+    status +
+    `<div class="pf-card-actions">` +
+    _detailLink("esc", d.question_id ?? "", copy("platform.detail.esc"), d) +
+    buttons +
+    `</div>`
+  );
 }
 
 /* 摘要卡渲染入口:一句结论(加粗)+ 补充行 + 详情链接/动作区(右下) */
@@ -320,7 +367,7 @@ export function summaryHtml(card) {
   const type = card?.type ?? "";
   const d = card?.data ?? {};
   const render = { plan: planSummary, skill_pack: packSummary, gate_report: gateSummary,
-    diff: diffSummary, publish: publishSummary }[type];
+    diff: diffSummary, publish: publishSummary, escalation: escalationSummary }[type];
   const body = render ? render(d) : type === "table" ? tableSummary(card)
     : `<pre class="mono">${esc(JSON.stringify(d, null, 2))}</pre>`;
   const link =

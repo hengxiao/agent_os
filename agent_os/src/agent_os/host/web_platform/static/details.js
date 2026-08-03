@@ -22,6 +22,28 @@ export function diffDetailHtml(data) {
   );
 }
 
+/* escalation 详情(W2):调用参数 JSON + 请求的权限集 + reason_hint 原文
+   (摘要层只给"需要你批准"一句,技术面全部在这里——审的就是要执行的) */
+export function escDetailHtml(data) {
+  const requested = data?.requested ?? {};
+  const chips = [...(requested.tools ?? []), ...(requested.skills ?? [])]
+    .map((r) => `<span class="chip mono">${esc(r)}</span>`)
+    .join(" ");
+  return (
+    `<div class="pf-detail">` +
+    `<div class="pf-detail-head mono">${esc(data?.skill ?? "")}</div>` +
+    (data?.reason_hint
+      ? `<div class="pf-sec">${esc(copy("platform.esc.reason"))}: <span class="mono">${esc(data.reason_hint)}</span></div>`
+      : "") +
+    (chips
+      ? `<div class="pf-sec">${esc(copy("platform.esc.requested"))}: ${chips}</div>`
+      : "") +
+    `<div class="pf-sec">${esc(copy("platform.esc.params"))}:</div>` +
+    `<pre class="mono">${esc(JSON.stringify(data?.params ?? {}, null, 2))}</pre>` +
+    `</div>`
+  );
+}
+
 /* gate 详情:完整报告(全部 findings 展开) */
 export function gateDetailHtml(data) {
   const gates = data?.gates ?? {};

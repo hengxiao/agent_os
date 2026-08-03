@@ -1,12 +1,15 @@
 """意图编排(docs/WEB-PLATFORM.md §5;方案 A:assistant 升级为 router)。
 
-本期三个意图(规则路由;**LLM 意图路由留接口**——构造时注入 provider,
-``_route_llm`` 是预留位,默认 None 走纯规则,见 §5 决策):
+W2 起四个意图(**LLM 意图路由**:装配注入 ProviderManager + model;LLM 不可用/
+超时/输出不合 schema → 回落规则路由,fail-safe——凭证 15 分钟过期是现实,
+规则面永远兜底):
 
-1. **"做个/写个 X 技能"** → plan 卡:分解(复用 closure/registry 搜已有技能
-   + 建议新建),批准动作 = scaffold.approve(走既有 scaffold 端点);
-2. **"为什么挂/失败"** → 最近失败 run 的 RCA 摘要 → table 卡;
-3. **其他** → help 卡(三句引导)。
+1. **create_skill**("做个/写个 X 技能")→ plan 卡:分解(复用 closure/registry
+   搜已有技能 + 建议新建),批准动作 = scaffold.approve(走既有 scaffold 端点);
+2. **why_failed**("为什么挂/失败")→ 最近失败 run 的 RCA 摘要 → table 卡;
+3. **browse**(W2;"上周哪些失败了/最近的 run")→ 最近运行摘要 → table 卡
+   (逐行 run 详情链接)——浏览对话化的第一个实例;
+4. **help**(其他)→ help 卡(三句引导)。
 
 工具面红线:编排只**读**生产 registry 与 run 记录;写动作全部经卡片
 action 白名单转发既有端点(docs/WEB-PLATFORM.md §7),不开新通道。
@@ -14,19 +17,44 @@ action 白名单转发既有端点(docs/WEB-PLATFORM.md §7),不开新通道。
 
 from __future__ import annotations
 
+import asyncio
+import json
+import logging
 import re
+import time
 from typing import Any
 
+from agent_os.api.v1 import ChatRequest, Message, Role
 from agent_os.host.web_platform.artifacts import (
     build_plan_card,
     build_table_card,
 )
 from agent_os.host.web_platform.sessions import new_message
 
+_log = logging.getLogger("agent_os.platform.router")
+
 #: 意图①关键词(规则路由;中文为主,英文兜底)
 _MAKE_RE = re.compile(r"(做个|写个|建个|帮我做|帮我写|创建|新建).*(技能|skill)|^make .*skill", re.IGNORECASE)
 #: 意图②关键词(失败排查)
 _FAIL_RE = re.compile(r"(为什么|为啥).*(挂|失败|错)|失败|挂了|报错|fail", re.IGNORECASE)
+#: 意图③关键词(浏览:集合语义的"哪些/列表/记录"——区别于单点排查的"为什么挂")
+_BROWSE_RE = re.compile(r"(哪些|所有|列表|记录|情况).*(run|运行|失败)|(run|运行).*(哪些|列表|记录)", re.IGNORECASE)
+
+#: LLM 意图枚举(schema 校验面;越界 → 回落规则)
+INTENTS = ("create_skill", "why_failed", "browse", "help")
+
+#: LLM 路由提示词(输出唯一 JSON;分类器不写解释,省 token 也省解析面)
+_ROUTE_PROMPT = """\
+你是意图分类器。把用户的话分进四类之一,只输出一行 JSON,不要别的文字:
+{"intent": "create_skill"|"why_failed"|"browse"|"help", "goal": "...", "timeframe": "..."}
+- create_skill:想做一个新技能/能力;goal = 主题词(英文小写,没有就空串)
+- why_failed:问某次运行为何失败/报错
+- browse:想看一段时间内的运行列表(哪些失败/最近的运行);timeframe = 如 "上周"/"最近"
+- help:其它(闲聊/不会分)
+"""
+
+#: LLM 单次分类的等待上限(秒;超时按不可用处理,回落规则)
+_ROUTE_TIMEOUT_S = 15.0
 
 
 class Orchestrator:
@@ -38,50 +66,90 @@ class Orchestrator:
         skills: Any = None,
         runs_provider: Any = None,
         provider: Any = None,
+        model: str | None = None,
     ) -> None:
         self._skills = skills  # 生产 SkillRegistry(只读:manifests())
-        #: 最近 run 列表来源(注入:``() -> [{run_id, skill, status, error}]``;
+        #: 最近 run 列表来源(注入:``() -> [{run_id, skill, status, error, ts?}]``;
         #: 隔离 app 装配细节,测试用假数据驱动
         self._runs_provider = runs_provider or (list)
-        #: LLM 意图路由预留(docs/WEB-PLATFORM.md §5;None = 纯规则,本期默认)
+        #: LLM 意图路由(docs/WEB-PLATFORM.md §5;W2):既有 ProviderManager 门面 +
+        #: 默认 model;None = 纯规则(装配失败/未装配时的安全态)
         self._provider = provider
+        self._model = model
 
     def handle(self, session: dict[str, Any], text: str) -> dict[str, Any]:
-        """用户意图 → agent 消息(文本 + 卡)。规则优先;LLM 路由留 ``_route_llm``。"""
-        intent = self._route(text)
-        if intent == "make_skill":
-            return self._make_skill(text)
+        """用户意图 → agent 消息(文本 + 卡)。LLM 路由优先,故障回落规则。"""
+        routed = self._route(text)
+        intent = routed["intent"]
+        if intent == "create_skill":
+            return self._make_skill(text, goal=routed.get("goal") or "")
         if intent == "why_failed":
             return self._why_failed()
+        if intent == "browse":
+            return self._browse(timeframe=routed.get("timeframe") or "")
         return self._help()
 
     # ------------------------------------------------------------------
     # 路由
     # ------------------------------------------------------------------
 
-    def _route(self, text: str) -> str:
+    def _route(self, text: str) -> dict[str, Any]:
+        """LLM 优先;不可用/超时/schema 不合 → 规则(永远兜底,fail-safe)。"""
         if self._provider is not None:
-            return self._route_llm(text)  # 预留:LLM 路由(本期不启用)
+            routed = self._route_llm(text)
+            if routed is not None:
+                return routed
+        return {"intent": self._route_rules(text)}
+
+    def _route_rules(self, text: str) -> str:
         if _MAKE_RE.search(text):
-            return "make_skill"
+            return "create_skill"
+        if _BROWSE_RE.search(text):  # 集合语义先于单点排查("哪些失败" ≠ "为什么挂")
+            return "browse"
         if _FAIL_RE.search(text):
             return "why_failed"
         return "help"
 
-    def _route_llm(self, text: str) -> str:
-        """LLM 意图路由预留位(本期不落:规则已覆盖三个意图;接入时保持同一返回面)。"""
-        if _MAKE_RE.search(text):
-            return "make_skill"
-        if _FAIL_RE.search(text):
-            return "why_failed"
-        return "help"
+    def _route_llm(self, text: str) -> dict[str, Any] | None:
+        """LLM 意图分类:唯一 JSON 输出 → schema 校验;任何失败 → None(回落规则)。
+
+        fail-safe 是硬要求(凭证过期/超时/胡说八道都不能打断对话);
+        ProviderManager 的 chat 是 async——本方法在 FastAPI 线程池里跑,
+        ``asyncio.run`` 开私有循环,不碰宿主事件循环。
+        """
+        async def _ask() -> Any:
+            req = ChatRequest(
+                model=self._model or "",
+                messages=[
+                    Message(role=Role.SYSTEM, content=_ROUTE_PROMPT),
+                    Message(role=Role.USER, content=text),
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=200,
+            )
+            return await asyncio.wait_for(self._provider.chat(req), timeout=_ROUTE_TIMEOUT_S)
+
+        try:
+            resp = asyncio.run(_ask())
+            data = json.loads(resp.message.content)
+        except Exception as e:  # noqa: BLE001 — 任何 LLM 侧失败都按"不可用"回落
+            _log.info("LLM 意图路由不可用,回落规则: %s", e)
+            return None
+        if not isinstance(data, dict) or data.get("intent") not in INTENTS:
+            _log.info("LLM 意图路由输出不合 schema,回落规则: %r", data)
+            return None
+        return {
+            "intent": data["intent"],
+            "goal": str(data.get("goal") or ""),
+            "timeframe": str(data.get("timeframe") or ""),
+        }
 
     # ------------------------------------------------------------------
     # 意图①:做个 X 技能 → plan 卡
     # ------------------------------------------------------------------
 
-    def _make_skill(self, text: str) -> dict[str, Any]:
-        topic = _topic_of(text)
+    def _make_skill(self, text: str, *, goal: str = "") -> dict[str, Any]:
+        topic = goal or _topic_of(text)  # LLM 给了主题词就用,没有走规则提取
         reuse = self._search_existing(topic)
         # 分解(规则骨架):有能复用的就复用,主技能建议新建——复用是默认动作,
         # 新建是补齐(docs/WEB-PLATFORM.md §5 意图①)
@@ -145,7 +213,7 @@ class Orchestrator:
             text=f"最近一次失败是 {latest.get('skill')}(run {latest.get('run_id', '')[:8]}),摘要见下表。",
             cards=[
                 build_table_card(
-                    title="最近失败 run",
+                    title="最近的失败",
                     columns=["run", "skill", "错误摘要"],
                     rows=rows,
                     ref={"kind": "run", "id": latest.get("run_id", "")},  # 详情 tab 的锚(§10)
@@ -154,7 +222,56 @@ class Orchestrator:
         )
 
     # ------------------------------------------------------------------
-    # 意图③:其他 → help 卡(三句引导)
+    # 意图③(W2):浏览 → 最近运行摘要表(逐行 run 详情链接)
+    # ------------------------------------------------------------------
+
+    def _browse(self, *, timeframe: str = "") -> dict[str, Any]:
+        """"上周哪些失败了/最近的 run" → 运行列表摘要(人话行 + 逐行详情锚)。
+
+        ``timeframe`` 目前只做文本回显("上周"→ 近 7 天过滤,前提是数据源带 ts;
+        没带 ts 的记录不过滤——降级为全量,不编时间)。
+        """
+        runs = list(self._runs_provider() or [])
+        cutoff = _timeframe_cutoff(timeframe)
+        if cutoff is not None:
+            dated = [r for r in runs if r.get("ts")]
+            if dated:  # 数据源带时间才过滤;全不带 → 降级全量,不编时间
+                runs = [r for r in dated if r["ts"] >= cutoff]
+        runs = runs[-10:]  # 列表上限:摘要不刷屏,全量去旧 UI 运行页
+        if not runs:
+            return new_message(
+                "agent",
+                text=f"{timeframe or '最近'}没有运行记录。",
+                cards=[build_table_card(title="最近的运行", columns=["run", "skill", "摘要"], rows=[])],
+            )
+        rows = []
+        row_refs = []
+        for r in runs:
+            failed = r.get("status") == "failed"
+            rows.append(
+                [
+                    r.get("run_id", "")[:8],
+                    r.get("skill", ""),
+                    (r.get("error", "")[:120] or "(无错误摘要)") if failed else "运行成功",
+                ]
+            )
+            row_refs.append({"kind": "run", "id": r.get("run_id", "")} if r.get("run_id") else None)
+        failed_n = sum(1 for r in runs if r.get("status") == "failed")
+        return new_message(
+            "agent",
+            text=f"{timeframe or '最近'}共 {len(runs)} 次运行,{failed_n} 次失败;摘要见下表,点行内链接看单次详情。",
+            cards=[
+                build_table_card(
+                    title="最近的运行",
+                    columns=["run", "skill", "摘要"],
+                    rows=rows,
+                    row_refs=row_refs,
+                )
+            ],
+        )
+
+    # ------------------------------------------------------------------
+    # 意图④:其他 → help 卡(三句引导)
     # ------------------------------------------------------------------
 
     def _help(self) -> dict[str, Any]:
@@ -185,3 +302,14 @@ def _topic_of(text: str) -> str:
     if words:
         return words[0][:24]
     return "custom"
+
+
+def _timeframe_cutoff(timeframe: str) -> float | None:
+    """"上周"/"近 7 天" → 时间窗下界(epoch 秒);识别不了 → None(不过滤)。"""
+    if re.search(r"上周|过去\s*7\s*天|近\s*7\s*天|last week", timeframe, re.IGNORECASE):
+        return time.time() - 7 * 86400
+    if re.search(r"昨天|yesterday", timeframe, re.IGNORECASE):
+        return time.time() - 86400
+    if re.search(r"今天|today", timeframe, re.IGNORECASE):
+        return time.time() - 86400  # 近 24h 近似"今天"(不按日历日切,免时区坑)
+    return None

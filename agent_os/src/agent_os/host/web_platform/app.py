@@ -26,6 +26,7 @@ from agent_os.api.v1 import derive_skill_tier
 from agent_os.host.web_platform.artifacts import (
     ACTION_WHITELIST,
     build_diff_card,
+    build_escalation_card,
     build_gate_report_card,
     build_publish_card,
     build_skill_pack_card,
@@ -59,13 +60,27 @@ class CardActionBody(BaseModel):
     session_id: str | None = None
 
 
+class DecisionBody(BaseModel):
+    """升权作答(W2):answer 必须是该问题 options 之一(裁决在 run_manager)。"""
+
+    answer: str
+
+
+#: 升权档 → 人话(W2 decisions 聚合字段;摘要层禁 tier 术语,前端按 tier 自取 copy,
+#: 本字段是给非前端消费方/调试面的固定中文)
+_TIER_HUMAN = {"none": "只读", "reversible": "可改能撤销", "irreversible": "不可逆需审批"}
+
+
 def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -> FastAPI:
-    """装配平台 app:会话存储 + 编排器 + 卡片动作转发面。"""
+    """装配平台 app:会话存储 + 编排器 + 卡片动作转发面 + 升权决策转发面。"""
     app = FastAPI(title="Agent OS Platform(对话中枢)")
     sessions = SessionStore(Path(artifacts_root) / "platform_sessions")
+    providers, route_model = _llm_route_backend(manager, lab_store)
     orch = Orchestrator(
         skills=manager.shared_skills_registry(),
         runs_provider=lambda: _recent_runs(manager),
+        provider=providers,
+        model=route_model,
     )
 
     # ------------------------------------------------------------------
@@ -103,6 +118,95 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             raise HTTPException(status_code=404, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=500, detail=f"编排产物不合卡协议: {e}") from e
+
+    # ------------------------------------------------------------------
+    # 升权决策(W2,docs/ESCALATION.md §3):supervisor pending 的**纯转发**——
+    # 聚合/作答都走 run_manager 的既有收件箱面,零新权限通道
+    # ------------------------------------------------------------------
+
+    def _decision_rows() -> list[dict[str, Any]]:
+        """聚合 supervisor pending 里的升权请求(普通 question 不进对话中枢)。
+
+        收件箱面异常时降级为空列表——决策轮询永远不能打断对话(fail-safe)。
+        """
+        try:
+            pending = manager.supervisor_pending()
+        except Exception:  # noqa: BLE001
+            return []
+        rows = []
+        for r in pending:
+            if r.get("kind") != "escalation":
+                continue
+            ctx = r.get("context") or {}
+            tier = str(ctx.get("tier") or "none")
+            rows.append(
+                {
+                    "question_id": r.get("question_id", ""),
+                    "skill": ctx.get("skill", ""),
+                    "tier": tier,
+                    "tier_human": _TIER_HUMAN.get(tier, tier),
+                    "reason_hint": ctx.get("reason_hint", ""),
+                    "params": ctx.get("params") or {},
+                    "requested": ctx.get("requested") or {},
+                    "options": list(r.get("options") or ["approve-once", "deny"]),
+                    "asked_at": r.get("asked_at", 0),
+                }
+            )
+        return rows
+
+    @app.get("/api/decisions")
+    def list_decisions() -> list[dict[str, Any]]:
+        """待决升权请求列表(人话字段 tier_human 随行)。"""
+        return _decision_rows()
+
+    @app.post("/api/decisions/{question_id}")
+    def answer_decision(question_id: str, body: DecisionBody) -> dict[str, Any]:
+        """作答转发:找不到 → 404;answer 不在 options → 400(与旧 web 收件箱同归类)。"""
+        try:
+            manager.supervisor_answer(question_id, body.answer)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"ok": True}
+
+    @app.post("/api/sessions/{session_id}/decisions/present")
+    def present_decisions(session_id: str) -> dict[str, Any]:
+        """轮询汇聚(W2 系统主动开口):新出现的 pending 以 agent 消息 + escalation
+        卡落进会话并持久化;已呈现判定 = 扫会话消息里的 escalation 卡 question_id
+        (无状态,进程重启/多标签页都安全)。"""
+        try:
+            session = sessions.get(session_id)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        seen = {
+            card.get("data", {}).get("question_id")
+            for m in session.get("messages", [])
+            for card in m.get("cards", [])
+            if card.get("type") == "escalation"
+        }
+        presented = []
+        for d in _decision_rows():
+            if d["question_id"] in seen:
+                continue
+            card = build_escalation_card(
+                question_id=d["question_id"],
+                skill=d["skill"],
+                tier=d["tier"],
+                reason_hint=d["reason_hint"],
+                params=d["params"],
+                requested=d["requested"],
+                options=d["options"],
+                asked_at=d["asked_at"],
+            )
+            msg = new_message(
+                "agent",
+                text=f"「{d['skill']}」请求批准({d['tier_human']}),细节见下卡。",
+                cards=[card],
+            )
+            sessions.append(session_id, msg)
+            presented.append(msg)
+        return {"presented": presented}
 
     # ------------------------------------------------------------------
     # 卡片动作(统一入口:白名单裁决 → 转发既有能力,§7 不开新通道)
@@ -313,8 +417,26 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     return app
 
 
+def _llm_route_backend(manager: Any, lab_store: Any) -> tuple[Any, str | None]:
+    """LLM 意图路由后端(W2):借一个装配好的内核拿既有 ProviderManager + 默认 model。
+
+    装配失败(无 providers 配置/注册表异常)→ ``(None, None)``,orchestrator
+    自动走纯规则——路由是增强不是依赖(fail-safe)。
+    """
+    try:
+        kernel = manager.assemble_lab_kernel(
+            OverlaySkillRegistry(manager.shared_skills_registry(), lab_store)
+        )
+        if kernel.providers is None or not getattr(kernel.providers, "providers", None):
+            return None, None
+        return kernel.providers, kernel.config.model
+    except Exception as e:  # noqa: BLE001
+        _log.info("LLM 意图路由后端装配失败,纯规则运行: %s", e)
+        return None, None
+
+
 def _recent_runs(manager: Any) -> list[dict[str, Any]]:
-    """最近 run 列表(意图②数据源):从 run_manager 的活跃记录读(读不到 → [])。"""
+    """最近 run 列表(意图②/③数据源):从 run_manager 的活跃记录读(读不到 → [])。"""
     try:
         items = manager.active_items()
     except Exception:  # noqa: BLE001 — run 记录面异常时降级为"无失败可报"
@@ -328,6 +450,8 @@ def _recent_runs(manager: Any) -> list[dict[str, Any]]:
                 "skill": state.get("skill") or record.get("skill") or "",
                 "status": state.get("status"),
                 "error": record.get("error") or state.get("error") or "",
+                # W2 browse 的时间窗过滤;没有就 0(orchestrator 不过滤无 ts 记录)
+                "ts": state.get("started_at") or record.get("started_at") or 0,
             }
         )
     return runs

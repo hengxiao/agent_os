@@ -72,7 +72,8 @@ Message  {id, role: user|agent, text?, cards: [artifact], ts}
 | gate_report | {draft, status, gates} | plan.recheck(非 fail) |
 | diff | {name, diff(§Flow C 同构)} | candidate.accept / discard |
 | publish | {root, members[], plan_id} | plan.confirm |
-| table | {title, columns[], rows[][]} | — |
+| table | {title, columns[], rows[][], ref?, row_refs?} | — |
+| escalation(W2) | {question_id, skill, tier, params, requested, reason_hint, options, asked_at} | 就地按钮 → POST /api/decisions(不走白名单,§11.1) |
 
 - 每型一个 `build_*` 函数;`validate_card` 是出服务端前的协议闸
   (type ∈ 注册表、v == 1、data 是 dict);
@@ -84,15 +85,16 @@ Message  {id, role: user|agent, text?, cards: [artifact], ts}
 
 ## 5. 意图编排(orchestrator.py)
 
-`handle(session, text) → agent 消息(文本 + 卡)`。本期三意图,**规则路由**
-(关键词正则);**LLM 意图路由留 provider 接口**(`_route_llm` 预留位,
-注入 provider 即启用,返回面与规则一致):
+`handle(session, text) → agent 消息(文本 + 卡)`。W2 起 **LLM 意图路由优先**
+(注入 ProviderManager + model;不可用/超时/schema 不合 → 回落规则,§11.2),
+规则面(关键词正则)永远兜底:
 
 | 意图 | 触发(规则) | 产物 |
 |---|---|---|
-| ① 做个/写个 X 技能 | 做个/写个/帮我做…+技能 | plan 卡:复用检索(名字/描述含主题词的生产技能,≤3)+ 新建建议;批准动作 scaffold.approve |
-| ② 为什么挂/失败 | 为什么…挂/失败/fail | table 卡:最近失败 run 的摘要(runs_provider 注入,隔离装配细节) |
-| ③ 其他 | — | help 卡(三句引导) |
+| ① create_skill(做个/写个 X 技能) | 做个/写个/帮我做…+技能 | plan 卡:复用检索(名字/描述含主题词的生产技能,≤3)+ 新建建议;批准动作 scaffold.approve |
+| ② why_failed(为什么挂/失败) | 为什么…挂/失败/fail | table 卡:最近失败 run 的摘要(runs_provider 注入,隔离装配细节) |
+| ③ browse(W2;哪些/列表/记录 + run/失败) | 哪些…失败/最近…run | table 卡:最近运行摘要 + 逐行 run 详情锚(row_refs) |
+| ④ 其他 | — | help 卡(三句引导) |
 
 **工具面红线**:编排只**读**生产 registry 与 run 记录;一切写动作走
 卡片 action 白名单转发(§6),编排自身零写权限。
@@ -105,6 +107,9 @@ POST /api/sessions                     创建会话
 GET  /api/sessions/{id}                读会话(404)
 POST /api/sessions/{id}/messages       user 意图 → agent 消息(+卡;卡过协议闸)
 POST /api/cards/action                 卡片按钮统一入口(白名单 → 转发)
+GET  /api/decisions                    待决升权请求聚合(W2;supervisor pending 纯转发)
+POST /api/decisions/{qid}              升权作答转发(W2;404/400 同旧收件箱)
+POST /api/sessions/{id}/decisions/present  轮询汇聚(W2;新 pending 落会话,幂等)
 ```
 
 `cards/action` 的转发面(每件都薄,调既有 store/gate/package 能力,
@@ -121,9 +126,9 @@ POST /api/cards/action                 卡片按钮统一入口(白名单 → �
 
 ## 7. 与既有系统的边界(红线逐条)
 
-- **复用**:内核/providers(经 manager 装配)、DraftStore(与 Lab 同一实例)、
-  gate 五关、closure、plan/promote、Flow C iterate、升权收件箱(决策类卡的
-  直接来源,后续期把 supervisor pending 也建模为卡);
+- **复用**:内核/providers(经 manager 装配;LLM 意图路由借同一面,§11.2)、
+  DraftStore(与 Lab 同一实例)、gate 五关、closure、plan/promote、Flow C
+  iterate、升权收件箱(W2 起 decisions 端点就是它的转发面,§11.1);
 - **不开新通道**:卡片动作只转发白名单内的既有端点语义;orchestrator 与
   handler 没有任何"绕过闸门"的调用;**没有第二条 promote 路径**
   (plan.confirm 就是 packages/promote);
@@ -197,3 +202,46 @@ POST /api/cards/action                 卡片按钮统一入口(白名单 → �
 tab 模型纯函数 + 详情全流程:开 tab/去重/五类渲染/重试/✕ 回落);浏览器
 绝对路径 import(`/static/js/` 共享模块)在 node 侧经
 `platform-loader.mjs` 钩子映射(测试基建,非运行时)。
+
+## 11. W2:升权决策汇入对话 + LLM 意图路由(本期落地)
+
+### 11.1 升权决策卡(系统主动开口)
+
+- **卡型** `escalation`(协议闸注册,§4):data = EscalationRequest 的展示面
+  (question_id/skill/tier/params/requested/reason_hint/options/asked_at);
+  `options` **原样携带内核按档选项**(L2 三枚含 approve-run,L3 两枚——卡不
+  自己造选项,语义裁决在内核,docs/ESCALATION.md §3);
+- **端点**(app.py;**纯转发,零新权限通道**):
+  `GET /api/decisions` 聚合 supervisor pending(只收 kind=escalation;人话
+  字段 `tier_human` 随行;收件箱异常降级空表);
+  `POST /api/decisions/{qid}` 作答转发 run_manager.supervisor_answer
+  (404/400 归类与旧 web 收件箱一致);
+- **轮询汇聚**(系统主动开口的简单方案):前端每 5s
+  `POST /api/sessions/{id}/decisions/present`——服务端把**新出现**的 pending
+  以 agent 消息 + escalation 卡写进会话(持久化);"已呈现"判定 = 扫会话消息里
+  的 escalation 卡 question_id(无状态,重启/多标签页安全);拉取失败前端静默;
+- **前端**:摘要层人话("「skill」想执行操作(只读/可改能撤销/需审批),需要
+  你批准";reason_hint/参数/选项协议串不上屏)+ 就地按钮(批准一次/本次都批
+  [仅选项里有]/拒绝)→ POST decisions → 卡标已决(置灰 + 状态字;404 = "该
+  请求已被处理",不算错误);详情 tab(esc)= 参数 JSON + 请求权限集 +
+  reason_hint 原文。作答**不走** cards/action 白名单——它是 supervisor 闭环,
+  不是卡片动作。
+
+### 11.2 LLM 意图路由(fail-safe)
+
+- orchestrator 注入既有 **ProviderManager + model**(装配时借一个 Lab 内核取
+  `kernel.providers`/`config.model`;装配失败 → None → 纯规则);
+- 分类器 = 一次 chat(system 提示词钉四枚举 + `response_format: json_object`,
+  15s 超时):输出 `{intent, goal?, timeframe?}`,intent ∈
+  `create_skill | why_failed | browse | help`;
+- **回落策略**(硬要求,凭证 15 分钟过期是现实):LLM 不可用/超时/输出非
+  JSON/intent 越界 → 一律回落规则路由(正则面永远在;`asyncio.run` 私有循环,
+  不碰宿主事件循环);
+- **新意图 browse**("上周哪些失败了/最近的 run"——浏览对话化第一个实例):
+  最近运行摘要 table 卡(失败行给错误摘要、成功行"运行成功";`row_refs`
+  逐行 run 详情锚);"上周/昨天/今天"时间窗过滤(数据源带 ts 才滤,不带不编)。
+
+测试:`tests/web_platform/test_platform_w2.py`(卡协议/decisions 聚合与作答
+404-400/present 幂等持久化/LLM 命中·故障·schema 三态/browse 时间窗);
+前端 `platform.test.mjs` 增补 escalation 摘要禁忌词边界、三按钮与已决置灰、
+轮询失败静默/插入持久化/幂等、esc 详情 tab。

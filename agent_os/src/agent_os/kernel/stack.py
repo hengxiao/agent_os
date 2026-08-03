@@ -1,4 +1,4 @@
-"""帧栈(DESIGN.md §2.3/§3.1;M2 技能与调用栈)。
+"""帧栈(docs/DESIGN.md §2.3/§3.1;M2 技能与调用栈)。
 
 隔离语义严格对齐函数调用:父帧只能经 ``input`` 传参,子帧只能经 ``result``/``error``
 返回;子帧 transcript 弹栈时折叠为返回值(§2.3,"isolation over compression")。

@@ -1,4 +1,4 @@
-"""M4 锚点测试:Sidecar 子系统(DESIGN.md §5;supervisor + RunControl + 内置 sidecar)。
+"""M4 锚点测试:Sidecar 子系统(docs/DESIGN.md §5;supervisor + RunControl + 内置 sidecar)。
 
 固定约定:
 

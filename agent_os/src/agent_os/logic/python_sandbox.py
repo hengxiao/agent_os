@@ -1,4 +1,4 @@
-"""PythonSandboxLogicKernel(DESIGN.md §9.2/§9.7;M5)。
+"""PythonSandboxLogicKernel(docs/DESIGN.md §9.2/§9.7;M5)。
 
 用于 LLM 动态代码(强制,无配置项可关闭)与声明 ``logic: {mode: sandbox}``
 的 code 技能。隔离阶梯(后端替换,契约不变):subprocess+rlimits(v1)→
@@ -59,7 +59,7 @@ _HARD_FAILURES = (RunAborted, MaxDepthExceeded)
 #: 默认兜底墙钟(调用方未给 limits.wall_time 时)
 _DEFAULT_WALL_TIME = 30.0
 
-#: 沙箱内 syscall 通道的公共前奏(CODE-ORCHESTRATION.md §2.2)。
+#: 沙箱内 syscall 通道的公共前奏(docs/CODE-ORCHESTRATION.md §2.2)。
 #:
 #: 环境变量 ``AGENT_OS_SYSCALL_FD`` 存在时建立 ctx:每次调用写一行 JSON 请求、
 #: 读一行 JSON 响应(阻塞语义,沙箱侧无其他工作)。同一传输层派生两种 ctx——
@@ -128,7 +128,7 @@ except Exception:
     sys.exit(1)
 """
 
-#: 编排脚本驱动(CODE-ORCHESTRATION.md §2.1):argv = [source];在带 ``ctx`` 的
+#: 编排脚本驱动(docs/CODE-ORCHESTRATION.md §2.1):argv = [source];在带 ``ctx`` 的
 #: 命名空间里执行 LLM 写的直线脚本,取变量 ``result`` 为返回值(最后一行 JSON)。
 _ORCH_DRIVER = _SYSCALL_PRELUDE + """
 import sys, traceback
@@ -189,7 +189,7 @@ def _parse_driver_stdout(stdout: str) -> tuple[Any, str]:
 async def _serve_syscalls(
     sock: socket.socket, dispatch_fn: Any, hard_failure: list[BaseException] | None = None
 ) -> int:
-    """syscall 服务循环(CODE-ORCHESTRATION.md §2.2):逐条读请求 → 分发 → 写响应。
+    """syscall 服务循环(docs/CODE-ORCHESTRATION.md §2.2):逐条读请求 → 分发 → 写响应。
 
     纯传输层:分发与**限额**都由内核回调决定(``_dispatch_call`` 一条闸门;
     调用上限在内核侧计数并以结构化错误回给脚本,脚本可自行处置)。跑飞脚本
@@ -264,7 +264,7 @@ class PythonSandboxLogicKernel:
         limits = req.limits
         wall = limits.wall_time if limits.wall_time else _DEFAULT_WALL_TIME
         pythonpath = os.pathsep.join(p for p in sys.path if p)
-        # 三种形态(CODE-ORCHESTRATION.md §2.1):
+        # 三种形态(docs/CODE-ORCHESTRATION.md §2.1):
         # 模块路径 → code 技能驱动;dispatch_fn 非 None 的源码 → 编排驱动;否则原样 -c(§9.4)
         module_mode = "\n" not in req.source and _is_module_path(req.source)
         orchestrate_mode = not module_mode and req.dispatch_fn is not None

@@ -3,7 +3,7 @@
 ``mega_pipeline`` → ``chain_00`` → … → ``chain_09`` → ``hub_agg`` 的 12 帧纯 code
 深链(锚点:tests/test_examples.py::test_skills_100_mega_pipeline_runs):
 每环把 ``i`` 累加进 ``acc``,终点 ``hub_agg`` 返回 ``{"total": acc}``
-(0+1+…+9 = 45),depth 恰好到 12。签名约定(DESIGN.md §6.3):
+(0+1+…+9 = 45),depth 恰好到 12。签名约定(docs/DESIGN.md §6.3):
 ``async def run(input: dict, ctx: LogicContext) -> dict``,全部经 ``ctx.invoke``
 回到内核分发路径(白名单、信号、记账一样不少)。
 """

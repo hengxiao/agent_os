@@ -1,4 +1,4 @@
-"""R2 锚点测试:CLI 复现(RUNNERS.md §3.2/§3.4;replay/diff/skills validate)。
+"""R2 锚点测试:CLI 复现(docs/RUNNERS.md §3.2/§3.4;replay/diff/skills validate)。
 
 固定约定:
 

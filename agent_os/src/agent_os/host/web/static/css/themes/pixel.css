@@ -1,4 +1,4 @@
-/* pixel 主题(DEBUG-UI-THEMES.md §3.6):8-bit 复古游戏。
+/* pixel 主题(docs/DEBUG-UI-THEMES.md §3.6):8-bit 复古游戏。
    深靛底(#1a1c2c 系)+ 饱和红白机色板;圆角归零,边框 2px 阶梯像素边
    (box-shadow 硬偏移拼出);状态点/精灵 image-rendering: pixelated;
    预算条 45° 条纹(HP/MP 感);入场动画 steps() 跳帧;mascot = sprite8
@@ -29,6 +29,8 @@
   --danger:  #ff6b5e;   /* failed / veto / error */
   --aborted: #c08cf8;   /* aborted(中止≠失败) */
   --live:    #4ecdf8;   /* running / live(MP 蓝) */
+  /* 焦点环(docs/WEB-A11Y.md §5.2;契约 token,须对 --bg-0..3 均 ≥3:1) */
+  --focus-ring: #4ecdf8;
 
   /* 语义:信号类型(与语义色同锚点) */
   --sig-llm:      #7ec4ff;
@@ -150,7 +152,6 @@
 [data-theme="pixel"] textarea:focus {
   border-color: var(--live);
   box-shadow: 3px 3px 0 var(--pixel-live-glow);
-  outline: none;
 }
 
 /* 导航:选中项亮面硬边块(替代 classic 下划线) */

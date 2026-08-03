@@ -1,4 +1,4 @@
-/* 主题系统 T1 冒烟测试(DEBUG-UI-THEMES.md §2.5 / §5;DEBUG-UI-MOE.md §7 M1):
+/* 主题系统 T1 冒烟测试(docs/DEBUG-UI-THEMES.md §2.5 / §5;docs/DEBUG-UI-MOE.md §7 M1):
    1) 注册表:classic + moe 声明完整({id,name,css,copy,motion,mascot,scope}),
       主题 css 已加载且契约变量完整才注册(swatch 三色取自主题 css);
    2) 启动解析:URL(?theme=)> localStorage > classic;URL 命中同时持久化;
@@ -388,6 +388,16 @@ const {
   }
   assert.ok(moeCss.includes(".dbg-trace-list::before"), "时间线粉色虚线竖轨");
   assert.ok(moeCss.includes(".dbg-sec-title::before"), "检视面板小节标题 🌸");
+  assert.ok(
+    moeCss.includes('.live-indicator[data-state="ok"]::before') &&
+      moeCss.includes('content: "❤️"') &&
+      moeCss.includes("@keyframes moe-heartbeat"),
+    "连接正常 = 跳动的心");
+  assert.ok(
+    moeCss.includes('.live-indicator[data-state="fail"]::before') &&
+      moeCss.includes('.live-indicator[data-state="down"]::before') &&
+      moeCss.includes('content: "💔"'),
+    "连接异常/断开 = 碎了的心");
   assert.match(moeCss, /@keyframes moe-pop-in/, "卡片入场动画");
   assert.ok(moeCss.includes("prefers-reduced-motion"), "reduced-motion 兜底");
   assert.ok(!classicCss.includes("moe-pop-in"), "classic 无入场动画");

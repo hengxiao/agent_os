@@ -1,4 +1,4 @@
-/* `?` 快捷键面板(WEB-UI.md §5):居中 Modal,列出全部快捷键(分组:全局 / Workbench)。
+/* `?` 快捷键面板(docs/WEB-UI.md §5):居中 Modal,列出全部快捷键(分组:全局 / Workbench)。
    Esc / 遮罩点击关闭;打开关闭均做焦点管理。SHORTCUTS 为纯数据(node 单测可载)。 */
 
 import { esc } from "../util.js";

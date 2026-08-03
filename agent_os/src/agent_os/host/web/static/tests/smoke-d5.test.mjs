@@ -1,4 +1,4 @@
-/* D5 DOM-stub 冒烟测试(WEB-UI.md §4.4/§4.5/§5/§6.3):
+/* D5 DOM-stub 冒烟测试(docs/WEB-UI.md §4.4/§4.5/§5/§6.3):
    1) 键盘模块:installGlobalKeys 分发(j/k/gg/G/⌘J/⌘K)//输入控件与浮层抑制;
    2) RCA 动线:异常 run 打开 → Banner(定位 ⌘J + Resume)→ 点定位 → 三栏到位
       (selection source "rca" / 时间线聚焦行 / 检视器 veto 归因卡 + rca-target 脉冲);

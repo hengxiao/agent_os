@@ -1,4 +1,4 @@
-"""Context 契约(DESIGN.md §7.5):帧上下文的全权管理——组装 + 压缩 + 前缀缓存稳定性。
+"""Context 契约(docs/DESIGN.md §7.5):帧上下文的全权管理——组装 + 压缩 + 前缀缓存稳定性。
 
 组装与压缩必须一家管(§7);不变量见 §7.4(pinned 永驻、tool_call/tool_result
 配对原子、压缩后 token 严格下降、压缩发信号、build 输出跨步逐字节稳定)。

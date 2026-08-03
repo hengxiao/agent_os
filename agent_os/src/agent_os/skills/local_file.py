@@ -1,4 +1,4 @@
-"""LocalFileSkillRegistry(DESIGN.md §6.3;M2)。
+"""LocalFileSkillRegistry(docs/DESIGN.md §6.3;M2)。
 
 YAML 加载,命名空间固定 ``local``;不做版本约束求解(单版本,依赖只查存在);
 依赖图拓扑排序保留(循环依赖加载期报错);热重载 = 手动 ``reload()``(mtime 检查)。
@@ -37,7 +37,7 @@ from agent_os.skills.manifest import INLINE_DEPS_MAX, parse_manifest, validate_m
 
 _log = logging.getLogger("agent_os.skills")
 
-#: 迁移期旧扁平名 → 新点分层次名 的兼容映射(NAMING.md §4)。
+#: 迁移期旧扁平名 → 新点分层次名 的兼容映射(docs/NAMING.md §4)。
 #: 用于解析清单时把旧 permissions.skills 引用自动转正,以及按旧名查找技能时给出警告。
 LEGACY_SKILL_ALIASES: dict[str, str] = {
     "extract_json": "common.text.extract_json",
@@ -124,6 +124,40 @@ def _topo_sort(manifests: list[SkillManifest]) -> list[str]:
     return order
 
 
+def build_child_frame(target: Skill, call: SkillCall, parent: SkillFrame) -> SkillFrame:
+    """make_frame 的构建部分(input 校验 + 新帧;local_file 与 OverlaySkillRegistry 共用)。
+
+    抽取理由(docs/SKILL-DEV.md §1.1;L3):overlay 装配的 test-run 压帧必须走
+    与生产完全相同的构建路径(§2.4 所见即所得),不允许两套帧语义漂移。
+    """
+    try:
+        jsonschema.validate(call.args, target.manifest.inputs)
+    except jsonschema.ValidationError as e:
+        raise SkillLoadError(
+            f"子技能 {call.name} 的调用参数不合 inputs schema: {e.message}"
+        ) from e
+    return SkillFrame(
+        frame_id=uuid.uuid4().hex,
+        run_id=parent.run_id,
+        skill=target.ref,
+        parent_id=parent.frame_id,
+        input=dict(call.args),
+        depth=parent.depth + 1,
+        # 身份不变量(docs/DATA-AUTHZ.md §2.3):子帧原样继承父帧 principal——
+        # skill 嵌套/升权/code 沙箱都不改变身份(升权改的是副作用许可)
+        principal=parent.principal,
+        context=FrameContext(
+            messages=[
+                Message(
+                    role=Role.USER,
+                    content=json.dumps(call.args),
+                    source=Source.PARENT_INPUT,
+                )
+            ]
+        ),
+    )
+
+
 class LocalFileSkillRegistry:
     """``agent_os.api.v1.SkillRegistry`` 协议实现(M2)。"""
 
@@ -180,7 +214,7 @@ class LocalFileSkillRegistry:
                     raise SkillLoadError(f"技能 {m.name} 引用了不存在的子技能: {dep}")
             for warning in validate_manifest(m):
                 _log.warning("%s", warning)
-            # 调用方侧膨胀 lint(SKILL-INLINING.md §3.3):merge 依赖条数上限
+            # 调用方侧膨胀 lint(docs/SKILL-INLINING.md §3.3):merge 依赖条数上限
             merged = [d for d in m.permissions.skills if by_name[d].inline]
             if len(merged) > INLINE_DEPS_MAX:
                 _log.warning(
@@ -248,32 +282,7 @@ class LocalFileSkillRegistry:
         由内核 runner 转为父帧的错误观察);帧输入以首条 USER 消息进入帧上下文。
         """
         target = self.get(SkillRef(name=call.name))
-        try:
-            jsonschema.validate(call.args, target.manifest.inputs)
-        except jsonschema.ValidationError as e:
-            raise SkillLoadError(
-                f"子技能 {call.name} 的调用参数不合 inputs schema: {e.message}"
-            ) from e
-        return SkillFrame(
-            frame_id=uuid.uuid4().hex,
-            run_id=parent.run_id,
-            skill=target.ref,
-            parent_id=parent.frame_id,
-            input=dict(call.args),
-            depth=parent.depth + 1,
-            # 身份不变量(DATA-AUTHZ.md §2.3):子帧原样继承父帧 principal——
-            # skill 嵌套/升权/code 沙箱都不改变身份(升权改的是副作用许可)
-            principal=parent.principal,
-            context=FrameContext(
-                messages=[
-                    Message(
-                        role=Role.USER,
-                        content=json.dumps(call.args),
-                        source=Source.PARENT_INPUT,
-                    )
-                ]
-            ),
-        )
+        return build_child_frame(target, call, parent)
 
     async def register(self, artifact: SkillArtifact, provenance: Provenance) -> SkillRef:
         """运行期写入路径(§6.2):默认不信任——code 强制 SANDBOX、CodeScanner 扫描、

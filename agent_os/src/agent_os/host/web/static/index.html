@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent OS</title>
+<link rel="icon" href="data:,"><!-- 抑制 favicon.ico 404(无站点图标,浏览器默认即可) -->
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/app.css">
 <link rel="stylesheet" href="/static/css/themes/classic.css">
@@ -14,12 +15,15 @@
 <link rel="stylesheet" href="/static/css/themes/pixel.css">
 </head>
 <body data-route="runs">
+<!-- 跳过导航(docs/WEB-A11Y.md §4 P1-6;WCAG 2.4.1)——必须是 body 的第一个可聚焦元素 -->
+<a class="skip-link" href="#main">跳到主内容</a>
 <header class="app-topbar">
   <div class="brand"><span class="brand-mark" aria-hidden="true">▎</span>Agent OS</div>
   <nav class="topnav" aria-label="主导航">
     <a class="nav-item" href="#/runs" data-nav="runs" aria-current="page">Runs</a>
     <a class="nav-item" href="#/skills" data-nav="skills">Skills</a>
     <a class="nav-item" href="#/tools" data-nav="tools">Tools</a>
+    <a class="nav-item" href="#/lab" data-nav="lab">Lab</a>
     <a class="nav-item" href="#/debug" data-nav="debug">Debug</a>
   </nav>
   <div class="topbar-side">
@@ -64,7 +68,9 @@
     </div>
     <div class="run-list" id="runList" role="listbox" aria-label="Run 列表"></div>
   </aside>
-  <main class="app-main" id="main"></main>
+  <!-- tabindex="-1":skip-link 的落点必须可编程聚焦,否则焦点不会真的进来
+       (只滚动、不移焦是 skip link 最常见的失效方式);-1 不进 Tab 序列 -->
+  <main class="app-main" id="main" tabindex="-1"></main>
 </div>
 <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 <script type="module" src="/static/js/app.js"></script>

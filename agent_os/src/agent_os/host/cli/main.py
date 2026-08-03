@@ -1,4 +1,4 @@
-"""agent-os CLI(RUNNERS.md §3;R1 核心:run/trace/inspect/resume;R2 复现:replay/diff/skills)。
+"""agent-os CLI(docs/RUNNERS.md §3;R1 核心:run/trace/inspect/resume;R2 复现:replay/diff/skills)。
 
 面向 coding agent 的薄宿主:stdout = RunRecord JSON(``--json`` 时唯一输出;
 缺省人读摘要 + 末行 JSON,§3.3),stderr 人类可读日志。退出码(§3.3):
@@ -10,7 +10,7 @@
 | 3 | run 失败或中止(技能返回错误、OutputValidationError、RunAborted) |
 | 4 | 宿主/基础设施错误(配置缺失、provider 装配失败、docker 不可用) |
 
-S2 增量(SUPERVISOR.md v2 §2.3):CLI 宿主通道——run/resume 装配时注入
+S2 增量(docs/SUPERVISOR.md v2 §2.3):CLI 宿主通道——run/resume 装配时注入
 ``_cli_supervisor`` handler,run 挂起时把 question JSON 写 stderr(coding agent
 可解析),从 stdin 读一行作答,单命令进程内闭环;跨进程 pending/answer 子命令
 在单进程 CLI 下无收件箱可查,异步收件箱形态由 Web 宿主承载。replay 不注入
@@ -55,7 +55,7 @@ def _parse_input(raw: str) -> Any:
 
 
 async def _cli_supervisor(question: Question) -> dict[str, Any]:
-    """CLI 宿主通道(SUPERVISOR.md §2.3;S2 简化形态):stderr 打印 + stdin 作答。
+    """CLI 宿主通道(docs/SUPERVISOR.md §2.3;S2 简化形态):stderr 打印 + stdin 作答。
 
     run 挂起时把 question 以单行 JSON 写 stderr(coding agent 可解析的协议行),
     随后从 stdin 读一行作为回答,run 进程内闭环;``previous_error`` 透传
@@ -72,7 +72,7 @@ async def _cli_supervisor(question: Question) -> dict[str, Any]:
         "options": question.options,
         "urgency": question.urgency,
     }
-    # 升权确认(ESCALATION.md §3):kind 透传给 coding agent 区分渲染/作答;
+    # 升权确认(docs/ESCALATION.md §3):kind 透传给 coding agent 区分渲染/作答;
     # 结构化载荷(skill/tier/params/requested)本就在 context 里直通
     if question.kind != "question":
         row["kind"] = question.kind
@@ -95,7 +95,7 @@ def _build_kernel(
 ) -> Any:
     """build_kernel 的退出码归类包装:SkillLoadError → 2,其余装配失败 → 4。
 
-    ``inline``(``--inline on|off``,SKILL-INLINING.md §9 消融开关):覆盖本次 run 的
+    ``inline``(``--inline on|off``,docs/SKILL-INLINING.md §9 消融开关):覆盖本次 run 的
     ``[run].inline``;缺省用配置文件值。改动只落在本次装配私有的 dict 副本上。
 
     ``checkpoint_interval``(``--checkpoint-interval``,Debugger P5):覆盖本次 run 的
@@ -159,7 +159,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     try:
         record = execute_run(
             kernel, args.skill, run_input, artifacts_root=Path(args.artifacts), host="cli",
-            # 数据层身份(DATA-AUTHZ.md §2.2):CLI 本机用户即身份
+            # 数据层身份(docs/DATA-AUTHZ.md §2.2):CLI 本机用户即身份
             principal=cli_principal(),
         )
     except SkillLoadError as e:
@@ -332,6 +332,79 @@ def _cmd_diff(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_lab(args: argparse.Namespace) -> int:
+    """lab validate(docs/SKILL-DEV.md §3;L5):草稿跑提交闸门(G1-G5),头less 输出。
+
+    闸门与 Web 同一函数(skills/gate.py):G4 冒烟用本配置装配的内核真跑
+    (overlay 草稿优先);报告落盘 ``drafts/<name>/gate/``(与 Web 共用
+    drafts_root,promote 可直接消费)。退出码:pass/warn = 0,fail = 2(lint 先例)。
+    """
+    import asyncio as _asyncio
+
+    import jsonschema as _jsonschema
+
+    from agent_os.skills.draft_store import DraftStore, OverlaySkillRegistry
+    from agent_os.skills.gate import validate_draft
+
+    cfg = load_config(args.config)
+    drafts_root = (cfg.get("lab") or {}).get("drafts_root") or str(
+        Path(args.artifacts) / "drafts"
+    )
+    store = DraftStore(drafts_root)
+    try:
+        draft = store.read(args.name)
+    except (FileNotFoundError, ValueError) as e:
+        _emit_report({"ok": False, "error": str(e)}, args.json, [f"error: {e}"])
+        return 2
+    try:
+        kernel = _build_kernel(args.config)
+    except (SkillLoadError, _InfraError) as e:
+        _emit_report({"ok": False, "error": str(e)}, args.json, [f"error: {e}"])
+        return 4
+    if kernel.skills is None:
+        # 无 [skills] 配置也能验草稿:生产层给空 registry(推导档只算 tools)
+        kernel.skills = _EmptyProduction()
+    from agent_os.host.web.run_manager import (
+        RunManager,  # 延迟导入(web 依赖不进 CLI 主路径)
+    )
+
+    RunManager.swap_skills_overlay(kernel, OverlaySkillRegistry(kernel.skills, store))
+    outputs = (draft.get("manifest") or {}).get("outputs") or {}
+
+    def smoke(case: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result = _asyncio.run(kernel.run(args.name, case.get("input") or {}))
+        except Exception as e:  # noqa: BLE001 — 冒烟失败归 G4 finding,不炸 validate
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        if outputs:
+            try:
+                _jsonschema.validate(result, outputs)
+            except _jsonschema.ValidationError as e:
+                return {"ok": False, "error": f"outputs 校验失败: {e.message}"}
+        return {"ok": True, "error": None}
+
+    report = validate_draft(draft, production=kernel.skills, tools=kernel.tools,
+                            smoke_runner=smoke, store=store)
+    report = store.save_gate_report(args.name, report)
+    ok = report["status"] != "fail"
+    _emit_report(
+        {"ok": ok, "status": report["status"], "report": report},
+        args.json,
+        [f"{args.name}: {report['status']}"],
+    )
+    return 0 if ok else 2
+
+
+class _EmptyProduction:
+    """空生产 registry(CLI 无 [skills] 配置时的推导档兜底)。"""
+
+    def get(self, ref: Any) -> Any:
+        raise SkillLoadError(f"未注册的技能: {ref}")
+
+    def manifests(self) -> list[Any]:
+        return []
+
+
 def _cmd_skills(args: argparse.Namespace) -> int:
     """skills validate|list(§3.2):构造即加载走完整校验管线,失败退出码 2。"""
     try:
@@ -375,7 +448,7 @@ def _cmd_debug(args: argparse.Namespace) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-os",
-        description="Agent OS CLI runner(RUNNERS.md §3):跑技能、拿结构化 debug 数据",
+        description="Agent OS CLI runner(docs/RUNNERS.md §3):跑技能、拿结构化 debug 数据",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -388,7 +461,7 @@ def _parser() -> argparse.ArgumentParser:
         "--inline",
         choices=["on", "off"],
         default=None,
-        help="merge 消融开关(SKILL-INLINING.md §9):off 时 inline 技能退化为压帧调用;缺省用配置值",
+        help="merge 消融开关(docs/SKILL-INLINING.md §9):off 时 inline 技能退化为压帧调用;缺省用配置值",
     )
     p_run.add_argument(
         "--checkpoint-interval",
@@ -464,6 +537,16 @@ def _parser() -> argparse.ArgumentParser:
         sp.add_argument("path", help="skills.yaml 路径")
         sp.add_argument("--json", action="store_true")
         sp.set_defaults(func=_cmd_skills)
+
+    # Skill Lab(docs/SKILL-DEV.md §3;L5):草稿闸门头less 入口(coding agent 可用)
+    p_lab = sub.add_parser("lab", help="Skill Lab:草稿提交闸门(G1-G5)")
+    lab_sub = p_lab.add_subparsers(dest="lab_command", required=True)
+    sp_lab = lab_sub.add_parser("validate", help="跑提交闸门;pass/warn 退出码 0,fail 2")
+    sp_lab.add_argument("name", help="草稿名(drafts_root 下的目录名)")
+    sp_lab.add_argument("--config", default="agent-os.toml")
+    sp_lab.add_argument("--artifacts", default=".agent-os")
+    sp_lab.add_argument("--json", action="store_true")
+    sp_lab.set_defaults(func=_cmd_lab)
     return parser
 
 

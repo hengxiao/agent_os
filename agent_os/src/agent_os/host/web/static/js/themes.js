@@ -1,4 +1,4 @@
-/* 主题系统 T1(DEBUG-UI-THEMES.md §2):三层契约的注册表与切换层。
+/* 主题系统 T1(docs/DEBUG-UI-THEMES.md §2):三层契约的注册表与切换层。
    职责:
    · 契约 token 清单(CONTRACT_TOKENS,§2.1 全集;css/themes/<id>.css 必须全量定义);
    · 声明式主题注册表 {id, name, css, copy, motion, mascot, scope}(§2.5);
@@ -21,13 +21,16 @@ import { COPY as pixelCopy } from "./copy/pixel.js";
 export const DEFAULT_THEME = "classic";
 export const THEME_STORAGE_KEY = "agent-os.theme";
 
-/* 契约 token 清单(§2.1 全集 = WEB-UI.md §3 既有语义变量,一个不能少) */
+/* 契约 token 清单(§2.1 全集 = docs/WEB-UI.md §3 既有语义变量,一个不能少) */
 export const CONTRACT_TOKENS = [
   // 基底
   "--bg-0", "--bg-1", "--bg-2", "--bg-3", "--line", "--line-strong",
   "--fg-0", "--fg-1", "--fg-2",
   // 状态
   "--ok", "--warn", "--danger", "--aborted", "--live",
+  // 焦点可见性(docs/WEB-A11Y.md §5.2):颜色须逐主题自定义并过 ≥3:1 对比度断言;
+  // 宽度/偏移是策略常量,只在 tokens.css :root 定义,主题不得覆盖(测试静态断言)
+  "--focus-ring",
   // 信号
   "--sig-llm", "--sig-tool", "--sig-sidecar", "--sig-compress", "--sig-budget", "--sig-frame",
   // 权限
@@ -195,8 +198,12 @@ function syncThemeUrl() {
 
 function themeFromUrl() {
   if (typeof location === "undefined") return null;
-  const qs = (location.hash || "").replace(/^#/, "").split("?")[1];
-  const id = new URLSearchParams(qs ?? "").get("theme");
+  // 两种携带形态都受理:#/lab?theme=moe(hash 内,主形态)与 /?theme=moe#...
+  // (hash 外;UX 评审第三轮实测 ?theme=classic 不生效即后者被忽略所致)
+  const hashQs = (location.hash || "").replace(/^#/, "").split("?")[1];
+  const id =
+    new URLSearchParams(hashQs ?? "").get("theme") ??
+    new URLSearchParams(location.search ?? "").get("theme");
   return id && THEMES.has(id) ? id : null;
 }
 

@@ -1,4 +1,4 @@
-"""M5b 锚点测试:Blackboard(共享状态)+ spawn 后台帧(DESIGN.md §12、§3.4)。
+"""M5b 锚点测试:Blackboard(共享状态)+ spawn 后台帧(docs/DESIGN.md §12、§3.4)。
 
 固定约定:
 
@@ -103,7 +103,7 @@ def _build(tmp_path, *, max_depth: int = 8):
         fib_brain,
         _yaml(tmp_path, FIB_PART + SPAWN_YAML),
         blackboard=LocalBlackboard(),
-        # spawn 升权闸(ESCALATION.md §3;E2):自动批准通道等价于生产宿主里人每次放行
+        # spawn 升权闸(docs/ESCALATION.md §3;E2):自动批准通道等价于生产宿主里人每次放行
         supervisor=auto_approve,
     )
 

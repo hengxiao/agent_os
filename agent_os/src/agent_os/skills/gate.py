@@ -1,0 +1,582 @@
+"""提交闸门(docs/SKILL-DEV.md §1.4;L2)。
+
+五关结构,报告落盘 ``drafts/<name>/gate/<ts>.json``;判定 ``pass|warn|fail``
+(G4 冒烟试跑 / G5 提示词卫生属 L3/L5,本期 ``skip`` 占位,结构先稳定)。
+G3 是 ESCALATION E3 的汇合点:``reversal``/``blast_radius` 必填 lint 在此落地
+(此前只有 docs/TIER-STANDARDS.md §4/§5 的设计,没有强制点)。
+
+判关哲学(§2.4):**编辑器不打断,闸门守出口**——本模块是唯一的判定点,
+validate 与 promote 共用;promote 前复跑 G1-G3(防报告过期/篡改,G4/G5 信报告)。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import shutil
+import string
+import time
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import yaml
+
+from agent_os.api.v1 import (
+    SkillRef,
+    explain_skill_tier,
+    tier_rank,
+)
+from agent_os.kernel.errors import SkillLoadError
+from agent_os.skills.closure import compute_closure
+from agent_os.skills.draft_store import OverlaySkillRegistry
+from agent_os.skills.loader import materialize
+from agent_os.skills.manifest import parse_manifest, validate_manifest
+
+#: 五关 id 与条款锚点(findings.clause 给 UI 链到 docs/TIER-STANDARDS.md 等)
+GATES = ("g1", "g2", "g3", "g4", "g5")
+
+#: version 语义化(语义化版本三段;非语义化版本 G1 warn,promote 会重写)
+_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+#: G5 提示词卫生(§1.4;docs/TIER-STANDARDS.md §8 反模式的镜像):
+#: prompt 教唆"绕过确认/隐瞒副作用" = 把机制问题写回自然语言,必须 fail。
+#: 宁稳勿滥——逐句判定,命中句同时命中正面表述白名单则放行
+#: ("让用户确认后才执行"这类正面表述不得误伤)。
+_G5_PATTERNS: tuple[tuple[str, str], ...] = (  # (regex, 说明)
+    (r"跳过.{0,4}(确认|审批|人审)", "教唆跳过确认"),
+    (r"忽略.{0,4}(确认|审批|用户)", "教唆忽略确认/用户"),
+    (r"无视.{0,4}(用户|确认|审批)", "教唆无视用户/确认"),
+    (r"(不用|不需要|无需|不必).{0,6}(问|询问|确认|审批|人审)", "教唆免确认直接执行"),
+    (r"绕过(确认|审批|用户|闸门)", "教唆绕过确认/闸门"),
+    (r"隐瞒(副作用|影响|后果)", "教唆隐瞒副作用"),
+    (r"(不要|别)告诉用户", "教唆对用户隐瞒"),
+    (
+        r"\b(ignore|disregard|bypass|skip)\b.{0,24}\b(user|confirm|confirmation|approval|review)\b",
+        "injection inducement (EN)",
+    ),
+    (r"\bno need to (ask|confirm)\b", "injection inducement (EN)"),
+    (r"\bdon'?t (ask|consult)\b", "injection inducement (EN)"),
+    (r"\bwithout (asking|confirmation|approval|review)\b", "injection inducement (EN)"),
+)
+_G5_SAFELIST = re.compile(
+    r"确认后|确认才|征得|经(用户|人)|审批后|人审"
+    r"|\bask the user\b|\bafter (user )?(confirmation|approval)\b"
+    r"|\bwith (user )?approval\b|\bmust (ask|confirm)\b",
+    re.IGNORECASE,
+)
+_G5_SENTENCE_SPLIT = re.compile(r"[。!?!;；\n]+")
+
+
+def _g5_findings(prompt: str) -> list[dict[str, str]]:
+    """G5 逐句扫描:命中反模式且非同句正面表述 → fail finding(带句子摘录)。"""
+    findings: list[dict[str, str]] = []
+    for sentence in _G5_SENTENCE_SPLIT.split(prompt or ""):
+        text = sentence.strip()
+        if not text:
+            continue
+        for pattern, why in _G5_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE) and not _G5_SAFELIST.search(text):
+                findings.append(
+                    _finding(
+                        "fail",
+                        "TIER-STANDARDS.md §8",
+                        f"prompt 含注入诱导({why}): {text[:80]}",
+                    )
+                )
+                break  # 一句一条,不重复轰炸
+    return findings
+
+
+def manifest_hash(draft: dict[str, Any]) -> str:
+    """草稿内容指纹(manifest+prompt+handler 规范化 JSON 的 sha1 前 16 位)。
+
+    报告与内容错位防护(§1.4):validate 落报告时记哈希,promote 比对——
+    草稿改过一个字节,旧报告就作废。
+    """
+    canonical = json.dumps(
+        {
+            "manifest": draft.get("manifest"),
+            "prompt": draft.get("prompt") or "",
+            "handler": draft.get("handler") or "",
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _finding(level: str, clause: str, message: str) -> dict[str, str]:
+    return {"level": level, "clause": clause, "message": message}
+
+
+def _status_of(findings: list[dict[str, str]]) -> str:
+    """关的汇总档:任一 fail → fail;否则任一 warn → warn;否则 pass。"""
+    levels = {f["level"] for f in findings}
+    if "fail" in levels:
+        return "fail"
+    if "warn" in levels:
+        return "warn"
+    return "pass"
+
+
+#: 占位字段根必须是标识符(与 str.format 的字段名语义对齐;根之后只许
+#: `.attr`/`[idx]`/`:spec`/`!conv` 或结束——"{some thing}" 这类空格即非法)
+_PLACEHOLDER_ROOT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?=[.\[:!]|$)")
+
+
+def _brace_finding(prompt: str) -> dict[str, str] | None:
+    """花括号预检(N4,B5):与 render_prompt 的 ``str.format`` 语义对齐。
+
+    合法 ``{name}`` 占位与 ``{{ }}`` 转义不拦;三类运行时必炸的形态 → fail:
+    未闭合/畸形花括号(``Formatter.parse`` 抛 ValueError)、裸露 ``{}``
+    (位置占位,``format(**input)`` 无位置实参必 IndexError)、非法占位名
+    (``{some thing}`` 等字段根不是标识符)。修复建议二选一:``{{ }}`` 转义,
+    或改用自然语言描述。
+    """
+    if not prompt:
+        return None
+    try:
+        parsed = list(string.Formatter().parse(prompt))
+    except ValueError as e:
+        return _finding(
+            "fail",
+            "SKILL-DEV §1.3",
+            f"prompt 含未闭合/畸形花括号,运行时渲染必失败({e});"
+            "修复:字面花括号用 {{ }} 转义,或改用自然语言描述",
+        )
+    for _literal, field, _spec, _conv in parsed:
+        if field is None:
+            continue
+        if field == "":
+            return _finding(
+                "fail",
+                "SKILL-DEV §1.3",
+                "prompt 含裸露 {} 占位(按位置取值,而输入按名传参,运行时必失败);"
+                "修复:写成 {参数名},或字面花括号用 {{ }} 转义,或改用自然语言描述",
+            )
+        if not _PLACEHOLDER_ROOT_RE.match(field):
+            return _finding(
+                "fail",
+                "SKILL-DEV §1.3",
+                f"prompt 占位 {{{field}}} 不是合法参数名(字段根须为标识符);"
+                "修复:改成 inputs 里的参数名,或字面花括号用 {{ }} 转义,或改用自然语言描述",
+            )
+    return None
+
+
+def validate_draft(
+    draft: dict[str, Any],
+    *,
+    production: Any,
+    tools: Any,
+    smoke_runner: Any = None,
+    store: Any = None,
+    strict_refs: bool = False,
+) -> dict[str, Any]:
+    """跑提交闸门(§1.4 五关),返回报告 dict(不落盘;落盘见 DraftStore)。
+
+    ``draft`` 为 :meth:`DraftStore.read` 的形态(含 parse_error 容错);
+    ``production``/``tools`` 是生产 skills/tools registry(推导档与引用检查用)。
+    ``smoke_runner``(L3,G4):``callable(case: dict) -> {"ok": bool, "error": str}``
+    的冒烟执行器(test-run 同逻辑,同步小预算);None 时 G4 按 skip(单测/嵌入路径)。
+    ``store``(P1,G2 引用完整性):DraftStore——给了它,skills 引用在 草稿 ∪ 生产
+    全量检查;不给则只查生产(嵌入路径,跨草稿引用查不到会被误报,调用方自酌)。
+    ``strict_refs``(P2,docs/SKILL-PACKAGES-V2.md §6.2):False = 草稿期
+    (UI 检查/助手/CLI 缺省)悬空引用 warn + 修复提示;True = 提交期
+    (promote 复跑/包级提交)悬空引用 fail。
+    """
+    gates: dict[str, Any] = {}
+    raw = draft.get("manifest") if isinstance(draft.get("manifest"), dict) else None
+    parse_error = draft.get("parse_error")
+
+    # —— 解析一份打过 prompt 补丁的 manifest(G1 lint / 推导档共用)——
+    manifest = None
+    tier_detail: dict[str, Any] | None = None
+    tier_error: str | None = None
+    if raw is not None and parse_error is None:
+        try:
+            manifest = parse_manifest(raw)
+            if draft.get("prompt"):
+                manifest.prompt = draft["prompt"]  # prompt.md 即指令体(§1.2),G1 不再误报缺失
+            overlay = OverlaySkillRegistry(production, _SingleDraftStore(draft))
+            tier_detail = explain_skill_tier(manifest, tools, overlay)
+        except (SkillLoadError, ValueError) as e:
+            tier_error = str(e)
+
+    # —— G1 metadata(现状 lint:docs/NAMING.md 层级 / 路由式 description / 语义化 version)——
+    g1: list[dict[str, str]] = []
+    name = str((raw or {}).get("name") or draft.get("name") or "")
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+", name):
+        g1.append(_finding("fail", "NAMING.md §2", f"name {name!r} 不合层级命名规范"))
+    version = str((raw or {}).get("version") or "")
+    if not _SEMVER_RE.match(version):
+        g1.append(_finding("warn", "SKILL-DEV §1.4 G1", f"version {version!r} 非语义化(x.y.z)"))
+    desc = str((raw or {}).get("description") or "")
+    if len(desc) < 10 or "Use when" not in desc:
+        g1.append(
+            _finding(
+                "warn",
+                "DESIGN.md §6.1 lint",
+                "description 应含 'Use when / Do not use when' 触发条件",
+            )
+        )
+    if manifest is not None:
+        # 现状自洽 lint(inline 纯度硬闸/prompt 缺失告警等),并入 G1 报告面
+        try:
+            for warning in validate_manifest(manifest):
+                g1.append(_finding("warn", "validate_manifest", warning))
+        except SkillLoadError as e:
+            g1.append(_finding("fail", "validate_manifest", str(e)))
+    gates["g1"] = {"status": _status_of(g1), "findings": g1}
+
+    # —— G2 契约(inputs/outputs 合法 JSON Schema;L2+ 每参数有 type)——
+    g2: list[dict[str, str]] = []
+    if parse_error is not None or raw is None:
+        g2.append(
+            _finding("fail", "SKILL-DEV §1.2", f"草稿暂不可解析: {parse_error or 'manifest 缺失'}")
+        )
+    else:
+        for field in ("inputs", "outputs"):
+            schema = raw.get(field) or {}
+            if not isinstance(schema, dict):
+                g2.append(_finding("fail", "DESIGN.md §2.1", f"{field} 必须是 JSON Schema dict"))
+                continue
+            try:
+                jsonschema.validators.validator_for(schema).check_schema(schema)
+            except jsonschema.SchemaError as e:
+                g2.append(_finding("fail", "JSON Schema", f"{field} 不是合法 JSON Schema: {e}"))
+        if tier_detail is not None and tier_rank(tier_detail["tier"]) >= 1:
+            # L2+ 高层 skill 不收自由文本参数(docs/ESCALATION.md §3 原则 1 的强制面)
+            for prop, spec in (raw.get("inputs") or {}).get("properties", {}).items():
+                if not isinstance(spec, dict) or "type" not in spec:
+                    g2.append(
+                        _finding(
+                            "fail",
+                            "TIER-STANDARDS.md §2",
+                            f"L2+ 技能的 inputs 参数 {prop!r} 必须有 type",
+                        )
+                    )
+        # 花括号预检(N4,B5):render_prompt 同款 format 语义,运行时必炸的三类
+        # 形态(未闭合/裸露 {}/非法占位名)在闸门期就 fail 并给修复建议
+        brace = _brace_finding(str(draft.get("prompt") or ""))
+        if brace is not None:
+            g2.append(brace)
+        # 引用完整性(docs/SKILL-PACKAGES.md §3.4 G2 行;P1 落地,实现注:校勘记里
+        # "G5 不引用不存在的 skill/tool 未实现"归入本关——它查的是契约面,不是辞卫)。
+        # 两阶段严格性(docs/SKILL-PACKAGES-V2.md §6.2):草稿期 warn + 修复提示
+        # (创作过程的不完整是过程状态),提交期 strict_refs=True → fail。
+        ref_level = "fail" if strict_refs else "warn"
+        ref_fix = "" if strict_refs else "(修复:补建同名草稿,或删除该引用)"
+        draft_name = str(draft.get("name") or (raw or {}).get("name") or "")
+        for tool_name in (raw.get("permissions") or {}).get("tools", []):
+            if not tools.has(tool_name) and tool_name not in (
+                "python_orchestrate",
+                "ask_supervisor",
+            ):
+                g2.append(
+                    _finding(
+                        ref_level,
+                        "SKILL-PACKAGES.md §3.4 G2",
+                        f"悬空工具引用: {draft_name} 声明了不存在的工具 {tool_name}{ref_fix}",
+                    )
+                )
+        for dep in (raw.get("permissions") or {}).get("skills", []):
+            if not _skill_resolvable(dep, draft_name, store, production):
+                g2.append(
+                    _finding(
+                        ref_level,
+                        "SKILL-PACKAGES.md §3.4 G2",
+                        f"悬空引用: {draft_name} 引用了不存在的子技能 {dep}{ref_fix}",
+                    )
+                )
+        if store is not None:
+            # 环沿用 loader 语义(自引用剔边,经他人回边才算;closure.py 是同一数据源)。
+            # 根用草稿视图而非裸 store——校验中的草稿可能还没保存(store 里查无此名)
+            try:
+                closure = compute_closure(
+                    draft_name, _DraftAwareStore(store, draft), production, tools
+                )
+                for error in closure["errors"]:
+                    g2.append(_finding("fail", "SKILL-PACKAGES.md §3.4 G2", error["message"]))
+            except FileNotFoundError:
+                pass  # 根不可解析已由上面的悬空检查覆盖
+    gates["g2"] = {"status": _status_of(g2), "findings": g2}
+
+    # —— G3 分档合规(docs/ESCALATION.md §2.1/§3.4 + docs/TIER-STANDARDS.md §4/§5)——
+    g3: list[dict[str, str]] = []
+    if tier_detail is None:
+        g3.append(
+            _finding("fail", "ESCALATION.md §2.1", f"推导档计算失败: {tier_error or 'manifest 不可解析'}")
+        )
+    else:
+        tier = tier_detail["tier"]
+        for source in tier_detail["sources"]:
+            g3.append(
+                _finding("info", "ESCALATION.md §2.1", f"{source['kind']} {source['name']}: {source['tier']}")
+            )
+        trust = (raw or {}).get("trust") or {}
+        if tier != "none" and (raw or {}).get("inline"):
+            g3.append(
+                _finding("fail", "ESCALATION.md §3.4", f"推导档 {tier} ≥L2 禁止 inline: true")
+            )
+        if tier == "irreversible" and trust.get("confirm") == "first":
+            g3.append(
+                _finding("fail", "ESCALATION.md §2.1", "推导档 L3 禁止 confirm: first(不可逆操作不批量的硬规则)")
+            )
+        if tier == "reversible" and not str(trust.get("reversal") or "").strip():
+            g3.append(
+                _finding("fail", "TIER-STANDARDS.md §4", "L2 必填 trust.reversal(逆转/补偿机制)")
+            )
+        if tier == "irreversible" and not str(trust.get("blast_radius") or "").strip():
+            g3.append(
+                _finding("fail", "TIER-STANDARDS.md §5", "L3 必填 trust.blast_radius(最坏影响面)")
+            )
+    gates["g3"] = {"status": _status_of(g3), "findings": g3}
+
+    # —— G4 冒烟试跑(§1.4;L3):草稿自带 tests/*.json 逐例跑真 run,outputs 必须过 schema ——
+    if smoke_runner is None:
+        gates["g4"] = {"status": "skip", "note": "冒烟试跑执行器未注入(嵌入路径)", "findings": []}
+    else:
+        cases = draft.get("tests") or {}
+        if not cases:
+            # 无用例不 fail(§2.3:warn 后可 ack 提交)——但冒烟是质量面的主要证据,值得黄
+            gates["g4"] = {
+                "status": "warn",
+                "findings": [
+                    _finding("warn", "SKILL-DEV.md §1.4 G4", "无冒烟用例(tests/*.json):建议至少一个")
+                ],
+            }
+        else:
+            g4: list[dict[str, str]] = []
+            for fname, text in cases.items():
+                try:
+                    case = json.loads(text) if isinstance(text, str) else text
+                except (json.JSONDecodeError, TypeError) as e:
+                    g4.append(_finding("fail", "SKILL-DEV.md §1.4 G4", f"用例 {fname} 不是合法 JSON: {e}"))
+                    continue
+                outcome = smoke_runner(case) or {}
+                if outcome.get("ok"):
+                    g4.append(_finding("info", "SKILL-DEV.md §1.4 G4", f"用例 {fname}: 冒烟通过"))
+                else:
+                    g4.append(
+                        _finding(
+                            "fail",
+                            "SKILL-DEV.md §1.4 G4",
+                            f"用例 {fname} 冒烟失败: {outcome.get('error') or '未知错误'}",
+                        )
+                    )
+            gates["g4"] = {"status": _status_of(g4), "findings": g4}
+    # —— G5 提示词卫生(§1.4;L5):注入诱导逐句扫描(模式表见模块顶部,宁稳勿滥)——
+    g5 = _g5_findings(draft.get("prompt") or "")
+    gates["g5"] = {"status": _status_of(g5), "findings": g5}
+
+    overall = "pass"
+    if any(gates[g]["status"] == "fail" for g in ("g1", "g2", "g3", "g4", "g5")):
+        overall = "fail"
+    elif any(gates[g]["status"] == "warn" for g in ("g1", "g2", "g3", "g4", "g5")):
+        overall = "warn"
+    return {
+        "report_id": "",  # 落盘时由 DraftStore 赋值(ts + hash)
+        "draft": str(draft.get("name") or ""),
+        "created_at": time.time(),
+        "manifest_hash": manifest_hash(draft),
+        "tier": (tier_detail or {}).get("tier"),
+        "status": overall,
+        "gates": gates,
+    }
+
+
+def _skill_resolvable(dep: str, self_name: str, store: Any, production: Any) -> bool:
+    """引用完整性判定(§3.4 G2):dep 在 草稿 ∪ 生产 中存在(自引用合法递归恒真)。"""
+    if dep == self_name:
+        return True
+    if store is not None:
+        try:
+            store.load_skill(dep)
+            return True
+        except (FileNotFoundError, SkillLoadError, ValueError):
+            pass
+    try:
+        production.get(SkillRef(name=dep))
+        return True
+    except SkillLoadError:
+        return False
+
+
+class _SingleDraftStore:
+    """把单个草稿伪装成 DraftStore(overlay 的 skills 参数只看 get(),§1.1)。"""
+
+    def __init__(self, draft: dict[str, Any]) -> None:
+        self._draft = draft
+
+    def load_skill(self, name: str) -> Any:
+        if name == self._draft.get("name"):
+            manifest = parse_manifest(self._draft["manifest"])
+            if self._draft.get("prompt"):
+                manifest.prompt = self._draft["prompt"]
+            return materialize(manifest)
+        raise FileNotFoundError(name)
+
+
+class _DraftAwareStore:
+    """store + 当前草稿(G2 环检测用):校验中的草稿可能还没保存,
+
+    裸 store 查不到根会导致闭包计算直接 404 漏报环——先查草稿本身再回落 store。
+    """
+
+    def __init__(self, store: Any, draft: dict[str, Any]) -> None:
+        self._store = store
+        self._draft = draft
+
+    def load_skill(self, name: str) -> Any:
+        if name == self._draft.get("name"):
+            manifest = parse_manifest(self._draft["manifest"])
+            if self._draft.get("prompt"):
+                manifest.prompt = self._draft["prompt"]
+            return materialize(manifest)
+        return self._store.load_skill(name)
+
+
+# ----------------------------------------------------------------------
+# promote(§2.3 流程 5;闸门通过后的唯一生产通道)
+# ----------------------------------------------------------------------
+
+
+def bump_patch(version: str) -> str:
+    """patch 位 +1;非语义化版本回落 0.1.0(无法 bump 就不假装能 bump)。"""
+    m = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version or "")
+    if not m:
+        return "0.1.0"
+    return f"{m.group(1)}.{m.group(2)}.{int(m.group(3)) + 1}"
+
+
+def default_version(registry: Any, name: str) -> str:
+    """缺省版本:生产已有同名 → 在其版本上 bump patch;否则 0.1.0。"""
+    try:
+        existing = registry.get(SkillRef(name=name)).manifest.version
+    except Exception:  # noqa: BLE001 — 不存在即新技能
+        return "0.1.0"
+    return bump_patch(existing)
+
+
+class GateError(RuntimeError):
+    """闸门拒绝(报告过期/含 fail/warn 未确认;路由层归 409 语义)。"""
+
+
+def promote_draft(
+    *,
+    store: Any,
+    name: str,
+    report_id: str,
+    version: str | None,
+    warnings_ack: bool,
+    production: Any,
+    tools: Any,
+    principal: str,
+) -> dict[str, Any]:
+    """promote(docs/SKILL-DEV.md §2.3 流程 5):闸门报告核验 → 复跑 G1-G3 → 写生产。
+
+    校验链(防篡改/防过期):报告必须存在 → 报告哈希 == 当前草稿哈希(草稿改过
+    一字节旧报告即作废)→ 报告无 fail → **复跑 G1-G3** 仍无 fail(G4/G5 信报告)
+    → 有 warn 必须 ``warnings_ack``。通过后写生产 skills.yaml(.bak 备份)、
+    loader reload()、promotions.jsonl 落 provenance 记录。
+    """
+    draft = store.read(name)
+    report = store.read_gate_report(name, report_id)
+    if report.get("manifest_hash") != manifest_hash(draft):
+        raise GateError("报告与当前草稿不一致:草稿在上次检查后有改动,请重新运行检查")
+    if report.get("status") == "fail":
+        raise GateError("闸门报告含 fail,不能 promote——先修红关再提交")
+    # 复跑 G1-G3(§1.4:防报告过期/篡改;G4/G5 信报告)。
+    # P2(docs/SKILL-PACKAGES-V2.md §6.2):复跑必须带 store(§2.2 实测死锁:
+    # 漏传时"根引用未发布兄弟草稿"在 validate 通过、复跑误报悬空)且按提交期
+    # 严格档(strict_refs=True,悬空即 fail)
+    fresh = validate_draft(draft, production=production, tools=tools,
+                           store=store, strict_refs=True)
+    # 根草稿引用了未发布的兄弟草稿(草稿层存在、生产层不存在)——单稿 promote
+    # 写出去生产即刻损坏(loader 依赖存在性),这是包,指路包级提交(§6.2 尾段)
+    if store is not None:
+        for dep in (draft.get("manifest") or {}).get("permissions", {}).get("skills", []):
+            if dep == name:
+                continue
+            try:
+                production.get(SkillRef(name=dep))
+                continue  # 已发布,不是兄弟草稿
+            except SkillLoadError:
+                pass
+            try:
+                store.load_skill(dep)
+            except (FileNotFoundError, SkillLoadError, ValueError):
+                continue  # 真悬空由 strict_refs 的 G2 拦,不在此重复
+            raise GateError(
+                f"根草稿引用了未发布的兄弟草稿 {dep}——这是一个包,"
+                f"请用包级提交(POST /api/lab/packages/{name}/plan → promote)"
+            )
+    for gate_id in ("g1", "g2", "g3"):
+        if fresh["gates"][gate_id]["status"] == "fail":
+            first = next(
+                (f["message"] for f in fresh["gates"][gate_id]["findings"] if f["level"] == "fail"),
+                "",
+            )
+            raise GateError(f"复跑 {gate_id} 出现新 fail(与报告判定不一致,非报告过期): {first}")
+    has_warn = report.get("status") == "warn" or any(
+        fresh["gates"][g]["status"] == "warn" for g in ("g1", "g2", "g3")
+    )
+    if has_warn and not warnings_ack:
+        raise GateError("闸门存在 warn,须人工勾选“我已阅读警告”(warnings_ack)后才能 promote")
+
+    final_version = version or default_version(production, name)
+    entry = dict(draft["manifest"] or {})
+    entry["name"] = name
+    entry["version"] = final_version
+    if draft.get("prompt"):
+        entry["prompt"] = draft["prompt"]  # 单文件形态:指令体内联进条目(§6.3)
+    action = write_production_entry(production, entry)
+    production.reload()  # 生产热重载(§6.1 现状先例;只影响后续新建的 run)
+    record = {
+        "promoted_by": principal,
+        "gate_report_id": report_id,
+        "version": final_version,
+        "action": action,
+        "at": time.time(),
+    }
+    store.record_promotion(name, record)  # 草稿保留可再迭代(§1.4 归档语义)
+    return {
+        "name": name,
+        "version": final_version,
+        "action": action,
+        "reloaded": True,
+        "promoted_by": principal,
+        "gate_report_id": report_id,
+    }
+
+
+def write_production_entry(registry: Any, entry: dict[str, Any]) -> str:
+    """把草稿写进生产 skills.yaml(追加或替换同名条;写前备份 ``.bak``)。
+
+    返回 ``"appended" | "replaced"``。生产面是**单文件** skills.yaml 才支持
+    (目录/多文件形态的归并策略留给 L5 打磨);registry  duck-typed
+    (``path``/``reload()``,LocalFileSkillRegistry 即满足)。
+    """
+    path = getattr(registry, "path", None)
+    if not isinstance(path, str) or Path(path).is_dir():
+        raise SkillLoadError(
+            "promote 目前只支持单文件 skills.yaml(目录/多文件形态见 docs/SKILL-DEV.md §4 L2 实现注)"
+        )
+    target = Path(path)
+    data = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+    entries = data.get("skills") or []
+    action = "appended"
+    for index, old in enumerate(entries):
+        if isinstance(old, dict) and old.get("name") == entry["name"]:
+            entries[index] = entry
+            action = "replaced"
+            break
+    else:
+        entries.append(entry)
+    data["skills"] = entries
+    shutil.copy2(target, target.with_name(target.name + ".bak"))
+    target.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return action

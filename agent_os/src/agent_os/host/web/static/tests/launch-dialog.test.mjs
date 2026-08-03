@@ -1,4 +1,4 @@
-/* launch-dialog.js 纯逻辑单测(WEB-UI.md §4.3 New Run Modal):
+/* launch-dialog.js 纯逻辑单测(docs/WEB-UI.md §4.3 New Run Modal):
    validateAgainstSchema(手写小型 JSON Schema 校验器:required 缺失 / type 不符 /
    minimum 违例 / 嵌套对象 / 非 JSON 输入)、skeletonFromSchema(示例骨架)、
    summarizeInputs(inputs 摘要)、buildOverrides(高级区 → overrides)。
@@ -165,7 +165,7 @@ const FIB_SCHEMA = {
   assert.deepEqual(buildOverrides({ maxCost: "abc", maxSteps: "1.9" }), { max_steps: 1 },
     "非数字丢弃;max_steps 取整");
   assert.deepEqual(buildOverrides(), {});
-  /* inline(SKILL-INLINING.md §9 消融开关):on/off 带出,""(继承配置)与其他值丢弃 */
+  /* inline(docs/SKILL-INLINING.md §9 消融开关):on/off 带出,""(继承配置)与其他值丢弃 */
   assert.deepEqual(buildOverrides({ inline: "off" }), { inline: "off" });
   assert.deepEqual(buildOverrides({ inline: "on" }), { inline: "on" });
   assert.deepEqual(buildOverrides({ inline: "" }), {}, "继承配置不带出");

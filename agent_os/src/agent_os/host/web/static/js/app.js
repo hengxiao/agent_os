@@ -1,4 +1,4 @@
-/* Agent OS Web UI 入口(WEB-UI.md §4.1 应用壳 / §5 交互与状态规范 / §6.1 结构)。
+/* Agent OS Web UI 入口(docs/WEB-UI.md §4.1 应用壳 / §5 交互与状态规范 / §6.1 结构)。
    职责:hash 路由(runs/skills/tools,§4.1 深链接含 ?frame/?signal;D6 增 ?set=)、
    Runs 侧栏(搜索/筛选/折叠;D6 set 切换器)、API 健康轮询(live 指示 + 列表 5s 刷新)、
    三态、Toast、复制。
@@ -11,6 +11,8 @@ import { absTime, copyText, emptyBlock, esc, fmtCost, relTime, toast } from "./u
 import { openLaunchDialog } from "./components/launch-dialog.js";
 import { closeSkillsView, openSkillsView } from "./components/skills-view.js";
 import { closeToolsView, openToolsView } from "./components/tools-view.js";
+import { closeLab, openLab } from "./components/lab.js";
+import { closeIterate, openIterate } from "./components/lab-iterate.js";
 import { closeDebugHome, openDebugHome } from "./components/debug-home.js";
 import {
   closeDebugView,
@@ -40,7 +42,7 @@ import {
   workbenchKeydown,
 } from "./workbench.js";
 import { installGlobalKeys } from "./shortcuts.js";
-import { initTheme, mountThemePicker, syncTheme } from "./themes.js";
+import { initTheme, mountThemePicker, syncTheme, copy } from "./themes.js";
 import { COMMANDS, openCommandPalette } from "./components/command-palette.js";
 import { openShortcutsPanel } from "./components/shortcuts-panel.js";
 
@@ -69,6 +71,12 @@ function parseRoute(hash) {
   }
   if (seg[0] === "skills") return { name: "skills", runId: null, itemName: seg[1] ?? null, set };
   if (seg[0] === "tools") return { name: "tools", runId: null, itemName: seg[1] ?? null, set };
+  // Skill Lab(docs/SKILL-DEV.md;L1):#/lab 与 #/lab/<draft> 深链接;
+  // 迭代模式(docs/LAB-ITERATION.md;Flow C):#/lab/<draft>/iterate
+  if (seg[0] === "lab") {
+    if (seg[2] === "iterate") return { name: "lab-iterate", runId: null, draft: seg[1] ?? null, set };
+    return { name: "lab", runId: null, draft: seg[1] ?? null, set };
+  }
   if (seg[0] === "debug") {
     return seg[1]
       ? { name: "debug-session", sessionId: seg[1], runId: null, set }
@@ -91,7 +99,10 @@ function applyRoute() {
 function renderNav() {
   const name = store.get("route").name;
   const page =
-    name === "run-detail" ? "runs" : name.startsWith("debug") ? "debug" : name;
+    name === "run-detail" ? "runs"
+    : name.startsWith("debug") ? "debug"
+    : name === "lab-iterate" ? "lab" // 迭代模式归 Lab 导航(docs/LAB-ITERATION.md)
+    : name;
   document.body.dataset.route = page; // 侧栏仅 Runs 页显示(app.css 按此驱动)
   document.querySelectorAll(".nav-item").forEach((a) => {
     if (a.dataset.nav === page) a.setAttribute("aria-current", "page");
@@ -242,6 +253,8 @@ function renderMain() {
   if (route.name !== "tools") closeToolsView();
   if (route.name !== "debug-home") closeDebugHome();
   if (route.name !== "debug-session") closeDebugView(); // 离开调试台:SSE/轮询收尾
+  if (route.name !== "lab") closeLab(); // 离开 Lab:丢弃页面状态(草稿在服务端,随时可回)
+  if (route.name !== "lab-iterate") closeIterate(); // 离开迭代模式同理(版本/批注在服务端)
   if (route.name === "skills") {
     openSkillsView(main, route.itemName); // §4.6(#/skills 与 #/skills/<name> 深链接恢复)
     return;
@@ -256,6 +269,14 @@ function renderMain() {
   }
   if (route.name === "debug-session") {
     openDebugView(main, route.sessionId); // P4 调试台
+    return;
+  }
+  if (route.name === "lab") {
+    openLab(main, route.draft); // Skill Lab(docs/SKILL-DEV.md;L1)
+    return;
+  }
+  if (route.name === "lab-iterate") {
+    openIterate(main, route.draft); // 迭代模式(docs/LAB-ITERATION.md;Flow C)
     return;
   }
   if (route.name === "run-detail") {
@@ -417,7 +438,15 @@ $("#collapseBtn").addEventListener("click", () => {
   const bar = $("#sidebar");
   const collapsed = bar.classList.toggle("collapsed");
   $("#collapseBtn").title = collapsed ? "展开侧栏" : "折叠侧栏";
+  try { // UX 评审 P1-9:折叠状态跨会话记忆(Lab 三栏页尤其需要宽度)
+    localStorage.setItem("agent-os.sidebar.collapsed", collapsed ? "1" : "0");
+  } catch { /* 隐私模式等:仅本次会话有效 */ }
 });
+try { // 启动恢复折叠状态
+  if (localStorage.getItem("agent-os.sidebar.collapsed") === "1") {
+    $("#sidebar").classList.add("collapsed");
+  }
+} catch { /* 同上 */ }
 
 $("#liveIndicator").addEventListener("click", () => {
   if (store.get("liveConn") === "down") {
@@ -426,7 +455,7 @@ $("#liveIndicator").addEventListener("click", () => {
   }
   poll();
 });
-// S3(SUPERVISOR.md §5):TopBar 收件箱图标 → 抽屉开关
+// S3(docs/SUPERVISOR.md §5):TopBar 收件箱图标 → 抽屉开关
 $("#inboxBtn").addEventListener("click", () => toggleInbox());
 // + New Run 主按钮(§4.3):打开 Launch Modal(不打断当前页;成功后跳 #/runs/<id> 进 live)
 $("#newRunBtn").addEventListener("click", () => openLaunchDialog());
@@ -502,6 +531,32 @@ installGlobalKeys({
 });
 
 window.addEventListener("hashchange", applyRoute);
+
+/* ── 页面冻结恢复(WebBridge 排障报告根因):Chrome 后台标签页被冻结(Energy
+   Saver / Tab Freeze)时 JS 事件循环整体停摆,按钮点击被静默吞掉且无任何
+   提示——表象即"页面不 work"。恢复可见时:提示"刚才是休眠"+ 立即补一轮
+   轮询(数据面各自轮询自愈,这里消除恢复期滞后并告知原因)。bfcache 恢复
+   (pageshow.persisted)时 DOM 是旧快照,同样补提示与刷新。── */
+let _hiddenAt = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    _hiddenAt = Date.now();
+    return;
+  }
+  if (_hiddenAt && Date.now() - _hiddenAt > 30_000) {
+    toast(copy("app.resumed"), "info");
+    poll();
+    pollInbox();
+  }
+  _hiddenAt = 0;
+});
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted) {
+    toast(copy("app.resumed"), "info");
+    poll();
+    pollInbox();
+  }
+});
 
 /* ── 启动:深链接恢复(§4.1)→ 首次轮询 → 5s 周期 ─────────────────── */
 

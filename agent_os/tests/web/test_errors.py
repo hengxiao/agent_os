@@ -1,4 +1,4 @@
-"""Web API 错误分支锚点测试(RUNNERS.md §4.3;未知资源一律 404,不 500)。"""
+"""Web API 错误分支锚点测试(docs/RUNNERS.md §4.3;未知资源一律 404,不 500)。"""
 
 from __future__ import annotations
 

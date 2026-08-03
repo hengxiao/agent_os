@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html data-theme="classic" lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>方案 B · 对话驱动 — Lab 迭代原型</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/themes/classic.css">
+<link rel="stylesheet" href="/static/css/themes/moe.css">
+<link rel="stylesheet" href="/static/css/themes/terminal.css">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css">
+<link rel="stylesheet" href="/static/css/themes/ink.css">
+<link rel="stylesheet" href="/static/css/themes/pixel.css">
+<style>
+  /* 原型页局部样式(不进 app.css;全部消费契约 token) */
+  body { background: var(--bg-0); color: var(--fg-0); margin: 0; font-family: var(--font-sans, system-ui); }
+  .proto-watermark {
+    position: fixed; right: var(--s3); bottom: var(--s3); z-index: 99;
+    font-size: var(--text-2xs); color: var(--fg-2);
+    border: var(--stroke) dashed var(--line-strong); border-radius: var(--r-sm);
+    padding: var(--s1) var(--s2); background: var(--bg-1); opacity: .85;
+  }
+  .proto-themes { display: flex; gap: var(--s1); align-items: center; font-size: var(--text-2xs); color: var(--fg-2); }
+  .proto-themes button {
+    border: var(--stroke) solid var(--line); background: var(--bg-2); color: var(--fg-1);
+    border-radius: var(--r-sm); padding: 0 var(--s2); cursor: pointer; font-size: var(--text-2xs); line-height: var(--s4);
+  }
+  .proto-themes button[data-on="1"] { color: var(--live); border-color: var(--live); }
+
+  .b-top {
+    display: flex; align-items: center; gap: var(--s3);
+    padding: var(--s2) var(--s4); border-bottom: var(--stroke) solid var(--line);
+  }
+  .b-pkg { font-weight: 700; font-family: var(--font-mono); }
+  .b-vers { display: flex; gap: var(--s1); }
+  .b-vers .chip { cursor: pointer; }
+  .b-vers .chip[data-on="1"] { color: var(--live); border-color: var(--live); }
+
+  .b-duo {
+    display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3);
+    padding: var(--s3) var(--s4); border-bottom: var(--stroke) solid var(--line);
+  }
+  .b-pane { background: var(--bg-2); border: var(--stroke) solid var(--line); border-radius: var(--r-md); padding: var(--s3); }
+  .b-pane h4 { margin: 0 0 var(--s2); font-size: var(--text-xs); color: var(--fg-2); display: flex; justify-content: space-between; }
+  .b-pane .kv { font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--fg-1); white-space: pre-wrap; }
+  .b-score { font-size: var(--text-2xs); margin-top: var(--s2); display: flex; gap: var(--s3); }
+  .b-up { color: var(--perm-read); }
+
+  .b-chat { padding: var(--s3) var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
+  .b-chat-head { font-size: var(--text-sm); font-weight: 600; color: var(--fg-1); }
+  .b-msg { display: flex; }
+  .b-msg-body {
+    max-width: 78%; padding: var(--s2) var(--s3); border-radius: var(--r-md);
+    font-size: var(--text-xs); background: var(--bg-2); border: var(--stroke) solid var(--line);
+  }
+  .b-msg[data-role="user"] { justify-content: flex-end; }
+  .b-msg[data-role="user"] .b-msg-body { border-color: var(--live); }
+  .b-msg .to { display: block; font-size: var(--text-2xs); color: var(--live); font-family: var(--font-mono); margin-bottom: var(--s1); }
+  .b-input { display: flex; gap: var(--s2); padding: 0 var(--s4) var(--s4); }
+  .b-input textarea { flex: 1; }
+</style>
+</head>
+<body>
+<div class="b-top">
+  <span class="b-pkg">dinner.planner</span>
+  <span class="perm-badge" data-perm="WRITE"><span class="perm-dot" aria-hidden="true"></span>reversible</span>
+  <div class="b-vers" id="vers">
+    <span class="chip mono" data-v="1">v1</span>
+    <span class="chip mono" data-v="2">v2</span>
+    <span class="chip mono" data-v="3" data-on="1">v3</span>
+    <span class="chip mono" data-v="4">v4(候选)</span>
+  </div>
+  <button class="btn" title="回到上一版">⟲ rewind</button>
+  <span style="flex:1"></span>
+  <div class="proto-themes" id="themes">
+    主题:
+    <button data-t="classic">classic</button><button data-t="moe">moe</button>
+    <button data-t="terminal">terminal</button><button data-t="blueprint">blueprint</button>
+    <button data-t="ink">ink</button><button data-t="pixel">pixel</button>
+  </div>
+  <a class="btn" href="./index.html">← 对比首页</a>
+</div>
+
+<!-- 上部:既有 ⇆ 候选(紧凑并排,内容与方案 A 一致) -->
+<div class="b-duo">
+  <div class="b-pane">
+    <h4>v003(既有)</h4>
+    <div class="kv">description: 根据天气与日程推荐晚餐,综合温度、降水与用户偏好,输出菜名与理由,尽量家常。
+prompt: 你是晚餐规划师…(3 段)
+permissions: dinner.weather[草稿] weather.query[外链]
+trust: confirm: first
+tests: case1 92 · case2 41 · case3 88 · 聚合 71</div>
+  </div>
+  <div class="b-pane">
+    <h4>v004(候选,随对话刷新)</h4>
+    <div class="kv" id="candKv">(对话里说"生成"后,这里出现候选摘要与分数)</div>
+    <div class="b-score" id="candScore" hidden>
+      <span>case2 <b class="b-up">41→78 ↑</b></span>
+      <span>聚合 <b class="b-up">71→88 ↑</b></span>
+      <button class="btn btn-primary" id="accept">✓ 接受</button>
+    </div>
+  </div>
+</div>
+
+<!-- 下部:对话流(批注 = 聊天气泡;无独立批注面板) -->
+<div class="b-chat">
+  <div class="b-chat-head">迭代对话(批注就是消息,助手按一轮意见出候选)</div>
+  <div class="b-msg" data-role="user"><div class="b-msg-body"><span class="to">→ manifest.description</span>太啰嗦了,一句话够了。</div></div>
+  <div class="b-msg" data-role="user"><div class="b-msg-body"><span class="to">→ tests/case2</span>加一个"大雨+加班"的反例,41 分主要是没给便携建议。</div></div>
+  <div class="b-msg" data-role="user"><div class="b-msg-body"><span class="to">→ trust</span>trust 不该是 L2——这只是推荐,又不写文件。</div></div>
+  <div class="b-msg" data-role="assistant"><div class="b-msg-body">已按 3 条意见生成 v004:description 精简为一句、prompt 补雨天便携选项、case2 新增"大雨加班"反例;trust 档位我没有擅改,标了"建议人工复核"。双侧分数:case1 92→95,case2 41→78,case3 88→90,聚合 71→88。</div></div>
+  <div class="b-msg" data-role="user"><div class="b-msg-body">case2b 的反例里把"可带饭"写得更具体一点。</div></div>
+  <div class="b-msg" data-role="assistant"><div class="b-msg-body">收到,已在 v004b 中把 case2b 的期望输出改为具体菜谱(饭团/三明治类),聚合升到 90(假数据演示)。</div></div>
+</div>
+<div class="b-input">
+  <textarea class="input" rows="2" placeholder="继续说,比如:description 再短一点 / case3 补一个不吃辣的例子…"></textarea>
+  <button class="btn btn-primary" id="send">发送</button>
+</div>
+
+<div class="proto-watermark">原型 PROTOTYPE · 数据为假</div>
+<script>
+  const root = document.documentElement;
+  const btns = document.querySelectorAll("#themes button");
+  function setTheme(id) {
+    root.dataset.theme = id;
+    btns.forEach((b) => { b.dataset.on = b.dataset.t === id ? "1" : "0"; });
+  }
+  btns.forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.t)));
+  setTheme("classic");
+
+  // 版本 chip(假切换:只换高亮;正式版会切左/右栏内容)
+  document.querySelectorAll("#vers .chip").forEach((c) => {
+    c.addEventListener("click", () => {
+      document.querySelectorAll("#vers .chip").forEach((x) => { delete x.dataset.on; });
+      c.dataset.on = "1";
+    });
+  });
+  // 发送(假):输入进对话,候选区出现
+  const send = document.getElementById("send");
+  send.addEventListener("click", () => {
+    const ta = document.querySelector(".b-input textarea");
+    if (!ta.value.trim()) return;
+    const log = document.querySelector(".b-chat");
+    const mine = document.createElement("div");
+    mine.className = "b-msg";
+    mine.dataset.role = "user";
+    mine.innerHTML = '<div class="b-msg-body"></div>';
+    mine.firstChild.textContent = ta.value;
+    ta.value = "";
+    const reply = document.createElement("div");
+    reply.className = "b-msg";
+    reply.dataset.role = "assistant";
+    reply.innerHTML = '<div class="b-msg-body">收到,已按这条意见刷新候选(假数据演示)。</div>';
+    log.appendChild(mine);
+    log.appendChild(reply);
+    document.getElementById("candKv").textContent =
+      "description 一句化;prompt 补雨天便携;case2 +大雨加班反例;trust 标人工复核";
+    document.getElementById("candScore").hidden = false;
+  });
+  document.getElementById("accept").addEventListener("click", () => {
+    document.getElementById("candScore").insertAdjacentHTML(
+      "beforeend", '<span style="color:var(--perm-read)">已接受为 v004(假)</span>');
+  });
+</script>
+</body>
+</html>

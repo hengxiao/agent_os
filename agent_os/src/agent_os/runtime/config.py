@@ -1,4 +1,4 @@
-"""配置文件加载(RUNNERS.md §2.1;DESIGN.md §14.2 的 TOML 形态;R1)。
+"""配置文件加载(docs/RUNNERS.md §2.1;docs/DESIGN.md §14.2 的 TOML 形态;R1)。
 
 ``agent-os.toml`` 等价完成 KernelBuilder 链式组装,供 CLI/Web 两个薄宿主共用::
 
@@ -14,7 +14,7 @@
                    声明即授权,RunConfig 权限上限同步提到 EXEC(同 system.python.exec)
     [skills]     → LocalFileSkillRegistry
     [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加)
-    [supervisor] → timeout_s / on_timeout / default_answer(SUPERVISOR.md §6;TOML
+    [supervisor] → timeout_s / on_timeout / default_answer(docs/SUPERVISOR.md §6;TOML
                    写不了可调用 handler——此处只加载策略字段,handler 由宿主经
                    build_kernel(supervisor_handler=...) 注入,S2:Web 收件箱
                    默认通道 / CLI stderr 协议)
@@ -75,7 +75,7 @@ _RUN_FIELDS = (
 
 
 class ConfigError(RuntimeError):
-    """配置缺失/畸形/装配失败(RUNNERS.md §3.3 退出码 4:宿主/基础设施错误)。"""
+    """配置缺失/畸形/装配失败(docs/RUNNERS.md §3.3 退出码 4:宿主/基础设施错误)。"""
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -230,7 +230,7 @@ def build_kernel(
     extra_sidecars: Iterable[Any] = (),
     supervisor_handler: Any = None,
 ) -> Any:
-    """按 RUNNERS.md §2.1 把 ``agent-os.toml``(或等价 dict)装配为 Kernel。
+    """按 docs/RUNNERS.md §2.1 把 ``agent-os.toml``(或等价 dict)装配为 Kernel。
 
     缺省:无 ``[run]`` 用 RunConfig 默认;无 ``[providers]`` → 空 Manager
     (运行时才报"provider 前缀未注册");无 ``[skills]``/``[telemetry]``/``[sidecars]``
@@ -241,7 +241,7 @@ def build_kernel(
     ``extra_sidecars``:配置文件之外由宿主追加的 sidecar(Web runner 的 stop
     通道占位 sidecar;M4 起仅有 sidecar 时 builder 才装配 ``kernel.ctl``)。
 
-    ``supervisor_handler``(S2,SUPERVISOR.md §2.3):宿主注入的调用方通道
+    ``supervisor_handler``(S2,docs/SUPERVISOR.md §2.3):宿主注入的调用方通道
     (``async def handler(question) -> Answer``),与 TOML ``[supervisor]``
     段的策略字段(timeout_s/on_timeout/default_answer)合并装配
     SupervisorManager;不传则维持 S1 行为(仅预置策略,运行时 ask 报
@@ -258,7 +258,7 @@ def build_kernel(
         else LocalPythonToolRegistry()
     )
     if tools_cfg.get("python_orchestrate", False):
-        # 编排伪工具(CODE-ORCHESTRATION.md):显式开启;声明即授权,权限上限提到 EXEC
+        # 编排伪工具(docs/CODE-ORCHESTRATION.md):显式开启;声明即授权,权限上限提到 EXEC
         run_cfg.orchestrate = True
         if run_cfg.tool_policy.max_permission < Permission.EXEC:
             run_cfg.tool_policy = ToolPolicy(max_permission=Permission.EXEC)

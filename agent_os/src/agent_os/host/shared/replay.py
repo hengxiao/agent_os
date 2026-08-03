@@ -1,4 +1,4 @@
-"""复现层(RUNNERS.md §3.4;replay 脚本重建与 run 结构化 diff,两个 runner 共用)。
+"""复现层(docs/RUNNERS.md §3.4;replay 脚本重建与 run 结构化 diff,两个 runner 共用)。
 
 replay:runner 只在帧上下文追加 LLM 响应(§3.1),故 trace 中**第 N 个属于帧 F 的
 ``post:llm.response`` 信号 ↔ checkpoint 中帧 F 的第 N 条 role=="assistant" 消息**;

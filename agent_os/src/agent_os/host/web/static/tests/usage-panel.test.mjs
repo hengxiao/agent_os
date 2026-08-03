@@ -1,4 +1,4 @@
-/* usage-panel.js 纯逻辑单测(WEB-UI.md §4.5):
+/* usage-panel.js 纯逻辑单测(docs/WEB-UI.md §4.5):
    aggregateUsage(七字段合计 / 缺字段按 0 / run 权威值优先)、
    sortRows(数字列升降序 / 字符串列 / 稳定性 / 不改动入参)、
    costBarWidth(比例 / 上限 100 / 零与负值边界)、

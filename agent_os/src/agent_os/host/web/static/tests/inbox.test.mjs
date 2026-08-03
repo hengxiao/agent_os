@@ -1,4 +1,4 @@
-/* inbox.js 纯逻辑单测(SUPERVISOR.md §5;S3 收件箱):
+/* inbox.js 纯逻辑单测(docs/SUPERVISOR.md §5;S3 收件箱):
    sortedPending(high 在前,其余先问先排)、badgeModel(计数/hasHigh)、
    questionCardHtml(urgency 色条数据、options 按钮组/文本输入、错误条、深链接)。
    运行:node static/tests/inbox.test.mjs(无需 DOM、无第三方依赖)。 */
@@ -87,7 +87,7 @@ const q = (over = {}) => ({
   assert.ok(html.includes("&lt;img"), "转义实体出现");
 }
 
-/* ── 升权卡片(ESCALATION.md §3;E2)─────────────────────────────
+/* ── 升权卡片(docs/ESCALATION.md §3;E2)─────────────────────────────
    kind == "escalation" 的 pending 项渲染专卡:档位徽标(perm 色板槽位)、
    skill 名、reason_hint、params JSON(可折叠)、requested 权限集、选项按钮。 */
 const escQ = (over = {}, ctx = {}) => ({

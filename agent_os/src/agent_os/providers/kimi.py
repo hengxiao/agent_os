@@ -1,4 +1,4 @@
-"""KimiProvider(DESIGN.md §4.3;Moonshot AI Kimi 接口适配)。
+"""KimiProvider(docs/DESIGN.md §4.3;Moonshot AI Kimi 接口适配)。
 
 Kimi API 是 OpenAI 兼容协议(官方文档:`POST {base_url}/chat/completions`,
 支持 tool use 与 thinking 模型的 ``reasoning_content``),故本适配器是

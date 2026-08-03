@@ -1,4 +1,4 @@
-"""R3 锚点测试:Web UI Runner 基础(RUNNERS.md §4;FastAPI + RunManager + SSE + SPA)。
+"""R3 锚点测试:Web UI Runner 基础(docs/RUNNERS.md §4;FastAPI + RunManager + SSE + SPA)。
 
 固定约定:
 

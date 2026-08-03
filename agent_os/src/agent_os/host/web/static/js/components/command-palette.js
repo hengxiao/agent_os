@@ -1,4 +1,4 @@
-/* ⌘K 命令条(WEB-UI.md §5 键盘):居中 Modal,顶部输入 + fuzzy 过滤列表,
+/* ⌘K 命令条(docs/WEB-UI.md §5 键盘):居中 Modal,顶部输入 + fuzzy 过滤列表,
    ↑/↓ 移动高亮,Enter 执行,Esc / 遮罩点击关闭;打开聚焦输入,关闭还原焦点。
    命令可见性(Stop 仅 running / Resume·定位首个错误 仅异常 run)由调用方
    在打开前按上下文过滤,本组件只渲染收到的命令集。

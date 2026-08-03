@@ -1,4 +1,4 @@
-"""内核检查点(DESIGN.md §10.2 WAL 原则、§3.1 中断配对;M5a)。
+"""内核检查点(docs/DESIGN.md §10.2 WAL 原则、§3.1 中断配对;M5a)。
 
 WAL 原则:"trajectory 是 Agent 的全部状态"——帧 transcript 完整入档即检查点,
 恢复 = 重建帧树 + 带着完整上下文重入 loop(**恢复不是重跑**:DONE 帧跳过,
@@ -28,10 +28,10 @@ WAL 原则:"trajectory 是 Agent 的全部状态"——帧 transcript 完整入�
 3. 调用完全无工具结果(分发到一半断电)且无子帧 → 追加中断占位结果
    (``ok=False, kind=interrupted``,§3.1 中断配对)。
 
-例外(SUPERVISOR.md §4):``ask_supervisor`` 调用无工具结果且帧 ``working`` 含
+例外(docs/SUPERVISOR.md §4):``ask_supervisor`` 调用无工具结果且帧 ``working`` 含
 ``_pending_ask`` 时**不是**"分发到一半断电"——恢复时先经
 ``Kernel._settle_pending_ask`` 重新向调用方提问并写回真实答案,
-再进入上面三条规则结算其余调用。升权确认(ESCALATION.md §3)同理:
+再进入上面三条规则结算其余调用。升权确认(docs/ESCALATION.md §3)同理:
 ``_pending_escalation`` 在档时经 ``Kernel._settle_pending_escalation``
 重走升权闸门(重问 → 批准则当场补建子帧跑完,拒绝则写 PERMISSION_DENIED),
 不落 interrupted 占位。
@@ -137,7 +137,7 @@ def dump_checkpoint(kernel: Any, run_id: str, path: str) -> None:
             "error": run.state.error,
             # §W1-4:run 级工具状态(todo 清单等)随 checkpoint 落盘(additive,schema v1 不变)
             "run_state": getattr(kernel.tools, "run_states", {}).get(run_id, {}),
-            # ESCALATION.md §4(E2):升权批准台账随 checkpoint 落盘(resume 后 Grant 命中一致)
+            # docs/ESCALATION.md §4(E2):升权批准台账随 checkpoint 落盘(resume 后 Grant 命中一致)
             "grants": [dataclasses.asdict(g) for g in getattr(run, "grants", [])],
         },
         "frames": [
@@ -151,8 +151,8 @@ def dump_checkpoint(kernel: Any, run_id: str, path: str) -> None:
                 "result": f.result,
                 "error": str(f.error) if f.error is not None else None,
                 "call_id": f.call_id,
-                "tier": f.tier,  # 帧信任档(ESCALATION.md §2.2;additive,schema v1 不变)
-                # 数据层身份(DATA-AUTHZ.md §2.3;additive):随帧落盘,resume 身份不变
+                "tier": f.tier,  # 帧信任档(docs/ESCALATION.md §2.2;additive,schema v1 不变)
+                # 数据层身份(docs/DATA-AUTHZ.md §2.3;additive):随帧落盘,resume 身份不变
                 "principal": dataclasses.asdict(f.principal) if f.principal is not None else None,
                 "usage": _usage_to_dict(f.usage),
                 "context": {
@@ -335,7 +335,7 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
     run = Run(run_id=doc["run"]["run_id"], config=kernel.config)
     run.state.usage = _usage_from_dict(doc["run"]["usage"])
     run.state.status = RunStatus.RUNNING
-    # ESCALATION.md §4(E2):恢复升权批准台账(approve-run 的 run 档 Grant 跨断电有效)
+    # docs/ESCALATION.md §4(E2):恢复升权批准台账(approve-run 的 run 档 Grant 跨断电有效)
     run.grants = [Grant(**g) for g in doc["run"].get("grants", [])]
     kernel._runs[run.run_id] = run
     # §W1-4:恢复 run 级工具状态(todo 清单等),恢复后状态栏与工具读到同一份
@@ -357,10 +357,10 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
         for frame in sorted(frames, key=lambda f: f.depth, reverse=True):
             if frame.status is FrameStatus.DONE:
                 continue
-            # pending ask(SUPERVISOR.md §4):重新向调用方提问结算,
+            # pending ask(docs/SUPERVISOR.md §4):重新向调用方提问结算,
             # 先于未配对结算——不得落入 interrupted 占位
             await kernel._settle_pending_ask(frame)
-            # pending 升权确认(ESCALATION.md §3):重走升权闸门(重问/带答案重入)
+            # pending 升权确认(docs/ESCALATION.md §3):重走升权闸门(重问/带答案重入)
             await kernel._settle_pending_escalation(frame)
             _settle_unpaired_calls(kernel, frame)
             skill_obj = kernel.skills.get(frame.skill)

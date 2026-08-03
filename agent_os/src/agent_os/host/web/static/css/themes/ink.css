@@ -1,4 +1,4 @@
-/* ink 主题(DEBUG-UI-THEMES.md §3.5,水墨;T3 克制系亮色主题):
+/* ink 主题(docs/DEBUG-UI-THEMES.md §3.5,水墨;T3 克制系亮色主题):
    宣纸底 + 墨色文本 + 全主题唯一强调色朱砂(只给暂停/失败强调与印章)。
    契约变量按 §2.1 全量定义(字面 hex——契约测试直接解析 css 源做 WCAG
    对比度计算,var() 引用无法求值);亮色主题对比度余量最紧,改色先跑
@@ -28,6 +28,8 @@
   --danger:  #a93226;   /* 深朱砂(失败) */
   --aborted: #4a4a44;   /* 灰墨 */
   --live:    #2e4a6b;   /* 靛墨(进行) */
+  /* 焦点环(docs/WEB-A11Y.md §5.2;契约 token,须对 --bg-0..3 均 ≥3:1) */
+  --focus-ring: #2e4a6b;
 
   /* 语义:信号类型(同墨色谱系) */
   --sig-llm:      #2e4a6b;
@@ -139,7 +141,6 @@
 [data-theme="ink"] .input:focus {
   border-color: var(--fg-1);
   box-shadow: none;
-  outline: none;
 }
 
 /* StatusPill → 印章(§3.5):方形小章,文字状态保留(双编码不豁免) */

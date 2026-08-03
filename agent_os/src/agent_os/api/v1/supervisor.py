@@ -1,4 +1,4 @@
-"""supervisor 契约(SUPERVISOR.md v2 §2.1/§2.3;S1 契约,S2 LLM 可见 schema)。
+"""supervisor 契约(docs/SUPERVISOR.md v2 §2.1/§2.3;S1 契约,S2 LLM 可见 schema)。
 
 ``ask_supervisor`` 是内核拦截式伪工具(同 ``python_orchestrate`` 的拦截理由:
 仲裁需绑定调用帧与 manifest,不进 Tool Registry);``Question`` 是路由出 agent、
@@ -19,7 +19,7 @@ __all__ = [
     "SupervisorHandler",
 ]
 
-#: ``ask_supervisor`` 伪工具名(SUPERVISOR.md §2.1):分发阶段被内核拦截,
+#: ``ask_supervisor`` 伪工具名(docs/SUPERVISOR.md §2.1):分发阶段被内核拦截,
 #: manifest 以 ``permissions.tools: [ask_supervisor]`` 声明(声明即授权)
 ASK_SUPERVISOR_TOOL = "ask_supervisor"
 
@@ -54,7 +54,7 @@ ASK_SUPERVISOR_SCHEMA: dict[str, Any] = {
 
 @dataclass
 class Question:
-    """发给本 run 调用方的裁决请求(SUPERVISOR.md §2.3 载荷)。
+    """发给本 run 调用方的裁决请求(docs/SUPERVISOR.md §2.3 载荷)。
 
     ``previous_error``:答案不合 ``options`` 时由 subsystem 带回重问(§3),
     初问恒为 ``None``。
@@ -68,7 +68,7 @@ class Question:
     frame_id: str = ""
     run_id: str = ""
     previous_error: str | None = None
-    #: 请求类别(additive;ESCALATION.md §3):"question" = LLM 主动提问(默认),
+    #: 请求类别(additive;docs/ESCALATION.md §3):"question" = LLM 主动提问(默认),
     #: "escalation" = 内核判定的升权确认——结构化载荷走 ``context``,宿主按 kind 区分渲染
     kind: str = "question"
 

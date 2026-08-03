@@ -53,7 +53,7 @@ def _build(brain, skills_path: Path):
         .tools(tools)
         .skills(LocalFileSkillRegistry(str(skills_path)))
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
-        # 升权闸门(ESCALATION.md §3):流水线跨档调用构成升权,自动批准通道
+        # 升权闸门(docs/ESCALATION.md §3):流水线跨档调用构成升权,自动批准通道
         # 等价于生产宿主里人每次放行
         .supervisor(auto_approve)
         .build()

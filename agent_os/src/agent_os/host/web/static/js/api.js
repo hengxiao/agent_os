@@ -1,4 +1,4 @@
-/* REST 封装(WEB-UI.md §6.1):同源相对路径,getJson / postJson + 统一错误处理。 */
+/* REST 封装(docs/WEB-UI.md §6.1):同源相对路径,getJson / postJson + 统一错误处理。 */
 
 export class ApiError extends Error {
   constructor(message, status) {
@@ -39,3 +39,12 @@ export const postJson = (path, body) =>
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+
+export const putJson = (path, body) =>
+  request(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+export const deleteJson = (path) => request(path, { method: "DELETE" });

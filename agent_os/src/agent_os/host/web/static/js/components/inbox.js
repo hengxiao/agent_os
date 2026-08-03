@@ -1,4 +1,4 @@
-/* Supervisor 收件箱(SUPERVISOR.md v2 §5;S3):TopBar 图标 + 待答计数徽标 +
+/* Supervisor 收件箱(docs/SUPERVISOR.md v2 §5;S3):TopBar 图标 + 待答计数徽标 +
    右侧抽屉视图。数据 GET /api/supervisor/pending(app.js 5s 轮询调 pollInbox 写
    store.inboxPending);抽屉打开时订阅 store 增量重绘(保留展开的 context / 输入中
    的回答 / 滚动位置)。
@@ -15,7 +15,7 @@
      badgeModel(rows)             TopBar 徽标视图模型 { count, hasHigh }
      questionCardHtml(q, err)     问题卡片 HTML(err = 本地提交被拒错误条文本);
                                   kind == "escalation" 转升权卡片
-     escalationCardHtml(q, err)   升权卡片(ESCALATION.md §3;E2):档位徽标 + skill 名
+     escalationCardHtml(q, err)   升权卡片(docs/ESCALATION.md §3;E2):档位徽标 + skill 名
                                   + reason_hint + params JSON + 权限集 + 选项按钮 */
 
 import { getJson, postJson } from "../api.js";
@@ -100,10 +100,11 @@ export function questionCardHtml(q, err = null) {
 }
 
 /* 档位 → perm 色板槽位(与 Permission 缺省推导同一梯度:L1↔READ,L2↔WRITE,L3↔EXEC)。
-   颜色走 --perm-* 契约 token;档名/参数/权限名是技术文本,直渲不进 copy 表。 */
-const TIER_PERM = { none: "READ", reversible: "WRITE", irreversible: "EXEC" };
+   颜色走 --perm-* 契约 token;档名/参数/权限名是技术文本,直渲不进 copy 表。
+   (导出供 Skill Lab 推导档徽标复用,docs/SKILL-DEV.md §2.1) */
+export const TIER_PERM = { none: "READ", reversible: "WRITE", irreversible: "EXEC" };
 
-/* 升权卡片(ESCALATION.md §3;E2):档位徽标(perm-badge 风格)+ skill 名 + question +
+/* 升权卡片(docs/ESCALATION.md §3;E2):档位徽标(perm-badge 风格)+ skill 名 + question +
    reason_hint + params JSON(可折叠)+ requested 权限集 chips + 选项按钮。
    选项枚数由后端 options 决定(L2 三枚/L3 两枚),UI 不自判;作答走同一 data-answer 通道。 */
 export function escalationCardHtml(q, err = null) {

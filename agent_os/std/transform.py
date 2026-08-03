@@ -1,6 +1,6 @@
 """std/transform 纯函数技能包(STDLIB-CATALOG §W2;STDLIB §4.1)。
 
-全部 code 技能 handler:``async def run(input: dict, ctx) -> dict``(DESIGN.md §6.3);
+全部 code 技能 handler:``async def run(input: dict, ctx) -> dict``(docs/DESIGN.md §6.3);
 零 LLM、零外部依赖(仅标准库)、确定性(同输入同输出、无时间戳/随机数)。
 ctx(TRUSTED 档 LogicContext)一律不触碰——纯转换不需要编排能力。
 

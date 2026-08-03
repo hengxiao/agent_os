@@ -1,4 +1,4 @@
-"""信号目录与信号结构(DESIGN.md §5.1;§14.1 冻结清单:``pre:frame.pop`` 信号名)。
+"""信号目录与信号结构(docs/DESIGN.md §5.1;§14.1 冻结清单:``pre:frame.pop`` 信号名)。
 
 命名 ``<阶段>:<事件>``;``pre:`` = 同步可否决,``post:`` = 异步观察。
 信号是 Telemetry(§10)的持久化数据源。
@@ -69,7 +69,7 @@ POST_TOOL_CALL = "post:tool.call"
 PRE_SKILL_INVOKE = "pre:skill.invoke"
 POST_SKILL_INVOKE = "post:skill.invoke"
 
-#: 升权确认(ESCALATION.md §5;E2):pre 在确认请求发出时,post 在收到裁决
+#: 升权确认(docs/ESCALATION.md §5;E2):pre 在确认请求发出时,post 在收到裁决
 #: (含 Grant 命中放行,decision="grant-run"),denied 专记拒绝——审计/重放可区分
 PRE_SKILL_ESCALATE = "pre:skill.escalate"
 POST_SKILL_ESCALATE = "post:skill.escalate"
@@ -81,7 +81,7 @@ POST_LOGIC_EXEC = "post:logic.exec"
 PRE_COMPRESS = "pre:compress"
 POST_COMPRESS = "post:compress"
 
-#: 内联能力段组装(帧首次 build 快照时一次性发射;SKILL-INLINING.md §7)
+#: 内联能力段组装(帧首次 build 快照时一次性发射;docs/SKILL-INLINING.md §7)
 POST_CONTEXT_INLINE = "post:context.inline"
 
 BLACKBOARD_PUBLISH = "blackboard.publish"  # 黑板读写可审计(§12)
@@ -90,7 +90,7 @@ BLACKBOARD_WRITE = "blackboard.write"
 BUDGET_WARNING = "budget.warning"  # 80%
 BUDGET_EXCEEDED = "budget.exceeded"
 
-#: supervisor 裁决路由(SUPERVISOR.md v2 §5;S1):ask/answer 成对渲染,timeout 记等待时长
+#: supervisor 裁决路由(docs/SUPERVISOR.md v2 §5;S1):ask/answer 成对渲染,timeout 记等待时长
 SUPERVISOR_ASK = "supervisor.ask"
 SUPERVISOR_ANSWER = "supervisor.answer"
 SUPERVISOR_TIMEOUT = "supervisor.timeout"

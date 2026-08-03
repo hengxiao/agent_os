@@ -1,4 +1,4 @@
-"""ClaudeProvider 锚点测试(DESIGN.md §4.3;Anthropic Messages API 独立适配器)。
+"""ClaudeProvider 锚点测试(docs/DESIGN.md §4.3;Anthropic Messages API 独立适配器)。
 
 固定约定(Anthropic Messages API 与 OpenAI 格式差异):
 

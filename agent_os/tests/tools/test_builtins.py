@@ -1,4 +1,4 @@
-"""内置工具锚点测试(DESIGN.md §4.2/§8.3)。
+"""内置工具锚点测试(docs/DESIGN.md §4.2/§8.3)。
 
 固定约定:
 
@@ -200,7 +200,7 @@ def test_tool_policy_caps_permission():
 
 
 def test_legacy_tool_aliases_resolve_to_canonical_specs():
-    """迁移期保留的扁平工具别名仍能通过 registry 查找与分发(§NAMING.md)。"""
+    """迁移期保留的扁平工具别名仍能通过 registry 查找与分发(§docs/NAMING.md)。"""
     reg = LocalPythonToolRegistry.with_builtins()
     aliases = (
         "fs_read",

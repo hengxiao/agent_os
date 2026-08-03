@@ -1,4 +1,4 @@
-/* New Run Modal(WEB-UI.md §4.3 运行发起):TopBar `+ New Run` 打开,不打断当前页。
+/* New Run Modal(docs/WEB-UI.md §4.3 运行发起):TopBar `+ New Run` 打开,不打断当前页。
    Skill 下拉(GET /api/skills,hover 显示 description,选中后显示 description 与
    inputs 摘要)→ Input JSON 编辑器(mono,按该技能 inputs schema 生成示例骨架,
    实时校验:非法 JSON / schema 错误进编辑器下方错误条 + 红框,有错禁用 Run)→
@@ -140,7 +140,7 @@ export function buildOverrides({ model = "", maxCost = "", maxSteps = "", inline
   if (c !== "" && Number.isFinite(Number(c))) overrides.max_cost = Number(c);
   const s = String(maxSteps).trim();
   if (s !== "" && Number.isFinite(Number(s))) overrides.max_steps = Math.trunc(Number(s));
-  // SKILL-INLINING.md §9 消融开关:仅 "on"/"off" 生效,""(继承配置)不带出
+  // docs/SKILL-INLINING.md §9 消融开关:仅 "on"/"off" 生效,""(继承配置)不带出
   const i = String(inline).trim();
   if (i === "on" || i === "off") overrides.inline = i;
   return overrides;
@@ -203,7 +203,7 @@ export function openLaunchDialog({ presetSkill = null, presetSet = null } = {}) 
   stepsIn.placeholder = "继承配置";
   stepsIn.setAttribute("inputmode", "numeric");
   stepsIn.setAttribute("aria-label", "max_steps 覆盖");
-  // SKILL-INLINING.md §9 消融开关:继承配置(不带出)/ on / off → overrides.inline
+  // docs/SKILL-INLINING.md §9 消融开关:继承配置(不带出)/ on / off → overrides.inline
   const inlineSel = $el("select", "input mono");
   inlineSel.setAttribute("aria-label", "inline 覆盖");
   inlineSel.title = "merge 消融开关(§9):off 时 inline 技能退化为压帧调用";

@@ -1,4 +1,4 @@
-"""RunControl 实现(DESIGN.md §5.2;M4 sidecar 与信号)。
+"""RunControl 实现(docs/DESIGN.md §5.2;M4 sidecar 与信号)。
 
 内核暴露给 sidecar 的特权接口的唯一实现——仅此通道可操控运行;
 ``get_frame_tree`` 是 sidecar(代码)→内核的 pull,不耗 token。

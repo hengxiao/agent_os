@@ -1,4 +1,4 @@
-"""KernelLogicContext(DESIGN.md §9.3;M2):TRUSTED 模式注入 code 技能的 LogicContext。
+"""KernelLogicContext(docs/DESIGN.md §9.3;M2):TRUSTED 模式注入 code 技能的 LogicContext。
 
 ``invoke`` / ``call_tool`` 全部回到内核分发路径(runner ``_dispatch_call``):
 白名单、信号、记账与 prompt 技能的 ``skill.*``/工具调用完全一致。差别只在形态:

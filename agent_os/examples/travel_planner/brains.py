@@ -513,7 +513,7 @@ def _plan_trip(inp: dict[str, Any], seq: list[tuple[str, dict[str, Any]]]) -> Ch
                 },
             )
         last_ask = asks[-1]
-        # 未装配/超时等失败形态:降级为削减(SUPERVISOR.md §3 retryable 语义)
+        # 未装配/超时等失败形态:降级为削减(docs/SUPERVISOR.md §3 retryable 语义)
         answer = last_ask["value"]["answer"] if last_ask.get("ok") else "trim"
         if answer == "approve":
             over_approved = True

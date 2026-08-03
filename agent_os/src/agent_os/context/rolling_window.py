@@ -1,4 +1,4 @@
-"""RollingWindowCompressor(DESIGN.md §7.6;M3)。
+"""RollingWindowCompressor(docs/DESIGN.md §7.6;M3)。
 
 保留 pinned + 最近若干原子组,超目标即从最旧整组驱逐;atomic_groups 把
 assistant(带 tool_calls)与其全部 tool result 绑成原子组——§7.4 不变量 2 由此

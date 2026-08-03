@@ -1,4 +1,4 @@
-"""ProviderManager(DESIGN.md §4.2/§4.4;M1 路由/重试/限流,M5 流式看门狗 + fallback 链)。
+"""ProviderManager(docs/DESIGN.md §4.2/§4.4;M1 路由/重试/限流,M5 流式看门狗 + fallback 链)。
 
 前缀路由(``"anthropic/claude-sonnet-4"`` → provider 前缀)+ 指数退避(仅 retryable,
 上限 ``max_attempts`` 次,尊重 ``retry_after``)+ 每 provider 令牌桶限流

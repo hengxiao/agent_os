@@ -1,4 +1,4 @@
-"""契约层冒烟测试(DESIGN.md §14.1 冻结清单的物理形态)。
+"""契约层冒烟测试(docs/DESIGN.md §14.1 冻结清单的物理形态)。
 
 不依赖任何实现:只验证 api/v1 契约可导入、可默认实例化、冻结字段在位、
 Protocol 全部 @runtime_checkable。

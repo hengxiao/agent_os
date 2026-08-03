@@ -1,4 +1,4 @@
-/* blueprint 主题(DEBUG-UI-THEMES.md §3.4):工程图纸——蓝图蓝底 + 白/青细线,
+/* blueprint 主题(docs/DEBUG-UI-THEMES.md §3.4):工程图纸——蓝图蓝底 + 白/青细线,
    24px 方格网 + 虚线图框 + 图章式结束横幅。克制系,无 emoji,无 mascot。
    契约变量按 §2.1 全量定义(字面 hex——契约测试直接解析 css 源做 WCAG
    对比度计算,var() 引用无法求值);--blueprint-* 是内部调色板,只供装饰层
@@ -28,6 +28,8 @@
   --danger:  #ffada0;   /* failed / REJECT 制图红(浅化保对比度) */
   --aborted: #d4b8ff;   /* aborted / VOID 淡紫 */
   --live:    #7fd6ff;   /* running / 晒图青 */
+  /* 焦点环(docs/WEB-A11Y.md §5.2;契约 token,须对 --bg-0..3 均 ≥3:1) */
+  --focus-ring: #7fd6ff;
 
   /* 语义:信号类型(与语义色同锚点) */
   --sig-llm:      #9cc3ff;
@@ -130,7 +132,6 @@
 [data-theme="blueprint"] .input:focus {
   border-color: var(--live);
   box-shadow: 0 0 0 1px var(--live);
-  outline: none;
 }
 
 /* 顶栏:图签栏下边线(虚线) */

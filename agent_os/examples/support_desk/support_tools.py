@@ -11,7 +11,7 @@ dotted path 是 run 时惰性 import 的,放在本模块即可稳定命中 sys.m
    装配(runtime/config.py 的 custom 扩展点);读路径命中 ``data/`` 下的 JSON 快照,
    写路径以 JSONL 追加落盘(退款/通知/升级各有副作用文件,调试时可直读核对);
 2. code 技能 handlers(十一个),供 ``skills.yaml`` 经 ``support_tools:<name>``
-   惰性加载;签名约定(DESIGN.md §6.3):``async def run(input: dict, ctx) -> dict``。
+   惰性加载;签名约定(docs/DESIGN.md §6.3):``async def run(input: dict, ctx) -> dict``。
 
 全部为确定性实现:同一 mock 数据集上重跑,run 结果逐字节一致(调试可复现);
 副作用文件里的落盘时间来自真实时钟,不进入 run 结果,不影响确定性。

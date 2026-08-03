@@ -1,4 +1,4 @@
-/* MascotLayer(DEBUG-UI-THEMES.md §2.4;DEBUG-UI-MOE.md §2 Mochi M1):
+/* MascotLayer(docs/DEBUG-UI-THEMES.md §2.4;docs/DEBUG-UI-MOE.md §2 Mochi M1):
    主题声明 mascot 时才渲染的独立层——组件零分支:层自己读当前主题(currentTheme().mascot),
    mascot 为 null 的主题(classic/terminal/blueprint/ink)下 mascotHtml 返回空串。
    多 mascot 注册表(MASCOTS):每个 mascot = { name, exprs, sprite },

@@ -1,6 +1,6 @@
-/* moe 主题(DEBUG-UI-MOE.md;M1 静态 + T1.2 sakura pastel 重构):
+/* moe 主题(docs/DEBUG-UI-MOE.md;M1 静态 + T1.2 sakura pastel 重构):
    奶油粉底 pastel + 大圆角贴纸化 + Mochi 精灵。
-   契约变量按 DEBUG-UI-THEMES.md §2.1 全量定义(字面 hex——契约测试直接解析
+   契约变量按 docs/DEBUG-UI-THEMES.md §2.1 全量定义(字面 hex——契约测试直接解析
    css 源做 WCAG 对比度计算,var() 引用无法求值);--moe-* 是内部调色板,
    只供装饰层(边框/渐变/光晕),不承担文本色职责。
    可访问性红线(§3):文本/状态色与基底关键配对 ≥4.5:1(弱化层级 ≥3:1),
@@ -29,6 +29,8 @@
   --danger:  #b83747;
   --aborted: #7650b8;
   --live:    #c2245c;
+  /* 焦点环(docs/WEB-A11Y.md §5.2;契约 token,须对 --bg-0..3 均 ≥3:1) */
+  --focus-ring: #c2245c;
 
   /* 语义:信号类型(与语义色同锚点) */
   --sig-llm:      #3a63c8;
@@ -136,7 +138,6 @@
 [data-theme="moe"] .input:focus {
   border-color: var(--moe-primary);
   box-shadow: 0 0 12px var(--moe-primary-glow);
-  outline: none;
 }
 
 /* 导航:选中项粉色气泡(替代 classic 下划线);hover 浅粉 */
@@ -327,4 +328,55 @@
 [data-theme="moe"] body {
   background-image:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Cg fill='%23ffc9d6' fill-opacity='.45'%3E%3Ccircle cx='48' cy='42' r='7'/%3E%3Ccircle cx='57' cy='49' r='7'/%3E%3Ccircle cx='53' cy='59' r='7'/%3E%3Ccircle cx='43' cy='59' r='7'/%3E%3Ccircle cx='39' cy='49' r='7'/%3E%3C/g%3E%3Ccircle cx='48' cy='50' r='3.5' fill='%23ff9eb0' fill-opacity='.55'/%3E%3Cg fill='%23ffd9e2' fill-opacity='.5'%3E%3Ccircle cx='144' cy='138' r='5'/%3E%3Ccircle cx='150' cy='143' r='5'/%3E%3Ccircle cx='147' cy='150' r='5'/%3E%3Ccircle cx='141' cy='150' r='5'/%3E%3Ccircle cx='138' cy='143' r='5'/%3E%3C/g%3E%3Ccircle cx='144' cy='144' r='2.5' fill='%23ffb3c2' fill-opacity='.6'/%3E%3C/svg%3E");
+}
+
+/* live 指示:连接正常 = 跳动的心(替代蓝点脉冲;文字通道由 title/aria 承担) */
+[data-theme="moe"] .live-indicator[data-state="ok"] {
+  background: transparent;
+  animation: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+[data-theme="moe"] .live-indicator[data-state="ok"]::before {
+  content: "❤️";
+  font-size: 13px;
+  line-height: 1;
+  display: inline-block;
+  animation: moe-heartbeat 1.2s ease-in-out infinite;
+}
+@keyframes moe-heartbeat {
+  0%, 100% { transform: scale(1); }
+  20% { transform: scale(1.28); }
+  35% { transform: scale(1.06); }
+  50% { transform: scale(1.22); }
+  65% { transform: scale(1); }
+}
+
+/* live 指示:连接异常/断开 = 碎了的心 💔(fail 静态;down 慢脉冲求重连) */
+[data-theme="moe"] .live-indicator[data-state="fail"],
+[data-theme="moe"] .live-indicator[data-state="down"] {
+  background: transparent;
+  animation: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+[data-theme="moe"] .live-indicator[data-state="fail"]::before,
+[data-theme="moe"] .live-indicator[data-state="down"]::before {
+  content: "💔";
+  font-size: 13px;
+  line-height: 1;
+  display: inline-block;
+}
+[data-theme="moe"] .live-indicator[data-state="down"]::before {
+  animation: moe-broken-pulse 2s ease-in-out infinite; /* 断开:慢闪烁求重连 */
+}
+@keyframes moe-broken-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }

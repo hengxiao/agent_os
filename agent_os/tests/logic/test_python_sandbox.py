@@ -1,4 +1,4 @@
-"""PythonSandboxLogicKernel 锚点测试(DESIGN.md §9.2/§9.7;子进程沙箱弹性)。
+"""PythonSandboxLogicKernel 锚点测试(docs/DESIGN.md §9.2/§9.7;子进程沙箱弹性)。
 
 固定约定:
 

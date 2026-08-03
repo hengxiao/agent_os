@@ -1,7 +1,7 @@
-"""数据层 authN+Z 契约(DATA-AUTHZ.md §2/§3;D1)。
+"""数据层 authN+Z 契约(docs/DATA-AUTHZ.md §2/§3;D1)。
 
 三闸模型的"读"闸:**机密性由数据层 authN+Z 完成,升权系统只管副作用**
-(ESCALATION.md §1 划界)。Principal = "谁"(run 启动者身份,不可自升,§2.3);
+(docs/ESCALATION.md §1 划界)。Principal = "谁"(run 启动者身份,不可自升,§2.3);
 DataDomain = 授权单位(不给 per-文件 ACL,域是最细粒度,§3.1);判定默认拒绝:
 clearance 不够就是不够,没有兜底放行——唯一的例外是 principal 为 ``None``
 (v1 单用户语义:宿主没注入身份 = 没启用数据层,拦截不发生)。

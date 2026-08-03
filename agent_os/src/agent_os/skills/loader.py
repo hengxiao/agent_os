@@ -1,4 +1,4 @@
-"""Skill 物化辅助(DESIGN.md §6.1 materialize 步骤;M2)。
+"""Skill 物化辅助(docs/DESIGN.md §6.1 materialize 步骤;M2)。
 
 prompt 技能:``str.format`` 渲染指令体;code 技能:dotted path importlib 加载并校验协程函数。
 code 技能的 handler **惰性 import**——load 期不 import(示例路径可能指向宿主包),

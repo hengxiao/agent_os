@@ -1,4 +1,4 @@
-"""内置 sidecar(DESIGN.md §5.4 表格逐字;BudgetGuard/LoopDetector/StallDetector/ToolGuard
+"""内置 sidecar(docs/DESIGN.md §5.4 表格逐字;BudgetGuard/LoopDetector/StallDetector/ToolGuard
 
 为 M4,CodeScanner 为 M5)。TraceRecorder 不在此列——已升格为 Telemetry 子系统的
 JSONL exporter(§10)。自定义 sidecar 经 entry point ``agent_os.sidecars`` 注册。

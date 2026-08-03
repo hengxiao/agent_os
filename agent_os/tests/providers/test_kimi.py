@@ -1,4 +1,4 @@
-"""KimiProvider 锚点测试(DESIGN.md §4.3;Moonshot Kimi 接口)。
+"""KimiProvider 锚点测试(docs/DESIGN.md §4.3;Moonshot Kimi 接口)。
 
 固定约定:
 

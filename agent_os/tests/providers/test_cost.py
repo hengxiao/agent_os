@@ -1,4 +1,4 @@
-"""成本记账锚点测试(DESIGN.md §4.2;记账职责在 ProviderManager)。
+"""成本记账锚点测试(docs/DESIGN.md §4.2;记账职责在 ProviderManager)。
 
 固定约定:
 

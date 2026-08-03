@@ -1,4 +1,4 @@
-"""Provider 契约(DESIGN.md §4.1;§14.1 冻结清单:ProviderCaps 能力位、usage 细分)。"""
+"""Provider 契约(docs/DESIGN.md §4.1;§14.1 冻结清单:ProviderCaps 能力位、usage 细分)。"""
 
 from __future__ import annotations
 

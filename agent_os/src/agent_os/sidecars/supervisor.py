@@ -1,4 +1,4 @@
-"""SidecarSupervisor(DESIGN.md §5.3;M4)。
+"""SidecarSupervisor(docs/DESIGN.md §5.3;M4)。
 
 sidecar 统一托管:注册、关停(ASYNC 任务取消)。
 监督语义:SYNC 在关键路径、独立超时(默认 2s)、自身异常或超时一律 fail-closed

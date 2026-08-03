@@ -1,4 +1,4 @@
-"""RunManager(RUNNERS.md §4.2;R3):Web runner 的进程内 run 管理器。
+"""RunManager(docs/RUNNERS.md §4.2;R3):Web runner 的进程内 run 管理器。
 
 - 每个 run **独立内核**(``build_kernel(config_path)`` 重新装配),在独立线程中经
   host/shared 的 :func:`execute_run` 推进——execute_run 内部 ``asyncio.run`` 自起
@@ -21,7 +21,7 @@ R4 增量(§4.3/§4.4):
 - ``reload_skills``:共享一份 skills registry(惰性装配,仅供查询/reload;
   每 run 的内核仍各自重建 registry,reload 只影响后续新建的 run,§6.1)。
 
-D3 增量(WEB-UI.md §4.3/§6.2):
+D3 增量(docs/WEB-UI.md §4.3/§6.2):
 
 - ``start_run(..., overrides=...)``:``{model?, max_cost?, max_steps?, inline?}`` 合并进
   本次 run 的 RunConfig——每次重新 ``load_config`` 读文件,改动只落在该 run
@@ -29,7 +29,7 @@ D3 增量(WEB-UI.md §4.3/§6.2):
 - ``skills_manifests`` / ``skill_manifest``:共享 registry 的只读查询
   (``GET /api/skills`` 数据源),与 ``reload_skills`` 共用惰性装配路径。
 
-D4 增量(WEB-UI.md §4.7/§6.2):
+D4 增量(docs/WEB-UI.md §4.7/§6.2):
 
 - ``tools_specs``:共享 tools registry 的全量 ToolSpec(``GET /api/tools``
   数据源);与 skills 共享 registry 同一惰性装配路径,但 ``[tools].builtins``
@@ -49,7 +49,7 @@ D6 增量(一站多 skill set;tests/test_skillsets.py 锚点):
   自动生效,否则全局 config(向后兼容);run 记录(内存态 + meta.json/result.json)
   带 ``skill_set``(全局 run 记 ``"default"``)。
 
-S2 增量(SUPERVISOR.md v2 §2.3/§5;tests/web/test_supervisor_channel.py 锚点):
+S2 增量(docs/SUPERVISOR.md v2 §2.3/§5;tests/web/test_supervisor_channel.py 锚点):
 
 - **Web 收件箱即默认宿主通道**:``_assemble_kernel`` 经
   ``build_kernel(supervisor_handler=...)`` 注入 supervisor handler——通道选择
@@ -121,8 +121,8 @@ HUB_CLOSED: Any = object()
 #: 环形缓冲容量(§4.2 默认 2000 条)
 BUFFER_MAXLEN = 2000
 
-#: ``POST /api/runs`` 的 ``overrides`` 允许覆盖的 RunConfig 字段(WEB-UI.md §4.3 高级区;
-#: ``inline`` = SKILL-INLINING.md §9 消融开关,写入 ``cfg["run"]["inline"]``;
+#: ``POST /api/runs`` 的 ``overrides`` 允许覆盖的 RunConfig 字段(docs/WEB-UI.md §4.3 高级区;
+#: ``inline`` = docs/SKILL-INLINING.md §9 消融开关,写入 ``cfg["run"]["inline"]``;
 #: ``checkpoint_interval`` = Debugger P5 周期 checkpoint,0=关)
 OVERRIDE_FIELDS = ("model", "max_cost", "max_steps", "inline", "checkpoint_interval")
 
@@ -323,11 +323,12 @@ class RunManager:
         self._hubs: dict[str, SignalHub] = {}
         self._skills_registry: Any = None  # 惰性装配的共享 registry(reload/查询用)
         self._tools_registry: Any = None  # 惰性装配的共享 tools registry(D4 查询用)
-        #: S2 supervisor 通道(SUPERVISOR.md §2.3):装配级注入的 handler(优先),
+        #: S2 supervisor 通道(docs/SUPERVISOR.md §2.3):装配级注入的 handler(优先),
         #: 与进程共享的 InboxChannel(缺省——Web 收件箱即默认宿主通道)
         self._supervisor_handler = supervisor_handler
         self._inbox = InboxChannel()
         #: D6 一站多 set:{set 名: set 目录(resolve 后,sys.path/模块逐出比较一致)}
+        self._skillsets_root = Path(skillsets_dir) if skillsets_dir is not None else None
         self._sets: dict[str, Path] = (
             {name: d.resolve() for name, d in load_skillsets(skillsets_dir).items()}
             if skillsets_dir is not None
@@ -345,6 +346,17 @@ class RunManager:
     def skillsets(self) -> dict[str, Path]:
         """全部 set(name → 目录,按名字序;``GET /api/skillsets`` 数据源,D6)。"""
         return dict(self._sets)
+
+    def skillsets_root(self) -> Path | None:
+        """set 根目录(docs/SKILL-PACKAGES.md §4.4:包级提交的目录形态落盘面;未配置 → None)。"""
+        return self._skillsets_root
+
+    def refresh_skillsets(self) -> None:
+        """重扫 set 目录(P4:包级提交落新 set 后,``/api/skillsets`` 与下拉立即可见)。"""
+        if self._skillsets_root is not None:
+            self._sets = {
+                name: d.resolve() for name, d in load_skillsets(self._skillsets_root).items()
+            }
 
     def _set_dir(self, name: str) -> Path:
         """set 名 → 目录;未知 set 抛 :class:`RunValidationError`(路由层归 400)。"""
@@ -396,7 +408,7 @@ class RunManager:
     ) -> Any:
         """按 config 装配一个 run 的内核;恒附带 _StopBridge 保证 ctl 存在(stop 通道)。
 
-        ``overrides``(D3,WEB-UI.md §4.3):``{model?, max_cost?, max_steps?, inline?}``
+        ``overrides``(D3,docs/WEB-UI.md §4.3):``{model?, max_cost?, max_steps?, inline?}``
         合并进本次 run 的 ``[run]`` 配置。配置文件每次重新读取,改动只落在本 run 私有的
         dict 副本上——只影响本次 run,不泄漏到后续 run 或共享 registry(D3 锚点)。
 
@@ -428,7 +440,7 @@ class RunManager:
             )
 
     def _principal(self) -> Any:
-        """数据层身份(DATA-AUTHZ.md §2.2):Web 单用户模式 = 部署者。
+        """数据层身份(docs/DATA-AUTHZ.md §2.2):Web 单用户模式 = 部署者。
 
         登录名取宿主配置 ``[web].user``(缺省本机用户);配置读取失败不拖垮 run
         (退化为本机用户)。多用户会话映射(api-token / 逐会话身份)属 D3。
@@ -438,6 +450,30 @@ class RunManager:
         except Exception:  # noqa: BLE001 — 身份构造失败退化为缺省,不阻断 run
             login = None
         return web_single_user_principal(login)
+
+    def principal(self) -> Any:
+        """本宿主的单用户 principal(docs/SKILL-DEV.md §1.2:promote 记录的 promoted_by)。"""
+        return self._principal()
+
+    def assemble_lab_kernel(self, overlay: Any) -> Any:
+        """装配"生产 + 草稿层"内核(docs/SKILL-DEV.md §1.1;L3):Lab test-run/G4 专用。
+
+        **生产 run 不受影响**——overlay 只活在返回的这个内核里(Lab 请求作用域,§1.1)。
+        """
+        kernel = self._assemble_kernel()
+        self.swap_skills_overlay(kernel, overlay)
+        return kernel
+
+    @staticmethod
+    def swap_skills_overlay(kernel: Any, overlay: Any) -> None:
+        """把 overlay 接进内核的全部 skills 引用点(kernel.skills / ContextManager /
+        tools.bind_skills 的 skill_search 数据源);start_run 的 kernel_patcher 同款接线。
+        """
+        kernel.skills = overlay
+        if getattr(kernel.context, "_skills", None) is not None:
+            kernel.context._skills = overlay
+        if getattr(kernel.tools, "_skills", None) is not None:
+            kernel.tools._skills = overlay
 
     async def start_run(
         self,
@@ -449,6 +485,7 @@ class RunManager:
         supervisor_handler: Any = None,
         debug_session: Any = None,
         replay_script: Any = None,
+        kernel_patcher: Any = None,
     ) -> str:
         """启动一个 run 并返回 run_id;``wait=True`` 时阻塞到 run 结束。
 
@@ -464,6 +501,8 @@ class RunManager:
         hub/trace,且本方法返回时会话已绑定 run)。
         ``replay_script``(P5 时间旅行):给了就 ``replace_providers`` 把内核
         provider 面换成回放脚本(LLM Mock 回放,工具真实重跑;replay.py 边界)。
+        ``kernel_patcher``(docs/SKILL-DEV.md §1.1;L3):装配后调用 ``kernel_patcher(kernel)``
+        (Lab 用它在生产内核上接 overlay / 替换 provider),run 管理/SSE/记录全复用。
         """
         effective = self._resolve_set(skill_set)
         tag = effective or "default"
@@ -498,6 +537,9 @@ class RunManager:
                     # P5 时间旅行:回放内核——provider 面换成 Mock 脚本(§3.4 边界:
                     # LLM 按 trace 重放,工具副作用真实重跑)
                     replace_providers(kernel, replay_script)
+                if kernel_patcher is not None:
+                    # Lab(docs/SKILL-DEV.md §1.1;L3):overlay 接线等请求作用域改造
+                    kernel_patcher(kernel)
                 state["kernel"] = kernel
 
                 async def _fan(sig: Signal) -> None:
@@ -520,7 +562,7 @@ class RunManager:
                 kernel.signals.subscribe(RUN_STARTED, _cap)
                 record = execute_run(
                     kernel, skill, input, artifacts_root=self._artifacts_root, host="web",
-                    principal=self._principal(),  # 数据层身份(DATA-AUTHZ.md §2.2)
+                    principal=self._principal(),  # 数据层身份(docs/DATA-AUTHZ.md §2.2)
                 )
                 record["skill_set"] = tag
                 self._tag_artifacts(record["run_id"], tag)
@@ -895,7 +937,7 @@ class RunManager:
         }
 
     # ------------------------------------------------------------------
-    # S2 supervisor 收件箱(SUPERVISOR.md §2.3/§5):Web 收件箱即默认宿主通道
+    # S2 supervisor 收件箱(docs/SUPERVISOR.md §2.3/§5):Web 收件箱即默认宿主通道
     # ------------------------------------------------------------------
 
     def supervisor_pending(self) -> list[dict[str, Any]]:
@@ -966,7 +1008,7 @@ class RunManager:
         return bool(self._shared_registry().reload())
 
     def skills_manifests(self, skill_set: str | None = None) -> list[Any]:
-        """``GET /api/skills``(WEB-UI.md §6.2):共享 registry 的 manifest 列表(拓扑序)。
+        """``GET /api/skills``(docs/WEB-UI.md §6.2):共享 registry 的 manifest 列表(拓扑序)。
 
         ``skill_set``(D6)限定某个 set 的 registry(``?skill_set=`` 过滤)。
         """
@@ -975,6 +1017,14 @@ class RunManager:
     def skill_manifest(self, name: str, skill_set: str | None = None) -> Any | None:
         """按名字取 manifest;不存在返回 ``None``(路由层归 404)。"""
         return next((m for m in self.skills_manifests(skill_set) if m.name == name), None)
+
+    def shared_skills_registry(self) -> Any:
+        """共享 skills registry(docs/SKILL-DEV.md §1.1:Lab 推导档的生产层数据源)。"""
+        return self._shared_registry()
+
+    def shared_tools_registry(self) -> Any:
+        """共享 tools registry(docs/SKILL-DEV.md §1.1:Lab 推导档的工具档数据源)。"""
+        return self._shared_tools()
 
     def _shared_tools(self) -> Any:
         """惰性装配共享 tools registry(``GET /api/tools`` 数据源;D4)。
@@ -998,7 +1048,7 @@ class RunManager:
         return registry
 
     def tools_specs(self) -> list[Any]:
-        """``GET /api/tools``(WEB-UI.md §6.2):共享 tools registry 的全量 ToolSpec(注册序)。"""
+        """``GET /api/tools``(docs/WEB-UI.md §6.2):共享 tools registry 的全量 ToolSpec(注册序)。"""
         return list(self._shared_tools().specs())
 
     def state_of(self, run_id: str) -> dict[str, Any] | None:

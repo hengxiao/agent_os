@@ -1,4 +1,4 @@
-"""消息模型(DESIGN.md §4.1 ``Message`` 块;§14.1 冻结清单:``reasoning`` 与 ``source``)。
+"""消息模型(docs/DESIGN.md §4.1 ``Message`` 块;§14.1 冻结清单:``reasoning`` 与 ``source``)。
 
 归一化不丢字段:``reasoning`` 原样保留,下次请求逐字回传。
 """

@@ -1,4 +1,4 @@
-# workspace_janitor(工作区大扫除)——升权系统全真示例(ESCALATION.md §7 指针)。
+# workspace_janitor(工作区大扫除)——升权系统全真示例(docs/ESCALATION.md §7 指针)。
 # 四技能三档剧情:L1 巡检 → L2 写计划(连调多次,演示 approve-run)
 # → L3 真删文件(每次必问)→ L3 真停进程。工具全是内置真工具,零 mock;
 # 爆炸半径由 run 的 workdir 沙箱圈住(fixture scratch 树 + 演示进程)。

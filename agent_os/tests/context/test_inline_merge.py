@@ -1,4 +1,4 @@
-"""Skill Inlining(预展开 merge)锚点测试(SKILL-INLINING.md)。
+"""Skill Inlining(预展开 merge)锚点测试(docs/SKILL-INLINING.md)。
 
 固定约定:
 

@@ -5,8 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "agent-os"
 version = "0.0.1"
-description = "Agent OS: a microkernel agentic engine (contracts + skeleton, see DESIGN.md)"
-readme = { text = "Agent OS architecture scaffold. Authoritative design: ../DESIGN.md", content-type = "text/plain" }
+description = "Agent OS: a microkernel agentic engine (contracts + skeleton, see docs/DESIGN.md)"
+readme = { text = "Agent OS architecture scaffold. Authoritative design: ../docs/DESIGN.md", content-type = "text/plain" }
 requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.27",
@@ -35,7 +35,7 @@ agent-os-web = "agent_os.host.web.serve:main"
 packages = ["src/agent_os"]
 
 # ---------------------------------------------------------------------------
-# 扩展点 entry point 组(DESIGN.md §14.3)。
+# 扩展点 entry point 组(docs/DESIGN.md §14.3)。
 # 骨架阶段不注册任何插件,仅以注释预留组名;第三方包在自身 pyproject 中声明:
 #
 #   [project.entry-points."agent_os.providers"]      # 新 LLM Provider

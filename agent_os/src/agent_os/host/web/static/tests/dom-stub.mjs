@@ -84,6 +84,14 @@ export class StubEl {
     return this.attributes[k] ?? null;
   }
 
+  removeAttribute(k) {
+    delete this.attributes[k];
+    if (k.startsWith("data-")) {
+      const key = k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+      delete this.dataset[key];
+    }
+  }
+
   appendChild(child) {
     child.parentNode = this;
     this.children.push(child);

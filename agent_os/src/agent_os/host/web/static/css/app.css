@@ -1,5 +1,52 @@
-/* Agent OS 应用壳与组件样式(WEB-UI.md §4.1 线框 / §5 交互与状态规范)。
+/* Agent OS 应用壳与组件样式(docs/WEB-UI.md §4.1 线框 / §5 交互与状态规范)。
    铁律:只消费 tokens.css 的 var(--*) token——本文件不得出现十六进制颜色与像素散值。 */
+
+/* ── 焦点可见性(docs/WEB-A11Y.md §5.2;WCAG 2.4.7 焦点可见 / 1.4.11 非文本对比)──
+   一条全局规则覆盖所有可聚焦元素,主题只换 --focus-ring token、不碰规则
+   (与"组件零分支"同哲学:差异收敛在契约层)。
+   用 outline 而非 box-shadow 作**基础**指示的两个理由:
+     ① box-shadow 在 Windows 高对比度模式(forced-colors)下会被丢弃,outline 不会;
+     ② outline 不参与布局,不会撑开或位移元素。
+   主题想要光晕可以**叠加** box-shadow,但不得移除 outline。
+   :focus-visible 而非 :focus——鼠标点击不显示环,只在键盘/程序化聚焦时显示。 */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* 高对比度模式(Windows HCM / forced-colors):系统接管配色,
+   box-shadow 被丢弃 → 焦点环必须走 outline 且用系统色关键字。 */
+@media (forced-colors: active) {
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: var(--focus-ring-width) solid CanvasText;
+    outline-offset: var(--focus-ring-offset);
+  }
+  /* 靠背景色区分的状态块在 HCM 下会塌成同色——补描边保住边界
+     (文字通道由双编码契约保证,见 docs/DEBUG-UI-THEMES.md §4 第 3 项) */
+  .status-pill,
+  .perm-badge,
+  .banner {
+    border: var(--stroke) solid CanvasText;
+  }
+}
+
+/* 跳过导航(docs/WEB-A11Y.md §4 P1-6;WCAG 2.4.1 区块跳过)——
+   平时视觉隐藏但**保留在焦点序列里**(不能用 display:none),聚焦即显形。 */
+.skip-link {
+  position: absolute;
+  left: var(--s2);
+  top: calc(-1 * var(--topbar-h) - var(--s8));
+  z-index: 100;
+  padding: var(--s2) var(--s3);
+  background: var(--bg-2);
+  color: var(--fg-0);
+  border: var(--stroke) solid var(--line-strong);
+  border-radius: var(--r-md);
+  font-size: var(--text-sm);
+  text-decoration: none;
+  transition: top 0.15s ease;
+}
+.skip-link:focus { top: var(--s2); }
 
 /* ── 布局(§4.1 应用壳)────────────────────────────────────── */
 body {
@@ -306,7 +353,6 @@ body[data-route="debug"] .sidebar { display: none; }
 .search-input:focus {
   border-color: var(--live);
   box-shadow: 0 0 0 3px var(--ring-live);
-  outline: none;
 }
 
 /* D6 一站多 skill set:set 切换器(侧栏 / Skills 工具栏,复用 search-input 盒模型) */
@@ -806,7 +852,7 @@ body[data-route="debug"] .sidebar { display: none; }
 }
 .ft-kind[data-kind="prompt"] { color: var(--sig-llm); }
 .ft-kind[data-kind="code"] { color: var(--sig-tool); }
-/* "等待上级"标注(S3,SUPERVISOR.md §5):挂起等上级裁决的帧;warn 色双编码 */
+/* "等待上级"标注(S3,docs/SUPERVISOR.md §5):挂起等上级裁决的帧;warn 色双编码 */
 .ft-wait {
   flex-shrink: 0;
   padding: 0 var(--s1);
@@ -1008,7 +1054,7 @@ body[data-route="debug"] .sidebar { display: none; }
 .tr-kw[data-k="tool"] { color: var(--sig-tool); }
 .tr-kw[data-k="exec"] { color: var(--sig-compress); }
 .tr-kw[data-k="obs"] { color: var(--sig-sidecar); }
-/* ⇥ inline 行(SKILL-INLINING.md §7):弱化色,不占 call/ret 语义色 */
+/* ⇥ inline 行(docs/SKILL-INLINING.md §7):弱化色,不占 call/ret 语义色 */
 .tr-kw[data-k="inline"] { color: var(--fg-2); font-style: italic; }
 .tr-name { font-weight: 600; color: var(--fg-0); }
 .tr-params {
@@ -1117,7 +1163,7 @@ body[data-route="debug"] .sidebar { display: none; }
 .insp-title { font-size: var(--text-sm); font-weight: 600; font-family: var(--font-mono); }
 .btn-mini { padding: 0 var(--s2); font-size: var(--text-xs); margin-left: auto; }
 
-/* 检视器"内联能力"小节(SKILL-INLINING.md §4.2:working._inline_caps 快照) */
+/* 检视器"内联能力"小节(docs/SKILL-INLINING.md §4.2:working._inline_caps 快照) */
 .insp-caps {
   padding: var(--s2) var(--s3);
   margin-bottom: var(--s2);
@@ -1265,7 +1311,6 @@ body[data-route="debug"] .sidebar { display: none; }
 .input:focus {
   border-color: var(--live);
   box-shadow: 0 0 0 3px var(--ring-live);
-  outline: none;
 }
 textarea.input {
   resize: vertical;
@@ -1498,7 +1543,7 @@ textarea.input {
   color: var(--fg-2);
 }
 .cycle-warn { color: var(--warn); flex-shrink: 0; } /* §4.6:循环依赖 --warn 警示 */
-/* inline 徽标(SKILL-INLINING.md §3.1):merge 技能弱色 chip(列表项 + 详情 Meta) */
+/* inline 徽标(docs/SKILL-INLINING.md §3.1):merge 技能弱色 chip(列表项 + 详情 Meta) */
 .inline-chip {
   flex-shrink: 0;
   padding: 0 var(--s1);
@@ -1891,7 +1936,7 @@ th.is-sorted .us-sort { color: var(--live); }
 }
 .sk-desc { font-size: var(--text-sm); color: var(--fg-1); }
 
-/* ── Supervisor 收件箱抽屉(S3,SUPERVISOR.md §5)────────────────
+/* ── Supervisor 收件箱抽屉(S3,docs/SUPERVISOR.md §5)────────────────
    右侧抽屉(遮罩 + 420px 面板);问题卡片:urgency 左色条(high=--danger)、
    question、context 可展开、options 按钮组 / 文本输入、错误条(重答语义)。 */
 .inbox-overlay {
@@ -1999,7 +2044,7 @@ th.is-sorted .us-sort { color: var(--live); }
 }
 .sup-actions .sup-input { flex: 1; min-width: 0; }
 
-/* 升权卡片(ESCALATION.md §3;E2):question 摘要 / reason_hint / requested 权限集 */
+/* 升权卡片(docs/ESCALATION.md §3;E2):question 摘要 / reason_hint / requested 权限集 */
 .sup-esc-q { font-size: var(--text-xs); color: var(--fg-1); word-break: break-word; }
 .sup-reason { font-size: var(--text-xs); color: var(--fg-2); }
 .sup-req {
@@ -2009,6 +2054,537 @@ th.is-sorted .us-sort { color: var(--live); }
   flex-wrap: wrap;
 }
 .sup-req-label { font-size: var(--text-xs); color: var(--fg-1); }
+
+/* ── Skill Lab(docs/SKILL-DEV.md §2.1;L1):三栏骨架 + 编辑器分组 ──
+   全部消费契约 token(组件零分支);主题特殊装饰不做。 */
+.lab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  height: 100%;
+  padding: var(--s4);
+  overflow: hidden;
+}
+.lab-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+.lab-top .lab-select { min-width: 16ch; }
+.lab-top .lab-new-name { width: 20ch; }
+.lab-top-tier { display: inline-flex; align-items: center; }
+.lab-top-actions { margin-left: auto; display: flex; gap: var(--s2); }
+/* 脏状态指示(UX 评审 P1-7):保存按钮右上角警示圆点,保存后熄灭 */
+.lab-top [data-dirty] { position: relative; }
+.lab-top [data-dirty]::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 4px var(--warn);
+}
+/* 空态 CTA(UX 评审 P1-6) */
+.lab-empty-cta { margin-top: var(--s3); }
+.lab-cols {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 3fr) minmax(0, 4fr);
+  gap: var(--s3);
+  min-height: 0;
+}
+.lab-col {
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-2);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s3);
+}
+.lab-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+.lab-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding-bottom: var(--s3);
+  border-bottom: var(--stroke) solid var(--line);
+}
+.lab-group:last-child { border-bottom: none; }
+.lab-group h3 {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--fg-1);
+}
+.lab-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.lab-label {
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+}
+.lab-hint {
+  font-size: var(--text-2xs);
+  color: var(--warn, var(--live));
+}
+.lab-inline-row {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s2);
+}
+.lab-tier-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.lab-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+.lab-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+}
+.lab-chip-x {
+  border: none;
+  background: none;
+  color: var(--fg-2);
+  cursor: pointer;
+  padding: 0 var(--s1);
+  font-size: var(--text-2xs);
+}
+.lab-chip-x:hover { color: var(--danger); }
+.lab-chip-add { width: auto; }
+.lab-status {
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+  border-top: var(--stroke) solid var(--line);
+  padding-top: var(--s2);
+}
+
+/* Skill Lab 闸门(docs/SKILL-DEV.md §1.4;L2):五关卡片(状态色 = 语义 token 双编码) */
+.lab-gate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.lab-gate-card {
+  padding: var(--s2) var(--s3);
+  background: var(--bg-2);
+  border: var(--stroke) solid var(--line);
+  border-left: var(--stroke-accent) solid var(--line);
+  border-radius: var(--r-md);
+}
+.lab-gate-card[data-status="pass"] { border-left-color: var(--perm-read); }
+.lab-gate-card[data-status="warn"] { border-left-color: var(--perm-write); }
+.lab-gate-card[data-status="fail"] { border-left-color: var(--danger); }
+.lab-gate-card[data-status="skip"] { border-left-color: var(--fg-2); opacity: 0.7; }
+.lab-gate-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.lab-gate-title { font-size: var(--text-sm); font-weight: 600; }
+.lab-gate-status {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  padding: 0 var(--s1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+}
+.lab-gate-status[data-status="pass"] { color: var(--perm-read); border-color: var(--perm-read); }
+.lab-gate-status[data-status="warn"] { color: var(--perm-write); border-color: var(--perm-write); }
+.lab-gate-status[data-status="fail"] { color: var(--danger); border-color: var(--danger); }
+.lab-gate-status[data-status="skip"] { color: var(--fg-2); }
+.lab-gate-note { font-size: var(--text-xs); color: var(--fg-2); margin-top: var(--s1); }
+.lab-gate-details summary {
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--fg-1);
+}
+.lab-findings {
+  margin: var(--s1) 0 0;
+  padding-left: var(--s4);
+  font-size: var(--text-xs);
+}
+.lab-finding[data-level="fail"] { color: var(--danger); }
+.lab-finding[data-level="warn"] { color: var(--perm-write); }
+.lab-finding[data-level="info"] { color: var(--fg-1); }
+.lab-clause { color: var(--fg-2); }
+.lab-ack {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  font-size: var(--text-sm);
+}
+.lab-promote-confirm {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) 0;
+}
+
+/* Skill Lab 测试面板(docs/SKILL-DEV.md §2.1 右栏;L3) */
+.lab-test-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding-bottom: var(--s3);
+  border-bottom: var(--stroke) solid var(--line);
+  margin-bottom: var(--s3);
+}
+.lab-test-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.lab-test-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  font-size: var(--text-xs);
+}
+.lab-test-summary pre {
+  margin: 0;
+  padding: var(--s2);
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  overflow-x: auto;
+}
+.lab-outputs[data-ok="true"] { color: var(--perm-read); }
+.lab-outputs[data-ok="false"] { color: var(--danger); }
+.lab-test-trace { max-height: 320px; overflow-y: auto; }
+
+/* Skill Lab 中栏 chat(docs/SKILL-DEV.md §2.2;L4) */
+.lab-chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  height: 100%;
+}
+.lab-chat-log {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.lab-msg { display: flex; }
+.lab-msg-body {
+  max-width: 90%;
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-md);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-0);
+  border: var(--stroke) solid var(--line);
+}
+.lab-msg[data-role="user"] { justify-content: flex-end; }
+.lab-msg[data-role="user"] .lab-msg-body { border-color: var(--live); }
+.lab-msg[data-role="system"] .lab-msg-body {
+  border: none;
+  color: var(--fg-2);
+  font-size: var(--text-2xs);
+  padding: 0 var(--s1);
+}
+
+/* Skill Lab 包面板(docs/SKILL-PACKAGES.md §3.1;P1):左栏上方的包视图 */
+.lab-left {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.lab-left .lab-editor {
+  flex: 1;
+  overflow-y: auto;
+}
+.lab-pkg {
+  flex-shrink: 0;
+  padding-bottom: var(--s2);
+  margin-bottom: var(--s2);
+  border-bottom: var(--stroke) solid var(--line);
+}
+.lab-pkg:empty { display: none; } /* 未选草稿/无闭包时不占位(面板空态) */
+.lab-pkg-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s1);
+}
+.lab-pkg-title { font-size: var(--text-sm); font-weight: 600; }
+.lab-pkg-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 0 var(--s2);
+  padding-left: calc(var(--s2) + var(--ns-depth, 0) * var(--s4));
+  font-size: var(--text-xs);
+}
+.lab-pkg-row[data-root="true"] { background: var(--bg-0); border-radius: var(--r-sm); }
+.lab-pkg-act {
+  border: none;
+  background: none;
+  color: var(--live);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 0;
+}
+.lab-pkg-act:hover { text-decoration: underline; }
+.lab-pkg-link { color: var(--live); text-decoration: none; }
+.lab-pkg-link:hover { text-decoration: underline; }
+.lab-pkg-status {
+  font-size: var(--text-2xs);
+  padding: 0 var(--s1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--fg-2);
+}
+.lab-pkg-status[data-status="draft"] { color: var(--live); border-color: var(--live); }
+.lab-pkg-status[data-status="missing"] { color: var(--danger); border-color: var(--danger); }
+.lab-pkg-status[data-status="external"] { color: var(--perm-net); border-color: var(--perm-net); }
+.lab-pkg-refby { color: var(--fg-2); font-size: var(--text-2xs); }
+.lab-pkg-tier-none { color: var(--fg-2); }
+.lab-pkg-error { color: var(--danger); font-size: var(--text-xs); }
+
+/* Skill Lab 提交计划面板(docs/SKILL-PACKAGES-V2.md §6.3/§6.8;P2) */
+.lab-plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.lab-plan-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.lab-plan-hash { color: var(--fg-2); font-size: var(--text-2xs); }
+.lab-plan-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-xs);
+  padding: var(--s1) var(--s2);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+}
+.lab-plan-row[data-action="unchanged"] { opacity: 0.7; }
+.lab-plan-action { color: var(--fg-2); }
+.lab-plan-row[data-action="create"] .lab-plan-action { color: var(--perm-read); }
+.lab-plan-row[data-action="replace"] .lab-plan-action { color: var(--perm-write); }
+.lab-plan-blocker {
+  font-size: var(--text-xs);
+  color: var(--danger);
+  padding: var(--s1) var(--s2);
+  border-left: var(--stroke-strong) solid var(--danger);
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.lab-plan-warning { font-size: var(--text-xs); color: var(--perm-write); }
+
+/* 命名空间树(docs/NAMING.md §2;Skills/Tools 浏览器共用):折叠箭头 + 计数,
+   缩进走 --ns-depth(结构行为,零主题分支,只消费 token) */
+.ns-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  padding: var(--s1) var(--s2);
+  padding-left: calc(var(--s2) + var(--ns-depth, 0) * var(--s4));
+  color: var(--fg-1);
+  font-size: var(--text-xs);
+}
+.ns-toggle {
+  border: none;
+  background: none;
+  color: var(--fg-2);
+  cursor: pointer;
+  padding: 0 var(--s1);
+  font-size: var(--text-2xs);
+  width: var(--s4);
+}
+.ns-toggle:hover { color: var(--fg-0); }
+.ns-name { font-weight: 600; }
+.ns-count {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-2);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 0 var(--s1);
+}
+.ns-leaf { padding-left: calc(var(--s4) + var(--ns-depth, 0) * var(--s4)); }
+
+/* 包徽标(docs/SKILL-PACKAGES.md §3.6;P4):闭包完整簇的命名空间行 chip */
+.pkg-badge {
+  font-size: var(--text-2xs);
+  color: var(--live);
+  border: var(--stroke) solid var(--live);
+  border-radius: var(--r-sm);
+  padding: 0 var(--s1);
+  cursor: pointer;
+}
+
+/* Skill Lab 迭代模式(docs/LAB-ITERATION.md;Flow C 样板):双栏 diff + 内嵌边注 */
+.it {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  height: 100%;
+  padding: var(--s4);
+  overflow: hidden;
+}
+.it-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+.it-pkg { font-weight: 600; }
+.it-ver { width: auto; }
+.it-cols {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--s3);
+  min-height: 0;
+}
+.it-left, .it-right {
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-2);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s3);
+}
+.it-member-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin-bottom: var(--s2);
+  color: var(--fg-1);
+}
+.it-unit { position: relative; margin-bottom: var(--s2); }
+.it-sec {
+  background: var(--bg-2);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s3);
+}
+.it-sec h4 {
+  margin: 0 0 var(--s1);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+  display: flex;
+  justify-content: space-between;
+}
+.it-kv { font-size: var(--text-xs); color: var(--fg-1); white-space: pre-wrap; }
+.it-para {
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: var(--s2);
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  margin-bottom: var(--s1);
+}
+.it-case {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-xs);
+  padding: var(--s1) 0;
+}
+.it-note-btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--fg-2);
+  font-size: var(--text-xs);
+  padding: 0 var(--s1);
+}
+.it-note-btn:hover { color: var(--live); }
+.it-note {
+  display: flex;
+  gap: var(--s2);
+  margin: var(--s1) 0 var(--s1) var(--s4);
+  padding: var(--s1) var(--s2);
+  background: var(--bg-1);
+  border: var(--stroke) solid var(--live);
+  border-radius: var(--r-sm);
+  font-size: var(--text-2xs);
+}
+.it-note-to { color: var(--live); flex-shrink: 0; }
+.it-note-form {
+  display: flex;
+  gap: var(--s1);
+  margin: var(--s1) 0 0 var(--s4);
+}
+.it-wait { color: var(--fg-2); font-size: var(--text-xs); margin-bottom: var(--s2); }
+.it-error { color: var(--danger); }
+.it-gen { width: 100%; padding: var(--s2) 0; }
+.it-reply {
+  font-size: var(--text-xs);
+  color: var(--fg-1);
+  padding: var(--s2);
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  margin-bottom: var(--s2);
+}
+.it-actions { display: flex; gap: var(--s2); margin-top: var(--s3); }
+.it-diff-member { margin-bottom: var(--s3); }
+.it-diff-head { display: flex; align-items: center; gap: var(--s2); font-size: var(--text-sm); }
+.it-diff-sec {
+  font-size: var(--text-2xs);
+  color: var(--fg-2);
+  margin: var(--s2) 0 var(--s1);
+}
+.it-twocol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  margin-bottom: var(--s1);
+}
+.it-twocol > div {
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  padding: var(--s2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.it-twocol[data-kind="added"] > div:last-child { border-left: var(--stroke-strong) solid var(--perm-read); }
+.it-twocol[data-kind="removed"] > div:first-child { border-left: var(--stroke-strong) solid var(--danger); }
+.it-twocol[data-kind="changed"] > div:first-child { border-left: var(--stroke-strong) solid var(--danger); }
+.it-twocol[data-kind="changed"] > div:last-child { border-left: var(--stroke-strong) solid var(--perm-read); }
+.it-dline {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: var(--s1) var(--s2);
+  white-space: pre-wrap;
+}
+.it-dline[data-kind="add"] { background: color-mix(in srgb, var(--perm-read) 16%, transparent); border-radius: var(--r-sm); }
+.it-dline[data-kind="del"] {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-radius: var(--r-sm);
+  text-decoration: line-through;
+}
 
 /* run 头"等待上级裁决"Banner(帧拿不到精确标注时的兜底,S3 §5) */
 .wb-wait { align-items: center; }

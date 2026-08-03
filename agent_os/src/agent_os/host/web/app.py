@@ -1,4 +1,4 @@
-"""FastAPI app(RUNNERS.md §4.3 API 契约;R3):Web UI Runner 的路由层。
+"""FastAPI app(docs/RUNNERS.md §4.3 API 契约;R3):Web UI Runner 的路由层。
 
 ``create_app(config_path, artifacts_root=..., skillsets_dir=...)`` 返回 app;路由层只调用
 host/shared 的读取层与 :class:`RunManager`,不 import 内核私有实现(§4.5)。
@@ -7,7 +7,7 @@ host/shared 的读取层与 :class:`RunManager`,不 import 内核私有实现(§
 "run 未开始"的失败统一返回 ``200 + {"status": "failed", "error": ...}``;
 ``skill_set`` 未知(D6)属请求本身非法,归 400。
 
-S2 增量(SUPERVISOR.md v2 §2.3/§5):supervisor 收件箱两个端点——
+S2 增量(docs/SUPERVISOR.md v2 §2.3/§5):supervisor 收件箱两个端点——
 ``GET /api/supervisor/pending`` 列挂起中的裁决请求,
 ``POST /api/supervisor/{question_id}/answer`` 作答结算(对应 run 恢复);
 Web 收件箱即默认宿主通道,装配即得。
@@ -23,22 +23,35 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import secrets
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
 
+import jsonschema
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
+from agent_os.api.v1 import (
+    ChatResponse,
+    ChatUsage,
+    Message,
+    Role,
+    SkillRef,
+    ToolCall,
+    explain_skill_tier,
+)
 from agent_os.host.shared.artifacts import (
     frame_tree,
     read_checkpoint,
     read_result,
     read_trace,
 )
+from agent_os.host.shared.replay import replace_providers
 from agent_os.host.web.rca import locate_first_error, usage_panel
 from agent_os.host.web.run_manager import (
     HUB_CLOSED,
@@ -49,9 +62,29 @@ from agent_os.host.web.run_manager import (
     _jsonable,
 )
 from agent_os.kernel.errors import AgentOSError, SkillLoadError
+from agent_os.runtime.config import load_config
+from agent_os.skills.closure import compute_closure
+from agent_os.skills.draft_store import (
+    DraftStore,
+    OverlaySkillRegistry,
+    package_template_members,
+)
+from agent_os.skills.gate import GateError, promote_draft
+from agent_os.skills.gate import validate_draft as validate_gate_draft
+from agent_os.skills.iterate import candidate_diff, edit_members, run_iterate
+from agent_os.skills.lab_assistant import (
+    ASSISTANT_NAME,
+    ITERATOR_NAME,
+    assistant_skill,
+    iterator_skill,
+)
 from agent_os.skills.manifest import validate_manifest
+from agent_os.skills.package import build_plan, promote_package
+from agent_os.tools.lab_tools import register_lab_tools
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+_log = logging.getLogger("agent_os.web")
 
 #: SSE 空闲 keepalive 间隔(秒):防代理/浏览器断连,dev 工具取保守值
 _SSE_KEEPALIVE = 15.0
@@ -70,10 +103,58 @@ _KIND_HINTS = {
 }
 
 
-class RunOverrides(BaseModel):
-    """``POST /api/runs`` 的 ``overrides``(WEB-UI.md §4.3 高级区):合并进本次 run 的 RunConfig。
+def _lab_store(config_path: str | Path, artifacts_root: Path) -> DraftStore:
+    """装配 DraftStore(docs/SKILL-DEV.md §1.2;L1)。
 
-    ``inline``(SKILL-INLINING.md §9 消融开关):``"on" | "off"``,其余值 422。
+    drafts_root 取宿主配置 ``[lab].drafts_root``(照 ``[web].user`` 先例);
+    缺省 ``<artifacts_root>/drafts``;配置读取失败退化为缺省,不拖垮装配。
+    """
+    drafts_root = None
+    try:
+        drafts_root = (load_config(config_path).get("lab") or {}).get("drafts_root")
+    except Exception:  # noqa: BLE001 — Lab 存储配置失败不阻断 Web 启动
+        drafts_root = None
+    return DraftStore(drafts_root or (Path(artifacts_root) / "drafts"))
+
+
+def _lab_replace_providers(kernel: Any, script: list[dict[str, Any]]) -> None:
+    """用例的 ``mock_script``(dict 形态)→ MockProvider 回放(docs/RUNNERS.md §3.4 同机制;
+
+    docs/SKILL-DEV.md §1.5:确定性重放优先,无 mock 才用装配的真实 provider)。
+    """
+    responses = []
+    for item in script:
+        msg = item.get("message") or {}
+        usage = item.get("usage") or {}
+        responses.append(
+            ChatResponse(
+                message=Message(
+                    role=Role(msg.get("role", "assistant")),
+                    content=msg.get("content", ""),
+                    tool_calls=[
+                        ToolCall(
+                            id=str(tc.get("id", "")),
+                            name=str(tc.get("name", "")),
+                            args=dict(tc.get("args") or {}),
+                        )
+                        for tc in msg.get("tool_calls") or []
+                    ],
+                ),
+                finish_reason=item.get("finish_reason", "stop"),
+                usage=ChatUsage(
+                    prompt=usage.get("prompt", 0),
+                    completion=usage.get("completion", 0),
+                    cost=usage.get("cost", 0.0),
+                ),
+            )
+        )
+    replace_providers(kernel, responses)
+
+
+class RunOverrides(BaseModel):
+    """``POST /api/runs`` 的 ``overrides``(docs/WEB-UI.md §4.3 高级区):合并进本次 run 的 RunConfig。
+
+    ``inline``(docs/SKILL-INLINING.md §9 消融开关):``"on" | "off"``,其余值 422。
     ``checkpoint_interval``(Debugger P5 周期 checkpoint):每 N 步覆盖写"最近现场",0=关。
     """
 
@@ -101,9 +182,86 @@ class ReloadBody(BaseModel):
 
 
 class SupervisorAnswerBody(BaseModel):
-    """``POST /api/supervisor/{question_id}/answer`` 请求体(SUPERVISOR.md §2.4;S2)。"""
+    """``POST /api/supervisor/{question_id}/answer`` 请求体(docs/SUPERVISOR.md §2.4;S2)。"""
 
     answer: str
+
+
+class LabCreateBody(BaseModel):
+    """``POST /api/lab/drafts``(docs/SKILL-DEV.md §1.5):空模板/模板库/从生产 skill 复制。
+
+    N5(B3):未知字段不再静默丢弃——``model_extra`` 收走的多余字段在端点
+    开头归 400 并逐个点名(调用方必须知道"我以为写入了"的东西没被接受)。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    from_skill: str | None = None  # 生产 skill 名(前端把 `from` 关键字映射为本字段)
+    template: str | None = None  # 模板库 key(§4 L5:prompt_query|file_process|danger_op)
+
+
+class LabSaveBody(BaseModel):
+    """``PUT /api/lab/drafts/{name}``(§1.5):整体替换;tests=None 不动 tests 目录。"""
+
+    manifest: dict[str, Any]
+    prompt: str = ""
+    handler: str | None = None
+    tests: dict[str, Any] | None = None
+
+
+class LabPromoteBody(BaseModel):
+    """``POST /api/lab/drafts/{name}/promote``(docs/SKILL-DEV.md §1.5;L2)。
+
+    ``report_id`` 必填(闸门报告);``version`` 缺省自动(bump patch / 0.1.0);
+    报告或复跑有 warn 时必须 ``warnings_ack``(§1.4:黄关强制人工确认)。
+    """
+
+    report_id: str
+    version: str | None = None
+    warnings_ack: bool = False
+
+
+class LabTestRunBody(BaseModel):
+    """``POST /api/lab/drafts/{name}/test-run``(docs/SKILL-DEV.md §1.5;L3)。
+
+    ``input`` 直给,或 ``case`` 指名 tests/ 下的用例文件({input, expect?, mock_script?});
+    二者都给时 case 优先。
+    """
+
+    input: dict[str, Any] | None = None
+    case: str | None = None
+
+
+class LabAssistantBody(BaseModel):
+    """``POST /api/lab/assistant``(docs/SKILL-DEV.md §2.2;L4):中栏 chat 发消息。"""
+
+    request: str
+    draft: str
+
+
+class LabIterateBody(BaseModel):
+    """``POST /api/lab/drafts/{name}/iterate``(docs/LAB-ITERATION.md §4;Flow C 样板)。
+
+    ``comments``:本轮边注 [{id?, anchor:{member,kind,path,span?}, text, at?}];
+    ``note``:补充说明(可选,随边注一起进生成上下文)。
+    """
+
+    comments: list[dict[str, Any]] = []
+    note: str = ""
+
+
+class LabRewindBody(BaseModel):
+    """``POST /api/lab/drafts/{name}/rewind``:回到指定版本(working 恢复,历史不动)。"""
+
+    version: str
+
+
+class LabPackagePromoteBody(BaseModel):
+    """``POST /api/lab/packages/promote``(docs/SKILL-PACKAGES-V2.md §6.3;P2)。"""
+
+    plan_id: str
+    warnings_ack: bool = False
 
 
 class DebugBreakpointBody(BaseModel):
@@ -256,9 +414,9 @@ def _filter_kind(rows: list[dict[str, Any]], kind: str | None) -> list[dict[str,
 
 
 def _skill_summary(manifest: Any) -> dict[str, Any]:
-    """manifest 摘要(WEB-UI.md §6.2):name/version/kind/description/permissions/inline。
+    """manifest 摘要(docs/WEB-UI.md §6.2):name/version/kind/description/permissions/inline。
 
-    ``inline``(SKILL-INLINING.md §3.1):merge 技能标记,Skills 浏览器打标数据源。
+    ``inline``(docs/SKILL-INLINING.md §3.1):merge 技能标记,Skills 浏览器打标数据源。
     """
     perms = manifest.permissions
     return {
@@ -278,7 +436,7 @@ def _skill_summary(manifest: Any) -> dict[str, Any]:
 def _skill_doc(manifest: Any) -> dict[str, Any]:
     """全量 manifest 文档(``GET /api/skills/{name}``;D3 Launch Modal 取 inputs schema)。
 
-    D4 增补(WEB-UI.md §4.6):``lint`` = description 自洽性 lint 警告列表
+    D4 增补(docs/WEB-UI.md §4.6):``lint`` = description 自洽性 lint 警告列表
     (与加载期同一套 :func:`validate_manifest`,警告不阻断;Skills 浏览器
     详情顶部横幅数据源)。
     """
@@ -313,7 +471,7 @@ def _skill_doc(manifest: Any) -> dict[str, Any]:
 
 
 def _tool_doc(spec: Any) -> dict[str, Any]:
-    """ToolSpec 摘要(WEB-UI.md §6.2,``GET /api/tools``;Tools 浏览器数据源)。
+    """ToolSpec 摘要(docs/WEB-UI.md §6.2,``GET /api/tools``;Tools 浏览器数据源)。
 
     ``examples`` 为空则省略(§6.2 契约:缺失字段省略即可);布尔执行属性
     (idempotent/cacheable/concurrency_safe/untrusted_source)恒带。
@@ -373,7 +531,7 @@ def create_app(
 
     ``skillsets_dir``(D6):一站多 skill set 根目录(``<root>/<set>/skills.yaml``)。
 
-    ``token``(RUNNERS.md §4.5):非 None 时全站要求
+    ``token``(docs/RUNNERS.md §4.5):非 None 时全站要求
     ``Authorization: Bearer <token>``(或 ``?token=`` 供 EventSource 用——SSE
     的浏览器 API 不支持自定义头)。缺省 None = 无认证,**只可用于 loopback**;
     ``serve.py`` 在绑定非 loopback 且未给 token 时拒绝启动。
@@ -395,12 +553,13 @@ def create_app(
                 supplied = request.query_params["token"]
             if not secrets.compare_digest(supplied, token):
                 return JSONResponse(
-                    {"detail": "需要 Authorization: Bearer <token>(RUNNERS.md §4.5)"},
+                    {"detail": "需要 Authorization: Bearer <token>(docs/RUNNERS.md §4.5)"},
                     status_code=401,
                 )
             return await call_next(request)
 
-    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+    # html=True:目录索引(static/proto/ 等原型页直接以目录路径访问,仅静态语义)
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
 
     @app.middleware("http")
     async def _static_no_cache(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -489,7 +648,7 @@ def create_app(
             # 帧上下文逐条:"模型那一步看到了什么"(§2.3 RCA 核心)
             "messages": (frame.get("context") or {}).get("messages", []),
             # 帧工作内存(checkpoint 已带,read 层透传):检视器内联能力小节
-            # 取 working._inline_caps(SKILL-INLINING.md §4.2 帧内冻结快照)
+            # 取 working._inline_caps(docs/SKILL-INLINING.md §4.2 帧内冻结快照)
             "working": (frame.get("context") or {}).get("working", {}),
         }
 
@@ -536,7 +695,7 @@ def create_app(
 
     @app.get("/api/supervisor/pending")
     def list_supervisor_pending() -> list[dict[str, Any]]:
-        """supervisor 收件箱(SUPERVISOR.md §5;S2):挂起中的裁决请求列表。
+        """supervisor 收件箱(docs/SUPERVISOR.md §5;S2):挂起中的裁决请求列表。
 
         Web 收件箱即默认宿主通道(§2.3):run 无需注入 handler,装配即得;
         每行含 question_id/run_id/frame_id/question/context/options/urgency/asked_at。
@@ -580,7 +739,7 @@ def create_app(
 
     @app.get("/api/skills")
     def list_skills(skill_set: str | None = None) -> list[dict[str, Any]]:
-        """技能清单(WEB-UI.md §6.2):共享 registry 的 manifest 摘要列表(Launch Modal 下拉)。
+        """技能清单(docs/WEB-UI.md §6.2):共享 registry 的 manifest 摘要列表(Launch Modal 下拉)。
 
         D6:``?skill_set=<name>`` 按 set 过滤(未知 set 归 400);不带参数维持全局行为。
         """
@@ -589,6 +748,47 @@ def create_app(
         except RunValidationError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return [_skill_summary(m) for m in manifests]
+
+    @app.get("/api/skills/packages")
+    def list_packages() -> list[dict[str, Any]]:
+        """包识别(docs/SKILL-PACKAGES.md §3.6;P4):闭包完整的命名空间簇清单。
+
+        判据:簇内 ≥2 成员,且存在根使运行闭包(runtime 模式)全部可解析
+        (无 missing;簇内成员全覆盖)。Skills 页 ns-tree 的"包"徽标数据源。
+        """
+        manifests = manager.skills_manifests()
+        by_ns: dict[str, list[str]] = {}
+        for m in manifests:
+            by_ns.setdefault(m.name.split(".")[0], []).append(m.name)
+
+        class _NoDrafts:
+            def load_skill(self, name: str) -> Any:
+                raise FileNotFoundError(name)
+
+        packages = []
+        registry = manager.shared_skills_registry()
+        for ns, names in sorted(by_ns.items()):
+            if len(names) < 2:
+                continue
+            # 根候选 = 不被簇内其他成员引用的成员(包入口);逐个试,取第一个全解析的
+            referenced = {d for m in manifests if m.name in names for d in m.permissions.skills}
+            candidates = [n for n in names if n not in referenced] or names
+            for root in candidates:
+                closure = compute_closure(root, _NoDrafts(), registry, manager.shared_tools_registry(), mode="runtime")
+                members = closure["members"]
+                if any(m["status"] == "missing" for m in members) or closure["errors"]:
+                    continue
+                if {m["name"] for m in members} >= set(names):
+                    packages.append(
+                        {
+                            "ns": ns,
+                            "root": root,
+                            "tier": closure["root_tier"],
+                            "members": [m["name"] for m in members],
+                        }
+                    )
+                    break
+        return packages
 
     @app.get("/api/skills/{name}")
     def get_skill(name: str, skill_set: str | None = None) -> dict[str, Any]:
@@ -617,8 +817,545 @@ def create_app(
 
     @app.get("/api/tools")
     def list_tools() -> list[dict[str, Any]]:
-        """工具清单(WEB-UI.md §6.2):共享 tools registry 的全量 ToolSpec 摘要(Tools 浏览器)。"""
+        """工具清单(docs/WEB-UI.md §6.2):共享 tools registry 的全量 ToolSpec 摘要(Tools 浏览器)。"""
         return [_tool_doc(s) for s in manager.tools_specs()]
+
+    # ------------------------------------------------------------------
+    # Skill Lab(docs/SKILL-DEV.md §1.5;L1):drafts CRUD + 实时推导档
+    # ------------------------------------------------------------------
+
+    lab_store = _lab_store(config_path, root)
+
+    def _lab_overlay() -> OverlaySkillRegistry:
+        """生产 registry + 草稿层(草稿优先;L1 仅服务推导档,test-run 装配属 L3)。"""
+        return OverlaySkillRegistry(manager.shared_skills_registry(), lab_store)
+
+    def _lab_tier_of(manifest: Any) -> str:
+        return explain_skill_tier(manifest, manager.shared_tools_registry(), _lab_overlay())["tier"]
+
+    @app.get("/api/lab/drafts")
+    def lab_list_drafts() -> list[dict[str, Any]]:
+        """草稿列表(§1.5):name/推导档/最近修改时间;暂不合规的草稿 tier 置 None。"""
+        rows = lab_store.list()
+        for row in rows:
+            try:
+                row["tier"] = _lab_tier_of(lab_store.load_skill(row["name"]).manifest)
+            except (SkillLoadError, RunValidationError):
+                row["tier"] = None  # 半成品也要能进列表(§1.2 允许临时不合规)
+        return rows
+
+    @app.post("/api/lab/drafts", status_code=201)
+    def lab_create_draft(body: LabCreateBody) -> dict[str, Any]:
+        """新建草稿(§1.5):空模板 / 单技能模板 / 功能包模板(``pkg.*``,§3.2 整套生成)/
+        ``from_skill`` 从生产 skill 复制。未知字段 400 逐个点名(N5,B3)。"""
+        unknown = sorted((body.model_extra or {}).keys())
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知字段: {', '.join(unknown)}(本端点只接受 name/from_skill/template)",
+            )
+        try:
+            if body.template and body.template.startswith("pkg."):
+                # 功能包模板(docs/SKILL-PACKAGES.md §3.2;P4):根 + 成员一次生成,
+                # 白名单已对齐;任一成员冲突 → 已建的清掉,保持原子观感
+                members = package_template_members(body.template, body.name)
+                created: list[str] = []
+                try:
+                    for member_name, (manifest, prompt) in members.items():
+                        lab_store.create(member_name)
+                        lab_store.save(member_name, manifest=manifest, prompt=prompt)
+                        created.append(member_name)
+                except Exception:
+                    for member_name in created:
+                        lab_store.delete(member_name)
+                    raise
+                return {"name": body.name, "package": True, "members": created}
+            source = None
+            if body.from_skill:
+                try:
+                    source = manager.shared_skills_registry().get(SkillRef(name=body.from_skill))
+                except (SkillLoadError, RunValidationError) as e:
+                    raise HTTPException(status_code=404, detail=f"找不到生产技能: {body.from_skill}") from e
+            return lab_store.create(body.name, source=source, template=body.template)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+
+    @app.get("/api/lab/drafts/{name}")
+    def lab_read_draft(name: str) -> dict[str, Any]:
+        """读草稿(§1.5):manifest + prompt + handler + tests;解析失败带 parse_error 不 500。"""
+        try:
+            return lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.put("/api/lab/drafts/{name}")
+    def lab_save_draft(name: str, body: LabSaveBody) -> dict[str, Any]:
+        """保存草稿(§1.5):整体替换,上一版自动 .bak;不校验内容(闸门守在出口)。"""
+        try:
+            return lab_store.save(
+                name,
+                manifest=body.manifest,
+                prompt=body.prompt,
+                handler=body.handler,
+                tests=body.tests,
+            )
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.delete("/api/lab/drafts/{name}")
+    def lab_delete_draft(name: str) -> dict[str, Any]:
+        """删草稿(§1.5;L2 语义,UI 已确认)。"""
+        try:
+            lab_store.delete(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"ok": True, "name": name}
+
+    @app.get("/api/lab/drafts/{name}/tier")
+    def lab_draft_tier(name: str, tools: str | None = None, skills: str | None = None) -> dict[str, Any]:
+        """实时推导档(§1.3/§2.4):tier + 每来源明细(top = 贡献最高档的工具/技能)。
+
+        ``?tools=a,b&skills=c,d`` 用编辑器**未保存**的白名单覆盖计算——推导档随
+        表单实时刷新,不必先保存(保存永不打断创作流,§2.4)。
+        """
+        try:
+            draft = lab_store.read(name)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        if draft["parse_error"] is not None or draft["manifest"] is None:
+            # 半成品给不出档:明示原因而不是 500(与 read 同一容错语义)
+            return {"tier": None, "sources": [], "top": [], "parse_error": draft["parse_error"]}
+        try:
+            manifest = lab_store.load_skill(name).manifest
+        except SkillLoadError as e:
+            return {"tier": None, "sources": [], "top": [], "parse_error": str(e)}
+        if tools is not None:
+            manifest.permissions.tools = [t for t in tools.split(",") if t]
+        if skills is not None:
+            manifest.permissions.skills = [s for s in skills.split(",") if s]
+        try:
+            detail = explain_skill_tier(manifest, manager.shared_tools_registry(), _lab_overlay())
+        except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        detail["parse_error"] = None
+        return detail
+
+    @app.post("/api/lab/drafts/{name}/validate")
+    def lab_validate_draft(name: str) -> dict[str, Any]:
+        """跑提交闸门(docs/SKILL-DEV.md §1.4;L2/L3):五关报告,落盘 ``gate/<ts>.json``。
+
+        G4 冒烟执行器(L3):与 test-run 同逻辑的真 run(overlay 装配,同步跑,
+        RunConfig 即预算封顶)——outputs 必须过草稿 outputs schema。
+
+        响应为**双形**(N5,B7):平铺字段(旧形,向后兼容期保留)+ 嵌套形
+        ``{"report": {...}}``(新调用方请用嵌套形,平铺将于下版本移除)。
+        """
+        try:
+            draft = lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        try:
+            report = validate_gate_draft(
+                draft,
+                production=manager.shared_skills_registry(),
+                tools=manager.shared_tools_registry(),
+                smoke_runner=_lab_smoke_runner(name, draft),
+                store=lab_store,  # P1:G2 引用完整性(草稿 ∪ 生产全量)
+            )
+        except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        saved = lab_store.save_gate_report(name, report)
+        # N5(B7):双形兼容——新增嵌套形 {"report": {...}}(与邻居端点风格一致),
+        # 平铺字段保留一个版本期(老调用方不破;文档注明迁移方向)
+        return {**saved, "report": saved}
+
+    def _lab_smoke_runner(name: str, draft: dict[str, Any]) -> Any:
+        """构造 G4 冒烟执行器:overlay 装配(草稿优先)→ 真 run → outputs 校验。
+
+        结果形态 ``{"ok": bool, "error": str}``(gate.py 消费);mock_script 用例
+        走 replay MockProvider(确定性重放,§1.5;无 mock 用装配的真实 provider)。
+        """
+        outputs = (draft.get("manifest") or {}).get("outputs") or {}
+
+        def _run(case: dict[str, Any]) -> dict[str, Any]:
+            try:
+                kernel = manager.assemble_lab_kernel(_lab_overlay())
+                script = case.get("mock_script")
+                if script:
+                    _lab_replace_providers(kernel, script)
+                result = asyncio.run(kernel.run(name, case.get("input") or {}))
+            except Exception as e:  # noqa: BLE001 — 冒烟失败归 G4 finding,不炸 validate
+                return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return _lab_outputs_check(outputs, result)
+
+        return _run
+
+    def _lab_outputs_check(outputs: dict[str, Any], result: Any) -> dict[str, Any]:
+        """outputs schema 校验(§1.4 G4/test-run 结果区共用);空 schema 恒过。"""
+        if outputs:
+            try:
+                jsonschema.validate(result, outputs)
+            except jsonschema.ValidationError as e:
+                return {"ok": False, "error": f"outputs 校验失败: {e.message}"}
+        return {"ok": True, "error": None}
+
+    @app.post("/api/lab/drafts/{name}/test-run")
+    async def lab_test_run(name: str, body: LabTestRunBody) -> dict[str, Any]:
+        """试跑(§1.5;L3):input 直给或 tests/case 文件;返回 run_id(SSE/记录复用现状)。
+
+        装配走 kernel_patcher:生产内核 + overlay(草稿优先)——跑的就是生产形态的
+        run(§2.4 所见即所得),生产 run 不受影响(overlay 仅本请求作用域)。
+        """
+        try:
+            draft = lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        mock_script = None
+        if body.case is not None:
+            raw = draft["tests"].get(body.case)
+            if raw is None:
+                raise HTTPException(status_code=404, detail=f"草稿无用例: {body.case}")
+            try:
+                case = json.loads(raw) if isinstance(raw, str) else raw
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"用例 {body.case} 不是合法 JSON: {e}") from e
+            run_input = case.get("input") or {}
+            mock_script = case.get("mock_script")
+        else:
+            run_input = body.input or {}
+
+        def _patch(kernel: Any) -> None:
+            manager.swap_skills_overlay(kernel, _lab_overlay())
+            if mock_script:
+                _lab_replace_providers(kernel, mock_script)
+
+        try:
+            run_id = await manager.start_run(name, run_input, kernel_patcher=_patch)
+        except (RunValidationError, SkillLoadError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"run_id": run_id}
+
+    @app.get("/api/lab/drafts/{name}/runs/{run_id}/check")
+    def lab_test_run_check(name: str, run_id: str) -> dict[str, Any]:
+        """试跑结果 + outputs 校验(§1.5;L3):状态/result/校验结论,前端轮询用。"""
+        try:
+            draft = lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        state = manager.state_of(run_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail=f"找不到 run: {run_id}")
+        record = state.get("record") or {}
+        outputs = (draft.get("manifest") or {}).get("outputs") or {}
+        check = {"ok": None, "error": None}
+        if state.get("status") == "done":
+            check = _lab_outputs_check(outputs, record.get("result"))
+        return {
+            "run_id": run_id,
+            "status": state.get("status"),
+            "result": record.get("result"),
+            "error": record.get("error"),
+            "outputs_check": check,
+        }
+
+    @app.get("/api/lab/packages/{root}/closure")
+    def lab_package_closure(root: str, mode: str = "edit") -> dict[str, Any]:
+        """包闭包(docs/SKILL-PACKAGES.md §3.1/§4.2;P1):成员表 + 状态四态 + 环 errors。
+
+        ``?mode=runtime``(P4):运行闭包(穿过生产节点,Skills 页只读包视图用)。
+        """
+        if mode not in ("edit", "runtime"):
+            raise HTTPException(status_code=400, detail=f"mode 应为 edit|runtime,得到: {mode!r}")
+        return _lab_closure(root, mode=mode)
+
+    @app.get("/api/lab/drafts/{name}/closure")
+    def lab_draft_closure(name: str) -> dict[str, Any]:
+        """= /api/lab/packages/{name}/closure 的别名(§4.2,平滑过渡)。"""
+        return _lab_closure(name)
+
+    def _lab_closure(root: str, *, mode: str = "edit") -> dict[str, Any]:
+        try:
+            return compute_closure(
+                root,
+                lab_store,
+                manager.shared_skills_registry(),
+                manager.shared_tools_registry(),
+                mode=mode,
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/lab/packages/{root}/plan")
+    def lab_package_plan(root: str) -> dict[str, Any]:
+        """提交计划(docs/SKILL-PACKAGES-V2.md §6.3;P2):成员三态 + blockers + warnings。
+
+        每个 draft 成员过完整闸门(提交期严格档);plan 落盘 ``_plans/``,
+        package_hash 绑定"审的就是要执行的"。
+        """
+        try:
+            return build_plan(
+                root,
+                store=lab_store,
+                production=manager.shared_skills_registry(),
+                tools=manager.shared_tools_registry(),
+                smoke_runner=lambda name, draft: _lab_smoke_runner(name, draft),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/lab/packages/promote")
+    def lab_package_promote(body: LabPackagePromoteBody) -> dict[str, Any]:
+        """按 plan 原子提交(docs/SKILL-PACKAGES-V2.md §6.3/§6.4;P2)。
+
+        409:package_hash 不一致(成员在计划后改动)/ blockers 未清 / warnings 未 ack。
+        P4:待写成员 ≥2 且配置了 skillsets 根目录 → 落目录形态 set(§4.4)。
+        """
+        try:
+            result = promote_package(
+                store=lab_store,
+                plan_id=body.plan_id,
+                warnings_ack=body.warnings_ack,
+                production=manager.shared_skills_registry(),
+                tools=manager.shared_tools_registry(),
+                principal=manager.principal().subject,
+                skillsets_root=manager.skillsets_root(),
+            )
+            if result.get("set"):
+                manager.refresh_skillsets()  # 新 set 落盘:/api/skillsets 与下拉立即可见
+            return result
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except GateError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except SkillLoadError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/lab/assistant")
+    async def lab_assistant(body: LabAssistantBody) -> dict[str, Any]:
+        """Agent 助手(docs/SKILL-DEV.md §2.2;L4):以 skill.dev.assistant 为根技能起 run。
+
+        kernel_patcher 做两件事:overlay 注入 assistant meta-skill(草稿 → assistant →
+        生产的解析序)+ 注册 ``lab.draft.*`` 五工具。**工具面没有 promote/delete**
+        (§1.1:能改不能发);run 管理/SSE 复用现状,前端轮询 /api/runs/{id} 拿回复。
+        """
+        try:
+            lab_store.read(body.draft)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+        def _patch(kernel: Any) -> None:
+            overlay = OverlaySkillRegistry(
+                manager.shared_skills_registry(),
+                lab_store,
+                extra={ASSISTANT_NAME: assistant_skill()},
+            )
+            manager.swap_skills_overlay(kernel, overlay)
+            register_lab_tools(
+                kernel.tools,
+                store=lab_store,
+                production=manager.shared_skills_registry(),
+                tools_registry=manager.shared_tools_registry(),
+                kernel_factory=lambda: manager.assemble_lab_kernel(_lab_overlay()),
+                # P3 信任边界(docs/SKILL-PACKAGES-V2.md §6.7):围栏以当前包根为界——
+                # create 只能建在同名空间内,write 只能写包编辑闭包内成员
+                package_root=body.draft,
+            )
+
+        try:
+            run_id = await manager.start_run(
+                ASSISTANT_NAME,
+                {"request": body.request, "draft": body.draft},
+                kernel_patcher=_patch,
+            )
+        except (RunValidationError, SkillLoadError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"run_id": run_id}
+
+    @app.post("/api/lab/drafts/{name}/iterate")
+    def lab_iterate(name: str, body: LabIterateBody) -> dict[str, Any]:
+        """边注驱动迭代(docs/LAB-ITERATION.md §4;Flow C 样板)。
+
+        存本轮边注 → 生成技能(skill.dev.iterator,工具面 = 读 working + 写候选,
+        写不到 working)产候选 → 返回 working vs candidate 的 diff。
+        助手不可用(provider 故障/凭证)→ 503 明确错误(前端显示"助手暂不可用")。
+        """
+        try:
+            lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        lab_store.save_comments(name, str(int(time.time() * 1000)), body.comments)
+        kernel = manager.assemble_lab_kernel(
+            OverlaySkillRegistry(
+                manager.shared_skills_registry(),
+                lab_store,
+                extra={ITERATOR_NAME: iterator_skill()},
+            )
+        )
+        try:
+            return run_iterate(
+                kernel,
+                store=lab_store,
+                production=manager.shared_skills_registry(),
+                tools_registry=manager.shared_tools_registry(),
+                name=name,
+                comments=body.comments,
+                note=body.note,
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+
+    def _lab_candidate_diff(name: str) -> dict[str, Any]:
+        """working vs candidate 的结构化 diff(skills/iterate.py 纯函数)。"""
+        return candidate_diff(
+            lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(), name
+        )
+
+    @app.get("/api/lab/drafts/{name}/candidate/diff")
+    def lab_candidate_diff_get(name: str) -> dict[str, Any]:
+        """候选 diff(§4;Flow C 右栏数据源;无候选 → 404)。"""
+        try:
+            if not lab_store.candidate_members(name):
+                raise FileNotFoundError(f"无候选: {name}")
+            return _lab_candidate_diff(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.post("/api/lab/drafts/{name}/candidate/accept")
+    def lab_candidate_accept(name: str) -> dict[str, Any]:
+        """接受候选(§1.2:接受是人的动作):快照新版本 → 候选覆盖 working → 清候选。"""
+        try:
+            members = edit_members(
+                lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(), name
+            )
+            cand = lab_store.candidate_members(name)
+            if not cand:
+                raise FileNotFoundError(f"无候选: {name}")
+            latest = lab_store.list_versions(name)
+            _, comments = lab_store.latest_comments(name)
+            vid = lab_store.snapshot(
+                name,
+                members,
+                source="iterate",
+                parent=latest[0]["version"] if latest else None,
+                comments_digest=f"{len(comments)} 条边注",
+                prefer_candidate=True,  # N2:快照 = 被接受的候选内容(B4)
+            )
+            for member in cand:
+                data = lab_store.read_candidate_member(name, member)
+                current = lab_store.read(member)
+                lab_store.save(
+                    member,
+                    manifest=data["manifest"] or {},
+                    prompt=data["prompt"],
+                    handler=current["handler"],
+                    tests=data["tests"] or None,
+                )
+            lab_store.clear_candidate(name)
+            return {"version": vid, "versions": lab_store.list_versions(name)}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.post("/api/lab/drafts/{name}/candidate/discard")
+    def lab_candidate_discard(name: str) -> dict[str, Any]:
+        """放弃候选(清候选区,working 不动)。"""
+        try:
+            lab_store.clear_candidate(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"ok": True}
+
+    @app.get("/api/lab/drafts/{name}/versions")
+    def lab_list_versions(name: str) -> list[dict[str, Any]]:
+        """版本列表(新→旧;版本下拉数据源)。"""
+        try:
+            return lab_store.list_versions(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.post("/api/lab/drafts/{name}/rewind")
+    def lab_rewind(name: str, body: LabRewindBody) -> dict[str, Any]:
+        """rewind(docs/LAB-ITERATION.md §1.2):恢复快照到 working,历史不动。"""
+        try:
+            lab_store.restore_version(name, body.version)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"ok": True, "version": body.version}
+
+    @app.get("/api/lab/drafts/{name}/comments")
+    def lab_latest_comments(name: str) -> dict[str, Any]:
+        """最近一轮边注(左栏边注卡数据源)。"""
+        try:
+            round_id, comments = lab_store.latest_comments(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"round": round_id, "comments": comments}
+
+    @app.post("/api/lab/drafts/{name}/promote")
+    def lab_promote_draft(name: str, body: LabPromoteBody) -> dict[str, Any]:
+        """promote(docs/SKILL-DEV.md §2.3 流程 5):闸门通过 → 写生产 → reload → 记录。
+
+        错误归类:草稿/报告不存在 404;报告过期/含 fail/warn 未确认 409(GateError);
+        生产面不支持(非单文件 skills.yaml)400。
+        """
+        try:
+            return promote_draft(
+                store=lab_store,
+                name=name,
+                report_id=body.report_id,
+                version=body.version,
+                warnings_ack=body.warnings_ack,
+                production=manager.shared_skills_registry(),
+                tools=manager.shared_tools_registry(),
+                principal=manager.principal().subject,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except GateError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except SkillLoadError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @app.get("/api/runs/{run_id}/stream")
     async def stream_run(run_id: str) -> StreamingResponse:
@@ -897,5 +1634,18 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    # 新平台(docs/AGENTIC-UI.md 方案 A 对话中枢;docs/WEB-PLATFORM.md):
+    # 挂载到 /platform;装配失败只记日志不拖垮主 app(降级策略 §8——旧页即专家模式)
+    try:
+        from agent_os.host.web_platform import create_platform_app
+
+        app.mount(
+            "/platform",
+            create_platform_app(manager=manager, lab_store=lab_store, artifacts_root=root),
+            name="platform",
+        )
+    except Exception:  # noqa: BLE001 — 平台是并列宿主,主 app 必须照常可用
+        _log.warning("web_platform 装配失败,跳过 /platform 挂载", exc_info=True)
 
     return app

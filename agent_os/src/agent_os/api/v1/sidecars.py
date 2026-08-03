@@ -1,4 +1,4 @@
-"""Sidecar 契约(DESIGN.md §5.2):被信号触发的监督者(中断处理程序 + 看门狗 + seccomp)。
+"""Sidecar 契约(docs/DESIGN.md §5.2):被信号触发的监督者(中断处理程序 + 看门狗 + seccomp)。
 
 输入最小化原则:默认只收结构化调用数据,不接收主模型自由文本;
 ``Veto(reason)`` 的 reason 作为错误观察回写帧上下文(``retryable: false``)。

@@ -1,4 +1,4 @@
-"""配置装配锚点测试(RUNNERS.md §2.1;runtime/config.py 的错误归类与扩展点)。
+"""配置装配锚点测试(docs/RUNNERS.md §2.1;runtime/config.py 的错误归类与扩展点)。
 
 固定约定:
 

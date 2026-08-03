@@ -1,4 +1,4 @@
-"""D1 数据层 authN+Z 锚点测试(DATA-AUTHZ.md §2/§3/§5;§8 分期 D1)。
+"""D1 数据层 authN+Z 锚点测试(docs/DATA-AUTHZ.md §2/§3/§5;§8 分期 D1)。
 
 固定约定:
 

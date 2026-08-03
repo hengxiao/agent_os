@@ -1,4 +1,4 @@
-"""JSONL exporter 与 JsonlTelemetrySink(DESIGN.md §10.1/§10.2;M5a baseline)。
+"""JSONL exporter 与 JsonlTelemetrySink(docs/DESIGN.md §10.1/§10.2;M5a baseline)。
 
 append-only 事件日志 + 版本头;快照可重建、可丢弃(§16 风险表)。
 WAL 原则:帧 transcript 实时 append-only 落盘 = 任何时刻持有完整检查点;

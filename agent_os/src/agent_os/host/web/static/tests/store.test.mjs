@@ -1,4 +1,4 @@
-/* store.js 纯逻辑单测(WEB-UI.md §6.1):set / subscribe / 退订。
+/* store.js 纯逻辑单测(docs/WEB-UI.md §6.1):set / subscribe / 退订。
    运行:node static/tests/store.test.mjs(无需 DOM、无第三方依赖)。 */
 
 import assert from "node:assert/strict";

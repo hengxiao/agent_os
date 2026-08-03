@@ -1,4 +1,4 @@
-"""S1 锚点测试:supervisor 内核机制(SUPERVISOR.md v2 §2/§9)。
+"""S1 锚点测试:supervisor 内核机制(docs/SUPERVISOR.md v2 §2/§9)。
 
 固定约定:
 

@@ -1,4 +1,4 @@
-/* terminal 主题(DEBUG-UI-THEMES.md §3.3):90 年代主机房。
+/* terminal 主题(docs/DEBUG-UI-THEMES.md §3.3):90 年代主机房。
    磷光绿 #33ff66 on 近黑深绿底,UI/mono 双 mono 栈,body 叠加 2% 扫描线,
    面板 double 边框,暂停行反色(底色/文字互换)而非改底色。
    契约变量按 §2.1 全量定义(字面 hex——契约测试直接解析 css 源做 WCAG
@@ -26,6 +26,8 @@
   --danger:  #ff5555;   /* failed / error */
   --aborted: #c678dd;   /* aborted */
   --live:    #40d0ff;   /* running / live */
+  /* 焦点环(docs/WEB-A11Y.md §5.2;契约 token,须对 --bg-0..3 均 ≥3:1) */
+  --focus-ring: #40d0ff;
 
   /* 语义:信号类型 */
   --sig-llm:      #66aaff;
@@ -129,7 +131,6 @@
 [data-theme="terminal"] .input:focus {
   border-color: var(--ok);
   box-shadow: 0 0 8px var(--terminal-glow);
-  outline: none;
 }
 
 /* StatusPill:方角 + double 描边(文字状态保留,双编码不豁免) */

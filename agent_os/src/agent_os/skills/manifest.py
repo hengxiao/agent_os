@@ -1,4 +1,4 @@
-"""SkillManifest 解析与校验(DESIGN.md §6.1;M2)。
+"""SkillManifest 解析与校验(docs/DESIGN.md §6.1;M2)。
 
 ``yaml.safe_load`` → manifest 校验(schema/权限引用存在/description lint:
 描述应含 "Use when / Do not use when" + 负例,过短或无触发条件 → 警告不阻断)。
@@ -71,7 +71,7 @@ def parse_manifest(data: dict[str, Any]) -> SkillManifest:
     trust_raw = data.get("trust")
     trust = None
     if trust_raw:
-        # ESCALATION.md §2.1:confirm 只允许上调(always)或缺省;非法值加载期拒绝
+        # docs/ESCALATION.md §2.1:confirm 只允许上调(always)或缺省;非法值加载期拒绝
         confirm = trust_raw.get("confirm")
         if confirm is not None and confirm not in ("always", "first"):
             raise SkillLoadError(
@@ -103,7 +103,7 @@ def parse_manifest(data: dict[str, Any]) -> SkillManifest:
     )
 
 
-#: 内联(merge)技能 prompt 的膨胀上限(SKILL-INLINING.md §3.3;C++ "拒绝内联大函数"对应物)
+#: 内联(merge)技能 prompt 的膨胀上限(docs/SKILL-INLINING.md §3.3;C++ "拒绝内联大函数"对应物)
 INLINE_PROMPT_MAX_CHARS = 500
 
 #: 单个调用方的 merge 依赖条数上限(超过告警;调用方侧检查在 Registry 层)
@@ -111,7 +111,7 @@ INLINE_DEPS_MAX = 3
 
 
 def validate_escalation_gates(manifest: SkillManifest, tier: str) -> None:
-    """升权分档硬闸门(ESCALATION.md §2.1/§3.4;抛 SkillLoadError)。
+    """升权分档硬闸门(docs/ESCALATION.md §2.1/§3.4;抛 SkillLoadError)。
 
     需要推导档作输入——推导依赖 Tool Registry,故本函数由同时持有两者的
     装配点(KernelBuilder)或测试直接调用;loader 单用 validate_manifest 时
@@ -139,8 +139,8 @@ def validate_manifest(manifest: SkillManifest, tier: str | None = None) -> list[
     且权限等级不超过 RunConfig 上限,否则拒绝加载并报出具体缺失项(§6.1)。
 
     本函数只做 manifest 自洽性 lint;跨技能引用与工具存在性由 Registry/Builder 检查。
-    内联(merge)技能另有硬闸门与 lint(SKILL-INLINING.md §3.2/§3.3)。
-    ``tier``(推导档)给定时追加升权分档硬闸门(ESCALATION.md §2.1/§3.4)。
+    内联(merge)技能另有硬闸门与 lint(docs/SKILL-INLINING.md §3.2/§3.3)。
+    ``tier``(推导档)给定时追加升权分档硬闸门(docs/ESCALATION.md §2.1/§3.4)。
     """
     if tier is not None:
         validate_escalation_gates(manifest, tier)
@@ -160,7 +160,7 @@ def validate_manifest(manifest: SkillManifest, tier: str | None = None) -> list[
 def _validate_inline(manifest: SkillManifest) -> list[str]:
     """merge 技能的硬闸门(抛 SkillLoadError)与 lint(返回告警)。
 
-    硬闸门(SKILL-INLINING.md §3.2):仅 prompt 技能;纯度(tools/skills/blackboard
+    硬闸门(docs/SKILL-INLINING.md §3.2):仅 prompt 技能;纯度(tools/skills/blackboard
     全空——指令并入后这些权限无法执行,声明即矛盾);prompt 非空。
     """
     name = manifest.name

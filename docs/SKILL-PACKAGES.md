@@ -1,0 +1,293 @@
+# 能力包(Capability Package)设计报告
+
+> 版本:v0.1(报告)
+> 起因(用户洞察):用户想做一个 skill 的时候,往往真正需要的是**表面那个
+>   skill 以及背后所有会被用到的 skill**——即用户的心智单位是"功能",
+>   而一个功能 = 一个 skill 包/库。本报告回答:按这个思路如何改善 Skill Lab
+>   的设计,后端需要如何配合。
+> 关系:Skill Lab 方案见 `SKILL-DEV.md`;命名空间见 `NAMING.md`;依赖与加载
+>   见 `DESIGN.md` §6;升权推导档(闭包取 max)见 `ESCALATION.md` §2.1。
+> **后续**:本报告的洞察成立,但作为工程方案留了七个洞(授时闭包不完整、
+>   闭包边界、原子性、包级防错位、多入口、冒烟覆盖率、助手信任面)。
+>   详细设计、业界对照与四份可选方案见 `SKILL-PACKAGES-V2.md`;
+>   两文冲突时**以 V2 为准**(V2 §2 有经实测复现的现状修正)。
+
+---
+
+## 1. 洞察:用户的心智单位是"功能",不是"技能"
+
+对照真实使用场景,这个判断几乎总是成立:
+
+- "让 agent 会查天气" = `weather.query`(根)+ `weather.geocode` + `weather.forecast`(子);
+- "运维值班" = `ops.inspect.fleet`(根)+ `ops.plan.write` + `ops.cleanup.execute` + `ops.service.stop`(这正是 workspace_janitor 示例的形态);
+- "旅行规划" = `travel.planner`(根)+ 航班/酒店/天气若干子技能(travel_planner 示例同构)。
+
+三个证据说明系统其实早已知道这一点,只是 UI 没跟上:
+
+1. **内核按闭包工作**:加载流水线对 `permissions.skills` 做拓扑排序、
+   依赖存在性检查、循环检测;推导档对闭包递归取 max——**技能从来没有
+   单独存在过,它一直活在闭包里**。
+2. **命名空间天然是包**:`weather.*`、`ops.*`、`travel.*` 的第一段就是
+   功能域;L4.5 的树状浏览器已经按命名空间把技能聚合成簇——**包在
+   浏览器里已经可见,在工坊里却不可见**。
+3. **测试早已按闭包跑**:Skill Lab 的 OverlayRegistry 是"生产 + **全部
+   草稿**",test-run 时跨草稿引用本来就通——后端在测试路径上已经是
+   包语义,缺的只是把它显式化。
+
+### 1.1 当前设计在这个心智下的三个断点
+
+| 断点 | 现状 | 后果 |
+|---|---|---|
+| **多草稿协同缺失** | Lab 一次编辑一个草稿;助手一次只看一个草稿 | 做功能 = 反复切换 N 个草稿,白名单靠手工对齐,错配只能在运行期爆 |
+| **悬空引用(dangling ref)无闸** | 闸门不检查"引用的 skill 是否存在"(校勘记/第 11 章已记录:G5 该项未实现,推导档对未知引用按 none 防御跳过) | 引用写错名字 → 闸门全绿 → promote 后 loader 拒绝/运行期才炸 |
+| **半吊子 promote 风险** | promote 一次一个草稿,无顺序、无原子性 | 先 promote 根技能 → 生产根的 permissions.skills 指向**尚未 promote 的子技能** → 生产 registry 直接进入损坏态(加载期依赖存在性检查失败)。这是今天就能踩到的真实事故面 |
+
+### 1.2 结论
+
+把"能力包"从用户心智升格为 Lab 的**一级工作单元**:包不是新实体,
+而是**根技能的依赖闭包**(推导,不声明——与推导档同一哲学:能算出来
+的就不让人维护)。Lab 的所有动作(编辑/助手/检查/试跑/提交)从
+"对单草稿"升级为"对闭包"。
+
+## 2. 概念模型:包 = 闭包,闭包 ≈ 命名空间子树
+
+```
+能力包 P(root) = { root } ∪ closure(root.permissions.skills, 传递)
+
+例:P(ops.inspect.fleet)
+  = ops.inspect.fleet        (根,L1 直接档)
+  ├─ ops.plan.write          (L2)
+  ├─ ops.cleanup.execute     (L3)
+  └─ ops.service.stop        (L3)
+推导档(P) = irreversible(闭包取 max,§2.1)
+包的成员状态 = 每个成员 ∈ { 生产已发布 | 草稿开发中 | 悬空(引用不存在) }
+```
+
+三条设计决定(每条都有取舍):
+
+1. **包用推导,不用清单**。不引入 `package.yaml` 成员列表——成员关系
+   的唯一事实源是各技能的 `permissions.skills` 白名单。清单会腐烂
+   (改了白名单忘了改清单),推导永不腐烂。包的元数据(描述/版本)
+   就是根技能的元数据,不另设。
+2. **包 ≈ 命名空间子树,但按闭包而不是按前缀算**。一个包通常占据一个
+   命名空间(`ops.*`),但闭包也允许跨空间引用(`travel.planner` 引用
+   `weather.query` 已发布的生产技能)。视图按闭包展开,跨空间的生产
+   引用显示为外链节点(只读),不属于包的编辑面。这条划清了
+   "包 = 我的功能"与"包依赖 = 别人的功能"。
+3. **包 ≠ skill set**。skill set(D6)是**部署形态**(多文件/目录分组);
+   包是**开发期概念**(闭包工作单元)。两者在 promote 时汇合:
+   原子提交一个包,落为一个以功能命名的目录形态 set(§4.4)——
+   这恰好是 L2 遗留的"多文件归并"的正确动机。
+
+## 3. Lab 设计:从单技能工坊到功能工坊
+
+### 3.1 包视图(左栏上方,编辑器之上)
+
+```
+┌─ 包:ops.inspect.fleet ●irreversible ─────────────┐
+│ ▾ ops.inspect.fleet      ●none      [生产]        │
+│   ├─ ops.plan.write      ●reversible [草稿✎]      │
+│   ├─ ops.cleanup.execute ●irreversible [草稿✎]    │
+│   ├─ ops.service.stop    ●irreversible [草稿✎]    │
+│   └─ weather.query       ●none      [生产·外链]   │
+│ ⚠ ops.report.write       —          [悬空·未创建] │
+└──────────────────────────────────────────────────┘
+```
+
+- 复用 ns-tree 的折叠树组件;节点 = 末段名 + tier 徽标 + **成员状态徽标**
+  (生产/草稿/悬空/外链);点击草稿节点进编辑器(现状行为),
+  点击外链节点跳 Skills 页详情;
+- **悬空节点一键成稿**:`⚠ ops.report.write` 行内按钮"创建该草稿"——
+  断点 1.1-B 从"运行期才爆"变成"视图里可见、点一下补齐";
+- 包推导档徽标在标题行(闭包取 max,与现状 /tier 同一数据源)。
+
+### 3.2 新建流程:从"新技能"到"新功能"
+
+新建入口改两档(解决 UX 评审"模板名看不懂"的同一根因):
+
+- **单技能模板**(现状三件);
+- **功能包模板**(场景化,如"巡检+清理"骨架:根(L1)+ 计划(L2)+
+  执行(L3,dry_run/blast_radius 就位),三个互相关联的草稿一次生成,
+  白名单已对齐)——模板名用人话描述功能,而不是技术档位。
+
+### 3.3 助手:从单稿编辑到包级协作者
+
+`skill.dev.assistant` 的工作单元升级为包:
+
+- 工具扩展:`lab.draft.create`(创建子技能草稿——现状没有,
+  是断点 1.1-B 的助手面)、`lab.pkg.closure`(读包树:成员/状态/档位,
+  让助手看得见全局);
+- prompt 升级:"用户要的是功能。先读包树,判断该改哪个成员或该不该
+  拆新子技能;新增引用必须指向包内成员或已发布技能;改完跑包级检查";
+- 典型对话:"把清理拆成干跑和真删两步"→ 助手创建 `ops.cleanup.dry`
+  草稿、改根的白名单、跑包级 validate、汇报新包树。
+
+### 3.4 包级闸门(closure-aware gate)
+
+五关不变,判定面从单技能扩到闭包:
+
+| 关 | 单技能语义(现状) | 包级语义(升级) |
+|---|---|---|
+| G1 metadata | 根技能合规 | 闭包内**每个成员**合规 |
+| G2 契约 | 根 inputs/outputs | 每个成员的契约 + **引用完整性**(dangling ref = fail,断点 1.1-B 在此关闭) |
+| G3 分档 | 推导档 + 根的分档必填 | 闭包逐成员:L2 各自 reversal、L3 各自 blast_radius;inline 硬闸门逐成员 |
+| G4 冒烟 | 根 test-run | **以根为入口的整包试跑**(子技能随闭包真实压栈)+ 成员级用例(可选) |
+| G5 辞卫 | 根 prompt | 闭包逐成员 prompt |
+
+报告呈现按成员分组,根问题与成员问题分栏;fail 定位到具体成员。
+
+### 3.5 原子提交(atomic promote)——后端配合的重心
+
+包级提交是**事务**,不是循环:
+
+```
+POST /api/lab/packages/promote
+{ root: "ops.inspect.fleet", report_id: "pkg-...", warnings_ack?: true }
+
+服务端:
+1. 计算闭包 → 成员清单(草稿∩闭包 = 待提交集)
+2. 逐成员复跑 G1-G3(防报告过期,同现状)
+3. 全部通过 → 一次性写入生产(追加/替换所有成员条目)
+   → 单次 loader reload() → promotions.jsonl 追加 {package, members, by}
+4. 任一失败 → 整体不写(原子性);skills.yaml 写前 .bak 兜底
+```
+
+要点:
+- **写入顺序无关**:所有成员一次落盘后统一 reload,不存在"根先于子"
+  的中间损坏态(断点 1.1-C 关闭);
+- **跨包引用不受阻**:闭包内引用已发布生产技能(外链)不需要 promote;
+- **半包提交禁止**:闭包内有"悬空"或"未过闸草稿"时不允许只提交根
+  (除非把该引用先移除——闸门会指路)。
+- 单技能 promote 保留(包大小为 1 的退化情形),端点统一为包语义。
+
+### 3.6 生产侧呈现
+
+- Skills 树(现状 ns-tree)给命名空间簇加"包"识别:闭包完整的
+  命名空间显示包徽标(点击展开包视图只读版);
+- 调试台/Run 详情:根技能的包名随 run 元数据展示(可读后补)。
+
+## 4. 后端配合清单
+
+### 4.1 闭包计算(新纯函数)
+
+`skills/closure.py`(新):`compute_closure(root, {drafts, production})`
+→ 成员表 {name, ref_by, status: draft|production|missing|external,
+tier, manifest}。拓扑排序复用 loader 的既有实现;环检测沿用
+(循环 = G2 fail 的一种)。这是包视图、包级闸门、原子提交的共同数据源。
+
+### 4.2 API
+
+```
+GET  /api/lab/packages/{root}/closure   # 包树(§3.1 视图数据源)
+POST /api/lab/packages/promote          # 原子提交(§3.5)
+GET  /api/lab/drafts/{name}/closure     # = packages/{name}/closure(别名,平滑过渡)
+```
+
+现状端点全部保留(单草稿 CRUD/tier/validate/test-run 语义不变)。
+
+### 4.3 校验面升级
+
+- `gate.py`:`validate_draft` 增加 `closure=` 参数;G2 新增引用完整性
+  判定(引用 ∉ 闭包 ∪ 生产 = fail;顺带关闭校勘记里"G5 不引用不存在
+  的 skill/tool 未实现"的已知缺口——归入 G2 比 G5 更贴切,实现注说明);
+- 加载期 `validate_escalation_gates` 不变(生产面本来就有依赖存在性检查);
+- 助手工具组加 `lab.draft.create` / `lab.pkg.closure`(§3.3;权限面
+  仍无 promote/delete)。
+
+### 4.4 promote 落为目录形态 set(承接 L2 遗留)
+
+L2 时 promote 只支持单文件 skills.yaml(多文件归并报错留 L5)。包语义
+给了正确动机:**原子提交时,若闭包 ≥2 个成员,落为目录形态**
+`skillsets/<ns>/<root>.yaml`(每成员一文件,loader 现状已支持目录
+合并);单成员仍写单文件。目录名取根技能第一段命名空间。
+这一步是可选的——先落单文件多条目(现状 loader 支持),目录形态
+作为 P4 打磨。
+
+### 4.5 不需要动的
+
+- OverlayRegistry(全部草稿优先)——包级试跑的现状已够;
+- 推导档计算(闭包取 max)——包档与其同源;
+- 升权闸/数据闸——包是开发期概念,运行期无新语义;
+- checkpoint/replay。
+
+## 5. 使用流程(升级后)
+
+1. 新建 → 选功能包模板"巡检+清理" → 包视图出现 3 个互链草稿;
+2. 助手:"把执行拆成干跑/真删" → 包树 +1 成员,白名单自动对齐;
+3. 手改某个成员 → tier 徽标与包档实时联动;
+4. 包级检查:五关按成员分组,G2 报出一处悬空引用 → 一键成稿补齐;
+5. 包级试跑:以根为入口整包跑一遍,trace 里子技能随闭包压栈;
+6. 原子提交:整包一次进生产,单次 reload;Skills 树里 `ops.*` 簇
+   显示包徽标;
+7. 后续迭代:进 Lab 选根技能,包视图原样展开,继续。
+
+## 6. 分期
+
+| 期 | 内容 | 关闭的断点 |
+|---|---|---|
+| P1 ✅ | `compute_closure` + closure API + 包视图(含悬空节点/一键成稿)+ G2 引用完整性 | 1.1-B。已实现:`skills/closure.py`(四态/环/外链不下传)、`/api/lab/packages/{root}/closure` + drafts 别名、G2 悬空引用(tool/skill)与环判、Lab 包面板(四态徽标/根高亮/一键成稿);819 Python + 24 前端测试全绿。**P2 修正**:G2 悬空改两阶段(草稿期 warn / 提交期 fail,docs/SKILL-PACKAGES-V2.md §6.2),闭包改 edit/runtime 两模式(§6.1) |
+
+> 实现注(P1):
+> 1. "不引用不存在的 skill/tool"归 G2 而非 G5(gate.py 注释同改):它查的是
+>    契约面不是辞卫;SKILL-DEV §1.4 的 G2/G5 两行已同步;
+> 2. G2 环检测用 `_DraftAwareStore`(store + 当前草稿):校验中的草稿可能
+>    还没保存,裸 store 查不到根会让闭包计算 404 漏报环;
+> 3. closure 的 tier 用完整推导档(derive_skill_tier),与包档语义一致;
+> 4. 包面板点击草稿节点仅切换选中(不重拉 closure);悬空一键成稿走空模板,
+>    模板化成稿(P3 功能包模板)再升级。
+| P2 ✅ | 原子提交(批量写入 + 单 reload + .bak + promotions 记录) | 1.1-C。**按 docs/SKILL-PACKAGES-V2.md §5 推荐路线实现**(以 A 为骨架 + C 的两切片):死锁修复(gate.py:412 / lab_tools.py 漏传 store=)、edit/runtime 两种闭包(编辑闭包生产即叶子)、两阶段 strict_refs(草稿期 warn+修复提示 / 提交期 fail)、plan + package_hash(审的就是要执行的)、先证后换原子事务(staging 全量加载验证 → 整文件单 .bak → 原子 rename → 单 reload)、unchanged 不重写不 bump、blockers.fix 一键成稿、前端 plan 面板;830 Python + 24 前端测试全绿 |
+
+> 实现注(P2):
+> 1. 单稿 promote 遇"引用未发布兄弟草稿"在**写入前**拒绝并指路包级提交
+>    (V2 §6.2 尾段;复跑错误信息两分:哈希不符 = 报告不一致 / 新 fail = 判定不一致);
+> 2. 事务成员 = 编辑闭包里的 draft 节点;production/external 纯展示;
+> 3. 版本比较内容面含 prompt(_manifest_to_dict 不含指令体,手动并入);
+> 4. plan 存 `drafts_root/_plans/`(根可能是生产技能,不一定有自己的草稿目录);
+> 5. G4 按成员各自的入口冒烟(smoke_runner 是 fn(name, draft) 工厂)。
+| P3 ✅ | 助手包级化(create/closure 工具 + prompt)+ 功能包模板两件 | 1.1-A。已实现:`lab.draft.create`(命名空间围栏 + 每 run 配额)+ `lab.pkg.closure`(包树读取)、`lab.draft.write` 编辑闭包围栏、assistant prompt 包视角化(先读包树 → 拆或改 → 引用只指包内/已发布 → 草稿期 validate)、前端改稿后草稿下拉与包面板即时刷新;833 Python + 24 前端测试全绿。功能包模板两件留后续(与 §3.2 新建流程一起) |
+
+> 实现注(P3,信任边界按 docs/SKILL-PACKAGES-V2.md §6.7 四条落实):
+> 1. 仍然没有 promote/delete——"能改不能发"扩展为"能改能建,不能发不能删";
+> 2. `lab.draft.create` 命名空间围栏 = 当前包根的第一段前缀(注册时注入
+>    `package_root`;嵌入方不注册则无围栏);
+> 3. `lab.draft.write` 编辑闭包围栏 = 只能写当前包 edit 闭包内的 draft 成员;
+> 4. 助手 validate 仍然只读不落盘(助手报告不能当 promote 依据);
+> 5. 创建配额每 run ≤5(防注入灌爆 drafts 目录)。
+| P4 ✅ | 目录形态 set 落盘 + Skills 树包徽标 + G4 包级报告分组呈现 | 打磨。已实现:`_atomic_write_set`(staging 全集加载验证 → 单文件迁移 + 整文件 .bak → set 目录原子换入,`<ns>/skills.yaml` + 每成员一文件 + `agent-os.toml path="."`)、`/api/skills/packages` 包识别 + ns-tree 包徽标与只读包视图(runtime 闭包 + P1 面板 readonly 渲染)、功能包模板两件(巡检+清理 / 检索+报告,`pkg.*` 一次生成互链整套);837 Python + 24 前端测试全绿。G4 报告分组呈现留后续(报告结构已按成员承载) |
+
+> 实现注(P4):
+> 1. set 目录必须含 `skills.yaml`(D6 `load_skillsets` 的硬发现条件),
+>    故根成员条目落 `skills.yaml`,其余成员每员一文件,`agent-os.toml`
+>    声明 `path = "."` 让 set 装配走目录合并;
+> 2. 迁移语义是事务一部分:同名成员从单文件移除(防重复定义),先证后换
+>    的验证面 = 单文件剩余 + set 成员的全集;
+> 3. 未配置 skillsets 根目录时包级提交回落单文件写入(现状,不阻塞);
+> 4. 包识别判据(§3.6 的具体化):簇内 ≥2 成员 + 存在根使 runtime 闭包
+>    全部可解析且覆盖全簇——只读视图经 `?mode=runtime` 取全展开闭包;
+> 5. `nsTreeHtml` 新增 `nsExtra` 扩展点供徽标注入,Tools 页不受影响。
+
+依赖:P1 是所有后续的数据源;P2 依赖 P1 的成员清单;P3 依赖 P1/P2;
+P4 独立可拆。
+
+## 7. 风险与不做
+
+- **不做 package.yaml 成员清单**(§2 决定 1):推导永不腐烂,清单会;
+  若未来出现"闭包之外还要打包资源"的需求(图标/文档),再引入
+  且只装元数据不装成员。
+- **闭包爆炸防护**:闭包过大(>20 成员)时闸门 warn——大闭包意味着
+  职责没拆好,提示但不硬拦(与 TIER-STANDARDS 批量上限同哲学)。
+- **跨草稿同名**:两个草稿同名已在 DraftStore 层冲突(现状),包语义
+  不新增问题。
+- **生产同名覆盖**:包提交覆盖生产同名技能时,promote 确认行列出
+  将被覆盖的生产技能清单(对齐现状单稿 promote 的确认语义)。
+- **不做运行时"包"实体**:运行期只有 skill 与闭包,没有新调度单元——
+  包纯粹是开发期组织与准入面,零内核改动。
+
+## 8. 与 UX 评审第三轮的关系
+
+本设计顺带回应了评审的多个点,且都不违反既定设计原则:
+- "模板名看不懂"→ 功能包模板用场景人话(§3.2);
+- "双下拉语义重叠"→ 包视图 + 新建弹窗重构时一并消掉(P1);
+- "主流程没有视觉主线"→ 包视图给了流程一个实体(功能),状态机
+  变成"包的生命周期":草稿齐不齐(视图)→ 包级检查 → 原子提交;
+- 术语主题化、Monaco 两项维持此前裁决(设计特性 / 零 bundler),不在本报告范围。

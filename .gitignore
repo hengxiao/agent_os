@@ -3,8 +3,14 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+.hypothesis/
 .ai_agent_book_tmp/
 ai-agent-book/
+# OS 软件包源镜像(动态下载,不进代码库;曾经误放仓库根)
+appstream/
+baseos/
+crb/
+extras/
 # support_desk 示例的运行副作用(退款/通知/升级 JSONL 与遥测 traces)
 agent_os/examples/support_desk/data/*.jsonl
 agent_os/examples/support_desk/traces/

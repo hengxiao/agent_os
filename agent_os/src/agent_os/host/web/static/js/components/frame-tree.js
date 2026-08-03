@@ -1,4 +1,4 @@
-/* 帧树(WEB-UI.md §4.2 左栏 320px):嵌套跨度块(nested span blocks)——
+/* 帧树(docs/WEB-UI.md §4.2 左栏 320px):嵌套跨度块(nested span blocks)——
    每帧一个圆角块递归嵌套,左侧 3px 状态 accent 边条;块头单行(chevron + 状态点 +
    skill 名 + kind chip + 右侧 metadata:steps · tok · cost · 时长);兄弟块间 1px 连接线;
    选中态(--bg-2 + accent 加粗 + --live 边框),样式在 app.css(ft-block / ft-kids)。
@@ -126,7 +126,7 @@ export function fmtDuration(ms) {
    meta 段按"无值省略"组装(0 steps / 0 tok / $0.00 / 0ms 不出现,§4.2:0 值是噪音),
    每段带 key(app.css 按块宽 container query 逐级丢弃低优先级段:cost → tok → dur → steps);
    steps/cost 缺省回落 frame.usage,kind 非空字符串才出 chip;
-   waiting(SUPERVISOR.md §5,S3):帧挂起等待上级裁决 → "等待上级"标注 chip。 */
+   waiting(docs/SUPERVISOR.md §5,S3):帧挂起等待上级裁决 → "等待上级"标注 chip。 */
 export function spanBlockModel(frame, extras = null) {
   const f = frame ?? {};
   const ex = extras ?? {};
@@ -195,7 +195,7 @@ function headHtml(node, model, { collapsed, selection }) {
     (model.kind
       ? `<span class="ft-kind" data-kind="${esc(model.kind)}">${esc(model.kind)}</span>`
       : "") +
-    // SUPERVISOR.md §5(S3):挂起等上级裁决的帧标注(数据:收件箱 pending 匹配帧)
+    // docs/SUPERVISOR.md §5(S3):挂起等上级裁决的帧标注(数据:收件箱 pending 匹配帧)
     (model.waiting
       ? `<span class="ft-wait" title="该帧挂起,等待上级裁决">等待上级</span>`
       : "") +

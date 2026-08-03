@@ -1,4 +1,4 @@
-"""RunControl 契约(DESIGN.md §5.2):内核暴露给 sidecar 的特权接口。
+"""RunControl 契约(docs/DESIGN.md §5.2):内核暴露给 sidecar 的特权接口。
 
 仅此通道可操控运行;sidecar(代码)→内核的 pull 不耗 token。
 """

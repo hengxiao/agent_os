@@ -1,4 +1,4 @@
-"""InMemoryBlobStore 锚点测试(DESIGN.md §8.4/§7.2;内容寻址 + 分页读取)。"""
+"""InMemoryBlobStore 锚点测试(docs/DESIGN.md §8.4/§7.2;内容寻址 + 分页读取)。"""
 
 from __future__ import annotations
 

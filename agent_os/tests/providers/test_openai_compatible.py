@@ -1,4 +1,4 @@
-"""OpenAICompatibleProvider 锚点测试(DESIGN.md §4.3;经 httpx.MockTransport,不碰真实网络)。
+"""OpenAICompatibleProvider 锚点测试(docs/DESIGN.md §4.3;经 httpx.MockTransport,不碰真实网络)。
 
 固定约定:自身不重试;错误映射 429→RATE_LIMIT(读 Retry-After)、401/403→AUTH、
 400 且 context length→CONTEXT_OVERFLOW、5xx/超时→UNAVAILABLE(retryable)。

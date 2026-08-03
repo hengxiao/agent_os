@@ -1,4 +1,4 @@
-"""Logic Kernel 契约(DESIGN.md §9.1/§9.3):逻辑代码的唯一执行点(类比 CPU/ALU)。
+"""Logic Kernel 契约(docs/DESIGN.md §9.1/§9.3):逻辑代码的唯一执行点(类比 CPU/ALU)。
 
 两类代码都从这个咽喉点过:code 技能(§2.1)与 LLM 动态代码(``system.python.exec``,§9.4)。
 动态代码永远走 SANDBOX,无配置项可关闭(§9.2)。
@@ -111,7 +111,7 @@ class ExecUsage:
     wall_ms: int = 0
 
 
-#: 编排伪工具名(CODE-ORCHESTRATION.md §2.1):分发阶段被内核拦截,不进 Tool Registry
+#: 编排伪工具名(docs/CODE-ORCHESTRATION.md §2.1):分发阶段被内核拦截,不进 Tool Registry
 #: ——syscall 仲裁需绑定调用帧与调用方 manifest,权限敏感的分发留在内核(同 ``skill.*``)
 ORCHESTRATE_TOOL = "python_orchestrate"
 
@@ -139,7 +139,7 @@ ORCHESTRATE_SCHEMA: dict[str, Any] = {
     },
 }
 
-#: 沙箱 syscall 协议版本(CODE-ORCHESTRATION.md §2.2;首行版本头,同 telemetry 惯例)
+#: 沙箱 syscall 协议版本(docs/CODE-ORCHESTRATION.md §2.2;首行版本头,同 telemetry 惯例)
 SYSCALL_PROTOCOL_VERSION = 1
 
 #: 沙箱内 syscall 通道的文件描述符(与业务 stdout 分流,避免混流)
@@ -150,7 +150,7 @@ SYSCALL_FD = 3
 class ExecRequest:
     """§9.1(逐字):``{ source, language, entry, args, ctx, limits, network }``。
 
-    ``dispatch_fn``(CODE-ORCHESTRATION.md):SANDBOX 档的**工具系统调用**回调——
+    ``dispatch_fn``(docs/CODE-ORCHESTRATION.md):SANDBOX 档的**工具系统调用**回调——
     非 None 时沙箱进入服务循环,脚本内 ``ctx.call_tool``/``ctx.invoke`` 经管道
     陷入内核,由本回调代为分发(白名单/veto/信号/记账全部沿用 ``_dispatch_call``)。
     None 则为纯计算档(``system.python.exec`` 与 v1 code 技能行为不变)。

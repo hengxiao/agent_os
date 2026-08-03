@@ -1,4 +1,4 @@
-/* 上下文检视器消息卡片(WEB-UI.md §4.2 右栏 420px):按 role 渲染气泡、
+/* 上下文检视器消息卡片(docs/WEB-UI.md §4.2 右栏 420px):按 role 渲染气泡、
    tool_call/tool_result 成对渲染(§4.2 规则 3)、reasoning 折叠、
    veto/纠偏 Banner 嵌入、逐条复制、大消息 head+tail 折叠。
 

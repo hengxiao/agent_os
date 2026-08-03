@@ -1,4 +1,4 @@
-"""帧模型(DESIGN.md §2.3;§14.1 冻结清单:Usage 细分字段)。
+"""帧模型(docs/DESIGN.md §2.3;§14.1 冻结清单:Usage 细分字段)。
 
 SkillFrame = 调用栈帧;FrameContext = 帧私有上下文(其他帧不可见);
 Usage 为帧与 run 两级记账的最小数据前提。
@@ -94,12 +94,12 @@ class SkillFrame:
     usage: Usage = field(default_factory=Usage)
     #: 触发本帧的父帧调用 id(子帧创建时登记;checkpoint 恢复按它配对结算,§10.2)
     call_id: str | None = None
-    #: 帧的信任档(ESCALATION.md §2.2;additive):根帧 = 根 skill 直接能力档
+    #: 帧的信任档(docs/ESCALATION.md §2.2;additive):根帧 = 根 skill 直接能力档
     #: (``derive_tools_tier``,只含自己的 tools),子帧继承被调 skill 完整推导档;
     #: 升权判定比较调用帧与被调 skill 的档,故必须随帧保存
     #: (checkpoint 序列化保证 resume 后判定一致)
     tier: str = "none"
-    #: 数据层身份(DATA-AUTHZ.md §2.3;additive):run 启动者的 Principal,子帧/升权帧
+    #: 数据层身份(docs/DATA-AUTHZ.md §2.3;additive):run 启动者的 Principal,子帧/升权帧
     #: 原样继承(身份不变量——升权改的是副作用许可,不是身份);None = v1 单用户语义
     #: (宿主未注入身份,数据层不启用拦截)
     principal: Any = None

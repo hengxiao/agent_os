@@ -1,4 +1,4 @@
-"""LocalBlackboard(DESIGN.md §12.2 baseline;M5)。
+"""LocalBlackboard(docs/DESIGN.md §12.2 baseline;M5)。
 
 进程内 dict + asyncio.Queue,单 run 作用域。
 StatusBoard 模式(§12.2):子帧每步把进度摘要写入约定命名空间(append-only +

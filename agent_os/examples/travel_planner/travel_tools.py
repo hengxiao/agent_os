@@ -7,7 +7,7 @@
   retryable 并附修复建议;条目不存在 → NOT_FOUND 不 retry;两个工具均声明
   ``untrusted_source=True``(§2.2 来源标记,正文是不可信内容,防注入)。
 
-装配:``[tools.custom] module = "travel_tools:register"``(RUNNERS.md §2.1,
+装配:``[tools.custom] module = "travel_tools:register"``(docs/RUNNERS.md §2.1,
 模块须在 PYTHONPATH 上,见本目录 agent-os.toml 头注释)。
 """
 

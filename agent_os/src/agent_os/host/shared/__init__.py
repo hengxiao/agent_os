@@ -1,4 +1,4 @@
-"""共享基础(RUNNERS.md §2):产物组织、RunRecord 读取层(CLI/Web 两 runner 共用)。"""
+"""共享基础(docs/RUNNERS.md §2):产物组织、RunRecord 读取层(CLI/Web 两 runner 共用)。"""
 
 from agent_os.host.shared.artifacts import (
     execute_resume,

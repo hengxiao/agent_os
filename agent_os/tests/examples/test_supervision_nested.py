@@ -1,4 +1,4 @@
-"""S3 锚点:嵌套监督(SUPERVISOR.md v2 §2.5,§9 锚点 10)——调用方是另一个 agent。
+"""S3 锚点:嵌套监督(docs/SUPERVISOR.md v2 §2.5,§9 锚点 10)——调用方是另一个 agent。
 
 固定约定:
 

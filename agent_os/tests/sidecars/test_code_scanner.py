@@ -1,4 +1,4 @@
-"""CodeScanner 锚点测试(DESIGN.md §5.4/§9.5)。
+"""CodeScanner 锚点测试(docs/DESIGN.md §5.4/§9.5)。
 
 固定约定:
 

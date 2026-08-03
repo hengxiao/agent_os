@@ -1,4 +1,4 @@
-r"""函数名边界映射(§NAMING.md「provider 线格式」):内部点分层级名 ↔ API 合法名。
+r"""函数名边界映射(§docs/NAMING.md「provider 线格式」):内部点分层级名 ↔ API 合法名。
 
 OpenAI 兼容协议与 Anthropic 的函数名规则都不允许点分(``^[a-zA-Z][\w-]*$`` /
 ``^[a-zA-Z0-9_-]{1,64}$``),而内核 canonical 名是点分层级(``system.file.read``、

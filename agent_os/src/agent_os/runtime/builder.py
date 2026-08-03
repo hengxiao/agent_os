@@ -1,4 +1,4 @@
-"""KernelBuilder(DESIGN.md §14.2;M0 组装)。
+"""KernelBuilder(docs/DESIGN.md §14.2;M0 组装)。
 
 链式组装内核与九个子系统::
 
@@ -105,7 +105,7 @@ class KernelBuilder:
         on_timeout: str = "fail",
         default_answer: str = "",
     ) -> KernelBuilder:
-        """注入 supervisor 调用方通道(SUPERVISOR.md §2.3 handler 通道 / §6 配置;S1)。
+        """注入 supervisor 调用方通道(docs/SUPERVISOR.md §2.3 handler 通道 / §6 配置;S1)。
 
         ``handler``:``async def handler(question: Question) -> Answer``(契约见
         ``api/v1/supervisor.py``);``None`` 表示仅预置策略字段(TOML
@@ -122,7 +122,7 @@ class KernelBuilder:
         return self
 
     def prices(self, table: dict[str, dict[str, float]] | None) -> KernelBuilder:
-        """模型单价表(RUNNERS.md §2.1 ``[prices]``):每百万 token 美元价。
+        """模型单价表(docs/RUNNERS.md §2.1 ``[prices]``):每百万 token 美元价。
 
         没有它 ``usage.cost`` 恒为 0,``RunConfig.max_cost`` 与 BudgetGuard
         都不会触发(fail-open 在钱上),故 :func:`build` 会在缺表时告警。
@@ -134,7 +134,7 @@ class KernelBuilder:
     def retry(
         self, *, max_attempts: int | None = None, backoff_base: float | None = None
     ) -> KernelBuilder:
-        """ProviderManager 重试参数(RUNNERS.md §2.1 ``[retry]``;None 保持 Manager 默认)。"""
+        """ProviderManager 重试参数(docs/RUNNERS.md §2.1 ``[retry]``;None 保持 Manager 默认)。"""
         if max_attempts is not None:
             self._retry["max_attempts"] = max_attempts
         if backoff_base is not None:
@@ -157,7 +157,7 @@ class KernelBuilder:
         telemetry(M5a)作为总线特权订阅者接入(§5.1:全量订阅,不算 sidecar);
         blackboard(M5b)接线到 kernel.blackboard(§12:StatusBoard 与帧间消息);
         supervisor(S1)有 handler 才装配 SupervisorManager 挂到 kernel.supervisor
-        (SUPERVISOR.md §2.3;仅预置策略字段时不装配,运行时按"未装配"报 not_found);
+        (docs/SUPERVISOR.md §2.3;仅预置策略字段时不装配,运行时按"未装配"报 not_found);
         debug_controller(P1)给了就把它挂到信号总线(直接订阅,见 kernel/debug.py);
         装配期权限闸门(§6.1):manifest 声明的工具必须在注册表中,缺失即拒绝加载。
         """
@@ -181,20 +181,20 @@ class KernelBuilder:
                     for m in skills.manifests()
                     for t in m.permissions.tools
                     # 伪工具由内核拦截,不进 registry(python_orchestrate /
-                    # ask_supervisor,SUPERVISOR.md §2.1)
+                    # ask_supervisor,docs/SUPERVISOR.md §2.1)
                     if not tools.has(t) and t not in (ORCHESTRATE_TOOL, ASK_SUPERVISOR_TOOL)
                 }
             )
             if missing:
                 raise SkillLoadError(f"manifest 声明的工具未注册(§6.1 权限闸门): {missing}")
-            # 升权分档硬闸门(ESCALATION.md §2.1/§3.4):推导档 ≥L2 禁 inline、
+            # 升权分档硬闸门(docs/ESCALATION.md §2.1/§3.4):推导档 ≥L2 禁 inline、
             # L3 禁 confirm: first。推导需要 Tool Registry,loader 单跑时不经过——
             # 装配是 tools 与 skills 同时在场的唯一加载期检查点
             for m in skills.manifests():
                 validate_escalation_gates(m, derive_skill_tier(m, tools, skills))
         sup_manager = None
         if self._supervisor is not None and self._supervisor["handler"] is not None:
-            # SUPERVISOR.md §2.3:装配级 handler 通道(S2 宿主通道——Web 收件箱 /
+            # docs/SUPERVISOR.md §2.3:装配级 handler 通道(S2 宿主通道——Web 收件箱 /
             # CLI 协议——经 build_kernel(supervisor_handler=...) 走同一注入入口)
             sup_manager = SupervisorManager(self._supervisor["handler"], signals=bus, **{
                 k: self._supervisor[k] for k in ("timeout_s", "on_timeout", "default_answer")
@@ -205,7 +205,7 @@ class KernelBuilder:
             tools=tools,
             config=self.config,
             signals=bus,
-            # S2(SUPERVISOR.md §2.1):ask_supervisor 伪工具 schema 只在装了
+            # S2(docs/SUPERVISOR.md §2.1):ask_supervisor 伪工具 schema 只在装了
             # supervisor 通道时呈现给 LLM;嵌入方自带 context manager 时自行决定
             supervisor=sup_manager is not None,
         )

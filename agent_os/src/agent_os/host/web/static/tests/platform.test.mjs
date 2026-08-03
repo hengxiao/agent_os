@@ -520,6 +520,35 @@ const assertClean = (html, who) => {
         cards: [{ type: "gate_report", v: 1, data: { draft: "lab.dinner", status: "pass", gates: {} }, actions: [] }],
         instance: { id: "app-spawn-lab.dinner", kind: "lab-draft", state: {} } });
     }
+    // M4a:run.launch(发起面)+ iterate run 通道 + ad-hoc run 的 instance fallback
+    if (url === "/platform/api/apps/app-spawn-run-1/actions/run.launch") {
+      return reply({ ok: true, text: "已发起 demo.fib,新 run: run-2。", run_id: "run-2",
+        skill: "demo.fib", status: "running",
+        cards: [{ type: "table", v: 1, data: { title: "新 run", columns: ["run", "skill", "摘要"],
+          rows: [["run-2", "demo.fib", "已启动"]], ref: { kind: "run", id: "run-2" } }, actions: [] }],
+        run_instance: { id: "app-run-2", kind: "run", ref: "run-2",
+          state: { run_id: "run-2", skill: "demo.fib", status: "running" } } });
+    }
+    if (url === "/api/runs/run-2") {
+      return reply({ run_id: "run-2", skill: "demo.fib", status: "running", result: null, error: "" });
+    }
+    if (url === "/api/runs/run-2/signals") return reply([]);
+    if (url === "/platform/api/apps/app-p1/actions/iterate.generate") {
+      return reply({ ok: true, text: "已生成候选: description 精简", run_id: "run-9",
+        run_status: "done", skill: "lab.dinner",
+        cards: [{ type: "diff", v: 1, data: { name: "lab.dinner", diff: { has_changes: true, members: [] } }, actions: [] }],
+        run_instance: { id: "app-run-9", kind: "run", ref: "run-9",
+          state: { run_id: "run-9", skill: "lab.dinner", status: "done" } } });
+    }
+    if (url === "/api/runs/run-9" || url === "/api/runs/run-9/signals") {
+      // ad-hoc run(不走产物面):API 404 → 前端回落 instance state(M4a)
+      return { ok: false, status: 404, json: async () => ({ detail: "找不到 run: run-9" }) };
+    }
+    if (url === "/platform/api/apps/app-spawn-run-9") {
+      return reply({ id: "app-spawn-run-9", kind: "run", ref: "run-9", title: "run-9",
+        state: { run_id: "run-9", skill: "lab.dinner", status: "done" },
+        created_by: "app-p1", created_at: 1 });
+    }
     if (url === "/api/lab/packages/lab.dinner/closure?mode=runtime") {
       return reply({ root: "lab.dinner", root_tier: "reversible", members: [
         { name: "lab.dinner", depth: 0, tier: "reversible", status: "draft" },
@@ -926,6 +955,42 @@ const assertClean = (html, who) => {
     packSpawns,
     "同 kind+ref 再开:不重复 spawn(M2 去重)");
   assert.equal(probe.state.active, "d:pack:lab.dinner", "去重聚焦已有 tab");
+
+  /* ── M4a:run 真通道 + 发起面归一 ──────────────────────────── */
+
+  // 发起面:run tab 有 launch textarea + 按钮;留空 → args {}(服务端按 schema 骨架)
+  doc.trigger("click", { target: runLink }); // run-1 tab(去重聚焦)
+  await tick();
+  assert.ok(detailHtml().includes("data-launch-input"), "发起面 textarea 在(app 内改参)");
+  assert.ok(detailHtml().includes('data-tab-act="run.launch"'), "再跑一次按钮在");
+  const launchBtn = new StubEl("button");
+  launchBtn.dataset.tabAct = "run.launch";
+  launchBtn.parentNode = doc.body;
+  doc.trigger("click", { target: launchBtn });
+  await tick();
+  const lPost = calls.find((c) => c.url === "/platform/api/apps/app-spawn-run-1/actions/run.launch");
+  assert.ok(lPost, "launch 走 action 管道");
+  assert.deepEqual(JSON.parse(lPost.body).args, {}, "留空 = 服务端骨架(可改参的缺省)");
+  assert.equal(probe.state.active, "d:run:run-2", "run 通道产出 → 直接进新 run tab");
+  assert.ok(detailHtml().includes("running"), "新 run tab 实时状态渲染");
+
+  // iterate(卡面 run 态):run_instance → 进 run tab;ad-hoc run(无产物面)回落 instance state
+  const itBtn = new StubEl("button");
+  itBtn.dataset.appInst = "app-p1";
+  itBtn.dataset.appAction = "iterate.generate";
+  itBtn.dataset.cardAct = "iterate.generate";
+  itBtn.dataset.payload = "{}";
+  itBtn.parentNode = doc.body;
+  doc.trigger("click", { target: itBtn });
+  await tick();
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/apps/app-p1/actions/iterate.generate"),
+    "iterate 走管道(run 态)");
+  assert.equal(probe.state.active, "d:run:run-9", "run_instance → 直接进 run tab");
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/apps/app-spawn-run-9"),
+    "产物面 404 → 回落 instance state(v0.2 §4 不发明标志位)");
+  assert.ok(detailHtml().includes("done"), "instance state 渲染终态(run app 持有 run_id)");
 }
 
 console.log("platform.test.mjs: all assertions passed");

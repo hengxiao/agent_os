@@ -215,4 +215,8 @@ export const COPY = {
   "platform.act.spawn": "启",
   "platform.act.pin": "置顶",
   "platform.act.close": "阖",
+  "platform.act.iterate": "成候选",
+  "platform.run.launch": "复行",
+  "platform.run.launch.ph": "空则用默认参;或填 JSON",
+  "platform.run.launch.badjson": "参非合法 JSON",
 };

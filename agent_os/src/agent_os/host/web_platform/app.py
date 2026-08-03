@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -46,7 +47,11 @@ from agent_os.host.web_platform.artifacts import (
 from agent_os.host.web_platform.orchestrator import Orchestrator
 from agent_os.host.web_platform.sessions import SessionStore, new_message
 from agent_os.kernel.errors import SkillLoadError
-from agent_os.skills.draft_store import OverlaySkillRegistry, smoke_case_from_schema
+from agent_os.skills.draft_store import (
+    OverlaySkillRegistry,
+    skeleton_from_schema,
+    smoke_case_from_schema,
+)
 from agent_os.skills.gate import GateError, validate_draft
 from agent_os.skills.iterate import edit_members, run_iterate
 from agent_os.skills.lab_assistant import ITERATOR_NAME, iterator_skill
@@ -506,6 +511,10 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         return {
             "ok": True,
             "text": f"已生成候选: {result['reply']}",
+            # M4a run 通道:run_id/status 透传(管道据此 spawn run app 持 run_id)
+            "run_id": result.get("run_id", ""),
+            "run_status": result.get("run_status", ""),
+            "skill": name,
             "cards": [build_diff_card(name=name, diff=result["diff"])],
         }
 
@@ -628,6 +637,56 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             ],
         }
 
+    def _act_run_launch(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.run.launch(M4a 发起面归一):app 内"再跑一次"。
+
+        input 缺省 = 按 skill inputs schema 的 skeleton 骨架(用户可改,改后
+        服务端按 schema 校验,不合 → 400);skill 缺省时从产物 meta 回推
+        (run tab spawn 的 state.skill 可能为空)。lab-draft 的"试跑"同通道
+        (overlay 解析序:草稿优先)。
+        """
+        skill = str(payload.get("skill") or "")
+        run_id = str(payload.get("run_id") or "")
+        if not skill and run_id:
+            meta = _read_json(Path(artifacts_root) / "runs" / run_id / "meta.json")
+            skill = str((meta or {}).get("skill") or "")
+        if not skill:
+            raise HTTPException(status_code=400, detail="launch 需要 skill(state.skill 或产物 meta)")
+        # inputs schema 解析(overlay:草稿 ∪ 生产;拿不到 schema 就只校验是 object)
+        inputs_schema: dict[str, Any] = {}
+        try:
+            overlay = OverlaySkillRegistry(manager.shared_skills_registry(), lab_store)
+            inputs_schema = overlay.get_by_name(skill).manifest.inputs or {}
+        except Exception as e:  # noqa: BLE001 — 未知技能由 start_run 归 400(RunValidationError)
+            _log.info("launch schema 解析失败,按无 schema 继续: %s", e)
+        input_value = payload.get("input")
+        if input_value is None:
+            input_value = skeleton_from_schema(inputs_schema)  # 缺省 = 骨架(§M4a 发起面)
+        if inputs_schema:
+            try:
+                jsonschema.validate(input_value, inputs_schema)
+            except jsonschema.ValidationError as e:
+                raise HTTPException(status_code=400, detail=f"input 不合 {skill} 的 inputs schema: {e.message}") from e
+        try:
+            new_id = asyncio.run(manager.start_run(skill, input_value))
+        except Exception as e:  # RunValidationError 等归 400(与 POST /api/runs 同)
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {
+            "ok": True,
+            "text": f"已发起 {skill},新 run: {new_id[:8]}。",
+            "run_id": new_id,
+            "skill": skill,
+            "status": "running",
+            "cards": [
+                build_table_card(
+                    title="新 run",
+                    columns=["run", "skill", "摘要"],
+                    rows=[[new_id[:8], skill, "已启动"]],
+                    ref={"kind": "run", "id": new_id},
+                )
+            ],
+        }
+
     SKILL_BINDINGS = {
         # exec 归态(v0.2 §4;归错态 = 授权漏洞,评审面):
         #   endpoint = 确定性写,转发既有端点(下方除标注外全部);
@@ -647,6 +706,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         "platform.run.rerun": _act_run_rerun,
         "platform.debug.command": _act_debug_command,
         "platform.draft.check": _act_draft_check,
+        "platform.run.launch": _act_run_launch,  # M4a 发起面(run 态)
     }
 
     registry = AppRegistry(known_skills=set(SKILL_BINDINGS))
@@ -658,9 +718,21 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
 
     @app.post("/api/apps/spawn", status_code=201)
     def app_spawn(body: AppSpawnBody) -> dict[str, Any]:
-        """spawn(§4):从卡面"打开"创建 app instance;kind 须在注册表,kind+ref 去重。"""
-        if registry.get(body.kind) is None:
+        """spawn(§4):从卡面"打开"创建 app instance;kind 须在注册表,kind+ref 去重。
+
+        M4a:初始 state 按 manifest 的 ``state_schema`` 校验(不合 → 400,
+        "登记即伪造"在此关闭;schema 以现状卡 data 为准,additionalProperties 默认放行)。
+        """
+        manifest = registry.get(body.kind)
+        if manifest is None:
             raise HTTPException(status_code=400, detail=f"未注册的 app kind: {body.kind!r}")
+        try:
+            jsonschema.validate(body.state, manifest["state_schema"])
+        except jsonschema.ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"spawn state 不合 {body.kind} 的 state_schema: {e.message}",
+            ) from e
         inst, opened = instances.register(
             kind=body.kind, ref=body.ref, title=body.title or body.ref,
             state=body.state, created_by=body.created_by,
@@ -718,9 +790,24 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         if ref == "platform.debug.command":
             # 调试命令 = action id 末段(debug.continue→continue,debug.stop→stop)
             payload["command"] = action_id.split(".")[-1]
-        # endpoint/run 当前同一薄 handler 面(run 态语义 = agentic 起 run;
-        # 真 run 通道——spawn run app 持 run_id——归 M4,v0.2 §4)
+        # endpoint/run 当前同一薄 handler 面;**run 态**(v0.2 §4,M4a):长任务 =
+        # spawn run app 持 run_id——handler 结果带 run_id 时登记 run instance,
+        # 响应附 run_instance(用户可直接进 run tab;running 态 = 持 run_id 且未终态)
         result = _run_handler(SKILL_BINDINGS[ref], payload)
+        if mode == "run" and result.get("run_id"):
+            run_inst, _opened = instances.register(
+                kind="run",
+                ref=result["run_id"],
+                title=result["run_id"][:8],
+                state={
+                    "run_id": result["run_id"],
+                    "skill": result.get("skill", ""),
+                    "status": result.get("run_status") or result.get("status") or "running",
+                    **({"result": result["result"]} if "result" in result else {}),
+                },
+                created_by=instance_id,
+            )
+            result = {**result, "run_instance": run_inst}
         if isinstance(result.get("state"), dict):
             instances.update_state(instance_id, result["state"])
         _register_cards(result.get("cards") or [], created_by=instance_id)

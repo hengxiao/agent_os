@@ -222,4 +222,8 @@ export const COPY = {
   "platform.act.spawn": "打开",
   "platform.act.pin": "置顶",
   "platform.act.close": "关闭",
+  "platform.act.iterate": "生成候选",
+  "platform.run.launch": "再跑一次",
+  "platform.run.launch.ph": "留空用默认参数骨架;或填 JSON 自定义参数",
+  "platform.run.launch.badjson": "参数不是合法 JSON",
 };

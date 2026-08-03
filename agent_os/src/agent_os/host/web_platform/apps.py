@@ -372,6 +372,15 @@ def default_manifests() -> list[dict[str, Any]]:
             "state_schema": obj(name={"type": "string"}),
             "actions": [
                 {
+                    "id": "iterate.generate",
+                    "label": "platform.act.iterate",
+                    # M4a:run 真通道(v0.2 §4)——agentic 起 run,管道 spawn run app 持 run_id
+                    "exec": {"mode": "run", "ref": "platform.iterate.generate"},
+                    "args_from": ["state.name"],
+                    "args_input": {"comments": {"type": "array"}, "note": {"type": "string"}},
+                    "surface": ["card", "tab"],
+                },
+                {
                     "id": "candidate.accept",
                     "label": "platform.act.accept",
                     "exec": {"mode": "endpoint", "ref": "platform.candidate.accept"},
@@ -452,7 +461,10 @@ def default_manifests() -> list[dict[str, Any]]:
             "title": "{run_id}",
             "surfaces": {"card": "run.card", "tab": "run.tab"},
             "state_schema": obj(
-                run_id={"type": "string"}, status={"type": "string"}, result={"type": "object"}
+                run_id={"type": "string"},
+                status={"type": "string"},
+                result={},
+                skill={"type": "string"},
             ),
             "actions": [
                 {
@@ -474,6 +486,15 @@ def default_manifests() -> list[dict[str, Any]]:
                     "label": "platform.run.rerun",
                     "exec": {"mode": "endpoint", "ref": "platform.run.rerun"},
                     "args_from": ["state.run_id"],
+                    "surface": ["card", "tab"],
+                },
+                {
+                    # M4a 发起面归一:app 内"再跑一次"(input 骨架可改,服务端校验)
+                    "id": "run.launch",
+                    "label": "platform.run.launch",
+                    "exec": {"mode": "run", "ref": "platform.run.launch"},
+                    "args_from": ["state.skill"],
+                    "args_input": {"input": {"type": "object"}},
                     "surface": ["card", "tab"],
                 },
             ],

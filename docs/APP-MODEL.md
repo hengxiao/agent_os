@@ -238,6 +238,25 @@ v0.1 说"action = skill 调用 → 内核仲裁自动覆盖 UI 全部副作用,U
 | M3.5 ✅ | exec 三态同构迁移(manifest `skill`→`exec{mode,ref}` 强制 + args_input 通道 + 授权测试三件套;行为零变化) |
 | M4 | legacy 五页以 tab surface 接入 + SSE transport + 主动汇报(app 状态推送进对话) |
 
+> **M4a 实现注**(2026-08-03,分支 debugger;M4 的引擎部分):
+> - **run 真通道**(v0.2 §4):`run_iterate` 回传 run_id/run_status(additive);
+>   diff manifest 新增 `iterate.generate`(exec.mode="run",args_input
+>   {comments,note});管道 run 分支——handler 结果带 run_id 即 spawn run app
+>   (state={run_id,skill,status}),响应附 `run_instance`,前端直接进 run tab;
+>   running 态 = 持 run_id 且未终态,**不发明新标志位**;ad-hoc run(iterate
+>   不走产物面)的 Tab Surface 在 API 404 时回落 instance state 渲染;
+> - **发起面归一**:run manifest 新增 `run.launch`(exec.mode="run",
+>   args_from state.skill,args_input {input});handler = schema 解析(overlay
+>   草稿∪生产)→ input 缺省用 `skeleton_from_schema` 骨架/给了按 schema 校验
+>   (不合 400)→ start_run → spawn run instance;Tab Surface 发起面 =
+>   textarea(留空=骨架,可填 JSON 改参)+ 按钮;lab-draft 试跑同通道
+>   (overlay 解析序草稿优先,未单独做按钮);
+> - **spawn 校验**(M3.5 留口关闭):POST /api/apps/spawn 按 manifest 的
+>   state_schema 校验初始 state(不合 → 400);各 kind schema 以现状卡 data
+>   为准(additionalProperties 默认放行,声明键查类型);
+> - **前端时序**:openDetail 的 spawn 改 await(tab.instance 确定后再渲染,
+>   fallback 无竞态)。
+
 > **M3.5 实现注**(2026-08-03,分支 debugger;v0.2 §4/§7/§9/§12):
 > - **schema**(apps.py):`exec` 强制项(缺省拒绝注册),mode ∈
 >   endpoint/run/local;endpoint/run 的 ref 须在绑定表;local 无 ref;

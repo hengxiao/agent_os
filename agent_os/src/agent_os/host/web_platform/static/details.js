@@ -198,12 +198,19 @@ export function runDetailHtml({ detail, signals }) {
     (["failed", "running", "aborted"].includes(detail?.status) && runId
       ? `<button class="btn" data-debug-run="${esc(runId)}">${esc(copy("platform.run.debug"))}</button>`
       : "");
+  // M4a 发起面归一:app 内"再跑一次"(留空 = 服务端按 schema 骨架;可填 JSON 改参)
+  const launch = runId
+    ? `<div class="pf-sec">${esc(copy("platform.run.launch"))}</div>` +
+      `<textarea class="input mono" data-launch-input rows="3" placeholder="${esc(copy("platform.run.launch.ph"))}"></textarea>` +
+      `<div class="pf-card-actions"><button class="btn" data-tab-act="run.launch">${esc(copy("platform.run.launch"))}</button></div>`
+    : "";
   return (
     `<div class="pf-detail">` +
     `<div class="pf-detail-head mono">${esc(detail?.skill ?? "")} ` +
     `<span class="lab-pkg-status" data-status="${status}">${status}</span></div>` +
     error + result +
     (actions ? `<div class="pf-card-actions">${actions}</div>` : "") +
+    launch +
     `<div class="pf-sec">${esc(copy("platform.detail.trace"))}</div>` +
     (trace || `<div class="pf-dim">${esc(copy("platform.detail.no.trace"))}</div>`) +
     `</div>`

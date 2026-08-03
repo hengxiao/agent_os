@@ -271,6 +271,11 @@ async function cardAction(btn) {
       result = await res.json();
     }
     state.messages.push({ role: "agent", text: result.text ?? "", cards: result.cards ?? [] });
+    if (instId && result.run_instance?.ref) {
+      // run 真通道(M4a):卡面动作产出 run app —— 直接进 run tab
+      await openDetail("run", result.run_instance.ref, null);
+      return;
+    }
     renderMain();
   } catch (e) {
     state.messages.push({ role: "agent", text: `${copy("platform.error")}: ${e.message ?? e}`, cards: [] });
@@ -364,7 +369,7 @@ async function openDetail(kind, ref, data) {
   state.detail = { kind, ref, loading: true };
   renderTabs();
   renderMain();
-  _spawnForTab(tab, data); // M2:登记 app instance(fire-and-forget,不阻断渲染)
+  await _spawnForTab(tab, data); // spawn 先行:tab.instance 确定后再渲染(M4a fallback 依赖)
   state.detail = await _loadDetail(kind, ref, data);
   renderMain();
 }
@@ -382,11 +387,33 @@ async function _loadDetail(kind, ref, data) {
       return { kind, ref, html: renderTabSurface(kind, closure) };
     }
     if (kind === "run") {
-      const [detail, signals] = await Promise.all([
-        (await fetch(`/api/runs/${encodeURIComponent(ref)}`)).json(),
-        (await fetch(`/api/runs/${encodeURIComponent(ref)}/signals`)).json(),
+      const [dRes, sRes] = await Promise.all([
+        fetch(`/api/runs/${encodeURIComponent(ref)}`),
+        fetch(`/api/runs/${encodeURIComponent(ref)}/signals`),
       ]);
-      return { kind, ref, html: renderTabSurface(kind, { detail, signals }) };
+      if (dRes.ok) {
+        const [detail, signals] = await Promise.all([dRes.json(), sRes.json()]);
+        return { kind, ref, html: renderTabSurface(kind, { detail, signals }) };
+      }
+      // M4a:ad-hoc run(iterate 等不走产物面)回落 instance state——
+      // running 态 = 持 run_id 且未终态,不发明新标志位(v0.2 §4)
+      const tab = state.tabs.find((t) => t.id === `d:run:${ref}`);
+      if (tab?.instance) {
+        const inst = await (await fetch(`/platform/api/apps/${encodeURIComponent(tab.instance)}`)).json();
+        if (inst?.state?.status) {
+          return {
+            kind, ref,
+            html: renderTabSurface(kind, {
+              detail: {
+                run_id: ref, skill: inst.state.skill ?? "",
+                status: inst.state.status, result: inst.state.result ?? null, error: "",
+              },
+              signals: [],
+            }),
+          };
+        }
+      }
+      throw new Error(`HTTP ${dRes.status}`);
     }
     if (kind === "debug") {
       // M3:简化调试台(快照 = 旧 web 调试端点同形)
@@ -498,18 +525,37 @@ async function tabAction(btn) {
   }
   btn.disabled = true;
   try {
+    // M4a:run.launch 的 input 来自发起面 textarea(留空 = 服务端骨架)
+    let args = {};
+    if (btn.dataset.tabAct === "run.launch") {
+      const raw = document.querySelector("#detailHost [data-launch-input]")?.value?.trim();
+      if (raw) {
+        try {
+          args = { input: JSON.parse(raw) };
+        } catch {
+          toast(copy("platform.run.launch.badjson"), "error");
+          btn.disabled = false;
+          return;
+        }
+      }
+    }
     const res = await fetch(
       `/platform/api/apps/${encodeURIComponent(tab.instance)}/actions/${encodeURIComponent(btn.dataset.tabAct)}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ surface: "tab", args: {}, session_id: state.current }),
+        body: JSON.stringify({ surface: "tab", args, session_id: state.current }),
       }
     );
     if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
     const result = await res.json();
     if (result.text) {
       state.messages.push({ role: "agent", text: result.text, cards: result.cards ?? [] });
+    }
+    if (result.run_instance?.ref) {
+      // run 真通道(v0.2 §4):动作产出 run app —— 直接进它的 tab 看进展
+      await openDetail("run", result.run_instance.ref, null);
+      return;
     }
     state.detail = await _loadDetail(tab.kind, tab.ref, null);
     renderMain();

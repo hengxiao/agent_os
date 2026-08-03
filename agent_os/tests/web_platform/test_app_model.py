@@ -36,6 +36,8 @@ KNOWN = {
     # M3:run/debug/lab-draft 三 kind 的绑定键
     "platform.run.stop", "platform.run.resume", "platform.run.rerun",
     "platform.debug.command", "platform.draft.check",
+    # M4a:发起面(run 态)
+    "platform.run.launch",
 }
 
 
@@ -513,3 +515,89 @@ def test_authz_exec_modes(client):
     after = (list(client.manager.stopped), list(client.manager.answered),
              list(client.manager.debug_cmds), list(client.manager.runs_started))
     assert before == after, "local 动作零出海(无任何 handler/manager 调用)"
+
+
+# ---------------------------------------------------------------------------
+# M4a:run 真通道 + 发起面归一 + spawn state_schema 校验(docs/APP-MODEL.md §10)
+# ---------------------------------------------------------------------------
+
+
+def test_m4a_spawn_state_schema_validation(client):
+    """spawn 初始 state 按 manifest state_schema 校验:不合 → 400(登记即伪造关闭)。"""
+    bad = client.post("/api/apps/spawn", json={"kind": "run", "ref": "r1", "state": {"run_id": 123}})
+    assert bad.status_code == 400
+    assert "state_schema" in bad.json()["detail"]
+    good = client.post("/api/apps/spawn",
+                       json={"kind": "run", "ref": "r1", "state": {"run_id": "r1", "skill": "demo.fib"}})
+    assert good.status_code == 201
+
+
+@pytest.fixture()
+def iterate_client(tmp_path: Path) -> TestClient:
+    """真装配 + iterator brain(候选真写盘;run 通道的 run_id 有真实来源)。"""
+    (tmp_path / "skills.yaml").write_text("skills: []\n", encoding="utf-8")
+    cfg = tmp_path / "agent-os.toml"
+    cfg.write_text(
+        """
+[run]
+model = "mock/x"
+compression = "off"
+[providers.mock]
+brain = "tests.web.test_lab_iterate:iterator_brain"
+[tools]
+builtins = true
+python_exec = "off"
+[skills]
+path = "{skills}"
+[lab]
+drafts_root = "{drafts}"
+""".format(skills=tmp_path / "skills.yaml", drafts=tmp_path / "drafts"),
+        encoding="utf-8",
+    )
+    return TestClient(create_app(cfg, artifacts_root=tmp_path / "runs"))
+
+
+def test_m4a_iterate_run_channel(iterate_client):
+    """exec.mode=run:iterate.generate → spawn run app 持 run_id(可进 run tab);
+    running 态 = 持 run_id 且未终态(状态来自真实 run 记录,不发明标志位)。"""
+    client = iterate_client
+    client.post("/api/lab/drafts", json={"name": "lab.it"})
+    inst = client.post("/platform/api/apps/spawn",
+                       json={"kind": "diff", "ref": "lab.it", "state": {"name": "lab.it"}}).json()["instance"]["id"]
+    r = client.post(f"/platform/api/apps/{inst}/actions/iterate.generate",
+                    json={"surface": "tab", "args": {"note": ""}})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["run_id"], "handler 透传 run_id(run_iterate 真 run)"
+    run_inst = body.get("run_instance")
+    assert run_inst and run_inst["kind"] == "run", "管道 spawn run app"
+    assert run_inst["state"]["run_id"] == body["run_id"], "run app 持 run_id(v0.2 §4)"
+    assert run_inst["state"]["status"] in ("done", "failed", "running"), "状态来自真实 run 记录"
+    got = client.get(f"/platform/api/apps/{run_inst['id']}").json()
+    assert got["state"]["run_id"] == body["run_id"], "run instance 持久化可解析(进 run tab 的锚)"
+
+
+def test_m4a_run_launch(full_client, tmp_path):
+    """发起面归一:run.launch 缺省骨架 → start_run → 新 run instance;
+    客户端改参不合 schema → 400。"""
+    client = full_client
+    inst = client.post("/platform/api/apps/spawn",
+                       json={"kind": "run", "ref": "seed", "state": {"run_id": "seed", "skill": "weather.query"}}
+                       ).json()["instance"]["id"]
+    r = client.post(f"/platform/api/apps/{inst}/actions/run.launch",
+                    json={"surface": "tab", "args": {}})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["run_id"] and body.get("run_instance"), "起 run + spawn run app 持 run_id"
+    # 产物面:runs/<new_id>/meta.json(artifacts_root=tmp_path/"runs",其内 runs/ 目录)
+    metas = list((tmp_path / "runs").rglob("meta.json"))
+    assert any(body["skill"].encode() in m.read_bytes() for m in metas), "新 run 落了产物"
+
+    bad = client.post(f"/platform/api/apps/{inst}/actions/run.launch",
+                      json={"surface": "tab", "args": {"input": {"city": 123}}})
+    assert bad.status_code == 400
+    assert "inputs schema" in bad.json()["detail"], "改参不合 schema 被拒"
+
+    good = client.post(f"/platform/api/apps/{inst}/actions/run.launch",
+                       json={"surface": "tab", "args": {"input": {"city": "北京"}}})
+    assert good.status_code == 200, "合法改参放行(用户可改的落点)"

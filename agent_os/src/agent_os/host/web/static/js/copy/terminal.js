@@ -221,4 +221,8 @@ export const COPY = {
   "platform.act.spawn": "open",
   "platform.act.pin": "pin",
   "platform.act.close": "close",
+  "platform.act.iterate": "generate candidate",
+  "platform.run.launch": "launch again",
+  "platform.run.launch.ph": "empty = default skeleton; or paste JSON",
+  "platform.run.launch.badjson": "invalid JSON input",
 };

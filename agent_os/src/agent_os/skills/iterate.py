@@ -173,8 +173,14 @@ def run_iterate(
     )
     request_text = _json.dumps({"note": note, "comments": comments}, ensure_ascii=False)
     result = asyncio.run(kernel.run(ITERATOR_NAME, {"request": request_text, "draft": name}))
+    # M4a(docs/APP-MODEL.md v0.2 §4):run 真通道需要 run_id——kernel 单次 run
+    # 只注册一条记录,取出回传(additive;旧调用方不受影响)
+    run_id = next(iter(kernel._runs), "")  # kernel 无公开取 run_id 面,单 run 取其唯一记录
+    run = kernel._runs.get(run_id) if run_id else None
     return {
         "candidate": True,
         "reply": (result or {}).get("reply", ""),
         "diff": candidate_diff(store, production, tools_registry, name),
+        "run_id": run_id,
+        "run_status": str(run.state.status.value) if run is not None else "",
     }

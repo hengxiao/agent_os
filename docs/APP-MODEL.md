@@ -234,7 +234,29 @@ v0.1 说"action = skill 调用 → 内核仲裁自动覆盖 UI 全部副作用,U
 | M1 ✅ | AppManifest 注册表 + action 管道(替代 cards/action)+ 对话 app 归一(现状卡型全部转成六个 app kind 的表面) |
 | M2 ✅ | Compositor 正式化(关闭≠销毁/嵌套 ≤2/图标列)+ app.state 持久化 |
 | M3 ✅ | run/debug/lab-draft 三个 app kind 接入(对话 → 包 → run → debug 闭环) |
+| M3.5 ✅ | exec 三态同构迁移(manifest `skill`→`exec{mode,ref}` 强制 + args_input 通道 + 授权测试三件套;行为零变化) |
 | M4 | legacy 五页以 tab surface 接入 + SSE transport + 主动汇报(app 状态推送进对话) |
+
+> **M3.5 实现注**(2026-08-03,分支 debugger;v0.2 §4/§7/§9/§12):
+> - **schema**(apps.py):`exec` 强制项(缺省拒绝注册),mode ∈
+>   endpoint/run/local;endpoint/run 的 ref 须在绑定表;local 无 ref;
+>   `normalize_exec` 迁移期把旧 `skill` 键归一为 exec.endpoint 并 warn
+>   (一个版本期;测试里旧键 manifest 同时充当兼容证据);
+> - **args_input 通道**:`{name: schema}` 形态(非法形态拒注册);
+>   `validate_args_input` 逐项过 jsonschema——客户端载荷只许出现在
+>   args_input(伪装 args_from 字段 → 400);warnings_ack 迁移入内并定性
+>   "客户端声明,服务端 promote 复跑兜底"(§4);管道合并
+>   `{**bound(服务端 state), **input(客户端声明)}` 调 handler;
+> - **归态终版**:scaffold.approve/plan.recheck/plan.confirm/decision.answer/
+>   version.rewind/run.stop/run.resume/run.rerun/debug.command/draft.check/
+>   draft.promote = endpoint;iterate.generate = run(不在 manifest 上,
+>   绑定表注释归态,真 run 通道归 M4);conversation 的 spawn/pin/close =
+>   local(声明归态不出海,调到管道 → 400);
+> - **授权测试三件套**(§9):①伪造 action id/越表面/伪装 args_from 字段
+>   → 4xx;②args_from 绑定服务端 state(空 args 也是服务端值)+ args_input
+>   不合 schema 被拒;③endpoint 无 run 副作用(runs_started 为空)、
+>   local 零出海(manager 面零调用);
+> - **行为零变化**:M1-M3 全部既有测试原样通过(同构迁移的验收)。
 
 > **M3 实现注**(2026-08-03,分支 debugger):
 > - **三 kind 注册**(apps.py):run(stop/resume/rerun)、debug(continue/stop,

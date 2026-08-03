@@ -212,4 +212,7 @@ export const COPY = {
   "platform.draft.promote": "付",
   "platform.draft.open": "往 Lab 修",
   "platform.draft.lead": "草稿「{name}」",
+  "platform.act.spawn": "启",
+  "platform.act.pin": "置顶",
+  "platform.act.close": "阖",
 };

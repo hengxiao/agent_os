@@ -211,4 +211,7 @@ export const COPY = {
   "platform.draft.promote": "提交",
   "platform.draft.open": "去 Lab 里改",
   "platform.draft.lead": "草稿「{name}」",
+  "platform.act.spawn": "打开",
+  "platform.act.pin": "置顶",
+  "platform.act.close": "关掉",
 };

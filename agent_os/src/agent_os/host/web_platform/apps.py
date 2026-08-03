@@ -25,13 +25,35 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import jsonschema
+
 _log = logging.getLogger("agent_os.platform.apps")
 
 #: action 可声明的表面(§3 两张面孔;action 至少出其一)
 SURFACES = ("card", "tab")
 
+#: exec 三态(docs/APP-MODEL.md v0.2 §4):endpoint=确定性写转发既有端点;
+#: run=agentic 起 run 跑 skill;local=纯 state 不出海(不进管道)
+EXEC_MODES = ("endpoint", "run", "local")
+
 #: instance id 合法面(``app-`` + hex;文件持久化的路径穿越防护,与 SessionStore 同哲学)
 _INSTANCE_ID_RE = re.compile(r"^app-[0-9a-f]{8}$")
+
+
+def normalize_exec(action: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    """exec 归一(v0.2 §12 同构迁移):旧 ``skill`` 键视为
+    ``exec:{mode:"endpoint", ref}`` 并 warn(一个版本期后移除;新 manifest 只用 exec)。
+    返回带规范 exec 的 action 副本;两键皆无 → 原样返回(交给校验拒绝)。
+    """
+    if action.get("exec") is not None:
+        return dict(action)
+    if action.get("skill") is not None:
+        _log.warning(
+            "manifest %s action %s: 旧 skill 键迁移期为 exec.endpoint,请改用 exec 字段",
+            kind, action.get("id"),
+        )
+        return {**action, "exec": {"mode": "endpoint", "ref": action["skill"]}}
+    return dict(action)
 
 
 def validate_manifest(manifest: dict[str, Any], *, known_skills: set[str]) -> None:
@@ -64,9 +86,21 @@ def validate_manifest(manifest: dict[str, Any], *, known_skills: set[str]) -> No
         aid = action.get("id")
         if not aid or not action.get("label"):
             raise ValueError(f"manifest {kind}: action 缺 id/label: {action!r}")
-        skill = action.get("skill")
-        if skill not in known_skills:
-            raise ValueError(f"manifest {kind}: action {aid} 的 skill {skill!r} 未注册(绑定表外)")
+        # exec(v0.2 §4/§7 强制项):三态归态是授权面,缺省/归错 = 授权漏洞,拒绝注册
+        exec_ = action.get("exec")
+        if exec_ is None:
+            raise ValueError(f"manifest {kind}: action {aid} 缺 exec(v0.2 强制项)")
+        if not isinstance(exec_, dict):
+            raise TypeError(f"manifest {kind}: action {aid} 的 exec 必须是 mapping")
+        mode = exec_.get("mode")
+        if mode not in EXEC_MODES:
+            raise ValueError(f"manifest {kind}: action {aid} exec.mode 非法: {mode!r}(三态 {EXEC_MODES})")
+        ref = exec_.get("ref")
+        if mode == "local":
+            if ref is not None:
+                raise ValueError(f"manifest {kind}: action {aid} local 态无 ref(不出海)")
+        elif ref not in known_skills:
+            raise ValueError(f"manifest {kind}: action {aid} 的 exec.ref {ref!r} 未注册(绑定表外)")
         for path in action.get("args_from") or []:
             if not isinstance(path, str) or not path.startswith("state."):
                 raise ValueError(f"manifest {kind}: action {aid} 的 args_from 须形如 state.<key>: {path!r}")
@@ -75,6 +109,14 @@ def validate_manifest(manifest: dict[str, Any], *, known_skills: set[str]) -> No
                 raise ValueError(
                     f"manifest {kind}: action {aid} 的 args_from {path!r} 越出 state_schema"
                 )
+        # args_input(v0.2 §4):{name: schema}——客户端载荷的唯一合法面,
+        # "哪些参数用户能控"在 manifest 上一眼可见
+        args_input = action.get("args_input")
+        if args_input is not None and (
+            not isinstance(args_input, dict)
+            or any(not isinstance(s, dict) for s in args_input.values())
+        ):
+            raise ValueError(f"manifest {kind}: action {aid} 的 args_input 必须是 {{name: schema}}")
         faces = action.get("surface") or []
         if not faces or any(f not in SURFACES for f in faces):
             raise ValueError(f"manifest {kind}: action {aid} 的 surface 非法: {faces!r}")
@@ -88,6 +130,12 @@ class AppRegistry:
         self._manifests: dict[str, dict[str, Any]] = {}
 
     def register(self, manifest: dict[str, Any]) -> None:
+        kind = manifest.get("kind", "")
+        # 迁移期兼容(v0.2 §12):旧 skill 键先归一为 exec 再校验(带 warn)
+        manifest = {
+            **manifest,
+            "actions": [normalize_exec(a, kind=kind) for a in manifest.get("actions") or []],
+        }
         validate_manifest(manifest, known_skills=self._known_skills)
         self._manifests[manifest["kind"]] = manifest
 
@@ -210,17 +258,47 @@ def resolve_state_path(state: dict[str, Any], path: str) -> Any:
 
 
 def bind_args(action: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
-    """按 args_from 从 instance.state 绑定参数(键 = 路径末段,§4 参数绑定面)。"""
+    """args_from 从 instance.state 绑定(键 = 路径末段)。
+
+    v0.2 §4 两分约定:本函数产出 **bound**(服务端权威,客户端改不了);
+    客户端载荷走 :func:`validate_args_input` 产出 input——管道合并
+    ``{**bound, **input}`` 调 handler,调用面单一而来源分明。
+    """
     payload: dict[str, Any] = {}
     for path in action.get("args_from") or []:
         payload[path.split(".")[-1]] = resolve_state_path(state, path)
     return payload
 
 
+def validate_args_input(action: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+    """args_input 通道(v0.2 §4):客户端载荷**只许**出现在 args_input 声明内,
+    逐项过 schema;未声明的键(伪装 args_from 字段的越权构造)或不合法值
+    → ValueError(管道归 400)。
+
+    定性(v0.2 §4):args_input 是客户端**声明**而非证明(如 warnings_ack
+    "人已阅读")——授权语义由服务端既有闸门兜底(promote 复跑),不在这层放大。
+    """
+    declared = action.get("args_input") or {}
+    out: dict[str, Any] = {}
+    for key, value in (args or {}).items():
+        if key not in declared:
+            raise ValueError(f"客户端参数 {key!r} 未在该 action 的 args_input 声明内")
+        schema = declared[key]
+        try:
+            jsonschema.validate(value, schema)
+        except jsonschema.ValidationError as e:
+            raise ValueError(f"客户端参数 {key!r} 不合 schema: {e.message}") from e
+        out[key] = value
+    return out
+
+
 def default_manifests() -> list[dict[str, Any]]:
-    """M1 首批 kind(docs/APP-MODEL.md §8 迁移地图):conversation + 现有六卡型
-    + escalation(七加一)。actions = 旧 ACTION_WHITELIST 的声明式化,
-    skill 键对应 app.py ``SKILL_BINDINGS``(同一份 handler 实现)。
+    """kind 注册表(docs/APP-MODEL.md §8;M1 八个 + M3 三个)。
+
+    actions = 旧 ACTION_WHITELIST 的声明式化;exec 归态(v0.2 §4/§12):
+    现状全部 endpoint(薄 handler 转发既有端点;iterate.generate 语义是
+    run 态——它不在 manifest 上,绑定表注释归态,M4 分真 run 通道);
+    conversation 的 spawn/pin/close = local(纯 UI 动作,声明归态但不出海)。
     """
     def obj(**props: Any) -> dict[str, Any]:
         return {"type": "object", "properties": props}
@@ -232,7 +310,15 @@ def default_manifests() -> list[dict[str, Any]]:
             "title": "{title}",
             "surfaces": {"card": "conversation.card", "tab": "conversation.tab"},
             "state_schema": obj(messages={"type": "array"}, outbox={"type": "array"}),
-            "actions": [],
+            "actions": [
+                # v0.2 §5.3:纯 UI 动作归 local(不出海、不进管道,前端本地处理)
+                {"id": "spawn", "label": "platform.act.spawn", "exec": {"mode": "local"},
+                 "args_from": [], "surface": ["card", "tab"]},
+                {"id": "pin", "label": "platform.act.pin", "exec": {"mode": "local"},
+                 "args_from": [], "surface": ["card", "tab"]},
+                {"id": "close", "label": "platform.act.close", "exec": {"mode": "local"},
+                 "args_from": [], "surface": ["card", "tab"]},
+            ],
         },
         {
             "kind": "plan",
@@ -248,7 +334,7 @@ def default_manifests() -> list[dict[str, Any]]:
                 {
                     "id": "scaffold.approve",
                     "label": "platform.act.approve",
-                    "skill": "platform.scaffold.approve",
+                    "exec": {"mode": "endpoint", "ref": "platform.scaffold.approve"},
                     "args_from": ["state.name", "state.template"],
                     "surface": ["card", "tab"],
                 }
@@ -272,7 +358,7 @@ def default_manifests() -> list[dict[str, Any]]:
                 {
                     "id": "plan.recheck",
                     "label": "platform.act.recheck",
-                    "skill": "platform.plan.recheck",
+                    "exec": {"mode": "endpoint", "ref": "platform.plan.recheck"},
                     "args_from": ["state.root"],
                     "surface": ["card", "tab"],
                 }
@@ -288,14 +374,14 @@ def default_manifests() -> list[dict[str, Any]]:
                 {
                     "id": "candidate.accept",
                     "label": "platform.act.accept",
-                    "skill": "platform.candidate.accept",
+                    "exec": {"mode": "endpoint", "ref": "platform.candidate.accept"},
                     "args_from": ["state.name"],
                     "surface": ["card", "tab"],
                 },
                 {
                     "id": "candidate.discard",
                     "label": "platform.act.discard",
-                    "skill": "platform.candidate.discard",
+                    "exec": {"mode": "endpoint", "ref": "platform.candidate.discard"},
                     "args_from": ["state.name"],
                     "surface": ["card", "tab"],
                 },
@@ -311,8 +397,11 @@ def default_manifests() -> list[dict[str, Any]]:
                 {
                     "id": "plan.confirm",
                     "label": "platform.act.confirm",
-                    "skill": "platform.plan.confirm",
+                    "exec": {"mode": "endpoint", "ref": "platform.plan.confirm"},
                     "args_from": ["state.plan_id"],
+                    # v0.2 §4:warnings_ack 是客户端**声明**(人已阅读),唯一可控参数;
+                    # 授权语义由服务端 promote 复跑兜底,不在此层放大
+                    "args_input": {"warnings_ack": {"type": "boolean"}},
                     "surface": ["card", "tab"],
                     "confirm": "summary",
                 }
@@ -336,21 +425,21 @@ def default_manifests() -> list[dict[str, Any]]:
                 {
                     "id": "approve-once",
                     "label": "platform.esc.approve.once",
-                    "skill": "platform.decision.answer",
+                    "exec": {"mode": "endpoint", "ref": "platform.decision.answer"},
                     "args_from": ["state.question_id"],
                     "surface": ["card", "tab"],
                 },
                 {
                     "id": "approve-run",
                     "label": "platform.esc.approve.run",
-                    "skill": "platform.decision.answer",
+                    "exec": {"mode": "endpoint", "ref": "platform.decision.answer"},
                     "args_from": ["state.question_id"],
                     "surface": ["card", "tab"],
                 },
                 {
                     "id": "deny",
                     "label": "platform.esc.deny",
-                    "skill": "platform.decision.answer",
+                    "exec": {"mode": "endpoint", "ref": "platform.decision.answer"},
                     "args_from": ["state.question_id"],
                     "surface": ["card", "tab"],
                 },
@@ -369,21 +458,21 @@ def default_manifests() -> list[dict[str, Any]]:
                 {
                     "id": "run.stop",
                     "label": "platform.run.stop",
-                    "skill": "platform.run.stop",
+                    "exec": {"mode": "endpoint", "ref": "platform.run.stop"},
                     "args_from": ["state.run_id"],
                     "surface": ["card", "tab"],
                 },
                 {
                     "id": "run.resume",
                     "label": "platform.run.resume",
-                    "skill": "platform.run.resume",
+                    "exec": {"mode": "endpoint", "ref": "platform.run.resume"},
                     "args_from": ["state.run_id"],
                     "surface": ["card", "tab"],
                 },
                 {
                     "id": "run.rerun",
                     "label": "platform.run.rerun",
-                    "skill": "platform.run.rerun",
+                    "exec": {"mode": "endpoint", "ref": "platform.run.rerun"},
                     "args_from": ["state.run_id"],
                     "surface": ["card", "tab"],
                 },
@@ -399,14 +488,14 @@ def default_manifests() -> list[dict[str, Any]]:
                 {
                     "id": "debug.continue",
                     "label": "platform.debug.continue",
-                    "skill": "platform.debug.command",
+                    "exec": {"mode": "endpoint", "ref": "platform.debug.command"},
                     "args_from": ["state.session_id"],
                     "surface": ["card", "tab"],
                 },
                 {
                     "id": "debug.stop",
                     "label": "platform.debug.stop",
-                    "skill": "platform.debug.command",
+                    "exec": {"mode": "endpoint", "ref": "platform.debug.command"},
                     "args_from": ["state.session_id"],
                     "surface": ["card", "tab"],
                 },
@@ -422,14 +511,14 @@ def default_manifests() -> list[dict[str, Any]]:
                 {
                     "id": "draft.check",
                     "label": "platform.draft.check",
-                    "skill": "platform.draft.check",
+                    "exec": {"mode": "endpoint", "ref": "platform.draft.check"},
                     "args_from": ["state.name"],
                     "surface": ["card", "tab"],
                 },
                 {
                     "id": "draft.promote",
                     "label": "platform.draft.promote",
-                    "skill": "platform.plan.recheck",
+                    "exec": {"mode": "endpoint", "ref": "platform.plan.recheck"},
                     "args_from": ["state.root"],
                     "surface": ["tab"],  # 提交是重动作:只在全面出,不上卡面(§3 卡面 ≤2 轻动作)
                 },

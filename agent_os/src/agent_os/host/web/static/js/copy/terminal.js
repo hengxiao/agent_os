@@ -218,4 +218,7 @@ export const COPY = {
   "platform.draft.promote": "promote",
   "platform.draft.open": "edit in lab",
   "platform.draft.lead": "draft「{name}」",
+  "platform.act.spawn": "open",
+  "platform.act.pin": "pin",
+  "platform.act.close": "close",
 };

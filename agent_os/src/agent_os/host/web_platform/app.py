@@ -31,6 +31,7 @@ from agent_os.host.web_platform.apps import (
     AppRegistry,
     bind_args,
     default_manifests,
+    validate_args_input,
 )
 from agent_os.host.web_platform.artifacts import (
     ACTION_WHITELIST,
@@ -628,15 +629,19 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         }
 
     SKILL_BINDINGS = {
+        # exec 归态(v0.2 §4;归错态 = 授权漏洞,评审面):
+        #   endpoint = 确定性写,转发既有端点(下方除标注外全部);
+        #   run = agentic 起 run(iterate.generate——当前与 endpoint 同 handler
+        #   面,真 run 通道 spawn run app 持 run_id 归 M4);local 不在此表(不出海)。
         "platform.scaffold.approve": _act_scaffold_approve,
-        "platform.iterate.generate": _act_iterate_generate,
+        "platform.iterate.generate": _act_iterate_generate,  # run 态(见上注释)
         "platform.candidate.accept": _act_candidate_accept,
         "platform.candidate.discard": _act_candidate_discard,
         "platform.version.rewind": _act_version_rewind,
         "platform.plan.recheck": _act_plan_recheck,
         "platform.plan.confirm": _act_plan_confirm,
         "platform.decision.answer": _act_decision_answer,
-        # M3(docs/APP-MODEL.md §8):run/debug/lab-draft 三 kind 的绑定
+        # M3(docs/APP-MODEL.md §8):run/debug/lab-draft 三 kind 的绑定(全 endpoint)
         "platform.run.stop": _act_run_stop,
         "platform.run.resume": _act_run_resume,
         "platform.run.rerun": _act_run_rerun,
@@ -691,17 +696,31 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
                 status_code=400,
                 detail=f"action {action_id!r} 不在 {body.surface!r} 面提供(manifest 表面裁决)",
             )
+        mode = action["exec"]["mode"]
+        if mode == "local":
+            # v0.2 §4:local 是纯 UI 动作(不出海、不进管道)——调到管道即拒绝
+            raise HTTPException(
+                status_code=400,
+                detail=f"action {action_id!r} 是 local 态(纯 UI 动作不出海),不应调到管道",
+            )
         try:
-            payload = bind_args(action, inst["state"])
+            input_args = validate_args_input(action, body.args)  # 客户端载荷的唯一合法面
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        try:
+            bound = bind_args(action, inst["state"])  # 服务端权威绑定(客户端改不了)
         except KeyError as e:
             raise HTTPException(status_code=400, detail=f"参数绑定缺源: {e}") from e
-        payload.update(body.args)  # 事件参数优先(warnings_ack/version 等)
-        if action["skill"] == "platform.decision.answer":
+        payload = {**bound, **input_args}  # 两分合并:bound(服务端)+ input(客户端声明)
+        ref = action["exec"]["ref"]
+        if ref == "platform.decision.answer":
             payload["answer"] = action_id  # 作答 = action id(approve-once/approve-run/deny)
-        if action["skill"] == "platform.debug.command":
+        if ref == "platform.debug.command":
             # 调试命令 = action id 末段(debug.continue→continue,debug.stop→stop)
             payload["command"] = action_id.split(".")[-1]
-        result = _run_handler(SKILL_BINDINGS[action["skill"]], payload)
+        # endpoint/run 当前同一薄 handler 面(run 态语义 = agentic 起 run;
+        # 真 run 通道——spawn run app 持 run_id——归 M4,v0.2 §4)
+        result = _run_handler(SKILL_BINDINGS[ref], payload)
         if isinstance(result.get("state"), dict):
             instances.update_state(instance_id, result["state"])
         _register_cards(result.get("cards") or [], created_by=instance_id)

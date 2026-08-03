@@ -47,7 +47,7 @@ def _manifest(**over):
         "surfaces": {"card": "test.card", "tab": "test.tab"},
         "state_schema": {"type": "object", "properties": {"name": {"type": "string"}}},
         "actions": [
-            {"id": "a1", "label": "x", "skill": "platform.plan.confirm",
+            {"id": "a1", "label": "x", "exec": {"mode": "endpoint", "ref": "platform.plan.confirm"},
              "args_from": ["state.name"], "surface": ["card", "tab"]}
         ],
     }
@@ -123,6 +123,7 @@ class _FakeManager:
         self.stopped: list[str] = []
         self.resumed: list[str] = []
         self.debug_cmds: list[tuple[str, str]] = []
+        self.runs_started: list[dict[str, Any]] = []
 
     def supervisor_pending(self) -> list[dict[str, Any]]:
         return self._pending
@@ -140,6 +141,10 @@ class _FakeManager:
         raise RuntimeError("无内核(测试面)")
 
     # ── M3:run/debug 能力面(async,与 RunManager 同签名) ──
+    async def start_run(self, skill: str, input: dict[str, Any], **kw: Any) -> str:
+        self.runs_started.append({"skill": skill, "input": input})
+        return "new-run-1"
+
     async def stop_run(self, run_id: str) -> bool:
         if run_id == "running-1":
             self.stopped.append(run_id)
@@ -410,3 +415,101 @@ def test_m3_draft_check_and_promote_surface(full_client):
 
     r400 = client.post(f"/platform/api/apps/{inst}/actions/draft.promote", json={"surface": "card"})
     assert r400.status_code == 400 and "表面" in r400.json()["detail"], "promote 仅全面(重动作不上卡面)"
+
+
+# ---------------------------------------------------------------------------
+# M3.5 exec 三态同构迁移(docs/APP-MODEL.md v0.2 §4/§7/§9/§12)
+# ---------------------------------------------------------------------------
+
+
+def test_exec_required_and_modes():
+    """协议:exec 缺省拒;mode 非法拒;endpoint/run 的 ref 未注册拒;local 带 ref 拒。"""
+    reg = AppRegistry(known_skills=KNOWN)
+    with pytest.raises(ValueError, match="缺 exec"):
+        reg.register(_manifest(actions=[{"id": "a1", "label": "x", "args_from": [], "surface": ["card"]}]))
+    with pytest.raises(ValueError, match="exec.mode 非法"):
+        reg.register(_manifest(actions=[{"id": "a1", "label": "x",
+                                         "exec": {"mode": "magic", "ref": "platform.plan.confirm"},
+                                         "args_from": [], "surface": ["card"]}]))
+    with pytest.raises(ValueError, match="未注册"):
+        reg.register(_manifest(actions=[{"id": "a1", "label": "x",
+                                         "exec": {"mode": "endpoint", "ref": "platform.evil"},
+                                         "args_from": [], "surface": ["card"]}]))
+    with pytest.raises(ValueError, match="local 态无 ref"):
+        reg.register(_manifest(actions=[{"id": "a1", "label": "x",
+                                         "exec": {"mode": "local", "ref": "platform.plan.confirm"},
+                                         "args_from": [], "surface": ["card"]}]))
+    # args_input 形态:必须 {name: schema}
+    with pytest.raises(ValueError, match="args_input"):
+        reg.register(_manifest(actions=[{"id": "a1", "label": "x",
+                                         "exec": {"mode": "endpoint", "ref": "platform.plan.confirm"},
+                                         "args_from": [], "args_input": ["warnings_ack"],
+                                         "surface": ["card"]}]))
+
+
+def test_legacy_skill_key_compat(caplog):
+    """迁移期兼容:旧 skill 键归一为 exec.endpoint 并 warn(一个版本期)。"""
+    reg = AppRegistry(known_skills=KNOWN)
+    legacy = _manifest(actions=[{"id": "a1", "label": "x", "skill": "platform.plan.confirm",
+                                 "args_from": [], "surface": ["card"]}])
+    with caplog.at_level("WARNING", logger="agent_os.platform.apps"):
+        reg.register(legacy)
+    action = reg.action_of("test.app", "a1")
+    assert action["exec"] == {"mode": "endpoint", "ref": "platform.plan.confirm"}, "归一为 exec"
+    assert any("skill" in r.message and "exec" in r.message for r in caplog.records), "warn 在"
+
+
+def test_conversation_local_actions_registered():
+    """conversation 的 spawn/pin/close 声明为 local(归态在 manifest 上一眼可见)。"""
+    reg = AppRegistry(known_skills=KNOWN)
+    for m in default_manifests():
+        reg.register(m)
+    for aid in ("spawn", "pin", "close"):
+        assert reg.action_of("conversation", aid)["exec"] == {"mode": "local"}
+
+
+def test_authz_forged_args_from_rejected(client):
+    """授权①:客户端伪装 args_from 字段(args 里塞 plan_id)→ 400 未声明。"""
+    inst = _spawn(client, "publish", "plan-1", {"plan_id": "plan-1", "root": "lab.x"})
+    r = client.post(f"/api/apps/{inst}/actions/plan.confirm",
+                    json={"surface": "card", "args": {"plan_id": "evil-plan", "warnings_ack": True}})
+    assert r.status_code == 400
+    assert "args_input" in r.json()["detail"], "伪装 args_from 字段被 args_input 面拒"
+
+
+def test_authz_state_is_server_authoritative(client):
+    """授权②:args_from 绑定服务端 state(客户端 args 给空也是服务端值);
+    args_input 不合 schema → 400。"""
+    inst = _spawn(client, "run", "running-1", {"run_id": "running-1", "status": "running"})
+    r = client.post(f"/api/apps/{inst}/actions/run.stop", json={"surface": "tab", "args": {}})
+    assert r.status_code == 200
+    assert client.manager.stopped == ["running-1"], "绑定的是服务端 state,不是客户端载荷"
+
+    inst2 = _spawn(client, "publish", "plan-2", {"plan_id": "plan-2", "root": "lab.x"})
+    r400 = client.post(f"/api/apps/{inst2}/actions/plan.confirm",
+                       json={"surface": "card", "args": {"warnings_ack": "yes"}})
+    assert r400.status_code == 400, "warnings_ack 须 boolean(schema 拒)"
+    assert "不合 schema" in r400.json()["detail"]
+
+
+def test_authz_exec_modes(client):
+    """授权③:endpoint 动作无 run 副作用;local 动作经管道被拒且零调用。"""
+    sid = client.post("/api/sessions").json()["id"]
+    client.post(f"/api/sessions/{sid}/decisions/present")
+    session = client.get(f"/api/sessions/{sid}").json()
+    inst_id = next(c for m in session["messages"] for c in m["cards"] if c.get("instance"))["instance"]
+    r = client.post(f"/api/apps/{inst_id}/actions/approve-once", json={"surface": "card"})
+    assert r.status_code == 200
+    assert client.manager.runs_started == [], "endpoint 动作不起 run(无 run 副作用)"
+
+    # local:conversation 的 close 调到管道 → 400;manager 面零调用(不出海)
+    # conversation instance 在 create_session 时登记,经 spawn 去重拿到它:
+    conv_spawn = client.post("/api/apps/spawn", json={"kind": "conversation", "ref": sid})
+    conv_id = conv_spawn.json()["instance"]["id"]
+    before = (list(client.manager.stopped), list(client.manager.answered),
+              list(client.manager.debug_cmds), list(client.manager.runs_started))
+    r400 = client.post(f"/api/apps/{conv_id}/actions/close", json={"surface": "card"})
+    assert r400.status_code == 400 and "local" in r400.json()["detail"]
+    after = (list(client.manager.stopped), list(client.manager.answered),
+             list(client.manager.debug_cmds), list(client.manager.runs_started))
+    assert before == after, "local 动作零出海(无任何 handler/manager 调用)"

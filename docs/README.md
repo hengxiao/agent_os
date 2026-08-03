@@ -46,3 +46,4 @@
 - [SKILL-PACKAGES-V2.md](SKILL-PACKAGES-V2.md) — 能力包详细设计:业界对照与四方案,推荐路线(两闭包/两阶段严格性/plan/先证后换,P2 按此实现)。
 - [LAB-ITERATION.md](LAB-ITERATION.md) — Lab 迭代工作流 spec:访谈初始化 → 首稿 → 批注式迭代 → 版本回溯(spec,未实现)。
 - [LAB-ITERATION-FLOWS.md](LAB-ITERATION-FLOWS.md) — 迭代交互流对比报告:三栏批注 / 对话驱动 / diff+边注 三方案对比与选型指引(静态原型见 `agent_os/src/agent_os/host/web/static/proto/`)。
+- [AGENTIC-UI.md](AGENTIC-UI.md) — Agentic 时代 UI/UX 重设计:"人是操作员 vs 指挥者"诊断、三套方案(A 对话中枢 / B 任务中心 / C 活动流工作台)、逐部分流程再造、推荐路线(C 先做 → B 概念 → A 主干)。

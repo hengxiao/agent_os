@@ -236,7 +236,27 @@ v0.1 说"action = skill 调用 → 内核仲裁自动覆盖 UI 全部副作用,U
 | M2 ✅ | Compositor 正式化(关闭≠销毁/嵌套 ≤2/图标列)+ app.state 持久化 |
 | M3 ✅ | run/debug/lab-draft 三个 app kind 接入(对话 → 包 → run → debug 闭环) |
 | M3.5 ✅ | exec 三态同构迁移(manifest `skill`→`exec{mode,ref}` 强制 + args_input 通道 + 授权测试三件套;行为零变化) |
-| M4 | legacy 五页以 tab surface 接入 + SSE transport + 主动汇报(app 状态推送进对话) |
+| M4 ✅ | legacy 五页以 tab surface 接入 + SSE transport + 主动汇报(app 状态推送进对话) |
+
+> **M4b 实现注**(2026-08-03,分支 debugger;M4 的表面部分,与 M4a 合为 M4):
+> - **legacy 五页**(apps.py +5 kind:skills/runs/tools/lab/debug-old,state
+>   最小无动作):逐页评估后 skills/tools/lab/debug-home 四页**直接挂载**
+>   (旧组件的 open*(main) 装配口,同 document 零隔离;切换经 close* 收编
+>   防 store 订阅泄漏,`__legacyMounts` 注入是 node 测试的替代装配口);
+>   runs 列表在旧 app.js 内无独立装配口 → **深链**(摘要行 + 旧 UI 链接 +
+>   行内 run tab 直达);入口 = 侧栏 launcher(五页按钮,与普通 tab 同级,
+>   关闭≠销毁语义沿用);
+> - **SSE transport**:`GET /api/stream`(decision.new/run.finished 帧 +
+>   keepalive,服务端 2s 巡检;帧语义在 `_stream_diff` 纯函数——TestClient
+>   整读缓冲,无限流不可经其测试,实测后改 openapi 面 + 纯函数守);前端
+>   EventSource 主通道,onerror 断线回落 5s 轮询、onopen 复活即停(替代不
+>   双轨);EventSource 缺席(node/老浏览器)直接轮询;
+> - **主动汇报**:`POST /api/sessions/{id}/runs/present`——本会话发起的 run
+>   (经 instance.created_by 链回溯,限深防环)到终态 → agent 消息 + 结果卡
+>   (人话摘要,N1 纪律)进会话;presented_runs 游标随会话落盘(幂等);
+>   SSE run.finished 触发,轮询兜底;
+> - **M5 留口**(shell app 化):对话 app 自身的 send/retry 归 run 态真通道、
+>   pin 等 local 动作的 manifest 化执行,未动。
 
 > **M4a 实现注**(2026-08-03,分支 debugger;M4 的引擎部分):
 > - **run 真通道**(v0.2 §4):`run_iterate` 回传 run_id/run_status(additive);

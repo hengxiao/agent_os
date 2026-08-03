@@ -116,6 +116,16 @@ function renderTabs() {
 
 function renderMain() {
   const isConv = state.active === "conv";
+  // legacy 视图切换/离开时先收编(close 退订 store,防复活写;M4b)
+  if (_legacyClose && (isConv || state.detail?.mount !== _legacyMountedFor)) {
+    try {
+      _legacyClose();
+    } catch {
+      /* close 失败不阻断切换 */
+    }
+    _legacyClose = null;
+    _legacyMountedFor = null;
+  }
   $("#log").hidden = !isConv;
   $("#inputBar").hidden = !isConv;
   $("#detailHost").hidden = isConv;
@@ -156,7 +166,10 @@ function renderLog() {
   log.scrollTop = log.scrollHeight;
 }
 
-function renderDetail() {
+let _legacyClose = null; // 当前挂载的 legacy 视图 close 句柄(M4b;防订阅泄漏)
+let _legacyMountedFor = null;
+
+async function renderDetail() {
   const host = $("#detailHost");
   const d = state.detail;
   if (!d) {
@@ -171,6 +184,18 @@ function renderDetail() {
     host.innerHTML =
       `<div class="pf-wait pf-errline">${esc(d.error)}</div>` +
       `<button class="btn" data-it-retry>${esc(copy("platform.detail.retry"))}</button>`;
+    return;
+  }
+  if (d.mount) {
+    if (_legacyMountedFor !== d.mount) {
+      host.innerHTML = "";
+      try {
+        _legacyClose = await _mountLegacy(host, d.mount); // ES module 直接挂载(M4b)
+        _legacyMountedFor = d.mount;
+      } catch (e) {
+        host.innerHTML = `<div class="pf-wait pf-errline">${esc(copy("platform.detail.error"))}: ${esc(e.message ?? e)}</div>`;
+      }
+    }
     return;
   }
   host.innerHTML = d.html ?? "";
@@ -297,9 +322,15 @@ const _DETAIL_META = {
   decompose: { title: copy("platform.detail.decompose") },
   debug: { title: copy("platform.detail.debug") },
   draft: { title: copy("platform.detail.draft") },
+  skills: { title: copy("platform.app.skills") },
+  runs: { title: copy("platform.app.runs") },
+  tools: { title: copy("platform.app.tools") },
+  lab: { title: copy("platform.app.lab") },
+  debugold: { title: copy("platform.app.debugold") },
 };
 
-/* 详情 kind → app kind(M3 全解开,docs/APP-MODEL.md §8:run/debug/lab-draft) */
+/* 详情 kind → app kind(M3 全解开,docs/APP-MODEL.md §8:run/debug/lab-draft;
+   M4b:legacy 五页 skills/runs/tools/lab/debug-old) */
 const _APP_KIND = {
   gate: "gate_report",
   pack: "skill_pack",
@@ -310,7 +341,74 @@ const _APP_KIND = {
   run: "run",
   debug: "debug",
   draft: "lab-draft",
+  skills: "skills",
+  runs: "runs",
+  tools: "tools",
+  lab: "lab",
+  debugold: "debug-old",
 };
+
+/* M4b legacy 页(§8 迁移地图末行):能挂 ES module 的直接挂载(同 document,
+   零隔离);runs 列表在旧 app.js 里无独立装配口 → 深链 + 摘要。
+   挂载经 globalThis.__legacyMounts 可注入(node 测试的替代装配口)。 */
+const _LEGACY_PAGES = [
+  ["skills", "platform.app.skills"],
+  ["runs", "platform.app.runs"],
+  ["tools", "platform.app.tools"],
+  ["lab", "platform.app.lab"],
+  ["debugold", "platform.app.debugold"],
+];
+const _LEGACY_MODULE = {
+  skills: ["/static/js/components/skills-view.js", "openSkillsView", "closeSkillsView"],
+  tools: ["/static/js/components/tools-view.js", "openToolsView", "closeToolsView"],
+  lab: ["/static/js/components/lab.js", "openLab", "closeLab"],
+  debugold: ["/static/js/components/debug-home.js", "openDebugHome", "closeDebugHome"],
+};
+
+function renderLauncher() {
+  const host = $("#launcher");
+  if (!host) return;
+  host.innerHTML =
+    `<div class="pf-recent-title">${esc(copy("platform.apps.label"))}</div>` +
+    _LEGACY_PAGES
+      .map(([k, c]) => `<button class="pf-recent-item" data-open-legacy="${k}">${esc(copy(c))}</button>`)
+      .join("");
+}
+
+/* legacy 挂载:返回 close 函数(切走/关闭时调用,防 store 订阅泄漏) */
+async function _mountLegacy(host, kind) {
+  const injected = globalThis.__legacyMounts?.[kind]; // node 测试替代装配口
+  if (injected) return injected(host);
+  const [url, openName, closeName] = _LEGACY_MODULE[kind];
+  const mod = await import(url);
+  mod[openName](host);
+  return mod[closeName] ?? null;
+}
+
+/* runs legacy tab:摘要 + 深链 + 行内 run tab 直达(旧页无装配口的落法) */
+async function _legacyRunsHtml() {
+  const runs = await (await fetch("/api/runs")).json();
+  const failed = (runs ?? []).filter((r) => r.status === "failed").length;
+  const rows = (runs ?? [])
+    .slice(0, 8)
+    .map(
+      (r) =>
+        `<div class="pf-ln"><button class="pf-detail-link" data-detail-kind="run" ` +
+        `data-detail-ref="${esc(r.run_id)}" data-detail='{}'>${esc(r.skill ?? r.run_id)}</button> ` +
+        `<span class="pf-dim">${esc(r.status ?? "")}</span></div>`
+    )
+    .join("");
+  return (
+    `<div class="pf-detail">` +
+    `<div class="pf-detail-head">${esc(copy("platform.app.runs"))}</div>` +
+    `<div class="pf-card-sub">${esc(copy("platform.legacy.runs.line"))
+      .replace("{n}", String((runs ?? []).length))
+      .replace("{f}", String(failed))}</div>` +
+    `<div class="pf-card-actions"><a class="btn" href="/#/runs">${esc(copy("platform.legacy.open"))}</a></div>` +
+    rows +
+    `</div>`
+  );
+}
 
 /* spawn 的 state 归一(M3):args_from 的参数源——run 要 run_id、debug 要
    session_id、lab-draft 要 name/root(绑定便利键,与 app.py _register_cards 同哲学) */
@@ -424,6 +522,9 @@ async function _loadDetail(kind, ref, data) {
       const doc = await (await fetch(`/api/lab/drafts/${encodeURIComponent(ref)}`)).json();
       return { kind, ref, html: renderTabSurface(kind, doc) };
     }
+    // M4b legacy:runs = 深链摘要(旧列表页无装配口);其余四页 = ES module 挂载
+    if (kind === "runs") return { kind, ref, html: await _legacyRunsHtml() };
+    if (_LEGACY_MODULE[kind]) return { kind, ref, mount: kind };
     return { kind, ref, error: `unknown detail kind: ${kind}` };
   } catch (e) {
     return { kind, ref, error: `${copy("platform.detail.error")}: ${e.message ?? e}` };
@@ -513,6 +614,67 @@ async function pollDecisions() {
   } catch {
     /* 静默:下一周期再试 */
   }
+}
+
+/* 主动汇报(M4b):本会话发起的 run 到终态 → agent 消息进会话(SSE run.finished
+   或轮询兜底触发;幂等,游标在服务端) */
+async function presentRuns() {
+  if (!state.current) return;
+  try {
+    const res = await fetch(`/platform/api/sessions/${state.current}/runs/present`, {
+      method: "POST",
+    });
+    if (!res.ok) return;
+    const { presented } = await res.json();
+    if (presented?.length) {
+      state.messages.push(...presented);
+      renderMain();
+    }
+  } catch {
+    /* 静默:下一周期再试 */
+  }
+}
+
+/* SSE transport(M4b):decision.new/run.finished 即时推进;断线回落 5s 轮询
+   (与 workbench 同哲学);EventSource 缺席(node 测试/老浏览器)直接轮询 */
+let _es = null;
+let _pollTimer = null;
+
+function _startPolling() {
+  if (_pollTimer) return;
+  _pollTimer = setInterval(() => {
+    pollDecisions();
+    presentRuns();
+  }, 5000);
+  _pollTimer.unref?.();
+}
+
+function _stopPolling() {
+  if (_pollTimer) {
+    clearInterval(_pollTimer);
+    _pollTimer = null;
+  }
+}
+
+function connectStream() {
+  if (typeof EventSource === "undefined") {
+    _startPolling();
+    return;
+  }
+  try {
+    _es = new EventSource("/platform/api/stream");
+  } catch {
+    _startPolling();
+    return;
+  }
+  _es.addEventListener("decision.new", () => pollDecisions());
+  _es.addEventListener("run.finished", () => presentRuns());
+  _es.onopen = () => _stopPolling(); // SSE 活了即停轮询(替代,不双轨)
+  _es.onerror = () => {
+    _es?.close();
+    _es = null;
+    _startPolling(); // 断线回落轮询
+  };
 }
 
 /* tab 面动作(M3,docs/APP-MODEL.md §4):全面动作与卡面同一管道——
@@ -605,6 +767,8 @@ function bind() {
     }
     const reopen = e.target.closest("[data-reopen]");
     if (reopen) return reopenTab(reopen.dataset.reopen);
+    const legacy = e.target.closest("[data-open-legacy]");
+    if (legacy) return openDetail(legacy.dataset.openLegacy, legacy.dataset.openLegacy, {});
     const tab = e.target.closest("[data-tab]");
     if (tab) return activateTab(tab.dataset.tab);
     const link = e.target.closest("[data-detail-kind]");
@@ -649,14 +813,18 @@ function renderStaticCopy() {
 mountThemes();
 bind();
 renderStaticCopy();
+renderLauncher();
 renderTabs();
 renderMain();
 loadSessions().catch((e) => toast(e.message ?? String(e), "error"));
-// 升权决策轮询(W2;unref 让 node 测试进程可退出,浏览器无此方法)
-const _decisionTimer = setInterval(pollDecisions, 5000);
-_decisionTimer.unref?.();
+connectStream(); // M4b:SSE 主通道(断线/缺席自动回落轮询)
 
 // 测试探针(node 冒烟用;浏览器无副作用)
 if (typeof globalThis !== "undefined") {
-  globalThis.__platform = { state, renderTabs, renderMain, loadSessions, openDetail, closeDetail, reopenTab, pollDecisions };
+  globalThis.__platform = {
+    state, renderTabs, renderMain, loadSessions, openDetail, closeDetail, reopenTab,
+    pollDecisions, presentRuns, connectStream,
+    stream: () => _es,
+    polling: () => Boolean(_pollTimer),
+  };
 }

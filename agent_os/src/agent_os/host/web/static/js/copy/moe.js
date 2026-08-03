@@ -218,4 +218,12 @@ export const COPY = {
   "platform.run.launch": "再跑一次",
   "platform.run.launch.ph": "留空用默认参数;或填 JSON 哦",
   "platform.run.launch.badjson": "参数不是合法 JSON 喵",
+  "platform.app.skills": "技能",
+  "platform.app.runs": "运行",
+  "platform.app.tools": "工具",
+  "platform.app.lab": "Lab",
+  "platform.app.debugold": "调试",
+  "platform.apps.label": "应用",
+  "platform.legacy.open": "去旧 UI 打开喵",
+  "platform.legacy.runs.line": "共 {n} 次运行,{f} 次失败",
 };

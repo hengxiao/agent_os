@@ -225,4 +225,12 @@ export const COPY = {
   "platform.run.launch": "launch again",
   "platform.run.launch.ph": "empty = default skeleton; or paste JSON",
   "platform.run.launch.badjson": "invalid JSON input",
+  "platform.app.skills": "skills",
+  "platform.app.runs": "runs",
+  "platform.app.tools": "tools",
+  "platform.app.lab": "lab",
+  "platform.app.debugold": "debug",
+  "platform.apps.label": "apps",
+  "platform.legacy.open": "open in legacy ui",
+  "platform.legacy.runs.line": "{n} runs, {f} failed",
 };

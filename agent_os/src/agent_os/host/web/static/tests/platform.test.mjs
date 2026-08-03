@@ -437,6 +437,7 @@ const assertClean = (html, who) => {
   };
   mk("div", "themes");
   mk("div", "tabs");
+  mk("div", "launcher");
   mk("select", "sessionSel");
   mk("button", "newSession");
   mk("div", "log");
@@ -510,6 +511,18 @@ const assertClean = (html, who) => {
     if (url === "/api/lab/drafts/lab.dinner") {
       return reply({ name: "lab.dinner", manifest: { description: "晚餐推荐" },
         prompt: "你是晚餐规划师。", tests: {} });
+    }
+    // M4b:runs legacy tab 摘要数据源 + 主动汇报
+    if (url === "/api/runs" && !options.method) {
+      return reply([
+        { run_id: "run-1", skill: "ops.janitor", status: "failed", started_at: "2026-08-02T10:00:00+00:00" },
+        { run_id: "run-2", skill: "demo.fib", status: "running", started_at: "2026-08-03T10:00:00+00:00" },
+      ]);
+    }
+    if (url === "/platform/api/sessions/s1/runs/present") {
+      return reply({ presented: [{ id: "m-rep", role: "agent", text: "「demo.fib」跑完了,结果见下卡。", ts: 11,
+        cards: [{ type: "table", v: 1, data: { title: "运行结果", columns: ["run", "skill", "摘要"],
+          rows: [["run-2", "demo.fib", "跑完了"]], ref: { kind: "run", id: "run-2" } }, actions: [] }] }] });
     }
     if (url === "/platform/api/apps/app-spawn-sess-1/actions/debug.continue") {
       return reply({ ok: true, text: "已放行。", state: { last_command: "continue" },
@@ -991,6 +1004,92 @@ const assertClean = (html, who) => {
     calls.some((c) => c.url === "/platform/api/apps/app-spawn-run-9"),
     "产物面 404 → 回落 instance state(v0.2 §4 不发明标志位)");
   assert.ok(detailHtml().includes("done"), "instance state 渲染终态(run app 持有 run_id)");
+
+  /* ── M4b:legacy 五页接入 + SSE transport + 主动汇报 ─────────── */
+
+  // launcher:五个 legacy 入口上屏
+  const launcherHtml = doc.querySelector("#launcher").innerHTML;
+  for (const k of ["skills", "runs", "tools", "lab", "debugold"]) {
+    assert.ok(launcherHtml.includes(`data-open-legacy="${k}"`), `launcher 有 ${k}`);
+  }
+
+  // 挂载型(skills):__legacyMounts 注入替代装配口 → tab 激活 → mount 被调;
+  // 切走 → close 被调(防订阅泄漏)
+  let mounted = 0;
+  let closed = 0;
+  globalThis.__legacyMounts = {
+    skills: (host) => {
+      mounted += 1;
+      host.innerHTML = `<div class="skills-shell">技能页</div>`;
+      return () => { closed += 1; };
+    },
+  };
+  const skillsBtn = new StubEl("button");
+  skillsBtn.dataset.openLegacy = "skills";
+  skillsBtn.parentNode = doc.body;
+  doc.trigger("click", { target: skillsBtn });
+  await tick();
+  assert.equal(probe.state.active, "d:skills:skills", "legacy tab 激活(与普通 tab 同级)");
+  assert.ok(mounted >= 1, "ES module 装配口被调用(直接挂载)");
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes('"skills"')),
+    "legacy kind 也 spawn 登记");
+  doc.trigger("click", { target: Object.assign(new StubEl("div"), { parentNode: doc.body, dataset: { tab: "conv" } }) });
+  await tick();
+  assert.equal(closed, 1, "切走时 close 收编(防 store 订阅泄漏)");
+
+  // 深链型(runs):摘要 + 旧 UI 链接 + 行内 run tab 直达
+  const runsBtn = new StubEl("button");
+  runsBtn.dataset.openLegacy = "runs";
+  runsBtn.parentNode = doc.body;
+  doc.trigger("click", { target: runsBtn });
+  await tick();
+  assert.equal(probe.state.active, "d:runs:runs", "runs legacy tab 激活");
+  assert.ok(detailHtml().includes("共 2 次运行,1 次失败"), "runs 人话摘要");
+  assert.ok(detailHtml().includes("/#/runs"), "深链旧 UI(无装配口的落法)");
+  assert.ok(detailHtml().includes('data-detail-kind="run"'), "行内直达 run tab");
+
+  // SSE:EventSource stub —— decision.new/run.finished 即时推进,断线回落轮询
+  const esInstances = [];
+  globalThis.EventSource = class {
+    constructor(url) {
+      this.url = url;
+      this.listeners = {};
+      this.closed = false;
+      esInstances.push(this);
+    }
+    addEventListener(type, fn) {
+      (this.listeners[type] ??= []).push(fn);
+    }
+    close() {
+      this.closed = true;
+    }
+  };
+  probe.connectStream();
+  const es = probe.stream();
+  assert.ok(es, "EventSource 建立");
+  assert.equal(es.url, "/platform/api/stream", "SSE 端点");
+  const presentBefore = calls.filter((c) => c.url === "/platform/api/sessions/s1/decisions/present").length;
+  es.listeners["decision.new"][0]();
+  await tick();
+  assert.ok(
+    calls.filter((c) => c.url === "/platform/api/sessions/s1/decisions/present").length > presentBefore,
+    "decision.new 即时推进(不等 5s 轮询)");
+  es.listeners["run.finished"][0]();
+  await tick();
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/sessions/s1/runs/present"),
+    "run.finished 触发主动汇报拉取");
+  assert.ok(probe.state.messages.some((m) => m.text?.includes("跑完了")), "汇报消息进会话");
+
+  es.onerror();
+  assert.ok(probe.polling(), "断线回落轮询");
+  assert.ok(es.closed, "旧连接已收");
+  probe.connectStream();
+  probe.stream().onopen?.();
+  assert.ok(!probe.polling(), "SSE 复活即停轮询(替代不双轨)");
+  delete globalThis.EventSource;
+  delete globalThis.__legacyMounts;
 }
 
 console.log("platform.test.mjs: all assertions passed");

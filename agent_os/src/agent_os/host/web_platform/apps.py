@@ -234,6 +234,10 @@ class AppInstanceStore:
             return None  # id 合法面(防穿越;非法 id 一律查无)
         return self._by_id.get(instance_id)
 
+    def all(self) -> list[dict[str, Any]]:
+        """全量 instance(M4b 主动汇报:按 created_by 回溯发起会话的扫描面)。"""
+        return list(self._by_id.values())
+
     def update_state(self, instance_id: str, patch: dict[str, Any]) -> None:
         """结果回写(§4 action 管道:skill 调用结果写回 app.state)+ 落盘。"""
         inst = self.get(instance_id)
@@ -545,4 +549,18 @@ def default_manifests() -> list[dict[str, Any]]:
                 },
             ],
         },
+        # ── M4b:legacy 五页(docs/APP-MODEL.md §8 迁移地图末行)────────────
+        # 旧 UI 整页以 Tab Surface 接入(能挂 ES module 的直接挂载,runs 深链);
+        # state 最小(本页无服务端动作;打开/关闭走 Compositor,local 语义)
+        *[
+            {
+                "kind": kind,
+                "v": 1,
+                "title": "{" + kind + "}",
+                "surfaces": {"card": f"{kind}.card", "tab": f"{kind}.tab"},
+                "state_schema": obj(),
+                "actions": [],
+            }
+            for kind in ("skills", "runs", "tools", "lab", "debug-old")
+        ],
     ]

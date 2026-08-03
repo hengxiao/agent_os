@@ -74,6 +74,13 @@ class SessionStore:
         self._write(session)
         return session
 
+    def put_fields(self, session_id: str, **fields: Any) -> None:
+        """写会话级元字段并落盘(M4b:主动汇报的 presented_runs 游标;
+        与消息同文件,刷新/重启不丢)。"""
+        session = self.get(session_id)
+        session.update(fields)
+        self._write(session)
+
     def list(self) -> list[dict[str, Any]]:
         """会话摘要列表(最近在前):{id, title, created_at, last_at, messages, cards}。"""
         out = []

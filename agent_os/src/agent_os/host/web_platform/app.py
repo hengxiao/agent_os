@@ -22,7 +22,7 @@ from typing import Any
 
 import jsonschema
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -44,7 +44,7 @@ from agent_os.host.web_platform.artifacts import (
     build_table_card,
     validate_card,
 )
-from agent_os.host.web_platform.orchestrator import Orchestrator
+from agent_os.host.web_platform.orchestrator import Orchestrator, human_error
 from agent_os.host.web_platform.sessions import SessionStore, new_message
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.skills.draft_store import (
@@ -108,6 +108,39 @@ class AppSpawnBody(BaseModel):
 #: 升权档 → 人话(W2 decisions 聚合字段;摘要层禁 tier 术语,前端按 tier 自取 copy,
 #: 本字段是给非前端消费方/调试面的固定中文)
 _TIER_HUMAN = {"none": "只读", "reversible": "可改能撤销", "irreversible": "不可逆需审批"}
+
+
+def _sse(data: dict[str, Any]) -> str:
+    """一条 SSE data 帧(event 名由调用方前缀)。"""
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _stream_diff(
+    pending_ids: list[str],
+    terminal_runs: list[dict[str, Any]],
+    seen: dict[str, set[str] | None],
+) -> list[tuple[str, dict[str, Any]]]:
+    """SSE 单周期 diff(M4b):返回 [(event, data)];seen 原地更新。
+
+    首周期(None)只建立基线不补报存量(前端 mount 时已拉;TestClient 整读
+    不了无限流,帧语义由本纯函数单测守)。
+    """
+    events: list[tuple[str, dict[str, Any]]] = []
+    current = set(pending_ids)
+    if seen["decisions"] is not None:
+        new = sorted(current - seen["decisions"])
+        if new:
+            events.append(("decision.new", {"question_ids": new}))
+    seen["decisions"] = current
+    terminal_ids = {r["run_id"] for r in terminal_runs}
+    if seen["terminal"] is not None:
+        for r in terminal_runs:
+            if r["run_id"] not in seen["terminal"]:
+                events.append(
+                    ("run.finished", {"run_id": r["run_id"], "skill": r["skill"], "status": r["status"]})
+                )
+    seen["terminal"] = terminal_ids
+    return events
 
 
 def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -> FastAPI:
@@ -296,6 +329,114 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             sessions.append(session_id, msg)
             presented.append(msg)
         return {"presented": presented}
+
+    # ------------------------------------------------------------------
+    # 主动汇报(M4b,docs/APP-MODEL.md §4):本会话发起的 run 到终态 →
+    # agent 消息 + 结果卡进会话(幂等游标随会话持久化)
+    # ------------------------------------------------------------------
+
+    def _session_of(inst: dict[str, Any]) -> str:
+        """created_by 链回溯(管道 spawn 的 run app 父级是 instance,再上一级
+        才是会话):走到非 instance 前缀即停(会话 id 或 "")。"""
+        created_by = str(inst.get("created_by") or "")
+        for _ in range(8):  # 限深防环(异常数据)
+            if not created_by.startswith("app-"):
+                return created_by
+            parent = instances.get(created_by)
+            if parent is None:
+                return ""
+            created_by = str(parent.get("created_by") or "")
+        return ""
+
+    def _terminal_run(run_id: str) -> dict[str, Any] | None:
+        """终态 run 摘要(产物 result.json 优先,内存态兜底;未终态 → None)。"""
+        result = _read_json(Path(artifacts_root) / "runs" / run_id / "result.json")
+        if result and result.get("status") in ("done", "failed", "aborted"):
+            meta = _read_json(Path(artifacts_root) / "runs" / run_id / "meta.json") or {}
+            status = result["status"]
+            return {
+                "skill": meta.get("skill") or "",
+                "status": status,
+                "summary": "跑完了" if status == "done" else human_error(result.get("error") or "")[:120] or "失败",
+            }
+        try:
+            state = manager.state_of(run_id)
+        except Exception:  # noqa: BLE001
+            state = None
+        if state and state.get("status") in ("done", "failed", "aborted"):
+            record = state.get("record") or {}
+            status = state["status"]
+            return {
+                "skill": state.get("skill") or record.get("skill") or "",
+                "status": status,
+                "summary": "跑完了" if status == "done"
+                else human_error(record.get("error") or state.get("error") or "")[:120] or "失败",
+            }
+        return None
+
+    @app.post("/api/sessions/{session_id}/runs/present")
+    def present_runs(session_id: str) -> dict[str, Any]:
+        """主动汇报:本会话发起的 run(经 instance.created_by 链回溯)到达终态
+        → agent 消息 + 结果卡进会话;presented_runs 游标随会话落盘(幂等)。"""
+        try:
+            session = sessions.get(session_id)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        seen = set(session.get("presented_runs") or [])
+        presented = []
+        for inst in instances.all():
+            if inst["kind"] != "run" or _session_of(inst) != session_id:
+                continue
+            rid = inst["ref"]
+            if rid in seen:
+                continue
+            term = _terminal_run(rid)
+            if term is None:
+                continue
+            failed = term["status"] != "done"
+            text = f"「{term['skill']}」" + (
+                f"失败了: {term['summary']}(详情见下卡)。" if failed else "跑完了,结果见下卡。"
+            )
+            card = build_table_card(
+                title="运行结果",
+                columns=["run", "skill", "摘要"],
+                rows=[[rid[:8], term["skill"], term["summary"]]],
+                ref={"kind": "run", "id": rid},
+            )
+            msg = new_message("agent", text=text, cards=[card])
+            _register_cards(msg["cards"], created_by=session_id)
+            sessions.append(session_id, msg)
+            seen.add(rid)
+            presented.append(msg)
+        if presented:
+            sessions.put_fields(session_id, presented_runs=sorted(seen))
+        return {"presented": presented}
+
+    # ------------------------------------------------------------------
+    # SSE transport(M4b,docs/APP-MODEL.md §4):decision.new / run.finished
+    # + keepalive(服务端 2s 巡检 diff;断线由前端回落轮询,与 workbench 同哲学)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/stream")
+    async def stream() -> StreamingResponse:
+        async def gen() -> Any:
+            seen: dict[str, set[str] | None] = {"decisions": None, "terminal": None}
+            while True:
+                try:
+                    pending_ids = [r["question_id"] for r in _decision_rows()]
+                    terminal_runs = [
+                        {k: r[k] for k in ("run_id", "skill", "status")}
+                        for r in _recent_runs(manager, artifacts_root)
+                        if r["status"] in ("done", "failed", "aborted")
+                    ]
+                    for event, data in _stream_diff(pending_ids, terminal_runs, seen):
+                        yield f"event: {event}\n" + _sse(data)
+                except Exception as e:  # noqa: BLE001 — 巡检面异常不炸流(下周期续)
+                    _log.info("SSE 巡检异常(下周期续): %s", e)
+                yield ": ka\n\n"  # keepalive(代理/浏览器不断线)
+                await asyncio.sleep(2)
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
 
     # ------------------------------------------------------------------
     # 卡片动作(统一入口:白名单裁决 → 转发既有能力,§7 不开新通道)

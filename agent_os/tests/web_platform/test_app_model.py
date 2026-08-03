@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -62,13 +63,14 @@ def _manifest(**over):
 
 
 def test_default_manifests_all_valid():
-    """首批 kind 全部合法(M1 八个 + M3 三个:run/debug/lab-draft)。"""
+    """首批 kind 全部合法(M1 八个 + M3 三个 + M4b legacy 五个)。"""
     reg = AppRegistry(known_skills=KNOWN)
     for m in default_manifests():
         reg.register(m)
     assert set(reg.kinds()) == {
         "conversation", "plan", "skill_pack", "gate_report", "diff", "publish", "table", "escalation",
         "run", "debug", "lab-draft",
+        "skills", "runs", "tools", "lab", "debug-old",
     }
 
 
@@ -589,8 +591,15 @@ def test_m4a_run_launch(full_client, tmp_path):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["run_id"] and body.get("run_instance"), "起 run + spawn run app 持 run_id"
-    # 产物面:runs/<new_id>/meta.json(artifacts_root=tmp_path/"runs",其内 runs/ 目录)
-    metas = list((tmp_path / "runs").rglob("meta.json"))
+    # 产物面:runs/<new_id>/meta.json(start_run 异步起线程,短轮询等落盘)
+    import time as _time
+
+    metas = []
+    for _ in range(50):
+        metas = list((tmp_path / "runs").rglob("meta.json"))
+        if any(body["skill"].encode() in m.read_bytes() for m in metas):
+            break
+        _time.sleep(0.1)
     assert any(body["skill"].encode() in m.read_bytes() for m in metas), "新 run 落了产物"
 
     bad = client.post(f"/platform/api/apps/{inst}/actions/run.launch",
@@ -601,3 +610,82 @@ def test_m4a_run_launch(full_client, tmp_path):
     good = client.post(f"/platform/api/apps/{inst}/actions/run.launch",
                        json={"surface": "tab", "args": {"input": {"city": "北京"}}})
     assert good.status_code == 200, "合法改参放行(用户可改的落点)"
+
+
+# ---------------------------------------------------------------------------
+# M4b:主动汇报 + SSE transport + legacy kinds(docs/APP-MODEL.md §10)
+# ---------------------------------------------------------------------------
+
+
+def test_m4b_runs_present_reports_to_owner_session(client, tmp_path):
+    """主动汇报:本会话发起的 run(created_by 链回溯)到终态 → agent 消息 + 卡;
+    幂等(游标随会话持久化);别会话发起的 run 不报。"""
+    sid = client.post("/api/sessions").json()["id"]
+    other = client.post("/api/sessions").json()["id"]
+    # 产物层落一个失败 run(meta/result)
+    run_dir = tmp_path / "runs" / "rep-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "meta.json").write_text(json.dumps({"run_id": "rep-1", "skill": "demo.fib",
+                                                    "started_at": "2026-08-03T10:00:00+00:00"}))
+    (run_dir / "result.json").write_text(json.dumps(
+        {"status": "failed", "result": None, "error": "ProviderError: 401 token expired", "usage": {}}))
+    # 本会话的发起链:tab spawn 的 run instance(created_by=sid);
+    # 另挂一个别会话的(created_by=other)对照
+    client.post("/api/apps/spawn", json={"kind": "run", "ref": "rep-1", "created_by": sid,
+                                          "state": {"run_id": "rep-1", "skill": "demo.fib"}})
+    client.post("/api/apps/spawn", json={"kind": "run", "ref": "rep-2", "created_by": other,
+                                          "state": {"run_id": "rep-2", "skill": "demo.fib"}})
+    r = client.post(f"/api/sessions/{sid}/runs/present")
+    presented = r.json()["presented"]
+    assert len(presented) == 1, "只报本会话发起的"
+    msg = presented[0]
+    assert "demo.fib" in msg["text"] and "失败" in msg["text"]
+    assert "ProviderError" not in msg["text"], "人话摘要(N1 纪律)"
+    assert msg["cards"][0]["data"]["ref"] == {"kind": "run", "id": "rep-1"}, "结果卡带 run 锚"
+    assert msg["cards"][0]["instance"], "结果卡登记 instance(M1 同轨)"
+
+    assert client.post(f"/api/sessions/{sid}/runs/present").json()["presented"] == [], "幂等"
+    session = client.get(f"/api/sessions/{sid}").json()
+    assert session.get("presented_runs") == ["rep-1"], "游标随会话持久化"
+
+    # 管道 spawn 的二级 created_by 链(run app 的父级是 instance,父级的父级才是会话)
+    parent = client.post("/api/apps/spawn", json={"kind": "skill_pack", "ref": "lab.chain",
+                                                   "created_by": sid}).json()["instance"]["id"]
+    run_dir2 = tmp_path / "runs" / "rep-3"
+    run_dir2.mkdir(parents=True)
+    (run_dir2 / "meta.json").write_text(json.dumps({"run_id": "rep-3", "skill": "demo.fib",
+                                                     "started_at": "2026-08-03T11:00:00+00:00"}))
+    (run_dir2 / "result.json").write_text(json.dumps({"status": "done", "result": {"x": 1},
+                                                       "error": "", "usage": {}}))
+    child = client.post("/api/apps/spawn", json={"kind": "run", "ref": "rep-3",
+                                                  "created_by": parent,
+                                                  "state": {"run_id": "rep-3", "skill": "demo.fib"}})
+    assert child.status_code == 201
+    r2 = client.post(f"/api/sessions/{sid}/runs/present").json()["presented"]
+    assert len(r2) == 1 and "跑完了" in r2[0]["text"], "created_by 链回溯到会话(二级)"
+
+
+def test_m4b_sse_stream(client):
+    """SSE:路由注册在案 + 帧语义(_stream_diff 纯函数)。
+
+    TestClient 会把响应体收完才返回(实测:无限 SSE 流连 headers 都拿不到),
+    无限流不能走 TestClient——端点存在性用 openapi 面钉,帧语义用纯函数守。
+    """
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/stream" in paths, "SSE 端点注册在案"
+
+    from agent_os.host.web_platform.app import _stream_diff
+
+    seen: dict[str, set[str] | None] = {"decisions": None, "terminal": None}
+    # 首周期建基线,不补报存量
+    assert _stream_diff(["esc-0"], [{"run_id": "r0", "skill": "a", "status": "done"}], seen) == []
+    # pending 新增 → decision.new;终态新增 → run.finished;消失/重复不出帧
+    events = _stream_diff(
+        ["esc-0", "esc-1"],
+        [{"run_id": "r0", "skill": "a", "status": "done"},
+         {"run_id": "r1", "skill": "demo.fib", "status": "failed"}],
+        seen,
+    )
+    assert ("decision.new", {"question_ids": ["esc-1"]}) in events
+    assert ("run.finished", {"run_id": "r1", "skill": "demo.fib", "status": "failed"}) in events
+    assert _stream_diff(["esc-0"], [{"run_id": "r0", "skill": "a", "status": "done"}], seen) == []

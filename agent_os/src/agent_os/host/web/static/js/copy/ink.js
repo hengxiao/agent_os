@@ -219,4 +219,12 @@ export const COPY = {
   "platform.run.launch": "复行",
   "platform.run.launch.ph": "空则用默认参;或填 JSON",
   "platform.run.launch.badjson": "参非合法 JSON",
+  "platform.app.skills": "技",
+  "platform.app.runs": "行",
+  "platform.app.tools": "器",
+  "platform.app.lab": "坊",
+  "platform.app.debugold": "调",
+  "platform.apps.label": "应用",
+  "platform.legacy.open": "往旧 UI 启",
+  "platform.legacy.runs.line": "凡 {n} 行,{f} 败",
 };

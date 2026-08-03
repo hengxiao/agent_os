@@ -147,10 +147,13 @@ def promote_package(
     production: Any,
     tools: Any,
     principal: str,
+    skillsets_root: Any = None,
 ) -> dict[str, Any]:
     """按 plan 原子提交(§6.3/§6.4):hash 一致性 → blockers → 先证后换 → 单次 reload。
 
     409 语义与单稿一致:任何成员改过一个字节,旧 plan 作废。
+    ``skillsets_root``(§4.4;P4):给了且待写成员 ≥2 → 落目录形态 set
+    ``<root>/<ns>``;不给或单成员 → 单文件 skills.yaml(现状)。
     """
     plan = _read_plan(store, plan_id)
     if plan["blockers"]:
@@ -179,13 +182,23 @@ def promote_package(
         old = _production_entry(production, m["name"])
         if old is not None:
             previous.append(old)
-    _atomic_write(production, entries)
+    form = "file"
+    set_name = None
+    if entries:  # 全部 unchanged 时没有写面(只落记录)
+        if len(entries) >= 2 and skillsets_root is not None:
+            # §4.4:≥2 成员落目录形态 set(单文件同名条目一并迁移)
+            set_name = _atomic_write_set(production, entries, skillsets_root, plan["root"].split(".")[0])
+            form = "set"
+        else:
+            _atomic_write(production, entries)
 
     record = {
         "kind": "package",
         "root": plan["root"],
         "plan_id": plan_id,
         "package_hash": plan["package_hash"],
+        "form": form,
+        "set": set_name,
         "promoted_by": principal,
         "at": time.time(),
         "members": [
@@ -204,6 +217,8 @@ def promote_package(
     return {
         "root": plan["root"],
         "package_hash": plan["package_hash"],
+        "form": form,
+        "set": set_name,
         "members": record["members"],
         "reloaded": True,
         "promoted_by": principal,
@@ -255,6 +270,84 @@ def _atomic_write(registry: Any, entries: dict[str, dict[str, Any]]) -> None:
         shutil.copy2(target.with_name(target.name + ".bak"), target)
         registry.reload()
         raise
+
+
+def _atomic_write_set(
+    registry: Any,
+    entries: dict[str, dict[str, Any]],
+    skillsets_root: str | Path,
+    ns: str,
+) -> str:
+    """目录形态 set 落盘(docs/SKILL-PACKAGES.md §4.4;P4):≥2 成员的包级提交。
+
+    同一套"先证后换":staging 集合(单文件剩余条目 + set 成员)先过 loader 全
+    流水线,失败零写入;成功则——单文件 skills.yaml 移除迁移成员(防目录与
+    单文件重复定义,这是事务的一部分)+ 整文件 .bak;set 目录整体换入
+    (旧目录 → ``<ns>.bak``)。返回 set 名(= ns)。
+    """
+    path = getattr(registry, "path", None)
+    if not isinstance(path, str) or Path(path).is_dir():
+        raise SkillLoadError(
+            "包提交目前只支持单文件 skills.yaml(目录/多文件形态见 docs/SKILL-DEV.md §4 L2 实现注)"
+        )
+    target = Path(path)
+    data = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+    # 迁移语义(§4.4):同名成员从单文件移除,改由目录形态 set 收纳
+    remainder = [
+        e for e in (data.get("skills") or [])
+        if not (isinstance(e, dict) and e.get("name") in entries)
+    ]
+    data["skills"] = remainder
+
+    root = Path(skillsets_root)
+    set_dir = root / ns
+    staging_dir = root / f"{ns}.staging"
+    next_file = target.with_name(target.name + ".next")
+    bak_dir = root / f"{ns}.bak"
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        next_file.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        (staging_dir / "agent-os.toml").write_text('[skills]\npath = "."\n', encoding="utf-8")
+        # skills.yaml 必须存在(D6 发现的硬条件,load_skillsets);根成员放这里,
+        # 其余成员每员一文件(loader 目录合并,§4.4)
+        names = sorted(entries)
+        first, *rest = names
+        (staging_dir / "skills.yaml").write_text(
+            yaml.safe_dump({"skills": [entries[first]]}, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        for name in rest:
+            (staging_dir / f"{name}.yaml").write_text(
+                yaml.safe_dump({"skills": [entries[name]]}, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
+        # 先证:候选全集(单文件剩余 + set 成员)过 loader 全流水线——依赖存在性
+        # 要在"换入后的世界"里成立,失败零写入(与 _atomic_write 同一语义)。
+        # 显式文件列表(dir 含 agent-os.toml 无关项,且不能把剩余条目留在 set 里)
+        proof_files = [str(next_file)] + [
+            str(f) for f in sorted(staging_dir.glob("*.yaml"))
+        ]
+        LocalFileSkillRegistry(proof_files)
+    except Exception:
+        next_file.unlink(missing_ok=True)
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+
+    # 换入:单文件原子替换 + set 目录整体替换(旧目录整体 .bak)
+    shutil.copy2(target, target.with_name(target.name + ".bak"))
+    os.replace(next_file, target)
+    if set_dir.is_dir():
+        shutil.rmtree(bak_dir, ignore_errors=True)
+        set_dir.rename(bak_dir)
+    staging_dir.rename(set_dir)
+    try:
+        registry.reload()
+    except Exception:
+        shutil.copy2(target.with_name(target.name + ".bak"), target)
+        registry.reload()
+        raise
+    return ns
 
 
 # ----------------------------------------------------------------------

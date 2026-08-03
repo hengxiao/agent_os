@@ -93,4 +93,7 @@ export const COPY = {
   "lab.pkg.create": "补此草",
   "lab.plan.title": "呈案",
   "lab.plan.blockers": "碍",
+  "pkg.badge": "函",
+  "lab.tpl.pkg.inspect_clean": "功能包:巡检 + 清理",
+  "lab.tpl.pkg.research_report": "功能包:检索 + 报告",
 };

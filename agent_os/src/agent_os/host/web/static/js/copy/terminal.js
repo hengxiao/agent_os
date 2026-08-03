@@ -99,4 +99,7 @@ export const COPY = {
   "lab.pkg.create": "create draft",
   "lab.plan.title": "plan",
   "lab.plan.blockers": "blockers",
+  "pkg.badge": "pkg",
+  "lab.tpl.pkg.inspect_clean": "pkg: inspect+clean",
+  "lab.tpl.pkg.research_report": "pkg: research+report",
 };

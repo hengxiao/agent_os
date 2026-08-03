@@ -20,8 +20,10 @@
 
 import { getJson, postJson } from "../api.js";
 import { store } from "../store.js";
+import { copy } from "../themes.js";
 import { COPY_SVG, emptyBlock, esc, routeDescHtml, toast } from "../util.js";
 import { banner } from "./banner.js";
+import { packagePanelHtml } from "./lab.js";
 import { openLaunchDialog } from "./launch-dialog.js";
 import {
   allNamespaces,
@@ -101,6 +103,8 @@ const sv = {
   set: null, // D6:当前 set 范围(null = 全部;单 set/无 sets 恒 null)
   unsub: null, // D6:store 订阅退订(侧栏 set 切换联动)
   expanded: null, // 命名空间折叠态(Set;null = 未初始化,首次渲染按 defaultExpanded)
+  packages: new Map(), // 包识别(docs/SKILL-PACKAGES.md §3.6;P4):ns → {root, tier, members}
+  pkgView: null, // 只读包视图打开的包根(null = 普通详情)
 };
 
 /* ── 骨架:createElement 搭结构(引用直持),内容区留空 ────────────── */
@@ -180,8 +184,16 @@ function onClick(e) {
     renderList();
     return;
   }
+  // 包徽标(docs/SKILL-PACKAGES.md §3.6;P4):点击展开只读包视图
+  const pkgChip = e.target.closest?.("[data-pkg-view]");
+  if (pkgChip && sv.root.contains(pkgChip)) {
+    sv.pkgView = pkgChip.dataset.pkgView;
+    renderDetail();
+    return;
+  }
   const item = e.target.closest?.(".brw-item");
   if (item && sv.root.contains(item) && item.dataset.name) {
+    sv.pkgView = null; // 回到技能详情(包视图是旁路)
     location.hash = `#/skills/${encodeURIComponent(item.dataset.name)}`;
     select(item.dataset.name); // 立即响应;hashchange 回来是同名下幂等
   }
@@ -295,6 +307,13 @@ async function loadList() {
     }
     for (const list of groups.values()) findCycles(list).forEach((n) => cyclic.add(n));
     sv.cycles = cyclic;
+    // P4:包识别(§3.6;闭包完整簇 → ns-tree 上的"包"徽标数据源)
+    try {
+      const pkgs = await getJson("/api/skills/packages");
+      sv.packages = new Map((Array.isArray(pkgs) ? pkgs : []).map((p) => [p.ns, p]));
+    } catch {
+      sv.packages = new Map(); // 识别失败不拖垮列表(徽标只是增强)
+    }
     sv.status = "ready";
   } catch (err) {
     if (!sv.mounted) return;
@@ -385,13 +404,19 @@ function visibleSkills() {
   return sv.skills.filter((s) => !q || (s.name || "").toLowerCase().includes(q));
 }
 
-/* 树化浏览(docs/NAMING.md §2):当前过滤态的树 + 展开集合(搜索时祖先链全展开) */
+/* 树化浏览(docs/NAMING.md §2):当前过滤态的树 + 展开集合(搜索时祖先链全展开);
+   P4:命名空间行的包徽标经 nsExtra 注入(闭包完整簇,§3.6) */
 function currentTree() {
   const q = sv.search.trim().toLowerCase();
   const tree = filterNsTree(buildNsTree(sv.skills), q);
   const expanded = q ? allNamespaces(tree) : (sv.expanded ??= defaultExpanded(tree));
   return { tree, expanded };
 }
+
+const _pkgNsExtra = (child) =>
+  sv.packages.has(child.full)
+    ? `<span class="pkg-badge" data-pkg-view="${esc(child.full)}" title="闭包完整的包(§3.6),点击查看只读包视图">${esc(copy("pkg.badge"))}</span>`
+    : "";
 
 function skillItemHtml(s, depth = 0) {
   const sel = s.name === sv.selected;
@@ -455,13 +480,13 @@ function renderList() {
         const subExpanded = q ? allNamespaces(subTree) : expanded;
         return (
           `<div class="brw-group" role="presentation">${esc(set)} (${flattenLeaves(subTree).length})</div>` +
-          nsTreeHtml(subTree, { expanded: subExpanded, leafHtml: skillItemHtml })
+          nsTreeHtml(subTree, { expanded: subExpanded, leafHtml: skillItemHtml, nsExtra: _pkgNsExtra })
         );
       })
       .join("");
     return;
   }
-  box.innerHTML = nsTreeHtml(tree, { expanded, leafHtml: skillItemHtml });
+  box.innerHTML = nsTreeHtml(tree, { expanded, leafHtml: skillItemHtml, nsExtra: _pkgNsExtra });
 }
 
 /* ── 渲染:右详情(§4.6 分区)──────────────────────────────────────── */
@@ -565,6 +590,10 @@ function detailHtml(d) {
 function renderDetail() {
   const box = sv.els?.detail;
   if (!box) return;
+  if (sv.pkgView) {
+    _renderPkgView(box); // §3.6 只读包视图(旁路,点叶子回普通详情)
+    return;
+  }
   const name = sv.selected;
   if (!name) {
     box.innerHTML = emptyBlock("选择一个技能", "从左侧列表选择技能查看详情,或点 Run ▶ 发起运行", "select");
@@ -584,6 +613,31 @@ function renderDetail() {
     return;
   }
   box.innerHTML = detailHtml(cached.data);
+}
+
+/* 只读包视图(docs/SKILL-PACKAGES.md §3.6;P4):runtime 闭包 + P1 包面板渲染(readonly) */
+async function _renderPkgView(box) {
+  const ns = sv.pkgView;
+  const pkg = sv.packages.get(ns);
+  if (!pkg) {
+    sv.pkgView = null;
+    renderDetail();
+    return;
+  }
+  box.innerHTML = `<div class="skeleton-pad">${skeletonRows(4)}</div>`;
+  try {
+    const closure = await getJson(
+      `/api/lab/packages/${encodeURIComponent(pkg.root)}/closure?mode=runtime`
+    );
+    if (!sv.mounted || sv.pkgView !== ns) return;
+    box.innerHTML =
+      `<div class="brw-detail-head"><span class="brw-title">` +
+      `${esc(copy("pkg.badge"))} ${esc(pkg.root)}</span></div>` +
+      packagePanelHtml({ form: { name: pkg.root }, pkg: closure, readonly: true });
+  } catch (e) {
+    if (!sv.mounted || sv.pkgView !== ns) return;
+    box.innerHTML = `<div class="panel-error"><span class="error-msg">${esc(e.message ?? "加载失败")}</span></div>`;
+  }
 }
 
 /* ── 选中(路由 itemName 与列表点击共用;同名下幂等)────────────────── */
@@ -631,4 +685,6 @@ export function closeSkillsView() {
   sv.search = "";
   sv.reloadBusy = false;
   sv.set = null;
+  sv.packages = new Map();
+  sv.pkgView = null;
 }

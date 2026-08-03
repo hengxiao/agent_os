@@ -282,6 +282,9 @@ promote 后想回滚 → skills.yaml 的 .bak(promote 自动备份)+ git。
 
 依赖说明:L2 的 G3 必填 lint 即 ESCALATION 的 E3 一部分(两份计划在此汇合);
 L4 依赖 L1-L3(助手改的是同一草稿、查的是同一闸门、试的是同一面板)。
+**后续**:能力包把 Lab 的工作单元从单草稿升级为闭包,分期与验收见
+`SKILL-PACKAGES.md` §6(P1 闭包/P2 原子提交/P3 助手包级化/P4 set 落盘,
+全部落地;V2 详细设计见 `SKILL-PACKAGES-V2.md`)。
 
 ## 5. 不做
 

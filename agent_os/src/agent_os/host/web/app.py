@@ -62,7 +62,11 @@ from agent_os.host.web.run_manager import (
 from agent_os.kernel.errors import AgentOSError, SkillLoadError
 from agent_os.runtime.config import load_config
 from agent_os.skills.closure import compute_closure
-from agent_os.skills.draft_store import DraftStore, OverlaySkillRegistry
+from agent_os.skills.draft_store import (
+    DraftStore,
+    OverlaySkillRegistry,
+    package_template_members,
+)
 from agent_os.skills.gate import GateError, promote_draft
 from agent_os.skills.gate import validate_draft as validate_gate_draft
 from agent_os.skills.lab_assistant import ASSISTANT_NAME, assistant_skill
@@ -711,6 +715,47 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(e)) from e
         return [_skill_summary(m) for m in manifests]
 
+    @app.get("/api/skills/packages")
+    def list_packages() -> list[dict[str, Any]]:
+        """包识别(docs/SKILL-PACKAGES.md §3.6;P4):闭包完整的命名空间簇清单。
+
+        判据:簇内 ≥2 成员,且存在根使运行闭包(runtime 模式)全部可解析
+        (无 missing;簇内成员全覆盖)。Skills 页 ns-tree 的"包"徽标数据源。
+        """
+        manifests = manager.skills_manifests()
+        by_ns: dict[str, list[str]] = {}
+        for m in manifests:
+            by_ns.setdefault(m.name.split(".")[0], []).append(m.name)
+
+        class _NoDrafts:
+            def load_skill(self, name: str) -> Any:
+                raise FileNotFoundError(name)
+
+        packages = []
+        registry = manager.shared_skills_registry()
+        for ns, names in sorted(by_ns.items()):
+            if len(names) < 2:
+                continue
+            # 根候选 = 不被簇内其他成员引用的成员(包入口);逐个试,取第一个全解析的
+            referenced = {d for m in manifests if m.name in names for d in m.permissions.skills}
+            candidates = [n for n in names if n not in referenced] or names
+            for root in candidates:
+                closure = compute_closure(root, _NoDrafts(), registry, manager.shared_tools_registry(), mode="runtime")
+                members = closure["members"]
+                if any(m["status"] == "missing" for m in members) or closure["errors"]:
+                    continue
+                if {m["name"] for m in members} >= set(names):
+                    packages.append(
+                        {
+                            "ns": ns,
+                            "root": root,
+                            "tier": closure["root_tier"],
+                            "members": [m["name"] for m in members],
+                        }
+                    )
+                    break
+        return packages
+
     @app.get("/api/skills/{name}")
     def get_skill(name: str, skill_set: str | None = None) -> dict[str, Any]:
         """单个技能的全量 manifest(§6.2;Launch Modal 的 inputs schema 数据源)。
@@ -767,14 +812,30 @@ def create_app(
 
     @app.post("/api/lab/drafts", status_code=201)
     def lab_create_draft(body: LabCreateBody) -> dict[str, Any]:
-        """新建草稿(§1.5):空模板,或 ``from_skill`` 从生产 skill 复制。"""
-        source = None
-        if body.from_skill:
-            try:
-                source = manager.shared_skills_registry().get(SkillRef(name=body.from_skill))
-            except (SkillLoadError, RunValidationError) as e:
-                raise HTTPException(status_code=404, detail=f"找不到生产技能: {body.from_skill}") from e
+        """新建草稿(§1.5):空模板 / 单技能模板 / 功能包模板(``pkg.*``,§3.2 整套生成)/
+        ``from_skill`` 从生产 skill 复制。"""
         try:
+            if body.template and body.template.startswith("pkg."):
+                # 功能包模板(docs/SKILL-PACKAGES.md §3.2;P4):根 + 成员一次生成,
+                # 白名单已对齐;任一成员冲突 → 已建的清掉,保持原子观感
+                members = package_template_members(body.template, body.name)
+                created: list[str] = []
+                try:
+                    for member_name, (manifest, prompt) in members.items():
+                        lab_store.create(member_name)
+                        lab_store.save(member_name, manifest=manifest, prompt=prompt)
+                        created.append(member_name)
+                except Exception:
+                    for member_name in created:
+                        lab_store.delete(member_name)
+                    raise
+                return {"name": body.name, "package": True, "members": created}
+            source = None
+            if body.from_skill:
+                try:
+                    source = manager.shared_skills_registry().get(SkillRef(name=body.from_skill))
+                except (SkillLoadError, RunValidationError) as e:
+                    raise HTTPException(status_code=404, detail=f"找不到生产技能: {body.from_skill}") from e
             return lab_store.create(body.name, source=source, template=body.template)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -966,22 +1027,28 @@ def create_app(
         }
 
     @app.get("/api/lab/packages/{root}/closure")
-    def lab_package_closure(root: str) -> dict[str, Any]:
-        """包闭包(docs/SKILL-PACKAGES.md §3.1/§4.2;P1):成员表 + 状态四态 + 环 errors。"""
-        return _lab_closure(root)
+    def lab_package_closure(root: str, mode: str = "edit") -> dict[str, Any]:
+        """包闭包(docs/SKILL-PACKAGES.md §3.1/§4.2;P1):成员表 + 状态四态 + 环 errors。
+
+        ``?mode=runtime``(P4):运行闭包(穿过生产节点,Skills 页只读包视图用)。
+        """
+        if mode not in ("edit", "runtime"):
+            raise HTTPException(status_code=400, detail=f"mode 应为 edit|runtime,得到: {mode!r}")
+        return _lab_closure(root, mode=mode)
 
     @app.get("/api/lab/drafts/{name}/closure")
     def lab_draft_closure(name: str) -> dict[str, Any]:
         """= /api/lab/packages/{name}/closure 的别名(§4.2,平滑过渡)。"""
         return _lab_closure(name)
 
-    def _lab_closure(root: str) -> dict[str, Any]:
+    def _lab_closure(root: str, *, mode: str = "edit") -> dict[str, Any]:
         try:
             return compute_closure(
                 root,
                 lab_store,
                 manager.shared_skills_registry(),
                 manager.shared_tools_registry(),
+                mode=mode,
             )
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
@@ -1015,16 +1082,21 @@ def create_app(
         """按 plan 原子提交(docs/SKILL-PACKAGES-V2.md §6.3/§6.4;P2)。
 
         409:package_hash 不一致(成员在计划后改动)/ blockers 未清 / warnings 未 ack。
+        P4:待写成员 ≥2 且配置了 skillsets 根目录 → 落目录形态 set(§4.4)。
         """
         try:
-            return promote_package(
+            result = promote_package(
                 store=lab_store,
                 plan_id=body.plan_id,
                 warnings_ack=body.warnings_ack,
                 production=manager.shared_skills_registry(),
                 tools=manager.shared_tools_registry(),
                 principal=manager.principal().subject,
+                skillsets_root=manager.skillsets_root(),
             )
+            if result.get("set"):
+                manager.refresh_skillsets()  # 新 set 落盘:/api/skillsets 与下拉立即可见
+            return result
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except FileNotFoundError as e:

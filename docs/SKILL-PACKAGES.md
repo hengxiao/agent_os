@@ -253,7 +253,18 @@ L2 时 promote 只支持单文件 skills.yaml(多文件归并报错留 L5)。包
 > 3. `lab.draft.write` 编辑闭包围栏 = 只能写当前包 edit 闭包内的 draft 成员;
 > 4. 助手 validate 仍然只读不落盘(助手报告不能当 promote 依据);
 > 5. 创建配额每 run ≤5(防注入灌爆 drafts 目录)。
-| P4 | 目录形态 set 落盘 + Skills 树包徽标 + G4 包级报告分组呈现 | 打磨 |
+| P4 ✅ | 目录形态 set 落盘 + Skills 树包徽标 + G4 包级报告分组呈现 | 打磨。已实现:`_atomic_write_set`(staging 全集加载验证 → 单文件迁移 + 整文件 .bak → set 目录原子换入,`<ns>/skills.yaml` + 每成员一文件 + `agent-os.toml path="."`)、`/api/skills/packages` 包识别 + ns-tree 包徽标与只读包视图(runtime 闭包 + P1 面板 readonly 渲染)、功能包模板两件(巡检+清理 / 检索+报告,`pkg.*` 一次生成互链整套);837 Python + 24 前端测试全绿。G4 报告分组呈现留后续(报告结构已按成员承载) |
+
+> 实现注(P4):
+> 1. set 目录必须含 `skills.yaml`(D6 `load_skillsets` 的硬发现条件),
+>    故根成员条目落 `skills.yaml`,其余成员每员一文件,`agent-os.toml`
+>    声明 `path = "."` 让 set 装配走目录合并;
+> 2. 迁移语义是事务一部分:同名成员从单文件移除(防重复定义),先证后换
+>    的验证面 = 单文件剩余 + set 成员的全集;
+> 3. 未配置 skillsets 根目录时包级提交回落单文件写入(现状,不阻塞);
+> 4. 包识别判据(§3.6 的具体化):簇内 ≥2 成员 + 存在根使 runtime 闭包
+>    全部可解析且覆盖全簇——只读视图经 `?mode=runtime` 取全展开闭包;
+> 5. `nsTreeHtml` 新增 `nsExtra` 扩展点供徽标注入,Tools 页不受影响。
 
 依赖:P1 是所有后续的数据源;P2 依赖 P1 的成员清单;P3 依赖 P1/P2;
 P4 独立可拆。

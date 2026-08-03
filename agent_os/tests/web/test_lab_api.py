@@ -207,8 +207,76 @@ def test_tier_endpoints_errors(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# P2:packages plan / promote(docs/SKILL-PACKAGES-V2.md §6.3/§6.4)
+# P4:/api/skills/packages 包识别 + 功能包模板创建(§3.6/§3.2)
 # ---------------------------------------------------------------------------
+
+
+def test_skills_packages_endpoint(tmp_path):
+    """/api/skills/packages:闭包完整簇被识别(互链生产簇成包;单成员簇不成包)。"""
+    (tmp_path / "skills.yaml").write_text(
+        "skills:\n"
+        "  - name: weather.query\n"
+        "    version: 1.0.0\n"
+        "    kind: prompt\n"
+        "    description: 查天气。Use when 查;Do not use when 写。\n"
+        "    permissions: { tools: [], skills: [weather.geocode] }\n"
+        "    prompt: 查。\n"
+        "  - name: weather.geocode\n"
+        "    version: 1.0.0\n"
+        "    kind: prompt\n"
+        "    description: 地理编码。Use when 解析地名;Do not use when 其他。\n"
+        "    permissions: { tools: [], skills: [] }\n"
+        "    prompt: 解析。\n"
+        "  - name: common.text.word_count\n"
+        "    version: 1.0.0\n"
+        "    kind: prompt\n"
+        "    description: 数字数。Use when 统计;Do not use when 其他。\n"
+        "    permissions: { tools: [], skills: [] }\n"
+        "    prompt: 数。\n",
+        encoding="utf-8",
+    )
+    cfg = tmp_path / "agent-os.toml"
+    cfg.write_text(
+        CONFIG_TOML.format(skills=tmp_path / "skills.yaml", drafts=tmp_path / "drafts"),
+        encoding="utf-8",
+    )
+    client = TestClient(create_app(cfg, artifacts_root=tmp_path / "runs"))
+    pkgs = client.get("/api/skills/packages").json()
+    assert len(pkgs) == 1
+    assert pkgs[0]["ns"] == "weather"
+    assert pkgs[0]["root"] == "weather.query"
+    assert set(pkgs[0]["members"]) == {"weather.query", "weather.geocode"}
+
+
+def test_package_template_create(tmp_path):
+    """功能包模板(§3.2):一次生成整套、成员互链白名单对齐、各成员 G1-G3 直过。"""
+    client = _client(tmp_path)
+    r = client.post("/api/lab/drafts", json={"name": "acme.inspect", "template": "pkg.inspect_clean"})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["package"] is True
+    assert set(body["members"]) == {"acme.inspect", "acme.plan", "acme.execute"}
+
+    root = client.get("/api/lab/drafts/acme.inspect").json()
+    assert root["manifest"]["permissions"]["skills"] == ["acme.plan", "acme.execute"]
+    execute = client.get("/api/lab/drafts/acme.execute").json()
+    assert "dry_run" in execute["manifest"]["inputs"]["properties"]
+    assert execute["manifest"]["trust"]["blast_radius"]
+    plan = client.get("/api/lab/drafts/acme.plan").json()
+    assert plan["manifest"]["trust"]["reversal"]
+
+    # 各成员 G1-G3 直过(plan 端点即闸门:无 blockers 即全绿)
+    for name in body["members"]:
+        gate = client.post(f"/api/lab/packages/{name}/plan").json()
+        member = next(m for m in gate["members"] if m["name"] == name)
+        assert member["gate_status"] != "fail", name
+
+    r = client.post("/api/lab/drafts", json={"name": "acme.research", "template": "pkg.research_report"})
+    assert r.status_code == 201
+    assert set(r.json()["members"]) == {"acme.research", "acme.report"}
+
+    r = client.post("/api/lab/drafts", json={"name": "acme.x", "template": "pkg.bogus"})
+    assert r.status_code == 400
 
 
 def test_package_plan_and_promote_api(tmp_path):

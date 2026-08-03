@@ -328,6 +328,7 @@ class RunManager:
         self._supervisor_handler = supervisor_handler
         self._inbox = InboxChannel()
         #: D6 一站多 set:{set 名: set 目录(resolve 后,sys.path/模块逐出比较一致)}
+        self._skillsets_root = Path(skillsets_dir) if skillsets_dir is not None else None
         self._sets: dict[str, Path] = (
             {name: d.resolve() for name, d in load_skillsets(skillsets_dir).items()}
             if skillsets_dir is not None
@@ -345,6 +346,17 @@ class RunManager:
     def skillsets(self) -> dict[str, Path]:
         """全部 set(name → 目录,按名字序;``GET /api/skillsets`` 数据源,D6)。"""
         return dict(self._sets)
+
+    def skillsets_root(self) -> Path | None:
+        """set 根目录(docs/SKILL-PACKAGES.md §4.4:包级提交的目录形态落盘面;未配置 → None)。"""
+        return self._skillsets_root
+
+    def refresh_skillsets(self) -> None:
+        """重扫 set 目录(P4:包级提交落新 set 后,``/api/skillsets`` 与下拉立即可见)。"""
+        if self._skillsets_root is not None:
+            self._sets = {
+                name: d.resolve() for name, d in load_skillsets(self._skillsets_root).items()
+            }
 
     def _set_dir(self, name: str) -> Path:
         """set 名 → 目录;未知 set 抛 :class:`RunValidationError`(路由层归 400)。"""

@@ -93,4 +93,7 @@ export const COPY = {
   "lab.pkg.create": "补开此幅",
   "lab.plan.title": "归档计划",
   "lab.plan.blockers": "障碍",
+  "pkg.badge": "整幅",
+  "lab.tpl.pkg.inspect_clean": "功能包:巡检 + 清理",
+  "lab.tpl.pkg.research_report": "功能包:检索 + 报告",
 };

@@ -281,13 +281,17 @@ export function topbarHtml(view) {
   const tplOptions = ["prompt_query", "file_process", "danger_op"]
     .map((k) => `<option value="tpl:${k}">${esc(copy(`lab.tpl.${k}`))}</option>`)
     .join("");
+  // 功能包模板(docs/SKILL-PACKAGES.md §3.2;P4:场景人话,整套成员一次生成)
+  const pkgTplOptions = ["pkg.inspect_clean", "pkg.research_report"]
+    .map((k) => `<option value="tpl:${k}">${esc(copy(`lab.tpl.${k}`))}</option>`)
+    .join("");
   return (
     `<div class="lab-top">` +
     `<select class="input lab-select" data-lab="select">${options}</select>` +
     `<input class="input mono lab-new-name" data-lab="new-name" placeholder="domain.action"` +
     ` aria-label="${esc(copy("lab.new"))}">` +
     `<select class="input lab-new-from" data-lab="new-from">` +
-    `<option value="">${esc(copy("lab.new.empty"))}</option>${tplOptions}${prodOptions}</select>` +
+    `<option value="">${esc(copy("lab.new.empty"))}</option>${tplOptions}${pkgTplOptions}${prodOptions}</select>` +
     `<button class="btn" data-lab="create">${esc(copy("lab.new"))}</button>` +
     `<button class="btn" data-lab="delete">${esc(copy("lab.delete"))}</button>` +
     `<span class="lab-top-tier" data-lab-tier-badge title="${esc(tierTitle(view.tierDetail))}">` +
@@ -547,6 +551,7 @@ export function diffGroups(oldManifest, newManifest) {
 export function packagePanelHtml(view) {
   const pkg = view.pkg;
   if (!view.form || !pkg) return "";
+  const readonly = view.readonly === true; // §3.6:Skills 页只读包视图(P4)
   const rows = (pkg.members ?? [])
     .map((m) => {
       const lastSeg = m.name.split(".").pop();
@@ -555,7 +560,11 @@ export function packagePanelHtml(view) {
       const status = `<span class="lab-pkg-status" data-status="${esc(m.status)}">` +
         `${esc(copy(`lab.pkg.${m.status}`))}</span>`;
       let action = "";
-      if (m.status === "draft" && !isRoot) {
+      if (readonly) {
+        action = m.status === "missing"
+          ? `<span class="mono">${esc(lastSeg)}</span>`
+          : `<a class="lab-pkg-link mono" href="#/skills/${encodeURIComponent(m.name)}">${esc(lastSeg)}</a>`;
+      } else if (m.status === "draft" && !isRoot) {
         action = `<button class="lab-pkg-act" data-pkg-select="${esc(m.name)}">${esc(lastSeg)}</button>`;
       } else if (m.status === "missing") {
         action =

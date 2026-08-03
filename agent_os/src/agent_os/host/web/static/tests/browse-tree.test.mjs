@@ -113,4 +113,72 @@ const { openToolsView, closeToolsView } = await import("../js/components/tools-v
   closeToolsView();
 }
 
+/* ── P4:Skills 页包徽标 + 只读包视图(§3.6)───────────────────── */
+{
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const toastStack = doc.createElement("div");
+  toastStack.setAttribute("id", "toastStack");
+  doc.body.appendChild(toastStack);
+  doc.querySelector = (sel) => doc.body.querySelector(sel);
+  globalThis.location = { hash: "" };
+
+  const SKILLS_PKG = [
+    { name: "weather.query", version: "1.0.0", kind: "prompt", permissions: { tools: [], skills: ["weather.geocode"] } },
+    { name: "weather.geocode", version: "1.0.0", kind: "prompt", permissions: { tools: [], skills: [] } },
+    { name: "common.text.word_count", version: "1.0.0", kind: "prompt", permissions: { tools: [], skills: [] } },
+  ];
+  globalThis.fetch = async (path) => {
+    const url = String(path);
+    const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (url === "/api/skills") return reply(SKILLS_PKG.map((s) => ({ ...s, lint: [] })));
+    if (url.startsWith("/api/skills/") && !url.includes("packages")) {
+      const name = decodeURIComponent(url.slice("/api/skills/".length));
+      return reply(SKILLS_PKG.find((s) => s.name === name) ?? { name, lint: [] });
+    }
+    if (url === "/api/skills/packages") {
+      return reply([{ ns: "weather", root: "weather.query", tier: "none",
+        members: ["weather.query", "weather.geocode"] }]);
+    }
+    if (url.startsWith("/api/lab/packages/weather.query/closure")) {
+      return reply({
+        root: "weather.query", root_tier: "none",
+        members: [
+          { name: "weather.query", ref_by: null, status: "production", tier: "none", depth: 0 },
+          { name: "weather.geocode", ref_by: "weather.query", status: "production", tier: "none", depth: 1 },
+        ],
+        errors: [],
+      });
+    }
+    throw new Error(`未 stub 的请求: ${url}`);
+  };
+
+  const { store } = await import("../js/store.js");
+  const { openSkillsView, closeSkillsView } = await import("../js/components/skills-view.js");
+  const main = doc.createElement("main");
+  doc.body.appendChild(main);
+  store.set({ skillsets: [], skillSet: null });
+  const view = openSkillsView(main);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  const listHtml = () => view.els.list.innerHTML;
+  assert.ok(listHtml().includes('data-pkg-view="weather"'), "闭包完整簇有包徽标");
+  assert.ok(!listHtml().includes('data-pkg-view="common"'), "单成员簇无包徽标");
+
+  // 点徽标 → 只读包视图(成员链接,无动作按钮)
+  const chip = new StubEl("span");
+  chip.dataset.pkgView = "weather";
+  chip.parentNode = view.root;
+  view.root.trigger("click", { target: chip });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  const detail = view.els.detail.innerHTML;
+  assert.ok(detail.includes("weather.query"), "只读包视图渲染根");
+  assert.ok(detail.includes("#/skills/weather.geocode"), "成员为只读链接");
+  assert.ok(!detail.includes("data-pkg-create"), "只读视图无一键成稿按钮");
+  closeSkillsView();
+}
+
 console.log("browse-tree.test.mjs: all assertions passed");

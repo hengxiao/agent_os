@@ -92,4 +92,7 @@ export const COPY = {
   "lab.pkg.create": "补上它",
   "lab.plan.title": "提交计划",
   "lab.plan.blockers": "挡路的",
+  "pkg.badge": "一整包",
+  "lab.tpl.pkg.inspect_clean": "功能包:巡检 + 清理",
+  "lab.tpl.pkg.research_report": "功能包:检索 + 报告",
 };

@@ -501,3 +501,108 @@ def _manifest_to_dict(manifest: SkillManifest) -> dict[str, Any]:
             if v is not None
         }
     return out
+
+
+def package_template_members(key: str, root_name: str) -> dict[str, tuple[dict[str, Any], str]]:
+    """功能包模板(docs/SKILL-PACKAGES.md §3.2;P4):按根名生成整套成员。
+
+    返回 ``{成员名: (manifest dict, prompt 文本)}``——成员互链、白名单已对齐
+    (子技能名 = 根的第一段命名空间 + 后缀,与助手的命名空间围栏同口径)。
+    模板名用场景人话,不用技术档位(§3.2 的 UX 评审回应)。
+    """
+    seg = root_name.split(".")[0]
+    if key == "pkg.inspect_clean":
+        return {
+            root_name: (
+                {
+                    "version": "0.1.0",
+                    "kind": "prompt",
+                    "description": f"{seg} 巡检入口。Use when 需要盘点并清理 {seg} 工作区;Do not use when 只读单个文件。",
+                    "inputs": {
+                        "type": "object",
+                        "properties": {"target_dir": {"type": "string"}},
+                        "required": ["target_dir"],
+                    },
+                    "outputs": {"type": "object", "properties": {"status": {"type": "string"}}, "required": ["status"]},
+                    "permissions": {"tools": [], "skills": [f"{seg}.plan", f"{seg}.execute"]},
+                },
+                (
+                    f"你是 {seg} 巡检员(L1 只读)。先盘点 target_dir,再调 {seg}.plan 写计划,"
+                    f"最后调 {seg}.execute 执行。被拒绝不要重试,记录后继续,status 记 partial。\n"
+                ),
+            ),
+            f"{seg}.plan": (
+                {
+                    "version": "0.1.0",
+                    "kind": "prompt",
+                    "description": f"{seg} 清理计划写入。Use when 需要把清理计划/巡检日志落盘;Do not use when 要删除文件。",
+                    "inputs": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                        "required": ["path", "content"],
+                    },
+                    "outputs": {"type": "object", "properties": {"written": {"type": "string"}}, "required": ["written"]},
+                    "permissions": {"tools": ["system.file.write"], "skills": []},
+                    "trust": {"reversal": "覆盖写前自动 .bak(写工具现状),回滚 = 取回 .bak 重写"},
+                },
+                "你是计划书记员(L2 可逆档)。用 system.file.write 把 content 写入 path,返回 written 字段。\n",
+            ),
+            f"{seg}.execute": (
+                {
+                    "version": "0.1.0",
+                    "kind": "prompt",
+                    "description": f"{seg} 清理执行(L3 指名删除)。Use when 清理计划已批准、需要删除指名文件;Do not use when 目标未指名。",
+                    "inputs": {
+                        "type": "object",
+                        "properties": {
+                            "targets": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 20},
+                            "dry_run": {"type": "boolean"},
+                        },
+                        "required": ["targets", "dry_run"],
+                    },
+                    "outputs": {
+                        "type": "object",
+                        "properties": {"destroyed": {"type": "array", "items": {"type": "string"}}},
+                        "required": ["destroyed"],
+                    },
+                    "permissions": {"tools": ["system.file.delete"], "skills": []},
+                    "trust": {"blast_radius": "仅 targets 指名清单(单次 ≤20);空目标/通配目标报错"},
+                },
+                "你是清理执行员(L3 不可逆档)。dry_run=true 只返回将影响清单不执行;false 按 targets 逐个删除,不得增删目标。返回 destroyed 字段。\n",
+            ),
+        }
+    if key == "pkg.research_report":
+        return {
+            root_name: (
+                {
+                    "version": "0.1.0",
+                    "kind": "prompt",
+                    "description": f"{seg} 检索报告入口。Use when 需要检索资料并形成报告;Do not use when 只要单条事实。",
+                    "inputs": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"],
+                    },
+                    "outputs": {"type": "object", "properties": {"report_path": {"type": "string"}}, "required": ["report_path"]},
+                    "permissions": {"tools": [], "skills": [f"{seg}.report"]},
+                },
+                f"你是 {seg} 检索员(L1 只读)。围绕 query 整理要点,调 {seg}.report 写成报告,返回 report_path。\n",
+            ),
+            f"{seg}.report": (
+                {
+                    "version": "0.1.0",
+                    "kind": "prompt",
+                    "description": f"{seg} 报告写作。Use when 需要把要点写成报告落盘;Do not use when 只需口头回答。",
+                    "inputs": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                        "required": ["path", "content"],
+                    },
+                    "outputs": {"type": "object", "properties": {"written": {"type": "string"}}, "required": ["written"]},
+                    "permissions": {"tools": ["system.file.write"], "skills": []},
+                    "trust": {"reversal": "覆盖写前自动 .bak(写工具现状),回滚 = 取回 .bak 重写"},
+                },
+                "你是报告撰写员(L2 可逆档)。用 system.file.write 把 content 写入 path,返回 written 字段。\n",
+            ),
+        }
+    raise ValueError(f"未知功能包模板: {key!r}(可选: pkg.inspect_clean | pkg.research_report)")

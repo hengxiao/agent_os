@@ -313,3 +313,64 @@ def test_atomic_write_success_single_bak(tmp_path, production):
     assert any(e["name"] == "lab.new" for e in data["skills"])
     from agent_os.api.v1 import SkillRef
     assert production.get(SkillRef(name="lab.new")).manifest.name == "lab.new"
+
+
+# ---------------------------------------------------------------------------
+# §4.4 目录形态 set 落盘(P4)
+# ---------------------------------------------------------------------------
+
+
+def test_promote_package_lands_as_set_dir(tmp_path, production, tools):
+    """≥2 成员 → 目录形态 set:成员每员一文件 + agent-os.toml(path=".")、
+    单文件同名条目迁移移除、D6 发现条件(skills.yaml)满足、set 可独立加载。"""
+    from agent_os.skills.package import _atomic_write_set
+
+    store = _setup_package(tmp_path, production, tools)
+    sets_root = tmp_path / "skillsets"
+    # 先单文件 promote(成员进单文件),再包级提交 → 应迁移到目录
+    _atomic_write(production, {
+        "lab.child": {"name": "lab.child", "version": "0.1.0", "kind": "prompt",
+                      "description": "x", "permissions": {"tools": [], "skills": []}, "prompt": "p"},
+    })
+    entries = {}
+    for m in build_plan("lab.root", store=store, production=production, tools=tools)["members"]:
+        draft = store.read(m["name"])
+        from agent_os.skills.package import _entry_of
+        entries[m["name"]] = _entry_of(draft) | {"version": m["to_version"]}
+    ns = _atomic_write_set(production, entries, sets_root, "lab")
+    assert ns == "lab"
+    set_dir = sets_root / "lab"
+    assert (set_dir / "skills.yaml").is_file(), "D6 发现条件(load_skillsets 要求 skills.yaml)"
+    assert (set_dir / "agent-os.toml").is_file()
+    # 单文件里的 lab.child 被迁移移除(防重复定义)
+    data = yaml.safe_load(Path(production.path).read_text(encoding="utf-8"))
+    assert not any(e.get("name") == "lab.child" for e in data["skills"])
+    assert not any(e.get("name") == "lab.root" for e in data["skills"])
+    # set 目录可独立加载(loader 目录合并,成员齐全)
+    from agent_os.skills.local_file import LocalFileSkillRegistry
+    reg = LocalFileSkillRegistry(str(set_dir))
+    names = {m.name for m in reg.manifests()}
+    assert names == {"lab.root", "lab.child"}
+    # 生产单文件 reload 后仍完整(迁移没炸既有条目)
+    assert production.get(__import__("agent_os.api.v1", fromlist=["SkillRef"]).SkillRef(name="lab.published"))
+
+
+def test_atomic_write_set_staging_failure_zero_change(tmp_path, production, tools):
+    """set 落盘先证后换:候选含悬空依赖 → 单文件与 set 目录都零变化。"""
+    from agent_os.kernel.errors import SkillLoadError
+    from agent_os.skills.package import _atomic_write_set
+
+    sets_root = tmp_path / "skillsets"
+    before = Path(production.path).read_bytes()
+    bad = {
+        "lab.bad": {"name": "lab.bad", "version": "0.1.0", "kind": "prompt",
+                    "description": "x", "permissions": {"tools": [], "skills": ["no.such.dep"]},
+                    "prompt": "p"},
+        "lab.other": {"name": "lab.other", "version": "0.1.0", "kind": "prompt",
+                      "description": "y", "permissions": {"tools": [], "skills": []}, "prompt": "p"},
+    }
+    with pytest.raises(SkillLoadError):
+        _atomic_write_set(production, bad, sets_root, "lab")
+    assert Path(production.path).read_bytes() == before, "验证失败单文件零变化"
+    assert not (sets_root / "lab").exists(), "验证失败 set 目录零写入"
+    assert not (sets_root / "lab.staging").exists(), "staging 已清理"

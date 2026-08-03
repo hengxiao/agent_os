@@ -2386,6 +2386,16 @@ th.is-sorted .us-sort { color: var(--live); }
 }
 .ns-leaf { padding-left: calc(var(--s4) + var(--ns-depth, 0) * var(--s4)); }
 
+/* 包徽标(docs/SKILL-PACKAGES.md §3.6;P4):闭包完整簇的命名空间行 chip */
+.pkg-badge {
+  font-size: var(--text-2xs);
+  color: var(--live);
+  border: var(--stroke) solid var(--live);
+  border-radius: var(--r-sm);
+  padding: 0 var(--s1);
+  cursor: pointer;
+}
+
 /* run 头"等待上级裁决"Banner(帧拿不到精确标注时的兜底,S3 §5) */
 .wb-wait { align-items: center; }
 .wb-wait .banner-main { flex: 1; }

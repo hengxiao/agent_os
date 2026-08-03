@@ -126,7 +126,10 @@ export function flattenLeaves(tree) {
 
 /* 树渲染(两视图共用;leafHtml 由视图决定叶子行长相)。
    expanded: Set(命名空间 full 路径);onToggle 由事件层按 data-ns-toggle 委托。 */
-export function nsTreeHtml(tree, { expanded, leafHtml }) {
+/* 树渲染(两视图共用;leafHtml 由视图决定叶子行长相)。
+   expanded: Set(命名空间 full 路径);onToggle 由事件层按 data-ns-toggle 委托。
+   nsExtra(可选):命名空间行的视图侧扩展点(Skills 页的包徽标,P4)。 */
+export function nsTreeHtml(tree, { expanded, leafHtml, nsExtra = null }) {
   const render = (node, depth) => {
     const parts = [];
     if (node.leaf) parts.push(leafHtml(node.leaf, depth));
@@ -143,6 +146,7 @@ export function nsTreeHtml(tree, { expanded, leafHtml }) {
         ` aria-expanded="${open}" aria-label="${esc(copy("ns.toggle"))} ${esc(child.full)}">` +
         `<span aria-hidden="true">${open ? "▾" : "▸"}</span></button>` +
         `<span class="ns-name mono" title="${esc(child.full)}">${esc(child.seg)}</span>` +
+        (nsExtra ? nsExtra(child) : "") +
         `<span class="ns-count">${child.count}</span>` +
         `</div>` +
         (open ? render(child, depth + 1) : ""),

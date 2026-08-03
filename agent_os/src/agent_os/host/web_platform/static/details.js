@@ -190,3 +190,21 @@ export function runDetailHtml({ detail, signals }) {
     `</div>`
   );
 }
+
+/* Tab Surface 分发(docs/APP-MODEL.md §3/§8;M1 概念归位):
+   详情渲染按 "app kind + surface" 寻址——详情 kind 即 tab surface 名。 */
+const _TAB_SURFACES = {
+  gate: (data) => gateDetailHtml(data),
+  pack: (data) => packDetailHtml(data),
+  plan: (data) => planDetailHtml(data),
+  run: (data) => runDetailHtml(data),
+  diff: (data) => diffDetailHtml(data),
+  esc: (data) => escDetailHtml(data),
+  decompose: (data) => decomposeDetailHtml(data),
+};
+
+export function renderTabSurface(kind, data) {
+  const render = _TAB_SURFACES[kind];
+  // 无 manifest 的 kind 拒绝渲染但不炸(docs/APP-MODEL.md §9 回退面)
+  return render ? render(data) : `<div class="pf-detail"><pre class="mono">${esc(JSON.stringify(data ?? {}, null, 2))}</pre></div>`;
+}

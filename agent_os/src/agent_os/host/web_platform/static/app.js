@@ -8,8 +8,8 @@
 
 import { copy, initTheme } from "/static/js/themes.js";
 import { esc, toast } from "/static/js/util.js";
-import { summaryHtml } from "./cards.js";
-import { decomposeDetailHtml, diffDetailHtml, escDetailHtml, gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml } from "./details.js";
+import { renderCardSurface } from "./cards.js";
+import { renderTabSurface } from "./details.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -107,7 +107,7 @@ function msgHtml(m) {
     m.meta?.route === "rule" && m.meta?.reason === "llm_unavailable"
       ? `<div class="pf-bubble-note">${esc(copy("platform.route.degrade"))}</div>`
       : "";
-  const cards = (m.cards ?? []).map(summaryHtml).join(""); // 对话流 = 摘要层(人话)
+  const cards = (m.cards ?? []).map(renderCardSurface).join(""); // 对话流 = Card Surface(摘要层)
   return `<div class="pf-msg" data-role="${role}"><div class="pf-bubble">${degrade}${text}${cards}</div></div>`;
 }
 
@@ -210,7 +210,8 @@ async function send() {
 /* ── 卡片动作(同前;结果追加进会话)──────────────────────────── */
 
 async function cardAction(btn) {
-  const actionId = btn.dataset.cardAct;
+  const actionId = btn.dataset.appAction || btn.dataset.cardAct;
+  const instId = btn.dataset.appInst; // M1:有 instance 走新 action 管道(§4)
   const payload = JSON.parse(btn.dataset.payload ?? "{}");
   const card = btn.closest(".pf-card");
   const ack = card?.querySelector("[data-ack]");
@@ -218,16 +219,33 @@ async function cardAction(btn) {
     toast(copy("platform.warnings.ack"), "info");
     return;
   }
-  if (ack) payload.warnings_ack = true;
   btn.disabled = true;
   try {
-    const res = await fetch("/platform/api/cards/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action_id: actionId, payload, session_id: state.current }),
-    });
-    if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
-    const result = await res.json();
+    let result;
+    if (instId) {
+      // 新管道:服务端按 manifest 绑定参数,前端只交事件参数(防越权构造)
+      const res = await fetch(`/platform/api/apps/${encodeURIComponent(instId)}/actions/${encodeURIComponent(actionId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          surface: "card",
+          args: ack ? { warnings_ack: true } : {},
+          session_id: state.current,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+      result = await res.json();
+    } else {
+      // 旧管道(过渡兼容:M1 前持久化的卡没有 instance;M3 退役)
+      if (ack) payload.warnings_ack = true;
+      const res = await fetch("/platform/api/cards/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action_id: actionId, payload, session_id: state.current }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+      result = await res.json();
+    }
     state.messages.push({ role: "agent", text: result.text ?? "", cards: result.cards ?? [] });
     renderMain();
   } catch (e) {
@@ -278,26 +296,22 @@ async function openDetail(kind, ref, data) {
 
 async function _loadDetail(kind, ref, data) {
   try {
-    if (kind === "gate") return { kind, ref, html: gateDetailHtml(data) };
-    if (kind === "plan") return { kind, ref, html: planDetailHtml(data) };
-    if (kind === "diff") return { kind, ref, html: diffDetailHtml(data) };
-    if (kind === "esc") return { kind, ref, html: escDetailHtml(data) };
-    if (kind === "decompose") return { kind, ref, html: decomposeDetailHtml(data) };
+    // gate/plan/diff/esc/decompose:数据在卡内不拉取;pack/run 拉取(同一 Tab Surface 分发)
+    if (["gate", "plan", "diff", "esc", "decompose"].includes(kind)) {
+      return { kind, ref, html: renderTabSurface(kind, data) };
+    }
     if (kind === "pack") {
       const closure = await (
         await fetch(`/api/lab/packages/${encodeURIComponent(ref)}/closure?mode=runtime`)
       ).json();
-      return { kind, ref, html: packDetailHtml(closure) };
+      return { kind, ref, html: renderTabSurface(kind, closure) };
     }
     if (kind === "run") {
       const [detail, signals] = await Promise.all([
         (await fetch(`/api/runs/${encodeURIComponent(ref)}`)).json(),
         (await fetch(`/api/runs/${encodeURIComponent(ref)}/signals`)).json(),
       ]);
-      if (detail.status === "failed" && detail.error) {
-        // run 详情本身就是失败面,不算加载错误
-      }
-      return { kind, ref, html: runDetailHtml({ detail, signals }) };
+      return { kind, ref, html: renderTabSurface(kind, { detail, signals }) };
     }
     return { kind, ref, error: `unknown detail kind: ${kind}` };
   } catch (e) {
@@ -330,13 +344,20 @@ function _markResolved(questionId, resolved) {
 async function answerDecision(btn) {
   const qid = btn.dataset.decision;
   const answer = btn.dataset.answer;
+  const instId = btn.dataset.appInst; // M1:有 instance 走新 action 管道(作答 = action id)
   btn.disabled = true;
   try {
-    const res = await fetch(`/platform/api/decisions/${encodeURIComponent(qid)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answer }),
-    });
+    const res = instId
+      ? await fetch(`/platform/api/apps/${encodeURIComponent(instId)}/actions/${encodeURIComponent(answer)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ surface: "card" }),
+        })
+      : await fetch(`/platform/api/decisions/${encodeURIComponent(qid)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ answer }),
+        });
     if (!res.ok) {
       // 404 = 已被别处处理(旧收件箱/另一标签页);400 = 答案不合(协议串没变,按已处理提示)
       _markResolved(qid, "gone");

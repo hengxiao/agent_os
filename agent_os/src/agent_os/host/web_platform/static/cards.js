@@ -8,9 +8,12 @@
 import { copy } from "/static/js/themes.js";
 import { esc } from "/static/js/util.js";
 
-const _act = (a) =>
-  `<button class="btn" data-card-act="${esc(a.id)}" data-payload='${esc(JSON.stringify(a.payload ?? {}))}'>` +
-  `${esc(a.label)}</button>`;
+/* 动作按钮:有 app instance(M1)即带新管道寻址(data-app-inst/action),
+   旧 cards/action 的 data-card-act/payload 保留(过渡兼容,M3 退役) */
+const _act = (a, inst) =>
+  `<button class="btn" data-card-act="${esc(a.id)}" data-payload='${esc(JSON.stringify(a.payload ?? {}))}'` +
+  (inst ? ` data-app-inst="${esc(inst)}" data-app-action="${esc(a.id)}"` : "") +
+  `>${esc(a.label)}</button>`;
 
 const _tier = (tier) =>
   tier
@@ -167,7 +170,7 @@ export function cardHtml(card) {
   const type = card?.type ?? "";
   const render = RENDERERS[type];
   const body = render ? render(card) : `<pre class="mono">${esc(JSON.stringify(card?.data ?? {}, null, 2))}</pre>`;
-  const actions = (card?.actions ?? []).map(_act).join("");
+  const actions = (card?.actions ?? []).map((a) => _act(a, card?.instance)).join("");
   return (
     `<div class="pf-card" data-card="${esc(type)}">` +
     `<div class="pf-card-tag mono">${esc(type)}</div>` +
@@ -333,7 +336,7 @@ const _OPTION_LABEL = {
 /* escalation 摘要(W2):「skill」想执行操作(tier 人话),需要你批准 +
    就地三按钮(approve-run 仅 L2 选项里有才出现——选项面是内核给的,卡不造)。
    已决(data.resolved)按钮置灰 + 状态字。 */
-function escalationSummary(d) {
+function escalationSummary(d, inst) {
   const tierKey = { none: "none", reversible: "reversible", irreversible: "irreversible" }[d.tier];
   const resolved = d.resolved;
   const status = resolved
@@ -346,6 +349,7 @@ function escalationSummary(d) {
     .map(
       (opt) =>
         `<button class="btn" data-decision="${esc(d.question_id ?? "")}" data-answer="${esc(opt)}"` +
+        (inst ? ` data-app-inst="${esc(inst)}" data-app-action="${esc(opt)}"` : "") +
         `${resolved ? " disabled" : ""}>${esc(copy(_OPTION_LABEL[opt] ?? "platform.esc.deny"))}</button>`
     )
     .join("");
@@ -367,8 +371,9 @@ export function summaryHtml(card) {
   const type = card?.type ?? "";
   const d = card?.data ?? {};
   const render = { plan: planSummary, skill_pack: packSummary, gate_report: gateSummary,
-    diff: diffSummary, publish: publishSummary, escalation: escalationSummary }[type];
-  const body = render ? render(d) : type === "table" ? tableSummary(card)
+    diff: diffSummary, publish: publishSummary }[type];
+  const body = type === "escalation" ? escalationSummary(d, card?.instance)
+    : render ? render(d) : type === "table" ? tableSummary(card)
     : `<pre class="mono">${esc(JSON.stringify(d, null, 2))}</pre>`;
   const link =
     type === "plan"
@@ -385,11 +390,17 @@ export function summaryHtml(card) {
             : type === "table" && d.ref?.kind === "run" && d.ref?.id
               ? _detailLink("run", d.ref.id, copy("platform.detail.run"), { id: d.ref.id })
               : "";
-  const actions = (card?.actions ?? []).map(_act).join("");
+  const actions = (card?.actions ?? []).map((a) => _act(a, card?.instance)).join("");
   return (
     `<div class="pf-card" data-card="${esc(type)}">` +
     body +
     (link || actions ? `<div class="pf-card-actions">${link}${actions}</div>` : "") +
     `</div>`
   );
+}
+
+/* Card Surface 分发(docs/APP-MODEL.md §3/§8;M1 概念归位):
+   渲染按 "app kind + surface" 寻址——卡型即 app kind,摘要渲染即 card surface。 */
+export function renderCardSurface(card) {
+  return summaryHtml(card);
 }

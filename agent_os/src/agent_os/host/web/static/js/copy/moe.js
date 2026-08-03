@@ -188,4 +188,9 @@ export const COPY = {
   "platform.route.llm": "模型路由",
   "platform.route.rule": "规则路由",
   "platform.route.degrade": "模型服务暂不可用,先用规则模式喵",
+  "platform.act.approve": "批准,生成首稿喵",
+  "platform.act.recheck": "生成提交计划",
+  "platform.act.accept": "✓ 接受",
+  "platform.act.discard": "放弃",
+  "platform.act.confirm": "确认发布",
 };

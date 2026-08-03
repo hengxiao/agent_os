@@ -25,6 +25,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent_os.api.v1 import ProviderError, derive_skill_tier
+from agent_os.host.web_platform.apps import (
+    AppInstanceStore,
+    AppRegistry,
+    bind_args,
+    default_manifests,
+)
 from agent_os.host.web_platform.artifacts import (
     ACTION_WHITELIST,
     build_diff_card,
@@ -68,13 +74,37 @@ class DecisionBody(BaseModel):
     answer: str
 
 
+class AppActionBody(BaseModel):
+    """app action 管道(docs/APP-MODEL.md §4;M1):表面 + 事件参数。
+
+    ``surface``:调用来自哪张面孔(card/tab)——manifest 据此校验表面合法;
+    ``args``:事件参数(warnings_ack/version 等,合并进 state 绑定参数,事件优先);
+    ``session_id``(可选):结果以 agent 消息回插该会话(因果可见,§5.2)。
+    """
+
+    surface: str = "card"
+    args: dict[str, Any] = {}
+    session_id: str | None = None
+
+
+class AppSpawnBody(BaseModel):
+    """spawn(docs/APP-MODEL.md §4):从卡面"打开"创建 app instance;kind+ref 去重。"""
+
+    kind: str
+    ref: str
+    title: str = ""
+    state: dict[str, Any] = {}
+    created_by: str = ""
+
+
 #: 升权档 → 人话(W2 decisions 聚合字段;摘要层禁 tier 术语,前端按 tier 自取 copy,
 #: 本字段是给非前端消费方/调试面的固定中文)
 _TIER_HUMAN = {"none": "只读", "reversible": "可改能撤销", "irreversible": "不可逆需审批"}
 
 
 def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -> FastAPI:
-    """装配平台 app:会话存储 + 编排器 + 卡片动作转发面 + 升权决策转发面。"""
+    """装配平台 app:会话存储 + 编排器 + 卡片动作转发面 + 升权决策转发面
+    + app 协议面(docs/APP-MODEL.md;M1:manifest 注册表 + action 管道)。"""
     app = FastAPI(title="Agent OS Platform(对话中枢)")
     sessions = SessionStore(Path(artifacts_root) / "platform_sessions")
     providers, route_model = _llm_route_backend(manager, lab_store)
@@ -85,6 +115,45 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         model=route_model,
         name_taken=lambda n: _name_taken(manager, lab_store, n),
     )
+    #: app instance 存储(M1 内存态;卡创建即登记,kind+ref 去重)
+    instances = AppInstanceStore()
+
+    # ------------------------------------------------------------------
+    # app instance 登记(docs/APP-MODEL.md §2;M1:创建卡时登记,卡上带 instance id)
+    # ------------------------------------------------------------------
+
+    def _card_ref(card: dict[str, Any]) -> str:
+        """卡 → app 业务锚(kind+ref 唯一性的 ref 段)。"""
+        d = card.get("data") or {}
+        t = card.get("type")
+        if t == "plan":
+            return (d.get("create") or [{}])[0].get("name", "")
+        if t == "publish":
+            return d.get("plan_id", "")
+        if t == "escalation":
+            return d.get("question_id", "")
+        if t == "table":
+            return (d.get("ref") or {}).get("id") or d.get("title", "")
+        return d.get("name") or d.get("draft") or d.get("title") or ""
+
+    def _register_cards(cards: list[dict[str, Any]], *, created_by: str) -> None:
+        """每张卡登记一个 app instance(kind = 卡型;state = 卡 data + 绑定便利键),
+        并把 instance id 写回卡 dict(前端 action 管道的寻址面,§4)。"""
+        for card in cards:
+            kind = card.get("type", "")
+            data = card.get("data") or {}
+            state = dict(data)
+            if kind == "plan":  # args_from state.name/state.template 的便利键
+                create0 = (data.get("create") or [{}])[0]
+                state.setdefault("name", create0.get("name", ""))
+                state.setdefault("template", create0.get("template", ""))
+            elif kind == "gate_report":  # args_from state.root
+                state.setdefault("root", data.get("draft", ""))
+            inst, _opened = instances.register(
+                kind=kind, ref=_card_ref(card), title=_card_ref(card),
+                state=state, created_by=created_by,
+            )
+            card["instance"] = inst["id"]
 
     # ------------------------------------------------------------------
     # 会话
@@ -97,7 +166,13 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
 
     @app.post("/api/sessions", status_code=201)
     def create_session() -> dict[str, Any]:
-        return sessions.create()
+        session = sessions.create()
+        # M1 对话 app 归一:会话即 conversation app 实例(§8 迁移地图)
+        instances.register(
+            kind="conversation", ref=session["id"], title=session["id"],
+            state={"messages": [], "outbox": []}, created_by="",
+        )
+        return session
 
     @app.get("/api/sessions/{session_id}")
     def get_session(session_id: str) -> dict[str, Any]:
@@ -115,6 +190,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             agent_msg = orch.handle(session, body.text)
             for card in agent_msg["cards"]:  # 出服务端前过协议闸(防编排侧造出坏卡)
                 validate_card(card)
+            _register_cards(agent_msg["cards"], created_by=session_id)  # M1:卡 → app instance
             sessions.append(session_id, agent_msg)
             return agent_msg
         except FileNotFoundError as e:
@@ -207,6 +283,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
                 text=f"「{d['skill']}」请求批准({d['tier_human']}),细节见下卡。",
                 cards=[card],
             )
+            _register_cards(msg["cards"], created_by=session_id)  # M1:决策卡也是 app
             sessions.append(session_id, msg)
             presented.append(msg)
         return {"presented": presented}
@@ -217,6 +294,8 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
 
     @app.post("/api/cards/action")
     def card_action(body: CardActionBody) -> dict[str, Any]:
+        """旧动作入口(过渡期保留,M3 退役;裁决面 ACTION_WHITELIST 不变)。
+        handler 与新 action 管道**同一份实现**(_ACTION_HANDLERS/SKILL_BINDINGS)。"""
         if body.action_id not in ACTION_WHITELIST:
             raise HTTPException(
                 status_code=400,
@@ -225,15 +304,20 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         handler = _ACTION_HANDLERS.get(body.action_id)
         if handler is None:
             raise HTTPException(status_code=400, detail=f"action {body.action_id!r} 本期未接线")
+        result = _run_handler(handler, body.payload)
+        _register_cards(result.get("cards") or [], created_by=body.session_id or "")
+        # 对话持久化(§3):带 session_id 时,动作结果以 agent 消息落进会话
+        if body.session_id and result.get("text"):
+            sessions.append(
+                body.session_id,
+                new_message("agent", text=result["text"], cards=result.get("cards") or []),
+            )
+        return result
+
+    def _run_handler(fn: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        """调 handler 并统一异常归类(旧 cards/action 与新 action 管道同一映射面)。"""
         try:
-            result = handler(body.payload)
-            # 对话持久化(§3):带 session_id 时,动作结果以 agent 消息落进会话
-            if body.session_id and result.get("text"):
-                sessions.append(
-                    body.session_id,
-                    new_message("agent", text=result["text"], cards=result.get("cards") or []),
-                )
-            return result
+            return fn(payload)
         except FileExistsError as e:
             # 草稿重名(重复批准/历史残留):友好 409,不 500(读屏层是人话,详情给原文)
             raise HTTPException(status_code=409, detail=f"同名草稿已存在:{e}") from e
@@ -430,6 +514,100 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         "plan.recheck": _act_plan_recheck,
         "iterate.generate": _act_iterate_generate,
     }
+
+    # ------------------------------------------------------------------
+    # app 协议面(docs/APP-MODEL.md;M1):manifest 注册表 + action 管道 + spawn。
+    # SKILL_BINDINGS 把 manifest 的 skill 键映射到**同一份**薄 handler——
+    # 白名单从代码升格为 manifest 数据,零新权限通道(§7 红线不变)。
+    # ------------------------------------------------------------------
+
+    def _act_decision_answer(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.decision.answer:升权作答(answer 由管道按 action_id 注入)。"""
+        qid = str(payload.get("question_id") or "")
+        answer = str(payload.get("answer") or "")
+        try:
+            manager.supervisor_answer(qid, answer)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"ok": True, "text": "已记录你的决定。", "state": {"resolved": answer}}
+
+    SKILL_BINDINGS = {
+        "platform.scaffold.approve": _act_scaffold_approve,
+        "platform.iterate.generate": _act_iterate_generate,
+        "platform.candidate.accept": _act_candidate_accept,
+        "platform.candidate.discard": _act_candidate_discard,
+        "platform.version.rewind": _act_version_rewind,
+        "platform.plan.recheck": _act_plan_recheck,
+        "platform.plan.confirm": _act_plan_confirm,
+        "platform.decision.answer": _act_decision_answer,
+    }
+
+    registry = AppRegistry(known_skills=set(SKILL_BINDINGS))
+    for _manifest in default_manifests():
+        registry.register(_manifest)
+    #: 内省面(测试/调试;registry 是进程静态面,实例存储是 M1 内存态)
+    app.state.platform_registry = registry
+    app.state.platform_instances = instances
+
+    @app.post("/api/apps/spawn", status_code=201)
+    def app_spawn(body: AppSpawnBody) -> dict[str, Any]:
+        """spawn(§4):从卡面"打开"创建 app instance;kind 须在注册表,kind+ref 去重。"""
+        if registry.get(body.kind) is None:
+            raise HTTPException(status_code=400, detail=f"未注册的 app kind: {body.kind!r}")
+        inst, opened = instances.register(
+            kind=body.kind, ref=body.ref, title=body.title or body.ref,
+            state=body.state, created_by=body.created_by,
+        )
+        return {"instance": inst, "opened": opened}
+
+    @app.get("/api/apps/{instance_id}")
+    def app_get(instance_id: str) -> dict[str, Any]:
+        """instance 读取(state 一致性/两表面同源的检查面,M1 先数据面)。"""
+        inst = instances.get(instance_id)
+        if inst is None:
+            raise HTTPException(status_code=404, detail=f"找不到 app instance: {instance_id}")
+        return inst
+
+    @app.post("/api/apps/{instance_id}/actions/{action_id}")
+    def app_action(instance_id: str, action_id: str, body: AppActionBody) -> dict[str, Any]:
+        """action 管道(§4):manifest 校验 → args 绑定(state+事件)→ handler → state 回写。
+
+        前端永不直接调业务端点:action 存在性/表面合法/参数来源都由 manifest
+        裁决(防前端越权构造,§7);handler 与旧 cards/action 同源。
+        """
+        inst = instances.get(instance_id)
+        if inst is None:
+            raise HTTPException(status_code=404, detail=f"找不到 app instance: {instance_id}")
+        action = registry.action_of(inst["kind"], action_id)
+        if action is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"app {inst['kind']!r} 无 action {action_id!r}(manifest 裁决)",
+            )
+        if body.surface not in (action.get("surface") or []):
+            raise HTTPException(
+                status_code=400,
+                detail=f"action {action_id!r} 不在 {body.surface!r} 面提供(manifest 表面裁决)",
+            )
+        try:
+            payload = bind_args(action, inst["state"])
+        except KeyError as e:
+            raise HTTPException(status_code=400, detail=f"参数绑定缺源: {e}") from e
+        payload.update(body.args)  # 事件参数优先(warnings_ack/version 等)
+        if action["skill"] == "platform.decision.answer":
+            payload["answer"] = action_id  # 作答 = action id(approve-once/approve-run/deny)
+        result = _run_handler(SKILL_BINDINGS[action["skill"]], payload)
+        if isinstance(result.get("state"), dict):
+            instances.update_state(instance_id, result["state"])
+        _register_cards(result.get("cards") or [], created_by=instance_id)
+        if body.session_id and result.get("text"):
+            sessions.append(
+                body.session_id,
+                new_message("agent", text=result["text"], cards=result.get("cards") or []),
+            )
+        return {**result, "instance": inst}
 
     # 前端样品(docs/WEB-PLATFORM.md §10):static/ 直接可访问(/platform/ → index.html)
     static_dir = Path(__file__).resolve().parent / "static"

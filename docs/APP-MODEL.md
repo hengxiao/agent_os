@@ -171,10 +171,25 @@ send(text):
 
 | 期 | 内容 |
 |---|---|
-| M1 | AppManifest 注册表 + action 管道(替代 cards/action)+ 对话 app 归一(现状卡型全部转成六个 app kind 的表面) |
+| M1 ✅ | AppManifest 注册表 + action 管道(替代 cards/action)+ 对话 app 归一(现状卡型全部转成六个 app kind 的表面) |
 | M2 | Compositor 正式化(关闭≠销毁/嵌套 ≤2/图标列)+ app.state 持久化 |
 | M3 | run/debug/lab-draft 三个 app kind 接入(对话 → 包 → run → debug 闭环) |
 | M4 | legacy 五页以 tab surface 接入 + SSE transport + 主动汇报(app 状态推送进对话) |
+
+> **M1 实现注**(2026-08-03,分支 debugger):
+> - **文件**:`web_platform/apps.py`(manifest 校验 + AppRegistry +
+>   AppInstanceStore + bind_args + default_manifests 八 kind:conversation +
+>   六卡型 + escalation);`app.py`(SKILL_BINDINGS + 管道/spawn/GET instance
+>   三端点 + 卡创建即登记 instance);前端 cards.js/app.js(按钮带
+>   data-app-inst 寻址,有 instance 走新管道,无则旧管道)。
+> - **instance 模型**:kind = 卡型,ref = 业务锚(草稿名/plan_id/question_id…),
+>   state = 卡 data + 绑定便利键(plan 的 name/template、gate 的 root);
+>   卡 dict 上带 `instance` id 持久化进会话;M1 内存态(instance store),
+>   持久化归 M2。
+> - **新旧管道过渡**:`POST /api/cards/action` 保留(旧持久化卡无 instance,
+>   前端自动回落);两管道共享同一 handler 映射(`_run_handler` 统一异常归类),
+>   M3 退役旧入口。manifest 的 action label 是 copy key(六主题已同步),
+>   M1 前端仍用卡 JSON 自带 label,tab surface 从 manifest 渲染动作归 M2+。
 
 ## 11. 不做
 

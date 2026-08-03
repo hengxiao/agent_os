@@ -195,4 +195,9 @@ export const COPY = {
   "platform.route.llm": "llm route",
   "platform.route.rule": "rule route",
   "platform.route.degrade": "model unavailable, rule mode on",
+  "platform.act.approve": "approve + scaffold",
+  "platform.act.recheck": "build plan",
+  "platform.act.accept": "accept",
+  "platform.act.discard": "discard",
+  "platform.act.confirm": "confirm publish",
 };

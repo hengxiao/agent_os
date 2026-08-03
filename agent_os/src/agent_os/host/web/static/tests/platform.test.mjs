@@ -446,6 +446,17 @@ const assertClean = (html, who) => {
         cards: [{ type: "skill_pack", v: 1,
           data: { name: "lab.dinner", tier: "reversible", members: ["lab.dinner"] }, actions: [] }] });
     }
+    // M1 新 action 管道(docs/APP-MODEL.md §4):服务端按 manifest 绑定参数
+    if (url === "/platform/api/apps/app-p1/actions/scaffold.approve") {
+      return reply({ ok: true, text: "首稿完成: lab.dinner",
+        cards: [{ type: "skill_pack", v: 1, instance: "app-p2",
+          data: { name: "lab.dinner", tier: "reversible", members: ["lab.dinner"] }, actions: [] }],
+        instance: { id: "app-p1", kind: "plan", state: {} } });
+    }
+    if (url === "/platform/api/apps/app-e1/actions/approve-once") {
+      return reply({ ok: true, text: "已记录你的决定。", state: { resolved: "approve-once" },
+        instance: { id: "app-e1", kind: "escalation", state: { resolved: "approve-once" } } });
+    }
     if (url === "/api/lab/packages/lab.dinner/closure?mode=runtime") {
       return reply({ root: "lab.dinner", root_tier: "reversible", members: [
         { name: "lab.dinner", depth: 0, tier: "reversible", status: "draft" },
@@ -723,6 +734,40 @@ const assertClean = (html, who) => {
   probe.renderMain();
   assert.ok(logHtml().includes("规则模式"), "降级系统提示上屏(copy)");
   assert.ok(!visibleText(logHtml()).includes("llm_unavailable"), "机器码不上屏");
+
+  /* ── M1 action 管道(docs/APP-MODEL.md §4):有 instance 走新管道 ── */
+
+  // 卡面带 instance 的按钮:POST 新管道 URL;前端只交事件参数(不带业务 payload)
+  const pipeBtn = new StubEl("button");
+  pipeBtn.dataset.appInst = "app-p1";
+  pipeBtn.dataset.appAction = "scaffold.approve";
+  pipeBtn.dataset.cardAct = "scaffold.approve"; // 兼容属性同在(新管道优先)
+  pipeBtn.dataset.payload = "{}";
+  pipeBtn.parentNode = doc.body;
+  doc.trigger("click", { target: pipeBtn });
+  await tick();
+  const pipePost = calls.find((c) => c.url === "/platform/api/apps/app-p1/actions/scaffold.approve");
+  assert.ok(pipePost, "新 action 管道请求发出");
+  const pipeBody = JSON.parse(pipePost.body);
+  assert.equal(pipeBody.surface, "card", "表面声明随行");
+  assert.ok(!("name" in (pipeBody.args ?? {})), "前端不交业务参数(服务端按 manifest 绑定)");
+  assert.ok(logHtml().includes("首稿完成"), "管道结果以 agent 消息呈现");
+  assert.equal(
+    probe.state.messages.at(-1).cards[0].instance, "app-p2",
+    "结果卡带 instance(可选 spawn 的寻址面)");
+
+  // 决策按钮带 instance:作答 = action id,走新管道
+  const escPipeBtn = new StubEl("button");
+  escPipeBtn.dataset.decision = "esc-1";
+  escPipeBtn.dataset.answer = "approve-once";
+  escPipeBtn.dataset.appInst = "app-e1";
+  escPipeBtn.dataset.appAction = "approve-once";
+  escPipeBtn.parentNode = doc.body;
+  doc.trigger("click", { target: escPipeBtn });
+  await tick();
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/apps/app-e1/actions/approve-once"),
+    "决策作答走新管道(action id = answer)");
 }
 
 console.log("platform.test.mjs: all assertions passed");

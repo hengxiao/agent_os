@@ -1,22 +1,46 @@
-/* Agent OS · 对话中枢(docs/WEB-PLATFORM.md §10):页面骨架与对话流。
+/* Agent OS · 对话中枢(docs/WEB-PLATFORM.md §10):tab 条布局 + 对话流。
 
-   布局:左栏会话索引(摘要 + 新建)/ 主区对话流(消息气泡 + 产物卡)/
-   底部意图输入(Enter 发送,Shift+Enter 换行)。空态 = help 卡引导。
-   刷新恢复:会话列表重载 + 选中会话重载(持久化在服务端,§3)。
-   不引用旧 web 的 app.js;只复用宿主无关模块(themes.js 的 initTheme/copy、
-   util.js 的 esc/toast)。 */
+   左栏 = 竖排 tab 条:conversation(会话,固定首 tab,不可关闭)+ detail
+   (详情,可关闭,✕);底部会话下拉(切换/新建)。卡上"查看详情"链接 →
+   开/聚焦 detail tab(同一 ref 去重)。主区:conversation tab = 对话流 +
+   意图输入;detail tab = 详情视图(输入区隐藏)。
+   不引用旧 web 的 app.js;只复用宿主无关模块(themes/util/trace 纯函数)。 */
 
 import { copy, initTheme } from "/static/js/themes.js";
 import { esc, toast } from "/static/js/util.js";
 import { cardHtml } from "./cards.js";
+import { gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml } from "./details.js";
 
 const $ = (sel) => document.querySelector(sel);
 
+/* ── tab 模型(纯函数;测试可载)────────────────────────────── */
+
+/* 开 tab:同 kind+ref 去重聚焦(gate/pack 可能同 ref——同一草稿的
+   报告与包是两个详情);返回 {tabs, active, opened} */
+export function openTab(tabs, tab) {
+  const existing = (tabs ?? []).find(
+    (t) => t.kind !== "conversation" && t.kind === tab.kind && t.ref === tab.ref
+  );
+  if (existing) return { tabs, active: existing.id, opened: false };
+  const next = [...(tabs ?? []), tab];
+  return { tabs: next, active: tab.id, opened: true };
+}
+
+/* 关 tab:关闭后回退到 conversation(或剩余最后一个) */
+export function closeTab(tabs, id, fallbackId = "conv") {
+  const next = (tabs ?? []).filter((t) => t.id !== id);
+  const active = next.some((t) => t.id === fallbackId) ? fallbackId : (next[0]?.id ?? fallbackId);
+  return { tabs: next, active };
+}
+
 const state = {
-  sessions: [], // 摘要列表
-  current: null, // 当前会话 id
-  messages: [], // 当前会话消息
-  busy: false, // 发送中(骨架 loading)
+  sessions: [],
+  current: null, // 当前会话 id(conversation tab 的内容源)
+  messages: [],
+  busy: false,
+  tabs: [{ id: "conv", kind: "conversation", title: "", ref: "conv" }],
+  active: "conv",
+  detail: null, // {kind, ref, loading, error, html}
 };
 
 /* ── 主题(与正式系统同一契约:initTheme 解析 URL/localStorage)────── */
@@ -36,26 +60,44 @@ function mountThemes() {
   }
 }
 
-/* ── 渲染:会话列表(左栏索引,§3)────────────────────────────── */
+/* ── 渲染:tab 条 + 会话下拉 ─────────────────────────────────── */
 
-function renderSessions() {
-  const box = $("#sessions");
-  if (!state.sessions.length) {
-    box.innerHTML = `<div class="pf-dim">${esc(copy("platform.no.sessions"))}</div>`;
-    return;
-  }
-  box.innerHTML = state.sessions
-    .map(
-      (s) =>
-        `<div class="pf-session" data-sid="${esc(s.id)}" role="option" tabindex="0"` +
-        ` aria-selected="${s.id === state.current}">` +
-        `<div class="pf-session-title">${esc(s.title)}</div>` +
-        `<div class="pf-dim">${s.messages} 条消息 · ${s.cards} 张卡</div></div>`
-    )
+function renderTabs() {
+  const host = $("#tabs");
+  host.innerHTML = state.tabs
+    .map((t) => {
+      const active = t.id === state.active;
+      const close =
+        t.kind !== "conversation"
+          ? `<button class="pf-tab-x" data-tab-x="${esc(t.id)}" aria-label="${esc(copy("platform.tab.close"))}">✕</button>`
+          : "";
+      const label = t.kind === "conversation" ? copy("platform.tab.chat") : t.title;
+      return (
+        `<div class="pf-tab" data-tab="${esc(t.id)}" role="tab" tabindex="0" aria-selected="${active}">` +
+        `<span class="pf-tab-label">${esc(label)}</span>${close}</div>`
+      );
+    })
     .join("");
+  const sel = $("#sessionSel");
+  sel.innerHTML =
+    state.sessions
+      .map(
+        (s) =>
+          `<option value="${esc(s.id)}"${s.id === state.current ? " selected" : ""}>${esc(s.title)}</option>`
+      )
+      .join("") || `<option value="">${esc(copy("platform.no.sessions"))}</option>`;
 }
 
-/* ── 渲染:对话流(气泡 + 卡;骨架 loading 与错误态)────────────── */
+/* ── 渲染:主区(conversation = 对话流;detail = 详情)──────────── */
+
+function renderMain() {
+  const isConv = state.active === "conv";
+  $("#log").hidden = !isConv;
+  $("#inputBar").hidden = !isConv;
+  $("#detailHost").hidden = isConv;
+  if (isConv) renderLog();
+  else renderDetail();
+}
 
 function msgHtml(m) {
   const role = m.role === "user" ? "user" : "agent";
@@ -67,7 +109,6 @@ function msgHtml(m) {
 function renderLog() {
   const log = $("#log");
   if (!state.messages.length && !state.busy) {
-    // 空态:help 卡引导(三句示例意图,§2.2 新手再造)
     log.innerHTML =
       `<div class="pf-empty">` +
       `<div class="pf-empty-title">${esc(copy("platform.empty.title"))}</div>` +
@@ -83,40 +124,57 @@ function renderLog() {
       ? `<div class="pf-msg" data-role="agent"><div class="pf-bubble pf-skel">` +
         `<span class="pf-skel-line"></span><span class="pf-skel-line w60"></span></div></div>`
       : "");
-  log.scrollTop = log.scrollHeight; // 焦点管理:新消息滚动到底(§widget 标准)
+  log.scrollTop = log.scrollHeight;
+}
+
+function renderDetail() {
+  const host = $("#detailHost");
+  const d = state.detail;
+  if (!d) {
+    host.innerHTML = "";
+    return;
+  }
+  if (d.loading) {
+    host.innerHTML = `<div class="pf-wait">${esc(copy("platform.detail.loading"))}</div>`;
+    return;
+  }
+  if (d.error) {
+    host.innerHTML =
+      `<div class="pf-wait pf-errline">${esc(d.error)}</div>` +
+      `<button class="btn" data-it-retry>${esc(copy("platform.detail.retry"))}</button>`;
+    return;
+  }
+  host.innerHTML = d.html ?? "";
 }
 
 /* ── 数据:会话装载与选择(刷新恢复)──────────────────────────── */
 
 async function loadSessions(selectId = null) {
   state.sessions = await (await fetch("/platform/api/sessions")).json();
-  const target =
-    selectId ?? (state.sessions.length ? state.sessions[0].id : null);
+  const target = selectId ?? (state.sessions.length ? state.sessions[0].id : null);
   if (target) await selectSession(target);
   else {
     state.current = null;
     state.messages = [];
   }
-  renderSessions();
-  renderLog();
+  renderTabs();
+  renderMain();
 }
 
 async function selectSession(id) {
   state.current = id;
   const session = await (await fetch(`/platform/api/sessions/${id}`)).json();
   state.messages = session.messages ?? [];
-  renderSessions();
-  renderLog();
+  renderTabs();
+  renderMain();
 }
 
 async function newSession() {
-  const session = await (
-    await fetch("/platform/api/sessions", { method: "POST" })
-  ).json();
+  const session = await (await fetch("/platform/api/sessions", { method: "POST" })).json();
   await loadSessions(session.id);
 }
 
-/* ── 发送意图:用户气泡 → 骨架 → agent 消息(失败以错误气泡呈现)── */
+/* ── 发送意图(同前:用户气泡 → 骨架 → agent 消息)────────────── */
 
 async function send() {
   const input = $("#intent");
@@ -126,7 +184,7 @@ async function send() {
   state.busy = true;
   state.messages.push({ role: "user", text, cards: [] });
   input.value = "";
-  renderLog();
+  renderMain();
   try {
     const res = await fetch(`/platform/api/sessions/${state.current}/messages`, {
       method: "POST",
@@ -137,24 +195,18 @@ async function send() {
     const msg = await res.json();
     state.messages.push(msg);
   } catch (e) {
-    state.messages.push({
-      role: "agent",
-      text: `${copy("platform.error")}: ${e.message ?? e}`,
-      cards: [],
-      error: true,
-    });
+    state.messages.push({ role: "agent", text: `${copy("platform.error")}: ${e.message ?? e}`, cards: [] });
   } finally {
     state.busy = false;
-    renderLog();
+    renderMain();
   }
 }
 
-/* ── 卡片动作:统一经 cards/action 转发(结果追加进会话)────────── */
+/* ── 卡片动作(同前;结果追加进会话)──────────────────────────── */
 
 async function cardAction(btn) {
   const actionId = btn.dataset.cardAct;
   const payload = JSON.parse(btn.dataset.payload ?? "{}");
-  // publish 卡的 warnings 勾选门(§4):未勾选不发
   const card = btn.closest(".pf-card");
   const ack = card?.querySelector("[data-ack]");
   if (ack && !ack.checked) {
@@ -171,24 +223,84 @@ async function cardAction(btn) {
     });
     if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
     const result = await res.json();
-    // 结果以 agent 消息呈现(返回新卡则渲染;§6 动作即对话)
-    state.messages.push({
-      role: "agent",
-      text: result.text ?? "",
-      cards: result.cards ?? [],
-    });
-    renderLog();
+    state.messages.push({ role: "agent", text: result.text ?? "", cards: result.cards ?? [] });
+    renderMain();
   } catch (e) {
-    state.messages.push({
-      role: "agent",
-      text: `${copy("platform.error")}: ${e.message ?? e}`,
-      cards: [],
-      error: true,
-    });
-    renderLog();
+    state.messages.push({ role: "agent", text: `${copy("platform.error")}: ${e.message ?? e}`, cards: [] });
+    renderMain();
   } finally {
     btn.disabled = false;
   }
+}
+
+/* ── 详情 tab(开/聚焦/关闭/加载;loading/error 可重试)────────── */
+
+const _DETAIL_META = {
+  gate: { title: copy("platform.detail.gate") },
+  pack: { title: copy("platform.detail.pack") },
+  plan: { title: copy("platform.detail.plan") },
+  run: { title: copy("platform.detail.run") },
+};
+
+function activateTab(id) {
+  state.active = id;
+  renderTabs();
+  renderMain();
+}
+
+async function openDetail(kind, ref, data) {
+  const tab = { id: `d:${kind}:${ref}`, kind, title: _DETAIL_META[kind]?.title ?? ref, ref };
+  const { tabs, active, opened } = openTab(state.tabs, tab);
+  state.tabs = tabs;
+  if (!opened) {
+    // 同 ref 已开:聚焦并直接重渲(数据可能已更新——详情是活面)
+    state.active = active;
+    state.detail = await _loadDetail(kind, ref, data);
+    renderTabs();
+    renderMain();
+    return;
+  }
+  state.active = active;
+  state.detail = { kind, ref, loading: true };
+  renderTabs();
+  renderMain();
+  state.detail = await _loadDetail(kind, ref, data);
+  renderMain();
+}
+
+async function _loadDetail(kind, ref, data) {
+  try {
+    if (kind === "gate") return { kind, ref, html: gateDetailHtml(data) };
+    if (kind === "plan") return { kind, ref, html: planDetailHtml(data) };
+    if (kind === "pack") {
+      const closure = await (
+        await fetch(`/api/lab/packages/${encodeURIComponent(ref)}/closure?mode=runtime`)
+      ).json();
+      return { kind, ref, html: packDetailHtml(closure) };
+    }
+    if (kind === "run") {
+      const [detail, signals] = await Promise.all([
+        (await fetch(`/api/runs/${encodeURIComponent(ref)}`)).json(),
+        (await fetch(`/api/runs/${encodeURIComponent(ref)}/signals`)).json(),
+      ]);
+      if (detail.status === "failed" && detail.error) {
+        // run 详情本身就是失败面,不算加载错误
+      }
+      return { kind, ref, html: runDetailHtml({ detail, signals }) };
+    }
+    return { kind, ref, error: `unknown detail kind: ${kind}` };
+  } catch (e) {
+    return { kind, ref, error: `${copy("platform.detail.error")}: ${e.message ?? e}` };
+  }
+}
+
+function closeDetail(id) {
+  const { tabs, active } = closeTab(state.tabs, id, "conv");
+  state.tabs = tabs;
+  state.active = active;
+  if (state.active === "conv") state.detail = null;
+  renderTabs();
+  renderMain();
 }
 
 /* ── 事件 ─────────────────────────────────────────────────────── */
@@ -197,14 +309,30 @@ function bind() {
   $("#send").addEventListener("click", send);
   $("#intent").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault(); // Enter 发送,Shift+Enter 换行(§骨架)
+      e.preventDefault();
       send();
     }
   });
   $("#newSession").addEventListener("click", newSession);
+  $("#sessionSel").addEventListener("change", (e) => {
+    if (e.target.value) selectSession(e.target.value);
+  });
   document.addEventListener("click", (e) => {
-    const session = e.target.closest(".pf-session");
-    if (session) return selectSession(session.dataset.sid);
+    const tabX = e.target.closest("[data-tab-x]");
+    if (tabX) {
+      e.stopPropagation(); // ✕ 不触发 tab 激活
+      return closeDetail(tabX.dataset.tabX);
+    }
+    const tab = e.target.closest("[data-tab]");
+    if (tab) return activateTab(tab.dataset.tab);
+    const link = e.target.closest("[data-detail-kind]");
+    if (link) {
+      const data = JSON.parse(link.dataset.detail ?? "{}");
+      return openDetail(link.dataset.detailKind, link.dataset.detailRef, data);
+    }
+    if (e.target.closest("[data-it-retry]") && state.detail) {
+      return openDetail(state.detail.kind, state.detail.ref, null);
+    }
     const act = e.target.closest("[data-card-act]");
     if (act) return cardAction(act);
     const example = e.target.closest("[data-example]");
@@ -213,16 +341,19 @@ function bind() {
       $("#intent").focus();
     }
   });
+  document.addEventListener("keydown", (e) => {
+    // tab 条键盘可达(Enter 激活;widget 标准)
+    if (e.key === "Enter" && e.target.closest?.("[data-tab]")) {
+      activateTab(e.target.closest("[data-tab]").dataset.tab);
+    }
+  });
 }
 
 /* ── 启动 ─────────────────────────────────────────────────────── */
 
 function renderStaticCopy() {
-  // index.html 的静态文案接 copy(文案契约:全走 copy,六主题同步;节点缺失防御)
   const sub = document.querySelector("[data-i18n='sub']");
   if (sub) sub.textContent = copy("platform.sub");
-  const side = document.querySelector("[data-i18n='sessions']");
-  if (side) side.textContent = copy("platform.sessions");
   $("#intent").placeholder = copy("platform.input.ph");
   $("#send").textContent = copy("platform.send");
 }
@@ -230,8 +361,11 @@ function renderStaticCopy() {
 mountThemes();
 bind();
 renderStaticCopy();
-renderLog();
+renderTabs();
+renderMain();
 loadSessions().catch((e) => toast(e.message ?? String(e), "error"));
 
 // 测试探针(node 冒烟用;浏览器无副作用)
-if (typeof globalThis !== "undefined") globalThis.__platform = { state, renderLog, loadSessions };
+if (typeof globalThis !== "undefined") {
+  globalThis.__platform = { state, renderTabs, renderMain, loadSessions, openDetail, closeDetail };
+}

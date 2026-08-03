@@ -30,18 +30,19 @@
     </div>
   </header>
   <div class="pf-cols">
-    <!-- 左栏:会话列表(任务/产物索引) -->
-    <aside class="pf-side" aria-label="会话列表">
-      <div class="pf-side-head">
-        <span data-i18n="sessions">会话</span>
+    <!-- 左栏:竖排 tab 条(conversation 固定首 tab + 可关闭 detail tabs)+ 底部会话下拉 -->
+    <aside class="pf-side" aria-label="tab 条">
+      <div class="pf-tabs" id="tabs" role="tablist" aria-label="工作区 tab"></div>
+      <div class="pf-side-foot">
+        <select class="input" id="sessionSel" aria-label="会话"></select>
         <button class="btn" id="newSession" aria-label="新会话">+</button>
       </div>
-      <div class="pf-sessions" id="sessions" role="listbox"></div>
     </aside>
-    <!-- 主区:对话流 + 意图输入 -->
+    <!-- 主区:conversation = 对话流 + 意图输入;detail = 详情视图(输入区隐藏) -->
     <main class="pf-main">
       <div class="pf-log" id="log" role="log" aria-live="polite" aria-label="对话流"></div>
-      <div class="pf-input">
+      <div class="pf-detail-host" id="detailHost" hidden></div>
+      <div class="pf-input" id="inputBar">
         <textarea id="intent" rows="2" aria-label="意图输入"
           placeholder="说意图,比如:帮我做个查天气的技能"></textarea>
         <button class="btn btn-primary" id="send" aria-label="发送">发送</button>

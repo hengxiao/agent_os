@@ -126,15 +126,43 @@ def build_diff_card(
     return _card("diff", {"name": name, "diff": diff}, actions)
 
 
-def build_publish_card(*, root: str, members: list[dict[str, Any]], plan_id: str) -> dict[str, Any]:
-    """publish 卡:提交计划摘要(成员 create/replace/unchanged)+ plan.confirm 动作。"""
+def build_publish_card(
+    *,
+    root: str,
+    members: list[dict[str, Any]],
+    plan_id: str,
+    package_hash: str = "",
+    blockers: list[dict[str, Any]] | None = None,
+    warnings: list[str] | None = None,
+) -> dict[str, Any]:
+    """publish 卡:提交计划摘要(成员 create/replace/unchanged)+ plan.confirm 动作。
+
+    ``package_hash``/``blockers``/``warnings`` 随卡携带(plan 详情 tab 直接渲染,
+    不必回拉——审的就是要执行的,同一包哈希面,§6.3)。
+    """
     return _card(
         "publish",
-        {"root": root, "members": members, "plan_id": plan_id},
+        {
+            "root": root,
+            "members": members,
+            "plan_id": plan_id,
+            "package_hash": package_hash,
+            "blockers": blockers or [],
+            "warnings": warnings or [],
+        },
         [_action("plan.confirm", "确认发布", {"plan_id": plan_id})],
     )
 
 
-def build_table_card(*, title: str, columns: list[str], rows: list[list[Any]]) -> dict[str, Any]:
-    """table 卡:通用筛选表(RCA 摘要/失败 run 列表/help 引导都复用它)。"""
-    return _card("table", {"title": title, "columns": columns, "rows": rows})
+def build_table_card(
+    *, title: str, columns: list[str], rows: list[list[Any]], ref: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """table 卡:通用筛选表(RCA 摘要/失败 run 列表/help 引导都复用它)。
+
+    ``ref``(可选):详情链接的锚(run 摘要卡 = {kind: "run", id}——前端据以
+    开详情 tab,不必从截断的展示文本里反推 id)。
+    """
+    data: dict[str, Any] = {"title": title, "columns": columns, "rows": rows}
+    if ref:
+        data["ref"] = ref
+    return _card("table", data)

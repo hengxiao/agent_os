@@ -143,7 +143,14 @@ class Orchestrator:
         return new_message(
             "agent",
             text=f"最近一次失败是 {latest.get('skill')}(run {latest.get('run_id', '')[:8]}),摘要见下表。",
-            cards=[build_table_card(title="最近失败 run", columns=["run", "skill", "错误摘要"], rows=rows)],
+            cards=[
+                build_table_card(
+                    title="最近失败 run",
+                    columns=["run", "skill", "错误摘要"],
+                    rows=rows,
+                    ref={"kind": "run", "id": latest.get("run_id", "")},  # 详情 tab 的锚(§10)
+                )
+            ],
         )
 
     # ------------------------------------------------------------------

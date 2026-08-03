@@ -31,6 +31,14 @@ function planCard(card) {
   );
 }
 
+/* 详情链接(小字链接,不抢主按钮;点击开详情 tab,§布局改造) */
+function _detailLink(kind, ref, label, data = null) {
+  return (
+    `<button class="pf-detail-link" data-detail-kind="${esc(kind)}" data-detail-ref="${esc(ref)}"` +
+    ` data-detail='${esc(JSON.stringify(data ?? {}))}'>${esc(label)}</button>`
+  );
+}
+
 /* skill_pack 卡:成员列表 + tier 徽标 */
 function skillPackCard(card) {
   const d = card.data ?? {};
@@ -38,7 +46,8 @@ function skillPackCard(card) {
     `<div class="pf-sec"><span class="mono">${esc(d.name ?? "")}</span> ${_tier(d.tier)}</div>` +
     `<div class="pf-sec">${esc(copy("platform.members"))}: ` +
     (d.members ?? []).map((m) => `<span class="chip mono">${esc(m)}</span>`).join(" ") +
-    `</div>`
+    `</div>` +
+    _detailLink("pack", d.name ?? "", copy("platform.detail.pack"), { name: d.name, tier: d.tier, members: d.members ?? [] })
   );
 }
 
@@ -65,7 +74,9 @@ function gateReportCard(card) {
     `<div class="pf-sec"><span class="mono">${esc(d.draft ?? "")}</span> ` +
     `<span class="lab-pkg-status" data-status="${esc(d.status ?? "")}">${esc(d.status ?? "")}</span></div>` +
     rows +
-    `<div class="pf-sec"><a class="btn" href="/#/lab/${encodeURIComponent(d.draft ?? "")}">${esc(copy("platform.fix"))}</a></div>`
+    `<div class="pf-sec"><a class="btn" href="/#/lab/${encodeURIComponent(d.draft ?? "")}">${esc(copy("platform.fix"))}</a>` +
+    _detailLink("gate", d.draft ?? "", copy("platform.detail.gate"), d) +
+    `</div>`
   );
 }
 
@@ -115,7 +126,8 @@ function publishCard(card) {
     `<span class="pf-dim mono">${esc(String(d.plan_id ?? "").slice(0, 16))}</span></div>` +
     rows +
     `<label class="pf-ack"><input type="checkbox" data-ack>` +
-    `<span>${esc(copy("platform.warnings.ack"))}</span></label>`
+    `<span>${esc(copy("platform.warnings.ack"))}</span></label>` +
+    _detailLink("plan", d.plan_id ?? "", copy("platform.detail.plan"), d)
   );
 }
 
@@ -126,9 +138,14 @@ function tableCard(card) {
   const rows = (d.rows ?? [])
     .map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`)
     .join("");
+  const link =
+    d.ref?.kind === "run" && d.ref?.id
+      ? _detailLink("run", d.ref.id, copy("platform.detail.run"), { id: d.ref.id })
+      : "";
   return (
     (d.title ? `<div class="pf-sec"><b>${esc(d.title)}</b></div>` : "") +
-    `<table class="pf-table"><tr>${head}</tr>${rows}</table>`
+    `<table class="pf-table"><tr>${head}</tr>${rows}</table>` +
+    link
   );
 }
 

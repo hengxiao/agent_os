@@ -255,7 +255,12 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             f"阻塞 {len(plan['blockers'])} 项。",
             "cards": [
                 build_publish_card(
-                    root=root, members=plan["members"], plan_id=plan["plan_id"]
+                    root=root,
+                    members=plan["members"],
+                    plan_id=plan["plan_id"],
+                    package_hash=plan["package_hash"],
+                    blockers=plan["blockers"],
+                    warnings=plan["warnings"],
                 )
             ],
         }

@@ -80,15 +80,21 @@ def build_plan_card(
     reuse: list[dict[str, str]],
     create: list[dict[str, str]],
     approve_payload: dict[str, Any],
+    route_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """plan 卡(意图①"做个 X 技能"):分解——复用哪些已有技能、建议新建哪些。
 
     data: {goal, reuse: [{name, reason}], create: [{name, template, reason}]};
     动作 = scaffold.approve(批准即走既有 scaffold 端点生成首稿)。
+    ``route_meta``(N6,O6):路由来源标注 {route: "llm"|"rule", reason?}
+    (机器码,人话在前端 copy;详情层角标,不进摘要层)。
     """
+    data: dict[str, Any] = {"goal": goal, "reuse": reuse, "create": create}
+    if route_meta:
+        data["route_meta"] = route_meta
     return _card(
         "plan",
-        {"goal": goal, "reuse": reuse, "create": create},
+        data,
         [_action("scaffold.approve", "批准并生成首稿", approve_payload)],
     )
 

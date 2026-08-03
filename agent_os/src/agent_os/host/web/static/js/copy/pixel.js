@@ -190,4 +190,9 @@ export const COPY = {
   "platform.esc.requested": "WANTS PERMISSIONS",
   "platform.esc.reason": "REASON",
   "platform.detail.esc": "VIEW REQUEST",
+  "platform.detail.decompose": "PLAN DETAIL",
+  "platform.route.label": "ROUTE",
+  "platform.route.llm": "LLM ROUTE",
+  "platform.route.rule": "RULE ROUTE",
+  "platform.route.degrade": "MODEL DOWN, RULE MODE ON",
 };

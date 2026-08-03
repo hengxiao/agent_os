@@ -75,4 +75,34 @@ N2 → N1 → N4 → N3 → N5 → N6 → N7(N2 是数据正确性最优先;N1/N
 
 ## 循环 4/5 记录位
 
-(开发完成后填:各目标达成情况、提交 hash、遗留)
+### 循环 4 开发记录(2026-08-03,分支 debugger,未 commit)
+
+N2 → N1 → N4 → N3 → N5 → N6 → N7 全部落地,测试库定义全表完成:
+
+| 节点 | 达成 | 要点 |
+|---|---|---|
+| N2(O2) | ✅ | snapshot 加 `prefer_candidate`(candidate 优先,缺省退 working 记日志);两个 accept 调用点(web/web_platform)同改;vNNN 与 candidate 逐字节一致有断言;既有 accept 测试适配新语义 |
+| N1(O1) | ✅ | orchestrator 后端 `human_error()`(auth > timeout > provider 优先级),`_why_failed`/`_browse` 行级全覆盖;前端 humanError 同步调序变纯兜底;数据源原文不动(详情层留全量) |
+| N4(O4) | ✅ | `_brace_finding` 入 G2:`string.Formatter.parse` 同款语义(未闭合/裸露 {}/非法占位名三类 fail,合法 {name} 与 {{ }} 不拦);修复建议 = "{{ }} 转义或自然语言";lab.draft.write 保存端 warning 不硬拦 |
+| N3(O3) | ✅ | `draft_store.skeleton_from_schema`/`smoke_case_from_schema`(launch-dialog 后端等价);scaffold.approve 首稿自动写 tests/smoke.json;G4 有用例即 pass |
+| N5(O5) | ✅ | LabCreateBody model_extra 未知字段 400 逐个点名;validate 双形(平铺兼容期 + {"report": …}) |
+| N6(O6) | ✅ | meta {route, reason?} 进 agent 消息 + plan 卡 route_meta;reason 机器码(llm_unavailable/llm_bad_schema)可统计;plan 卡新增 decompose 详情 tab(分解结构 + 路由角标),摘要层零标注 |
+| N7(O7) | ✅ | LLM 路由降级 → meta.reason=llm_unavailable → 前端系统气泡(copy 六主题);cards/action ProviderError → 503 人话;不 500 不裸错 |
+
+测试:新增 20(test_o1_leak×3 / test_lab_iterate+N2×1 / test_gate+N4×4 /
+test_scaffold_smoke×3 / test_lab_api+N5×2 / test_route_meta×5 /
+test_cred_degrade×2);全量 pytest 894+1(SSE flake,孤立 3/3 过,与本次无关);
+前端 26 文件全绿(themes-contract 同步扫)。
+
+遗留:flow_eval.py 需 live instance(8391)复核 F01-F06,由主代理执行;
+`test_debug_api.py::test_debug_sse_bp_hit_resumed_run_end` 时序 flake 属既有;
+assistant 端点(旧 web /api/lab/assistant)是异步 run,凭证故障落在 run 记录
+(轮询面),端点本身无同步错误可映射——降级提示由轮询侧与平台两处覆盖。
+
+### 主代理验收(2026-08-03,live 8391)
+
+- 全量 pytest **895 passed**(875+20,对账一致);前端 26 文件全绿;
+- flow_eval.py 四轮全 ✅:F03 摘要泄漏由循环 1 的 ❌×3 转为不泄漏(O1 实证);
+  F06 LLM 命名 dinner.weather_recommender(本轮 LLM 路由正常);
+- O2 实测:iterate(加"火锅")→ accept → v002 快照含改动(循环 1 的 B4 不复现),
+  rewind 后 working 恢复被接受版——快照链路修复实证。

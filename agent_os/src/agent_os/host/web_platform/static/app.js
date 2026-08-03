@@ -9,7 +9,7 @@
 import { copy, initTheme } from "/static/js/themes.js";
 import { esc, toast } from "/static/js/util.js";
 import { summaryHtml } from "./cards.js";
-import { diffDetailHtml, escDetailHtml, gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml } from "./details.js";
+import { decomposeDetailHtml, diffDetailHtml, escDetailHtml, gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml } from "./details.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -102,8 +102,13 @@ function renderMain() {
 function msgHtml(m) {
   const role = m.role === "user" ? "user" : "agent";
   const text = m.text ? `<div class="pf-bubble-text">${esc(m.text)}</div>` : "";
+  // N7(O7):LLM 路由凭证降级 → 人话系统提示(copy 六主题;不静默,不裸错)
+  const degrade =
+    m.meta?.route === "rule" && m.meta?.reason === "llm_unavailable"
+      ? `<div class="pf-bubble-note">${esc(copy("platform.route.degrade"))}</div>`
+      : "";
   const cards = (m.cards ?? []).map(summaryHtml).join(""); // 对话流 = 摘要层(人话)
-  return `<div class="pf-msg" data-role="${role}"><div class="pf-bubble">${text}${cards}</div></div>`;
+  return `<div class="pf-msg" data-role="${role}"><div class="pf-bubble">${degrade}${text}${cards}</div></div>`;
 }
 
 function renderLog() {
@@ -242,6 +247,7 @@ const _DETAIL_META = {
   run: { title: copy("platform.detail.run") },
   diff: { title: copy("platform.detail.diff") },
   esc: { title: copy("platform.detail.esc") },
+  decompose: { title: copy("platform.detail.decompose") },
 };
 
 function activateTab(id) {
@@ -276,6 +282,7 @@ async function _loadDetail(kind, ref, data) {
     if (kind === "plan") return { kind, ref, html: planDetailHtml(data) };
     if (kind === "diff") return { kind, ref, html: diffDetailHtml(data) };
     if (kind === "esc") return { kind, ref, html: escDetailHtml(data) };
+    if (kind === "decompose") return { kind, ref, html: decomposeDetailHtml(data) };
     if (kind === "pack") {
       const closure = await (
         await fetch(`/api/lab/packages/${encodeURIComponent(ref)}/closure?mode=runtime`)

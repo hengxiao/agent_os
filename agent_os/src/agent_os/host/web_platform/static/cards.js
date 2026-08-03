@@ -192,9 +192,9 @@ const _q = (name) => `「${esc(name ?? "")}」`;
 /* 英文错误类名 → 人话(摘要层一句;原文留在详情层)。
    未识别的去掉 `XxxError:` 前缀留消息体——不编造原因。 */
 const _ERROR_HUMAN = [
-  [/ProviderError|model.*(unavailable|error)/i, "platform.err.provider"],
-  [/timeout|timed out/i, "platform.err.timeout"],
   [/auth|api.?key|unauthorized|401/i, "platform.err.auth"],
+  [/timeout|timed out/i, "platform.err.timeout"],
+  [/ProviderError|model.*(unavailable|error)/i, "platform.err.provider"],
 ];
 function humanError(raw) {
   const s = String(raw ?? "");
@@ -371,7 +371,9 @@ export function summaryHtml(card) {
   const body = render ? render(d) : type === "table" ? tableSummary(card)
     : `<pre class="mono">${esc(JSON.stringify(d, null, 2))}</pre>`;
   const link =
-    type === "skill_pack"
+    type === "plan"
+      ? _detailLink("decompose", d.create?.[0]?.name ?? "", copy("platform.detail.decompose"), d) // N6:结构 + 路由角标在详情层
+      : type === "skill_pack"
       ? _detailLink("pack", d.name ?? "", copy("platform.detail.pack"), { name: d.name, tier: d.tier, members: d.members ?? [] })
       : type === "gate_report"
         ? `<a class="btn" href="/#/lab/${encodeURIComponent(d.draft ?? "")}">${esc(copy("platform.fix"))}</a>` +

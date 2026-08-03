@@ -34,7 +34,7 @@ import jsonschema
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from agent_os.api.v1 import (
     ChatResponse,
@@ -188,7 +188,13 @@ class SupervisorAnswerBody(BaseModel):
 
 
 class LabCreateBody(BaseModel):
-    """``POST /api/lab/drafts``(docs/SKILL-DEV.md §1.5):空模板/模板库/从生产 skill 复制。"""
+    """``POST /api/lab/drafts``(docs/SKILL-DEV.md §1.5):空模板/模板库/从生产 skill 复制。
+
+    N5(B3):未知字段不再静默丢弃——``model_extra`` 收走的多余字段在端点
+    开头归 400 并逐个点名(调用方必须知道"我以为写入了"的东西没被接受)。
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     name: str
     from_skill: str | None = None  # 生产 skill 名(前端把 `from` 关键字映射为本字段)
@@ -841,7 +847,13 @@ def create_app(
     @app.post("/api/lab/drafts", status_code=201)
     def lab_create_draft(body: LabCreateBody) -> dict[str, Any]:
         """新建草稿(§1.5):空模板 / 单技能模板 / 功能包模板(``pkg.*``,§3.2 整套生成)/
-        ``from_skill`` 从生产 skill 复制。"""
+        ``from_skill`` 从生产 skill 复制。未知字段 400 逐个点名(N5,B3)。"""
+        unknown = sorted((body.model_extra or {}).keys())
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未知字段: {', '.join(unknown)}(本端点只接受 name/from_skill/template)",
+            )
         try:
             if body.template and body.template.startswith("pkg."):
                 # 功能包模板(docs/SKILL-PACKAGES.md §3.2;P4):根 + 成员一次生成,
@@ -942,6 +954,9 @@ def create_app(
 
         G4 冒烟执行器(L3):与 test-run 同逻辑的真 run(overlay 装配,同步跑,
         RunConfig 即预算封顶)——outputs 必须过草稿 outputs schema。
+
+        响应为**双形**(N5,B7):平铺字段(旧形,向后兼容期保留)+ 嵌套形
+        ``{"report": {...}}``(新调用方请用嵌套形,平铺将于下版本移除)。
         """
         try:
             draft = lab_store.read(name)
@@ -959,7 +974,10 @@ def create_app(
             )
         except RunValidationError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        return lab_store.save_gate_report(name, report)
+        saved = lab_store.save_gate_report(name, report)
+        # N5(B7):双形兼容——新增嵌套形 {"report": {...}}(与邻居端点风格一致),
+        # 平铺字段保留一个版本期(老调用方不破;文档注明迁移方向)
+        return {**saved, "report": saved}
 
     def _lab_smoke_runner(name: str, draft: dict[str, Any]) -> Any:
         """构造 G4 冒烟执行器:overlay 装配(草稿优先)→ 真 run → outputs 校验。
@@ -1250,6 +1268,7 @@ def create_app(
                 source="iterate",
                 parent=latest[0]["version"] if latest else None,
                 comments_digest=f"{len(comments)} 条边注",
+                prefer_candidate=True,  # N2:快照 = 被接受的候选内容(B4)
             )
             for member in cand:
                 data = lab_store.read_candidate_member(name, member)

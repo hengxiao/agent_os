@@ -15,6 +15,7 @@ import hashlib
 import json
 import re
 import shutil
+import string
 import time
 from pathlib import Path
 from typing import Any
@@ -120,6 +121,51 @@ def _status_of(findings: list[dict[str, str]]) -> str:
     return "pass"
 
 
+#: 占位字段根必须是标识符(与 str.format 的字段名语义对齐;根之后只许
+#: `.attr`/`[idx]`/`:spec`/`!conv` 或结束——"{some thing}" 这类空格即非法)
+_PLACEHOLDER_ROOT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?=[.\[:!]|$)")
+
+
+def _brace_finding(prompt: str) -> dict[str, str] | None:
+    """花括号预检(N4,B5):与 render_prompt 的 ``str.format`` 语义对齐。
+
+    合法 ``{name}`` 占位与 ``{{ }}`` 转义不拦;三类运行时必炸的形态 → fail:
+    未闭合/畸形花括号(``Formatter.parse`` 抛 ValueError)、裸露 ``{}``
+    (位置占位,``format(**input)`` 无位置实参必 IndexError)、非法占位名
+    (``{some thing}`` 等字段根不是标识符)。修复建议二选一:``{{ }}`` 转义,
+    或改用自然语言描述。
+    """
+    if not prompt:
+        return None
+    try:
+        parsed = list(string.Formatter().parse(prompt))
+    except ValueError as e:
+        return _finding(
+            "fail",
+            "SKILL-DEV §1.3",
+            f"prompt 含未闭合/畸形花括号,运行时渲染必失败({e});"
+            "修复:字面花括号用 {{ }} 转义,或改用自然语言描述",
+        )
+    for _literal, field, _spec, _conv in parsed:
+        if field is None:
+            continue
+        if field == "":
+            return _finding(
+                "fail",
+                "SKILL-DEV §1.3",
+                "prompt 含裸露 {} 占位(按位置取值,而输入按名传参,运行时必失败);"
+                "修复:写成 {参数名},或字面花括号用 {{ }} 转义,或改用自然语言描述",
+            )
+        if not _PLACEHOLDER_ROOT_RE.match(field):
+            return _finding(
+                "fail",
+                "SKILL-DEV §1.3",
+                f"prompt 占位 {{{field}}} 不是合法参数名(字段根须为标识符);"
+                "修复:改成 inputs 里的参数名,或字面花括号用 {{ }} 转义,或改用自然语言描述",
+            )
+    return None
+
+
 def validate_draft(
     draft: dict[str, Any],
     *,
@@ -212,6 +258,11 @@ def validate_draft(
                             f"L2+ 技能的 inputs 参数 {prop!r} 必须有 type",
                         )
                     )
+        # 花括号预检(N4,B5):render_prompt 同款 format 语义,运行时必炸的三类
+        # 形态(未闭合/裸露 {}/非法占位名)在闸门期就 fail 并给修复建议
+        brace = _brace_finding(str(draft.get("prompt") or ""))
+        if brace is not None:
+            g2.append(brace)
         # 引用完整性(docs/SKILL-PACKAGES.md §3.4 G2 行;P1 落地,实现注:校勘记里
         # "G5 不引用不存在的 skill/tool 未实现"归入本关——它查的是契约面,不是辞卫)。
         # 两阶段严格性(docs/SKILL-PACKAGES-V2.md §6.2):草稿期 warn + 修复提示

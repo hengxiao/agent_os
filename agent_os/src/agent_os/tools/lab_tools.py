@@ -205,13 +205,18 @@ def register_lab_tools(
         except (ValueError, TypeError) as e:
             return ToolResult(ok=False, value=None, error=_err("invalid_args", str(e)))
         changed = field or ("manifest" if manifest is not None else "prompt")
-        return ToolResult(
-            value={
-                "changed": changed,
-                "parse_error": saved["parse_error"],
-                "note": "已写入草稿(上一版 .bak);改动将在用户编辑器里刷新",
-            }
-        )
+        value_out: dict[str, Any] = {
+            "changed": changed,
+            "parse_error": saved["parse_error"],
+            "note": "已写入草稿(上一版 .bak);改动将在用户编辑器里刷新",
+        }
+        # N4(B5):保存端同步提示(不硬拦——编辑器不打断;硬闸在 G2)
+        from agent_os.skills.gate import _brace_finding
+
+        brace = _brace_finding(str(saved.get("prompt") or ""))
+        if brace is not None:
+            value_out["warning"] = brace["message"]
+        return ToolResult(value=value_out)
 
     @registry.tool(name="lab.draft.validate", permission=Permission.READ, side_effect="none")
     def draft_validate(draft: str, ctx: Any = None) -> ToolResult:

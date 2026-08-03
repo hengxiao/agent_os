@@ -227,9 +227,10 @@ def test_llm_route_browse_with_timeframe():
     assert "old12345"[:8] not in ids, "10 天前的被时间窗滤掉"
     assert len(card["data"]["rows"]) == 2
     assert card["data"]["row_refs"][0] == {"kind": "run", "id": "new12345"}, "逐行详情锚"
-    # 失败行给错误摘要,成功行人话
+    # 失败行给人话摘要(N1),成功行 status_human
     assert card["data"]["rows"][0][2] == "运行成功"
-    assert "ProviderError" in card["data"]["rows"][1][2]
+    assert card["data"]["rows"][1][2] == "模型服务不可用"
+    assert "ProviderError" not in card["data"]["rows"][1][2], "行级摘要零类名泄漏(N1)"
 
 
 def test_llm_route_failure_falls_back_to_rules():

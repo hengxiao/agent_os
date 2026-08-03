@@ -44,6 +44,44 @@ export function escDetailHtml(data) {
   );
 }
 
+/* plan(分解)详情(N6,O6):分解结构全量(goal + reuse/create 的 reason/template)
+   + 路由来源角标(route_meta;技术标注只活在详情层,不进摘要——禁忌词纪律) */
+export function decomposeDetailHtml(data) {
+  const meta = data?.route_meta;
+  const badge = meta
+    ? `<div class="pf-sec">${esc(copy("platform.route.label"))}: ` +
+      `<span class="lab-pkg-status" data-status="${esc(meta.route === "llm" ? "pass" : "warn")}">` +
+      `${esc(copy(meta.route === "llm" ? "platform.route.llm" : "platform.route.rule"))}</span>` +
+      (meta.reason ? ` <span class="pf-dim mono">${esc(meta.reason)}</span>` : "") +
+      `</div>`
+    : "";
+  const reuse = (data?.reuse ?? [])
+    .map(
+      (r) =>
+        `<div class="pf-prow" data-action="unchanged"><span class="mono">${esc(r.name)}</span>` +
+        `<span class="pf-dim">${esc(r.reason ?? "")}</span></div>`
+    )
+    .join("");
+  const create = (data?.create ?? [])
+    .map(
+      (c) =>
+        `<div class="pf-prow" data-action="create"><span class="mono">${esc(c.name)}</span>` +
+        `<span class="pf-dim mono">${esc(c.template ?? "")}</span> ` +
+        `<span class="pf-dim">${esc(c.reason ?? "")}</span></div>`
+    )
+    .join("");
+  return (
+    `<div class="pf-detail">` +
+    `<div class="pf-detail-head">${esc(data?.goal ?? "")}</div>` +
+    badge +
+    `<div class="pf-sec">${esc(copy("platform.reuse"))}</div>` +
+    (reuse || `<div class="pf-dim">—</div>`) +
+    `<div class="pf-sec">${esc(copy("platform.create"))}</div>` +
+    create +
+    `</div>`
+  );
+}
+
 /* gate 详情:完整报告(全部 findings 展开) */
 export function gateDetailHtml(data) {
   const gates = data?.gates ?? {};

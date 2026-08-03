@@ -495,3 +495,33 @@ def test_promote_end_to_end_and_stale_report(tmp_path):
     assert r2.status_code == 200, r2.text
     assert r2.json()["version"] == "0.1.1"
     assert r2.json()["action"] == "replaced"
+
+
+# ---------------------------------------------------------------------------
+# N5 API 卫生(O5,B3/B7;docs/FLOWS-OPTIMIZATION.md 循环 3)
+# ---------------------------------------------------------------------------
+
+
+def test_create_unknown_fields_400(tmp_path):
+    """create 带未知字段(manifest 等)→ 400 逐个点名,不静默丢弃。"""
+    client = _client(tmp_path)
+    r = client.post("/api/lab/drafts", json={"name": "lab.x", "manifest": {"a": 1}})
+    assert r.status_code == 400
+    assert "manifest" in r.json()["detail"], "点名未知字段"
+    r2 = client.post("/api/lab/drafts", json={"name": "lab.x", "foo": 1, "bar": 2})
+    assert r2.status_code == 400
+    assert "bar" in r2.json()["detail"] and "foo" in r2.json()["detail"]
+    # 合法字段不受影响
+    assert client.post("/api/lab/drafts", json={"name": "lab.x"}).status_code == 201
+
+
+def test_validate_dual_shape(tmp_path):
+    """validate 双形:平铺字段(兼容期)+ 嵌套 {"report": {...}} 同内容。"""
+    client = _client(tmp_path)
+    _create(client)
+    _save_manifest(client, _good_weather_manifest())
+    _put_smoke_case(tmp_path)
+    body = client.post("/api/lab/drafts/weather.query/validate").json()
+    assert body["report_id"], "平铺旧形保留"
+    assert body["report"]["report_id"] == body["report_id"], "嵌套形同 report_id"
+    assert body["report"]["gates"] == body["gates"]

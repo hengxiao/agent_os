@@ -372,3 +372,52 @@ def test_version_bump_and_override(tmp_path, production, tools):
         principal="user:test",
     )
     assert result["version"] == "2.0.0", "body 显式版本优先于 bump"
+
+
+# ---------------------------------------------------------------------------
+# N4 花括号预检(O4,B5;docs/FLOWS-OPTIMIZATION.md 循环 3)
+# ---------------------------------------------------------------------------
+
+
+def test_bare_braces_fail_with_escape_hint(production, tools):
+    """裸露 {} → G2 fail,提示给"{{ }} 转义 / 自然语言描述"两个选项。"""
+    report = validate_draft(
+        _draft("lab.weather", _good_manifest(), prompt="输出 JSON,形如 {\"a\": {}}"),
+        production=production, tools=tools,
+    )
+    g2 = report["gates"]["g2"]
+    assert g2["status"] == "fail"
+    brace = next(f for f in g2["findings"] if "花括号" in f["message"] or "{}" in f["message"])
+    assert brace["level"] == "fail"
+    assert "{{ }}" in brace["message"], "转义选项"
+    assert "自然语言" in brace["message"], "自然语言选项"
+
+
+def test_unclosed_brace_fail(production, tools):
+    """未闭合 { → G2 fail(str.format 同款语义,运行时必炸的形态)。"""
+    report = validate_draft(
+        _draft("lab.weather", _good_manifest(), prompt="示例: {city"),
+        production=production, tools=tools,
+    )
+    assert report["gates"]["g2"]["status"] == "fail"
+
+
+def test_illegal_placeholder_fail(production, tools):
+    """非法占位名({some thing})→ G2 fail;字段根须为标识符。"""
+    report = validate_draft(
+        _draft("lab.weather", _good_manifest(), prompt="查 {some thing} 的天气"),
+        production=production, tools=tools,
+    )
+    g2 = report["gates"]["g2"]
+    assert g2["status"] == "fail"
+    assert any("不是合法参数名" in f["message"] for f in g2["findings"])
+
+
+def test_legal_placeholder_and_escape_pass(production, tools):
+    """合法 {city} 占位与 {{ }} 转义不误伤(G2 其它检查本就走既有路径)。"""
+    report = validate_draft(
+        _draft("lab.weather", _good_manifest(),
+               prompt="查 {city} 的天气;字面示例:{{ json }}"),
+        production=production, tools=tools,
+    )
+    assert report["gates"]["g2"]["status"] == "pass", report["gates"]["g2"]["findings"]

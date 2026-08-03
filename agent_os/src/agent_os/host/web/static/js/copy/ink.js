@@ -184,4 +184,9 @@ export const COPY = {
   "platform.esc.requested": "所请之权",
   "platform.esc.reason": "故",
   "platform.detail.esc": "观请之详",
+  "platform.detail.decompose": "谋之详",
+  "platform.route.label": "路由",
+  "platform.route.llm": "模型之路",
+  "platform.route.rule": "规则之路",
+  "platform.route.degrade": "模型暂不可用,以规则行之",
 };

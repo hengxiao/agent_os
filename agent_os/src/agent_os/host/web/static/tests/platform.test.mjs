@@ -15,7 +15,7 @@ await register("./platform-loader.mjs", import.meta.url); // "/static/js/" → �
 
 const { makeDocument, StubEl } = await import("./dom-stub.mjs");
 const { cardHtml, summaryHtml } = await import("../../../web_platform/static/cards.js");
-const { gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml, diffDetailHtml, escDetailHtml } =
+const { gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml, diffDetailHtml, escDetailHtml, decomposeDetailHtml } =
   await import("../../../web_platform/static/details.js");
 
 /* ── 两层边界工具 ─────────────────────────────────────────────
@@ -362,6 +362,31 @@ const assertClean = (html, who) => {
   assert.ok(dt.includes("fs.write"), "详情层保留请求权限集");
 }
 
+{
+  // plan 摘要(N6):人话不变,结构 + 路由角标收 decompose 详情
+  const s = summaryHtml({
+    type: "plan", v: 1,
+    data: { goal: "晚餐推荐",
+      reuse: [{ name: "weather.query", reason: "已覆盖" }],
+      create: [{ name: "dinner.planner", template: "prompt_query", reason: "主技能" }],
+      route_meta: { route: "llm" } },
+    actions: [],
+  });
+  const t = assertClean(s, "plan(N6)");
+  assert.ok(s.includes('data-detail-kind="decompose"'), "decompose 详情链接");
+  assert.ok(!t.includes("llm") && !t.includes("route_meta"), "路由标注不进摘要层(禁忌词纪律)");
+  const dt = decomposeDetailHtml({
+    goal: "晚餐推荐",
+    reuse: [{ name: "weather.query", reason: "已覆盖" }],
+    create: [{ name: "dinner.planner", template: "prompt_query", reason: "主技能" }],
+    route_meta: { route: "rule", reason: "llm_unavailable" },
+  });
+  assert.ok(dt.includes("规则路由"), "详情层路由角标");
+  assert.ok(dt.includes("llm_unavailable"), "详情层 reason 机器码");
+  assert.ok(dt.includes("prompt_query"), "详情层 template 结构数据");
+  assert.ok(dt.includes("dinner.planner"), "详情层分解成员");
+}
+
 /* ── app.js 对话流(fetch stub)───────────────────────────────── */
 
 {
@@ -484,7 +509,7 @@ const assertClean = (html, who) => {
   assert.ok(logHtml().includes("计划如下"), "agent 消息渲染");
   assert.ok(logHtml().includes('data-card="plan"'), "plan 卡渲染");
   assert.ok(!logHtml().includes("pf-card-tag"), "对话流走摘要层(无技术卡型标签)");
-  assert.ok(!logHtml().includes("prompt_query"), "对话流摘要不含结构数据");
+  assert.ok(!visibleText(logHtml()).includes("prompt_query"), "对话流摘要可见文字不含结构数据");
   assert.ok(!logHtml().includes("pf-skel"), "骨架 loading 已撤");
 
   // 点卡动作:批准 → action 请求体 → 返回 skill_pack 卡追加
@@ -689,6 +714,15 @@ const assertClean = (html, who) => {
   assert.equal(probe.state.active, "d:esc:esc-1", "esc tab 激活");
   assert.ok(detailHtml().includes("/tmp/x"), "esc 详情参数渲染");
   assert.ok(detailHtml().includes("none → irreversible"), "esc 详情 reason_hint 渲染");
+
+  /* ── N7 凭证降级:meta.reason → 人话系统提示(不静默不裸错)────── */
+
+  probe.state.active = "conv";
+  probe.state.messages.push({ id: "m-deg", role: "agent", text: "计划如下", ts: 10,
+    meta: { route: "rule", reason: "llm_unavailable" }, cards: [] });
+  probe.renderMain();
+  assert.ok(logHtml().includes("规则模式"), "降级系统提示上屏(copy)");
+  assert.ok(!visibleText(logHtml()).includes("llm_unavailable"), "机器码不上屏");
 }
 
 console.log("platform.test.mjs: all assertions passed");

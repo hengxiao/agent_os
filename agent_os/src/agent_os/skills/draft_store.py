@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import math
 import re
 import shutil
 import time
@@ -33,6 +35,8 @@ from agent_os.kernel.errors import SkillLoadError
 from agent_os.skills.compound import CompoundSkillRegistry, StaticSkillRegistry
 from agent_os.skills.loader import materialize
 from agent_os.skills.manifest import parse_manifest
+
+_log = logging.getLogger("agent_os.skills.draft_store")
 
 #: 草稿名合法面(docs/NAMING.md §2):≥2 段点分,段内小写 snake_case——
 #: 同时充当路径穿越防护(字符面不含 /、..、空白,目录名即草稿名)
@@ -390,12 +394,18 @@ class DraftStore:
         source: str,
         parent: str | None = None,
         comments_digest: str = "",
+        prefer_candidate: bool = False,
     ) -> str:
         """版本快照(docs/LAB-ITERATION.md §1.2 不变量:版本不可变)。
 
         ``members`` 由调用方按编辑闭包给出(包语义;单稿即 [pkg])。快照 =
         versions/vNNN/<member>/{manifest.yaml,prompt.md,handler.py,tests/}
         + meta.json(source/parent/at/members/comments_digest)。返回版本号 vNNN。
+
+        ``prefer_candidate``(N2 快照源修正,B4):成员内容优先取 candidate
+        目录——accept 的语义是"存下被接受的版本",而接受发生在候选覆盖
+        working 之前,从 working 拷会把**旧**内容存成新版本;candidate
+        缺省的成员退回 working 并记日志(防裸 accept 调用序)。
         """
         vdir = self._iter_dir(pkg, "versions")
         vdir.mkdir(exist_ok=True)
@@ -405,6 +415,12 @@ class DraftStore:
         target.mkdir()
         for member in members:
             src = self._dir(member)
+            if prefer_candidate:
+                cand = self._iter_dir(pkg, "candidate", member)
+                if cand.is_dir():
+                    src = cand
+                else:
+                    _log.info("snapshot: %s 无候选,退回 working 快照(裸 accept?)", member)
             if not src.is_dir():
                 continue  # 悬空成员(未创建)不进快照
             dst = target / member
@@ -662,6 +678,48 @@ def _manifest_to_dict(manifest: SkillManifest) -> dict[str, Any]:
             if v is not None
         }
     return out
+
+
+def skeleton_from_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
+    """inputs schema → 示例骨架(N3;launch-dialog ``skeletonFromSchema`` 的
+    后端等价实现,语义逐条对齐:object 递归属性、integer 取 ceil(minimum) 或 1、
+    number 取 minimum 或 1、string ""/boolean False/array []/未声明 None 占位)。
+
+    技能 input 恒为 JSON 对象:顶层未声明/非 object 时退化为 ``{}`` 占位。
+    """
+
+    def _value(sch: Any) -> Any:
+        if not isinstance(sch, dict):
+            return None
+        t = sch.get("type")
+        if t == "object":
+            return {k: _value(sub) for k, sub in (sch.get("properties") or {}).items()}
+        if t == "integer":
+            minimum = sch.get("minimum")
+            return math.ceil(minimum) if isinstance(minimum, (int, float)) else 1
+        if t == "number":
+            return sch.get("minimum") if isinstance(sch.get("minimum"), (int, float)) else 1
+        if t == "string":
+            return ""
+        if t == "boolean":
+            return False
+        if t == "array":
+            return []
+        return None
+
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        return {}
+    return _value(schema) or {}
+
+
+def smoke_case_from_schema(inputs: dict[str, Any] | None) -> dict[str, Any] | None:
+    """首稿冒烟用例(N3,O3,B2):按 inputs schema 生成 1 个合 schema 的最小用例
+    (``{"input": 骨架}``;expect 留人补——骨架只保证"能跑",不断言内容)。
+    inputs 不是 object schema(残缺 manifest) → None(不造不合 schema 的用例)。
+    """
+    if not isinstance(inputs, dict) or inputs.get("type") != "object":
+        return None
+    return {"input": skeleton_from_schema(inputs)}
 
 
 def package_template_members(key: str, root_name: str) -> dict[str, tuple[dict[str, Any], str]]:

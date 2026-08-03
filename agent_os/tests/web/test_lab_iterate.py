@@ -192,7 +192,8 @@ def test_iterate_produces_candidate_without_touching_working(client):
 
 
 def test_accept_snapshot_overwrite_and_rewind(client):
-    """accept:v001 封存 → 候选覆盖 working → 清候选;rewind 恢复 v001,历史不动。"""
+    """accept:v001 封存**候选内容**(N2 修正,B4)→ 候选覆盖 working → 清候选;
+    rewind 恢复的就是被接受的版本,历史不动。"""
     client.post("/api/lab/drafts/weather.query/iterate", json={"comments": _COMMENTS, "note": ""})
     r = client.post("/api/lab/drafts/weather.query/candidate/accept")
     assert r.status_code == 200, r.text
@@ -207,16 +208,51 @@ def test_accept_snapshot_overwrite_and_rewind(client):
     assert "便携" in working["prompt"]
     assert client.get("/api/lab/drafts/weather.query/candidate/diff").status_code == 404, "候选已清"
 
-    # 再迭代出 v002,然后 rewind 回 v001:working 恢复,版本历史不动
+    # 再迭代出 v002,然后 rewind 回 v001:working = 被接受的候选版,版本历史不动
     client.post("/api/lab/drafts/weather.query/iterate", json={"comments": [], "note": ""})
     client.post("/api/lab/drafts/weather.query/candidate/accept")
     assert [v["version"] for v in client.get("/api/lab/drafts/weather.query/versions").json()] == ["v002", "v001"]
     r = client.post("/api/lab/drafts/weather.query/rewind", json={"version": "v001"})
     assert r.status_code == 200
     restored = client.get("/api/lab/drafts/weather.query").json()
-    assert restored["manifest"]["description"].startswith("根据天气"), "rewind 恢复 v001 内容"
+    assert restored["manifest"]["description"] == "按天气推荐一份家常晚餐。", "rewind 恢复被接受版(N2)"
+    assert "便携" in restored["prompt"]
     versions2 = client.get("/api/lab/drafts/weather.query/versions").json()
     assert [v["version"] for v in versions2] == ["v002", "v001"], "版本不可变:rewind 不改历史"
+
+
+# ---------------------------------------------------------------------------
+# N2 快照源修正(O2,B4):vNNN 与 candidate 逐字节一致
+# ---------------------------------------------------------------------------
+
+
+def test_accept_snapshot_is_candidate_bytes(client):
+    """accept 的 versions/v001 与接受前的 candidate 目录逐字节一致(prompt/manifest/用例)。"""
+    client.post("/api/lab/drafts/weather.query/iterate", json={"comments": _COMMENTS, "note": ""})
+    tmp = client._tmp_path
+    cand_dir = tmp / "drafts" / "weather.query" / "candidate" / "weather.query"
+    cand_files = {
+        p.relative_to(cand_dir).as_posix(): p.read_bytes()
+        for p in sorted(cand_dir.rglob("*"))
+        if p.is_file()
+    }
+    assert cand_files, "候选已落盘(prompt/manifest/tests)"
+
+    client.post("/api/lab/drafts/weather.query/candidate/accept")
+    snap_dir = tmp / "drafts" / "weather.query" / "versions" / "v001" / "weather.query"
+    snap_files = {
+        p.relative_to(snap_dir).as_posix(): p.read_bytes()
+        for p in sorted(snap_dir.rglob("*"))
+        if p.is_file()
+    }
+    assert snap_files == cand_files, "快照 = 被接受的候选,逐字节一致(N2)"
+
+    # rewind v001 后 working = 被接受版本(逐字节)
+    client.post("/api/lab/drafts/weather.query/iterate", json={"comments": [], "note": ""})
+    client.post("/api/lab/drafts/weather.query/candidate/accept")  # v002
+    client.post("/api/lab/drafts/weather.query/rewind", json={"version": "v001"})
+    working_prompt = (tmp / "drafts" / "weather.query" / "prompt.md").read_bytes()
+    assert working_prompt == cand_files["prompt.md"], "rewind 恢复被接受版本"
 
 
 def test_discard_and_provider_error(client, monkeypatch):

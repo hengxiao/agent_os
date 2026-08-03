@@ -183,4 +183,9 @@ export const COPY = {
   "platform.esc.requested": "请求的权限",
   "platform.esc.reason": "原因",
   "platform.detail.esc": "看看请求详情",
+  "platform.detail.decompose": "计划详情",
+  "platform.route.label": "路由",
+  "platform.route.llm": "模型路由",
+  "platform.route.rule": "规则路由",
+  "platform.route.degrade": "模型服务暂不可用,先用规则模式喵",
 };

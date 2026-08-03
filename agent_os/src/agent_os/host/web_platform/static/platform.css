@@ -175,6 +175,14 @@
 /* 摘要层(人话):一句结论加粗 + 补充行常规 */
 .pf-card-lead { font-size: var(--text-sm); font-weight: 600; }
 .pf-card-sub { font-size: var(--text-xs); color: var(--fg-1); }
+
+/* N7 降级系统提示(凭证不可用时的规则模式声明) */
+.pf-bubble-note {
+  font-size: var(--text-2xs);
+  color: var(--fg-2);
+  border-left: var(--stroke-strong) solid var(--perm-write);
+  padding-left: var(--s2);
+}
 .pf-card-actions .btn:hover { border-color: var(--live); }
 .pf-card-actions .btn:disabled { opacity: 0.5; }
 .pf-sec { font-size: var(--text-xs); }

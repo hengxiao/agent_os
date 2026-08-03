@@ -57,6 +57,25 @@ _ROUTE_PROMPT = """\
 #: LLM 单次分类的等待上限(秒;超时按不可用处理,回落规则)
 _ROUTE_TIMEOUT_S = 15.0
 
+#: 英文错误类名 → 人话(N1 摘要泄漏清零,B1):行级摘要统一过这层,
+#: 错误原文只留详情 tab(产物层 /api/runs/{id} 不动)。未识别的剥掉
+#: `XxxError:` 前缀留消息体——不编造原因(与前端 humanError 同一映射,
+#: 后端先译一道,前端那层变纯兜底)
+_ERROR_HUMAN = [
+    (re.compile(r"auth|api.?key|unauthorized|401", re.IGNORECASE), "API Key 无效或过期"),
+    (re.compile(r"timeout|timed out", re.IGNORECASE), "请求超时"),
+    (re.compile(r"ProviderError|model.*(unavailable|error)", re.IGNORECASE), "模型服务不可用"),
+]
+
+
+def human_error(raw: Any) -> str:
+    """错误原文 → 摘要层人话(行级;已知模式给翻译,未知剥类名前缀)。"""
+    s = str(raw or "")
+    for rx, human in _ERROR_HUMAN:
+        if rx.search(s):
+            return human
+    return re.sub(r"^[A-Z][\w.]*Error:\s*", "", s)
+
 
 class Orchestrator:
     """意图路由 + 编排(规则本期,LLM 留 provider 接口)。"""
@@ -83,18 +102,29 @@ class Orchestrator:
         self._name_taken = name_taken or (lambda _name: False)
 
     def handle(self, session: dict[str, Any], text: str) -> dict[str, Any]:
-        """用户意图 → agent 消息(文本 + 卡)。LLM 路由优先,故障回落规则。"""
+        """用户意图 → agent 消息(文本 + 卡)。LLM 路由优先,故障回落规则。
+
+        N6(O6,B6):消息与 plan 卡 data 带 ``meta/route_meta``
+        ``{route: "llm"|"rule", reason?}``——路由来源可观测,LLM 失败率
+        可按 reason 统计;reason 是机器码(llm_unavailable/llm_bad_schema),
+        人话文案在前端 copy(六主题,N7 降级提示同挂这条)。
+        """
         routed = self._route(text)
         intent = routed["intent"]
+        meta = routed.get("meta")
         if intent == "create_skill":
-            return self._make_skill(
-                text, goal=routed.get("goal") or "", name=routed.get("name") or ""
+            msg = self._make_skill(
+                text, goal=routed.get("goal") or "", name=routed.get("name") or "", route_meta=meta
             )
-        if intent == "why_failed":
-            return self._why_failed()
-        if intent == "browse":
-            return self._browse(timeframe=routed.get("timeframe") or "")
-        return self._help()
+        elif intent == "why_failed":
+            msg = self._why_failed()
+        elif intent == "browse":
+            msg = self._browse(timeframe=routed.get("timeframe") or "")
+        else:
+            msg = self._help()
+        if meta:
+            msg["meta"] = meta
+        return msg
 
     # ------------------------------------------------------------------
     # 路由
@@ -103,10 +133,12 @@ class Orchestrator:
     def _route(self, text: str) -> dict[str, Any]:
         """LLM 优先;不可用/超时/schema 不合 → 规则(永远兜底,fail-safe)。"""
         if self._provider is not None:
-            routed = self._route_llm(text)
+            routed, reason = self._route_llm(text)
             if routed is not None:
+                routed["meta"] = {"route": "llm"}
                 return routed
-        return {"intent": self._route_rules(text)}
+            return {"intent": self._route_rules(text), "meta": {"route": "rule", "reason": reason}}
+        return {"intent": self._route_rules(text), "meta": {"route": "rule"}}
 
     def _route_rules(self, text: str) -> str:
         if _MAKE_RE.search(text):
@@ -117,12 +149,14 @@ class Orchestrator:
             return "why_failed"
         return "help"
 
-    def _route_llm(self, text: str) -> dict[str, Any] | None:
-        """LLM 意图分类:唯一 JSON 输出 → schema 校验;任何失败 → None(回落规则)。
+    def _route_llm(self, text: str) -> tuple[dict[str, Any] | None, str | None]:
+        """LLM 意图分类:唯一 JSON 输出 → schema 校验;任何失败 → (None, 原因码)。
 
-        fail-safe 是硬要求(凭证过期/超时/胡说八道都不能打断对话);
-        ProviderManager 的 chat 是 async——本方法在 FastAPI 线程池里跑,
-        ``asyncio.run`` 开私有循环,不碰宿主事件循环。
+        返回 ``(routed, reason)``:命中时 reason=None;失败时 routed=None,
+        reason ∈ {"llm_unavailable", "llm_bad_schema"}(N6 可观测/N7 降级
+        文案的机器码)。fail-safe 是硬要求(凭证过期/超时/胡说八道都不能
+        打断对话);ProviderManager 的 chat 是 async——本方法在 FastAPI
+        线程池里跑,``asyncio.run`` 开私有循环,不碰宿主事件循环。
         """
         async def _ask() -> Any:
             req = ChatRequest(
@@ -138,25 +172,31 @@ class Orchestrator:
 
         try:
             resp = asyncio.run(_ask())
-            data = json.loads(resp.message.content)
         except Exception as e:  # noqa: BLE001 — 任何 LLM 侧失败都按"不可用"回落
             _log.info("LLM 意图路由不可用,回落规则: %s", e)
-            return None
+            return None, "llm_unavailable"
+        try:
+            data = json.loads(resp.message.content)
+        except (json.JSONDecodeError, TypeError, AttributeError) as e:
+            _log.info("LLM 意图路由输出非 JSON,回落规则: %s", e)
+            return None, "llm_bad_schema"
         if not isinstance(data, dict) or data.get("intent") not in INTENTS:
             _log.info("LLM 意图路由输出不合 schema,回落规则: %r", data)
-            return None
+            return None, "llm_bad_schema"
         return {
             "intent": data["intent"],
             "goal": str(data.get("goal") or ""),
             "name": _sanitize_name(data.get("name")),
             "timeframe": str(data.get("timeframe") or ""),
-        }
+        }, None
 
     # ------------------------------------------------------------------
     # 意图①:做个 X 技能 → plan 卡
     # ------------------------------------------------------------------
 
-    def _make_skill(self, text: str, *, goal: str = "", name: str = "") -> dict[str, Any]:
+    def _make_skill(
+        self, text: str, *, goal: str = "", name: str = "", route_meta: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         topic = goal or _topic_of(text)  # LLM 给了主题词就用,没有走规则提取
         # create 名:LLM 建议 > 规则"域名.动作"(lab.<topic>);冲突自动加唯一后缀,
         # 绝不批准一个已存在的名(草稿层/生产层占用都查,批准即 409 的坑)
@@ -175,6 +215,7 @@ class Orchestrator:
             reuse=reuse,
             create=create,
             approve_payload={"name": create_name, "template": create[0]["template"]},
+            route_meta=route_meta,  # N6:路由来源进卡 data(详情层角标)
         )
         summary = (
             f"计划如下:复用 {len(reuse)} 个已有技能"
@@ -229,7 +270,7 @@ class Orchestrator:
             [
                 latest.get("run_id", "")[:8],
                 latest.get("skill", ""),
-                latest.get("error", "")[:120] or "(无错误摘要)",
+                human_error(latest.get("error", ""))[:120] or "(无错误摘要)",  # N1:行级人话
             ]
         ]
         return new_message(
@@ -276,7 +317,8 @@ class Orchestrator:
                 [
                     r.get("run_id", "")[:8],
                     r.get("skill", ""),
-                    (r.get("error", "")[:120] or "(无错误摘要)") if failed else "运行成功",
+                    # N1:行级人话(failed = error_human,成功 = status_human)
+                    (human_error(r.get("error", ""))[:120] or "(无错误摘要)") if failed else "运行成功",
                 ]
             )
             row_refs.append({"kind": "run", "id": r.get("run_id", "")} if r.get("run_id") else None)

@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent_os.api.v1 import derive_skill_tier
+from agent_os.api.v1 import ProviderError, derive_skill_tier
 from agent_os.host.web_platform.artifacts import (
     ACTION_WHITELIST,
     build_diff_card,
@@ -37,7 +37,7 @@ from agent_os.host.web_platform.artifacts import (
 from agent_os.host.web_platform.orchestrator import Orchestrator
 from agent_os.host.web_platform.sessions import SessionStore, new_message
 from agent_os.kernel.errors import SkillLoadError
-from agent_os.skills.draft_store import OverlaySkillRegistry
+from agent_os.skills.draft_store import OverlaySkillRegistry, smoke_case_from_schema
 from agent_os.skills.gate import GateError, validate_draft
 from agent_os.skills.iterate import edit_members, run_iterate
 from agent_os.skills.lab_assistant import ITERATOR_NAME, iterator_skill
@@ -237,6 +237,12 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         except FileExistsError as e:
             # 草稿重名(重复批准/历史残留):友好 409,不 500(读屏层是人话,详情给原文)
             raise HTTPException(status_code=409, detail=f"同名草稿已存在:{e}") from e
+        except ProviderError as e:
+            # N7(O7):凭证/模型服务故障 → 503 人话(前端系统气泡;不 500 不裸英文类名)
+            raise HTTPException(
+                status_code=503,
+                detail="模型服务暂不可用(凭证可能已过期),请刷新凭证后重试",
+            ) from e
         except GateError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:
@@ -251,11 +257,26 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     # ------------------------------------------------------------------
 
     def _act_scaffold_approve(payload: dict[str, Any]) -> dict[str, Any]:
-        """scaffold.approve(意图①批准):创建首稿 → 五关 → skill_pack + gate_report 卡。"""
+        """scaffold.approve(意图①批准):创建首稿 → 五关 → skill_pack + gate_report 卡。
+
+        N3(O3,B2):首稿即带 1 个合 schema 的冒烟用例(tests/smoke.json,
+        按 inputs schema 骨架生成)——首稿 G4 不再必然 warn。
+        """
         name = str(payload.get("name") or "")
         template = payload.get("template") or None
         lab_store.create(name, template=template)
         draft = lab_store.read(name)
+        if not draft["tests"]:
+            case = smoke_case_from_schema((draft["manifest"] or {}).get("inputs"))
+            if case is not None:
+                lab_store.save(
+                    name,
+                    manifest=draft["manifest"],
+                    prompt=draft["prompt"],
+                    handler=draft["handler"],
+                    tests={"smoke.json": case},
+                )
+                draft = lab_store.read(name)
         report = validate_draft(
             draft,
             production=manager.shared_skills_registry(),
@@ -323,6 +344,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             name, members, source="iterate",
             parent=latest[0]["version"] if latest else None,
             comments_digest=f"{len(comments)} 条边注",
+            prefer_candidate=True,  # N2:快照 = 被接受的候选内容(B4)
         )
         for member in cand:
             data = lab_store.read_candidate_member(name, member)

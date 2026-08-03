@@ -161,15 +161,24 @@ POST /api/cards/action                 卡片按钮统一入口(白名单 → �
   底部意图输入(Enter 发送,Shift+Enter 换行),detail = 详情视图(输入区
   隐藏);空态 help 引导(三句示例意图,点击回填输入框);
   刷新恢复 = 会话列表重载 + 选中会话重载(持久化在服务端,§3);
-- **详情视图**(`details.js`,四类渲染纯函数):gate(五关 + findings 全展开)、
+- **详情视图**(`details.js`,五类渲染纯函数):gate(五关 + findings 全展开)、
   pack(closure 成员树,生产成员链旧 UI `/#/skills/<name>`)、plan(成员三态
   全表 + package_hash/blockers/warnings 随卡携带,审的就是要执行的)、
   run(状态/结果 + 信号时间线,复用旧 web `trace.js` 的
-  `deriveTraceView`/`renderTrace`);入口 = 卡上"查看详情"小字链接
-  (gate_report/skill_pack/publish 常带,table 带 `ref={kind:"run",id}` 时带,
-  后端 `_why_failed` 的 run 摘要卡即此锚);gate/plan 数据在卡内不拉取,
+  `deriveTraceView`/`renderTrace`)、diff(红绿行全量 = 复用 cards.js 技术渲染);
+  入口 = 卡上"查看详情"小字链接;gate/plan/diff 数据在卡内不拉取,
   pack 拉 closure、run 拉 detail+signals;loading/error 占位可重试;
-- **卡渲染**(`cards.js`,纯函数 `cardHtml(card)` 按 type 分发):
+- **卡渲染双层化**(`cards.js`;用户原则:主 UI 默认人话,技术细节藏详情页):
+  对话流 = **摘要层** `summaryHtml(card)`——一句结论(加粗 `.pf-card-lead`)+
+  补充行(`.pf-card-sub`)+ 详情链接/动作区(右下),所有句子从 `card.data`
+  **算**出来(数据驱动,copy 模板 `{n}/{name}` 占位),黑话翻译表:
+  tier→只读/可改能撤销/需审批、五关→"检查"、create/replace/unchanged→
+  新建/更新/不变、英文字段路径→说明/措辞/用例、ProviderError 等错误类名→
+  人话一句(原文留详情);hash/关号/条款号/run id/template 一律不进摘要;
+  详情 tab = **技术层**(现有全量渲染 `cardHtml`/details.js);两层边界有测试
+  守着(摘要断言**不含**禁忌词,详情断言**含**技术字段——摘要层只查剥掉
+  标签属性后的可见文字,data-detail 属性里的 JSON 不上屏不算泄漏);
+- **卡渲染技术层**(`cards.js`,纯函数 `cardHtml(card)` 按 type 分发):
   plan(分解表 + 批准)、skill_pack(成员 + tier 徽标)、gate_report(五关色点
   + findings 可展开 + 去修复跳 Lab)、diff(字段两列 + 红绿行,Flow C 同构)、
   publish(成员三态 + warnings 勾选门)、table(通用表);actions 按钮统一走
@@ -183,7 +192,8 @@ POST /api/cards/action                 卡片按钮统一入口(白名单 → �
 - **降级**:本页只覆盖意图级闭环;精确操作(改单字段/逐关报告/断点调试)
   一律回旧页(§8 专家模式),gate_report 卡的"去修复"就是这个出口的形态。
 
-测试:`static/tests/platform.test.mjs`(六卡型渲染 + 详情链接断言 + fetch
-stub 对话流/错误态 + tab 模型纯函数 + 详情全流程:开 tab/去重/四类渲染/
-重试/✕ 回落);浏览器绝对路径 import(`/static/js/` 共享模块)在 node 侧经
+测试:`static/tests/platform.test.mjs`(六卡型技术渲染 + 详情链接断言 +
+摘要层人话/禁忌词边界 + 详情层技术字段保留 + fetch stub 对话流/错误态 +
+tab 模型纯函数 + 详情全流程:开 tab/去重/五类渲染/重试/✕ 回落);浏览器
+绝对路径 import(`/static/js/` 共享模块)在 node 侧经
 `platform-loader.mjs` 钩子映射(测试基建,非运行时)。

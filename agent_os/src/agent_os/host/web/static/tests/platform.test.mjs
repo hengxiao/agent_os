@@ -1,9 +1,11 @@
 /* web_platform 前端样品单测(docs/WEB-PLATFORM.md §10):
-   cards.js 六卡型渲染(结构/actions 按钮/publish warnings 勾选门/详情链接);
+   cards.js 双层渲染——技术层 cardHtml(六卡型结构/actions 按钮/warnings 勾选门)
+   + 摘要层 summaryHtml(人话一句结论,数据驱动;断言可见文字不含禁忌词:
+   tier/manifest/hash/G1-G5/条款号/ProviderError 等),详情层断言技术字段保留;
    app.js 对话流(fetch stub:会话列表 → 发消息 → agent 卡渲染 →
    点卡动作 → action 请求体 → 返回卡追加;骨架 loading / 错误态);
-   tab 条模型(openTab 去重聚焦 / closeTab 回落)与四类详情视图
-   (gate/pack/plan 数据在卡内,pack/run 拉取;loading/error/重试;✕ 关闭回对话)。
+   tab 条模型(openTab 去重聚焦 / closeTab 回落)与五类详情视图
+   (gate/plan/diff 数据在卡内,pack/run 拉取;loading/error/重试;✕ 关闭回对话)。
    运行:node static/tests/platform.test.mjs */
 
 import assert from "node:assert/strict";
@@ -12,7 +14,24 @@ import { register } from "node:module";
 await register("./platform-loader.mjs", import.meta.url); // "/static/js/" → 旧 web 共享模块
 
 const { makeDocument, StubEl } = await import("./dom-stub.mjs");
-const { cardHtml } = await import("../../../web_platform/static/cards.js");
+const { cardHtml, summaryHtml } = await import("../../../web_platform/static/cards.js");
+const { gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml, diffDetailHtml } =
+  await import("../../../web_platform/static/details.js");
+
+/* ── 两层边界工具 ─────────────────────────────────────────────
+   摘要层禁区只看**用户可见文字**(剥标签+属性;data-detail/data-payload
+   属性里的技术 JSON 不渲染上屏,不算泄漏);详情层则必须留得住技术面。 */
+const visibleText = (html) => html.replace(/<[^>]*>/g, "");
+const FORBIDDEN = [
+  "irreversible", "reversible", "tier", "manifest", "package_hash", "manifest_hash",
+  "report_id", "G1", "G2", "G3", "G4", "G5", "TIER-STANDARDS", "ESCALATION",
+  "schema", "closure", "promote", "ProviderError",
+];
+const assertClean = (html, who) => {
+  const t = visibleText(html);
+  for (const w of FORBIDDEN) assert.ok(!t.includes(w), `${who} 摘要层禁见 ${w}`);
+  return t;
+};
 
 /* ── 六卡型渲染 ─────────────────────────────────────────────── */
 
@@ -154,6 +173,149 @@ const { cardHtml } = await import("../../../web_platform/static/cards.js");
   assert.ok(!diff.includes("data-detail-kind"), "diff 卡不带详情链接");
 }
 
+/* ── 摘要层(人话):六卡型 summaryHtml + 两层边界 ─────────────── */
+
+{
+  const s = summaryHtml({
+    type: "plan", v: 1,
+    data: { goal: "晚餐推荐",
+      reuse: [{ name: "weather.query", reason: "已覆盖" }],
+      create: [
+        { name: "lab.dinner", template: "prompt_query", reason: "主技能" },
+        { name: "lab.calendar", template: "prompt_query", reason: "读日程" },
+      ] },
+    actions: [{ id: "scaffold.approve", label: "批准", method: "POST",
+      endpoint: "/api/lab/drafts", payload: {} }],
+  });
+  const t = assertClean(s, "plan");
+  assert.ok(t.includes("晚餐推荐"), "plan 摘要带目标");
+  assert.ok(t.includes("weather.query") && t.includes("lab.dinner") && t.includes("lab.calendar"), "技能名保留");
+  assert.ok(!t.includes("prompt_query"), "template 结构数据不进摘要");
+  assert.ok(s.includes("pf-card-lead"), "一句结论(加粗槽位)");
+  assert.ok(s.includes('data-card-act="scaffold.approve"'), "动作按钮保留在摘要卡");
+}
+
+{
+  const s = summaryHtml({
+    type: "skill_pack", v: 1,
+    data: { name: "lab.dinner", tier: "irreversible", members: ["lab.dinner", "lab.dinner.plan"] },
+    actions: [],
+  });
+  const t = assertClean(s, "skill_pack");
+  assert.ok(t.includes("lab.dinner"), "包名保留");
+  assert.ok(t.includes("2"), "成员数入句");
+  assert.ok(t.includes("审批"), "tier=irreversible → 人话审批提示");
+  assert.ok(s.includes('data-detail-kind="pack"'), "成员表/tier 徽标收进详情链接");
+  // 详情层:技术面留得住
+  const dt = packDetailHtml({ root: "lab.dinner", root_tier: "irreversible",
+    members: [{ name: "lab.dinner", depth: 0, tier: "irreversible", status: "draft" }], errors: [] });
+  assert.ok(dt.includes("irreversible"), "详情层保留 tier 术语");
+  assert.ok(dt.includes('data-perm="EXEC"'), "详情层保留 tier 徽标");
+}
+
+{
+  const s = summaryHtml({
+    type: "gate_report", v: 1,
+    data: { draft: "lab.dinner", status: "warn",
+      gates: {
+        G1: { status: "pass", findings: [] },
+        G2: { status: "warn", findings: [{ level: "warn", clause: "TIER-STANDARDS.md §2.1", message: "description 太短" }] },
+      } },
+    actions: [],
+  });
+  const t = assertClean(s, "gate_report");
+  assert.ok(t.includes("1"), "通过计数入句");
+  assert.ok(t.includes("description 太短"), "建议内容人话呈现");
+  assert.ok(s.includes('data-detail-kind="gate"'), "五关/条款号收进详情链接");
+  const dt = gateDetailHtml({
+    draft: "lab.dinner", status: "warn",
+    gates: { G2: { status: "warn", findings: [{ level: "warn", clause: "TIER-STANDARDS.md §2.1", message: "description 太短" }] } },
+  });
+  assert.ok(dt.includes("TIER-STANDARDS.md §2.1"), "详情层保留条款号");
+  assert.ok(dt.includes("G2"), "详情层保留关号");
+}
+
+{
+  const card = {
+    type: "diff", v: 1,
+    data: { name: "lab.dinner", diff: { has_changes: true, members: [{
+      member: "lab.dinner", status: "changed",
+      fields: [{ kind: "changed", path: "description", old: "旧文案", new: "新文案" }],
+      prompt_diff: [{ kind: "add", text: "雨天优先便携" }, { kind: "del", text: "旧句" }],
+      tests: { added: ["t1", "t2"], removed: [] } }] } },
+    actions: [],
+  };
+  const s = summaryHtml(card);
+  const t = assertClean(s, "diff");
+  assert.ok(t.includes("lab.dinner"), "diff 摘要带对象名");
+  assert.ok(t.includes("说明") && t.includes("措辞"), "字段路径翻译成人话");
+  assert.ok(t.includes("+2"), "用例增减计数入句");
+  assert.ok(!t.includes("旧文案") && !t.includes("新文案"), "新旧内容不进摘要");
+  assert.ok(s.includes('data-detail-kind="diff"'), "红绿细节收进详情链接");
+  const dt = diffDetailHtml(card.data);
+  assert.ok(dt.includes('data-kind="add"') && dt.includes('data-kind="del"'), "详情层保留红绿行");
+  assert.ok(dt.includes("旧文案") && dt.includes("新文案"), "详情层保留字段新旧值");
+}
+
+{
+  const s = summaryHtml({
+    type: "publish", v: 1,
+    data: { root: "lab.dinner", plan_id: "plan-x", package_hash: "abc123hash",
+      members: [
+        { name: "a", action: "create", from_version: null, to_version: "0.1.0" },
+        { name: "b", action: "create", from_version: null, to_version: "0.1.0" },
+        { name: "c", action: "replace", from_version: "0.1.0", to_version: "0.2.0" },
+        { name: "d", action: "unchanged", from_version: "0.1.0", to_version: "0.1.0" },
+      ],
+      blockers: [{ kind: "gate", member: "a", message: "x" }], warnings: ["w1"] },
+    actions: [{ id: "plan.confirm", label: "确认发布", method: "POST",
+      endpoint: "/api/lab/packages/promote", payload: { plan_id: "plan-x" } }],
+  });
+  const t = assertClean(s, "publish");
+  assert.ok(t.includes("4"), "总数入句");
+  assert.ok(t.includes("2 个新建") && t.includes("1 个更新") && t.includes("1 个不变"), "三态计数入句");
+  assert.ok(t.includes("1 个阻塞") && t.includes("1 条警告"), "阻塞/警告计数入句");
+  assert.ok(s.includes("data-ack"), "warnings 勾选门留在摘要(动作而非术语)");
+  const dt = planDetailHtml({
+    root: "lab.dinner", plan_id: "plan-x", package_hash: "abc123hash",
+    members: [{ name: "a", action: "create", gate_status: "pass", from_version: null, to_version: "0.1.0" }],
+    blockers: [], warnings: [],
+  });
+  assert.ok(dt.includes("abc123hash"), "详情层保留 package_hash");
+  assert.ok(dt.includes('data-action="create"'), "详情层保留三态行");
+}
+
+{
+  const s = summaryHtml({
+    type: "table", v: 1,
+    data: { title: "最近失败 run", columns: ["run", "skill", "错误摘要"],
+      rows: [["a1b2c3d4", "demo.fib", "ProviderError: quota exceeded"]],
+      ref: { kind: "run", id: "a1b2c3d4-full" } },
+    actions: [],
+  });
+  const t = assertClean(s, "table(run)");
+  assert.ok(t.includes("demo.fib"), "技能名保留");
+  assert.ok(t.includes("模型服务不可用"), "ProviderError 翻译成人话");
+  assert.ok(!t.includes("a1b2c3d4"), "run id 不进摘要");
+  assert.ok(s.includes('data-detail-ref="a1b2c3d4-full"'), "run 详情锚保留");
+  const dt = runDetailHtml({
+    detail: { skill: "demo.fib", status: "failed", error: "ProviderError: quota exceeded", result: null },
+    signals: [],
+  });
+  assert.ok(dt.includes("ProviderError: quota exceeded"), "详情层保留错误原文");
+}
+
+{
+  // 无 run ref 的通用表(help 卡)= 本身即摘要,保持表格原样
+  const s = summaryHtml({
+    type: "table", v: 1,
+    data: { title: "我能做什么", columns: ["说法", "效果"], rows: [["做个 X", "出计划"]] },
+    actions: [],
+  });
+  assert.ok(s.includes("<table"), "通用表摘要 = 表格本体");
+  assert.ok(!s.includes("data-detail-kind"), "通用表不带详情链接");
+}
+
 /* ── app.js 对话流(fetch stub)───────────────────────────────── */
 
 {
@@ -255,6 +417,8 @@ const { cardHtml } = await import("../../../web_platform/static/cards.js");
   assert.deepEqual(JSON.parse(msgPost.body), { text: "帮我做个查天气的技能" });
   assert.ok(logHtml().includes("计划如下"), "agent 消息渲染");
   assert.ok(logHtml().includes('data-card="plan"'), "plan 卡渲染");
+  assert.ok(!logHtml().includes("pf-card-tag"), "对话流走摘要层(无技术卡型标签)");
+  assert.ok(!logHtml().includes("prompt_query"), "对话流摘要不含结构数据");
   assert.ok(!logHtml().includes("pf-skel"), "骨架 loading 已撤");
 
   // 点卡动作:批准 → action 请求体 → 返回 skill_pack 卡追加
@@ -359,6 +523,22 @@ const { cardHtml } = await import("../../../web_platform/static/cards.js");
   assert.ok(calls.some((c) => c.url === "/api/runs/run-1/signals"), "run 详情拉 signals");
   assert.ok(detailHtml().includes("ops.janitor"), "run 详情渲染 skill");
   assert.ok(detailHtml().includes("outputs 错"), "run 详情渲染失败原因");
+
+  // diff 详情:数据在卡内,红绿行全量渲染(摘要只留人话)
+  const diffLink = new StubEl("button");
+  diffLink.dataset.detailKind = "diff";
+  diffLink.dataset.detailRef = "lab.dinner";
+  diffLink.dataset.detail = JSON.stringify({ name: "lab.dinner", diff: { has_changes: true, members: [{
+    member: "lab.dinner", status: "changed",
+    fields: [{ kind: "changed", path: "description", old: "旧文案", new: "新文案" }],
+    prompt_diff: [{ kind: "add", text: "雨天优先便携" }],
+    tests: { added: [], removed: [] } }] } });
+  diffLink.parentNode = doc.body;
+  doc.trigger("click", { target: diffLink });
+  await tick();
+  assert.equal(probe.state.active, "d:diff:lab.dinner", "diff tab 激活");
+  assert.ok(detailHtml().includes('data-kind="add"'), "diff 详情红绿行渲染");
+  assert.ok(detailHtml().includes("旧文案"), "diff 详情字段新旧值渲染");
 
   // 加载失败 → 错误占位 + 重试成功
   const badLink = new StubEl("button");

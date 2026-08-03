@@ -9,6 +9,18 @@
 import { copy } from "/static/js/themes.js";
 import { esc } from "/static/js/util.js";
 import { deriveTraceView, renderTrace } from "/static/js/components/trace.js";
+import { diffCard } from "./cards.js";
+
+/* diff 详情:字段两列 + prompt 红绿行(技术面全貌 = 原 diff 卡本体;
+   接受/放弃动作留在对话流摘要卡上,详情只看) */
+export function diffDetailHtml(data) {
+  return (
+    `<div class="pf-detail">` +
+    `<div class="pf-detail-head mono">${esc(data?.name ?? "")}</div>` +
+    diffCard({ data }) +
+    `</div>`
+  );
+}
 
 /* gate 详情:完整报告(全部 findings 展开) */
 export function gateDetailHtml(data) {

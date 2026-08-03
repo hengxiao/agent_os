@@ -8,8 +8,8 @@
 
 import { copy, initTheme } from "/static/js/themes.js";
 import { esc, toast } from "/static/js/util.js";
-import { cardHtml } from "./cards.js";
-import { gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml } from "./details.js";
+import { summaryHtml } from "./cards.js";
+import { diffDetailHtml, gateDetailHtml, packDetailHtml, planDetailHtml, runDetailHtml } from "./details.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -102,7 +102,7 @@ function renderMain() {
 function msgHtml(m) {
   const role = m.role === "user" ? "user" : "agent";
   const text = m.text ? `<div class="pf-bubble-text">${esc(m.text)}</div>` : "";
-  const cards = (m.cards ?? []).map(cardHtml).join("");
+  const cards = (m.cards ?? []).map(summaryHtml).join(""); // 对话流 = 摘要层(人话)
   return `<div class="pf-msg" data-role="${role}"><div class="pf-bubble">${text}${cards}</div></div>`;
 }
 
@@ -240,6 +240,7 @@ const _DETAIL_META = {
   pack: { title: copy("platform.detail.pack") },
   plan: { title: copy("platform.detail.plan") },
   run: { title: copy("platform.detail.run") },
+  diff: { title: copy("platform.detail.diff") },
 };
 
 function activateTab(id) {
@@ -272,6 +273,7 @@ async function _loadDetail(kind, ref, data) {
   try {
     if (kind === "gate") return { kind, ref, html: gateDetailHtml(data) };
     if (kind === "plan") return { kind, ref, html: planDetailHtml(data) };
+    if (kind === "diff") return { kind, ref, html: diffDetailHtml(data) };
     if (kind === "pack") {
       const closure = await (
         await fetch(`/api/lab/packages/${encodeURIComponent(ref)}/closure?mode=runtime`)

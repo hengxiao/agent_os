@@ -167,7 +167,14 @@
   border-top: var(--stroke) solid var(--line);
   padding-top: var(--s2);
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end; /* 动作区右下(商业 widget 信息层级) */
 }
+/* 详情链接靠左、动作按钮靠右 */
+.pf-card-actions .pf-detail-link { margin-right: auto; }
+/* 摘要层(人话):一句结论加粗 + 补充行常规 */
+.pf-card-lead { font-size: var(--text-sm); font-weight: 600; }
+.pf-card-sub { font-size: var(--text-xs); color: var(--fg-1); }
 .pf-card-actions .btn:hover { border-color: var(--live); }
 .pf-card-actions .btn:disabled { opacity: 0.5; }
 .pf-sec { font-size: var(--text-xs); }

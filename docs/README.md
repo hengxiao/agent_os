@@ -24,6 +24,7 @@
 - [SKILL-DEV.md](SKILL-DEV.md) — Skill 开发平台(Skill Lab)方案:草稿存储(DraftStore/OverlayRegistry)、全字段编辑器、Agent 助手(skill.dev.assistant)、测试面板、五关提交闸门。
 - [SKILL-PACKAGES.md](SKILL-PACKAGES.md) — 能力包设计报告(v0.1):用户心智单位是"功能"而非技能;包 = 根技能的依赖闭包(推导不声明);包视图/包级闸门/原子提交/后端配合清单。
 - [SKILL-PACKAGES-V2.md](SKILL-PACKAGES-V2.md) — 能力包详细设计(v2.1,设计依据 + 实施记录;P1-P4 已落地):业界十系统对照(Nix/Helm/Claude Plugin/Salesforce/VS Code/Agentforce/Terraform/ComfyUI/Agent Skills/GlassWorm)、四份方案与推荐路线、编辑闭包 vs 运行闭包、提交计划与包哈希、先证后换的原子事务、依赖变更档位告警、注册表分层与草稿身份、与并行稿的对照裁决。
+- [LAB-ITERATION.md](LAB-ITERATION.md) — Lab 迭代工作流 spec:访谈初始化(brief)→ 首稿(包+测试+LLM judge rubric)→ 批注式迭代(左既有/中批注/右候选)→ 版本回溯;数据模型、API/前端改动、状态机、分期 V1-V4。
 - [DESIGN.md](DESIGN.md) — 微内核总体设计:九子系统契约、agent loop、帧模型、权限三层交集、信号与记账(全仓架构基准)。
 - [NAMING.md](NAMING.md) — 命名规范:`<域>.<动作>[.<对象>]` 点分命名与动词-副作用对应规则。
 - [RUNNERS.md](RUNNERS.md) — 宿主运行器:CLI/Web 薄宿主、配置文件(agent-os.toml)各段语义、退出码契约。

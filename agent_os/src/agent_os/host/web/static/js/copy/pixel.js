@@ -82,6 +82,9 @@ export const COPY = {
   "lab.tpl.danger_op": "TPL: DANGER (L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
   "app.resumed": "CONTINUE! data refreshed (freeze? keep site ACTIVE in Chrome settings)",
+  "lab.promote.disabled.dirty": "LOCKED: unsaved changes — SAVE first",
+  "lab.dirty.leave": "unsaved changes will be lost. switch? [confirm]",
+  "lab.promote.goto": "VIEW IN SKILLS →",
   "lab.promote.disabled.noreport": "LOCKED: pass CHECK first",
   "lab.promote.disabled.stale": "LOCKED: changed after CHECK — re-run",
   "lab.promote.disabled.fail": "LOCKED: gate FAILED",

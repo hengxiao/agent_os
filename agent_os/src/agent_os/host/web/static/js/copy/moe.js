@@ -75,6 +75,9 @@ export const COPY = {
   "lab.tpl.danger_op": "模板:危险操作(L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
   "app.resumed": "🌸 睡醒啦,数据刷新一下~(老被冻住?在 Chrome 设置→性能里把咱家保持活动吧)",
+  "lab.promote.disabled.dirty": "先存一下再提交哦",
+  "lab.dirty.leave": "还有改动没存呢,切走就没啦,确定吗?",
+  "lab.promote.goto": "去 Skills 看看它 →",
   "lab.promote.disabled.noreport": "先点「检查」过关才能提交哦",
   "lab.promote.disabled.stale": "检查后又改过啦,再检查一次吧",
   "lab.promote.disabled.fail": "还有红卡没修好,加油!",

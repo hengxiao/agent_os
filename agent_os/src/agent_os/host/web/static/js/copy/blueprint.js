@@ -76,6 +76,9 @@ export const COPY = {
   "lab.tpl.danger_op": "图幅:危险操作(L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
   "app.resumed": "页面已从休眠恢复(REFRESH)(若频繁冻结,Chrome 设置→性能将本站保持活动)",
+  "lab.promote.disabled.dirty": "图面有未落图改动,先落图再归档",
+  "lab.dirty.leave": "图面有未落图改动,切换后将丢失。确定切换?",
+  "lab.promote.goto": "去 Skills 查验 →",
   "lab.promote.disabled.noreport": "需先校核通过",
   "lab.promote.disabled.stale": "校核后有改动,需重新校核",
   "lab.promote.disabled.fail": "校核存在未修复失败项",

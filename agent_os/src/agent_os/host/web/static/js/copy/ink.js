@@ -76,6 +76,9 @@ export const COPY = {
   "lab.tpl.danger_op": "帖:危(L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
   "app.resumed": "醒墨,数据已新(若常眠不醒,可于 Chrome 设置将本站保持活动)",
+  "lab.promote.disabled.dirty": "有墨未落,先落后呈",
+  "lab.dirty.leave": "有墨未落,易稿则失。确定?",
+  "lab.promote.goto": "去 Skills 观之 →",
   "lab.promote.disabled.noreport": "先校后呈",
   "lab.promote.disabled.stale": "校后有改,需再校",
   "lab.promote.disabled.fail": "有未合之项",

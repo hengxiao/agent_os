@@ -519,6 +519,92 @@ const DRAFT = {
   closeLab();
 }
 
+/* ── F2/F11/F5:openLab 清场、schema 预填、脏改动切换守卫(UX 流程评审)── */
+{
+  const { openLab, closeLab, startTestRun } = await import("../js/components/lab.js");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const toastStack = doc.createElement("div");
+  toastStack.setAttribute("id", "toastStack");
+  doc.body.appendChild(toastStack);
+  doc.querySelector = (sel) => doc.body.querySelector(sel);
+
+  const calls = [];
+  const DANGER = {
+    name: "labtest.danger",
+    manifest: { name: "labtest.danger", version: "0.1.0", kind: "prompt",
+      description: "x",
+      inputs: { type: "object", required: ["targets"],
+        properties: { targets: { type: "array", items: { type: "string" } },
+          dry_run: { type: "boolean" } } },
+      outputs: { type: "object" },
+      permissions: { tools: ["system.file.delete"], skills: [] } },
+    prompt: "x", handler: null, parse_error: null, tests: {},
+  };
+  const OTHER = { ...DANGER, name: "other.draft",
+    manifest: { ...DANGER.manifest, name: "other.draft" } };
+  globalThis.fetch = async (path, options = {}) => {
+    const url = String(path);
+    calls.push({ url, method: options.method ?? "GET", body: options.body });
+    const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (url === "/api/lab/drafts") return reply([{ name: "labtest.danger" }, { name: "other.draft" }]);
+    if (url === "/api/lab/drafts/labtest.danger") return reply(DANGER);
+    if (url === "/api/lab/drafts/other.draft") return reply(OTHER);
+    if (url.includes("/tier")) return reply({ tier: "irreversible", sources: [], top: [] });
+    if (url === "/api/tools" || url === "/api/skills") return reply([]);
+    if (url.endsWith("/test-run")) return reply({ run_id: "run-1" });
+    if (url.includes("/runs/run-1/check")) {
+      return reply({ run_id: "run-1", status: "done", result: {}, error: null,
+        outputs_check: { ok: true, error: null } });
+    }
+    if (url === "/api/runs/run-1/signals") return reply([]);
+    throw new Error(`未 stub 的请求: ${url}`);
+  };
+
+  // F2:主区有上一页残留(模拟 Workbench Usage 折叠栏)时,openLab 必须清场
+  const main = doc.createElement("main");
+  const remnant = doc.createElement("details");
+  remnant.setAttribute("id", "wbUsage");
+  main.appendChild(remnant);
+  doc.body.appendChild(main);
+  openLab(main);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(main.children.length, 1, "F2:openLab 清场,上一页 DOM 不残留");
+  assert.equal(main.children[0].className, "lab", "清场后仅剩 Lab 根");
+
+  // F11:试跑输入由 inputs schema 预填(targets 必填 → 样例自带 targets)
+  await startTestRun();
+  const post = calls.find((c) => c.url.endsWith("/test-run"));
+  const sent = JSON.parse(post.body).input;
+  assert.ok("targets" in sent, "F11:预填样例含必填字段 targets(不再默认必炸)");
+  assert.ok("dry_run" in sent, "F11:预填样例含 dry_run");
+
+  // F5:脏改动切换守卫——confirm 拒绝时不切换草稿
+  const labRoot = main.querySelector(".lab");
+  const fieldEl = doc.createElement("textarea");
+  fieldEl.dataset.field = "description";
+  fieldEl.value = "改过但没存";
+  fieldEl.closest = (sel) => (sel === "[data-field]" ? fieldEl : null);
+  labRoot.trigger("input", { target: fieldEl }); // 变脏
+  globalThis.confirm = () => false; // 用户取消
+  const selEl = doc.createElement("select");
+  selEl.value = "other.draft";
+  selEl.closest = (sel) => (sel === "[data-lab='select']" ? selEl : null);
+  labRoot.trigger("change", { target: selEl });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(!calls.some((c) => c.url === "/api/lab/drafts/other.draft"),
+    "F5:confirm 取消 → 不切换(不拉新草稿)");
+  globalThis.confirm = () => true; // 用户确认放弃改动
+  labRoot.trigger("change", { target: selEl });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(calls.some((c) => c.url === "/api/lab/drafts/other.draft"),
+    "F5:confirm 确认 → 切换生效");
+  delete globalThis.confirm;
+  closeLab();
+}
+
 /* ── L4:chat 渲染 / diffGroups / 发送流程(fetch stub)────────────────── */
 {
   const { chatHtml, diffGroups } = await import("../js/components/lab.js");

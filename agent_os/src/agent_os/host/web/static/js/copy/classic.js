@@ -83,6 +83,9 @@ export const COPY = {
   "lab.tpl.danger_op": "模板:危险操作(L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
   "app.resumed": "页面刚从休眠恢复,数据已刷新(若频繁冻结,可在 Chrome 设置→性能将本站保持活动)",
+  "lab.promote.disabled.dirty": "有未保存的改动,先保存再提交",
+  "lab.dirty.leave": "当前草稿有未保存的改动,切换后将丢失。确定切换?",
+  "lab.promote.goto": "去 Skills 查看 →",
   "lab.promote.disabled.noreport": "需先点「检查」并通过闸门",
   "lab.promote.disabled.stale": "检查后有改动,需重新检查",
   "lab.promote.disabled.fail": "闸门存在未修复的失败项",

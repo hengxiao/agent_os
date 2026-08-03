@@ -21,6 +21,7 @@ import { copy } from "../themes.js";
 import { deriveTraceView, renderTrace } from "./trace.js";
 import { emptyBlock, esc, toast } from "../util.js";
 import { TIER_PERM } from "./inbox.js";
+import { skeletonFromSchema } from "./launch-dialog.js";
 
 /* ── 纯函数 ─────────────────────────────────────────────────── */
 
@@ -311,6 +312,7 @@ export function isReportStale(view) {
 
 /* 提交按钮点亮条件(§1.4):报告在、无 fail、不过期、warn 已确认 */
 export function promoteReady(view) {
+  if (view?.dirty) return false; // F6:有未保存改动时禁提交(防把旧版本发进生产)
   if (!view?.report || isReportStale(view)) return false;
   if (view.report.status === "fail") return false;
   if (view.report.status === "warn" && !view.ackWarn) return false;
@@ -320,6 +322,7 @@ export function promoteReady(view) {
 /* 置灰理由(UX 评审 P0-3:disabled 必须说明解锁条件,hover tooltip 展示) */
 export function promoteDisabledReason(view) {
   if (promoteReady(view)) return "";
+  if (view?.dirty) return copy("lab.promote.disabled.dirty"); // 未保存优先报(F6)
   if (!view?.report) return copy("lab.promote.disabled.noreport");
   if (isReportStale(view)) return copy("lab.promote.disabled.stale");
   if (view.report.status === "fail") return copy("lab.promote.disabled.fail");
@@ -674,8 +677,10 @@ export async function confirmPromote({ version = null, warningsAck = false } = {
   lab.report = null; // 已进生产:旧报告消费掉,下一次迭代重新检查
   lab.ackWarn = false;
   lab.confirming = false;
+  lab.promoted = { name: result.name, version: result.version }; // F15:状态条给"去 Skills 查看"出路
   _renderGate();
   _renderTop();
+  _renderStatus();
   toast(`${copy("lab.promote.done")}: ${result.name}@${result.version}`, "success");
   return result;
 }
@@ -704,7 +709,16 @@ export async function refreshTier() {
 
 function _renderStatus() {
   const el = lab?.root?.querySelector(".lab-status");
-  if (el) el.textContent = statusLine(lab);
+  if (!el) return;
+  // F15:发布成功给出路(状态条带"去 Skills 查看"链接,不在最激动时刻戛然而止)
+  if (lab.promoted) {
+    const p = lab.promoted;
+    el.innerHTML =
+      `${esc(copy("lab.promote.done"))}: ${esc(p.name)}@${esc(p.version)} · ` +
+      `<a href="#/skills/${encodeURIComponent(p.name)}">${esc(copy("lab.promote.goto"))}</a>`;
+    return;
+  }
+  el.textContent = statusLine(lab);
 }
 
 async function _loadCatalogs() {
@@ -724,18 +738,31 @@ async function _loadDrafts() {
 }
 
 async function _selectDraft(name) {
+  // F5:有未保存改动时切草稿前确认(与 beforeunload 同源的数据保护)
+  if (
+    lab?.dirty &&
+    lab.form?.name !== name &&
+    typeof globalThis.confirm === "function" &&
+    !globalThis.confirm(copy("lab.dirty.leave"))
+  ) {
+    return;
+  }
   const draft = await getJson(`/api/lab/drafts/${encodeURIComponent(name)}`);
   lab.form = draftToForm(draft);
   lab.parseError = draft.parse_error ?? null;
   lab.savedAt = null;
   lab.dirty = false; // 换草稿:脏标不跨草稿
   lab.report = null; // 换草稿:旧报告不属于新对象
+  lab.promoted = null; // 换草稿:发布成功横幅不跨草稿
   lab.ackWarn = false;
   lab.confirming = false;
   lab.draftTests = Object.keys(draft.tests ?? {}); // 用例下拉数据源(tests/*.json)
   lab.testCase = null;
   lab.testRun = null;
   lab.traceHtml = "";
+  // F11:试跑输入预填由当前草稿 inputs schema 生成(默认必成功的合法样例,
+  // 不再用与 schema 无关的静态占位)
+  lab.testInput = JSON.stringify(skeletonFromSchema(draft.manifest?.inputs ?? null), null, 2);
   _renderEditor();
   _renderTestPanel();
   await refreshTier();
@@ -904,6 +931,17 @@ export function openLab(main, name = null) {
   if (lab) {
     closeLab();
   }
+  // F2(UX 流程评审):进场前清空主区——Workbench 等上一页的 DOM(如 Usage
+  // 折叠栏)残留在 main 里会浮在 Lab 上方,closeWorkbench 只收状态不收 DOM
+  main.innerHTML = "";
+  // F5:未保存改动离开页面时的浏览器级拦截(beforeunload;closeLab 时摘除)
+  _beforeUnload ??= (e) => {
+    if (lab?.dirty) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  };
+  globalThis.addEventListener?.("beforeunload", _beforeUnload);
   lab = {
     form: null,
     drafts: [],
@@ -915,6 +953,7 @@ export function openLab(main, name = null) {
     dirty: false, // 有未保存修改(保存按钮圆点指示)
     parseError: null,
     report: null, // 最近一次闸门报告(§1.4;保存后过期)
+    promoted: null, // 最近一次发布结果(F15:状态条出路)
     ackWarn: false, // warn 报告的"我已阅读警告"勾选
     confirming: false, // promote 内联确认行开关
     draftTests: [], // 当前草稿的用例文件名列表(tests/*.json)
@@ -951,6 +990,9 @@ export function openLab(main, name = null) {
   })().catch((e) => toast(e.message ?? String(e), "error"));
   return { root: lab.root };
 }
+
+/* beforeunload 处理器引用(openLab 幂等:重复进场不重复挂) */
+let _beforeUnload = null;
 
 export function closeLab() {
   lab?.root?.remove();

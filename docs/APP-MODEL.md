@@ -396,3 +396,46 @@ shell 的操作一旦是 action,**agent 就能操作用户的界面**——这�
 - M4 不变(引擎与接入先行);**M5 = shell app 化**:state/布局持久化、
   shell actions 进 manifest 与管道、agent 可寻址子集、窗口布局重启恢复;
 - 测试加一条:shell manifest 与普通 manifest 过同一协议校验(无特例)。
+
+## 14. Widget 寻址:从 root 到每个 widget 的运行时 id(v0.3 增补)
+
+**问题**:Shell as App 让 agent 能操作 app,但 app 内部的 widget(某张卡、
+某个按钮、某段文本)还不可寻址——agent 无法说"看这张卡的第三个用例"
+或"帮你按下这个按钮"。
+
+**模型**:每个 widget 实例有一个**从 root 到自己的运行时地址**(路径 id),
+由组合链构成,与 DOM 无关(重渲染不改变它):
+
+```
+/shell                                  # 根(shell app)
+  /tab/<instance_id>                    # tab 条里的 app instance(M1 的 id)
+    /surface/card                       # 该 app 的 Card Surface
+    /surface/tab                        # Tab Surface
+      /section/<name>                   # 逻辑区块(如 tests、findings、members)
+      /field/<name>                     # 语义字段(如 description、prompt)
+      /action/<action_id>               # 具体动作按钮(与 manifest action 同名)
+/conv/<session_id>                      # 对话 app instance
+  /msg/<n>                              # 第 n 条消息
+    /card/<k>                           # 消息里的第 k 张卡
+```
+
+规则:
+
+1. **逻辑键,不用位置索引**(除非无语义键):tab 用 instance_id、字段用
+   名字、动作用 action_id;只有消息/卡这类纯序列才用序号;
+   重渲染/重排后地址仍指向同一对象——**稳定性来自语义,不来自 DOM**;
+2. **注册制**:各 Surface 渲染时把自己的区块/字段/动作登记进 shell 的
+   widget registry(state 的一部分),卸载即注销;查询路径即查 registry,
+   不查 DOM;
+3. **agent 三个动词**:
+   - `read(path)` → 该 widget 的人话摘要(文本/状态;禁忌词纪律沿用);
+   - `focus(path)` → 把它带到用户眼前(滚动+高亮脉冲;"看这里"可寻址);
+   - `act(path)` → 触发该 widget 的默认动作(等价于用户点击,走同一
+     action 管道与 exec 归态——**代理点击不绕过授权**);
+4. **权限沿用 §13.3 收口**:agent 的 `read/focus` 全开放,`act` 只对
+   摆台类开放;destroy/publish/promote 类的 `act` 永远只对人(用户自己点);
+5. **测试**:路径解析(存在/重渲染后仍解析/注销后 404)、read/focus/act
+   三动词的授权面、agent act 触发与用户点击同源(同一管道断言)。
+
+**对分期的影响**:与 M5 同批(shell app 化时 registry 随 state 落地);
+§13.2 的"agent 可寻址"由此从 app 粒度细化到 widget 粒度。

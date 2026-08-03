@@ -459,38 +459,58 @@ shell 的操作一旦是 action,**agent 就能操作用户的界面**——这�
 **对分期的影响**:与 M5 同批(shell app 化时 registry 随 state 落地);
 §13.2 的"agent 可寻址"由此从 app 粒度细化到 widget 粒度。
 
-## 15. Drag & Drop 标准化(v0.3 增补)
+## 15. Drag & Drop:drop 是目标 widget 的 action(v0.3 增补)
 
-**原则**:拖拽是手势,**落点才是动作**——每个 widget 可拖、每个容器
-声明接受什么,落点统一走 action 管道(不允许组件私有 DnD 逻辑)。
+**原则**:拖拽是手势,**drop 是被拖入方(drop target)manifest 里的一个
+标准 action**——每个 widget 可拖,每个 widget 可声明自己接受什么 drop;
+**输入全系统统一**,兼容性由 schema 保障,不由组件间约定。drop 的背后
+也是一次 exec 调用(local/endpoint/run,按动作语义归态)。
 
-### 15.1 协议
+### 15.1 标准化输入(envelope)
 
-- **拖拽载荷 = §14 的 widget 路径**:`dragstart` 时
-  `dataTransfer.setData("application/x-agent-os-widget", path)`——
-  拖的不是 DOM 节点,是可解析的地址(配合 §14 registry,语义随路径走);
-- **可拖声明**:Surface 渲染可拖 widget 时标 `data-drag-path`(与注册
-  一致);无声明不可拖(防任意元素被拖出);
-- **落点区(drop zone)**:容器声明 `data-drop-accept`(逗号分隔的
-  kind 前缀,如 `skill_pack,run`)与落点动作;`dragover` 只做高亮,
-  `drop` 时解析路径 → 校验 kind → **走 action 管道**(多为
-  exec: local 的 shell 动作)。
+源 widget 在 `dragstart` 时提供,目标 widget 的 drop action 消费:
 
-### 15.2 v1 两个标准落点
+```jsonc
+// application/x-agent-os-widget 的载荷(dataTransfer)
+{
+  "source": "/shell/tab/app-7f3a/surface/card",  // §14 路径,必填(语义随地址,不随 DOM)
+  "source_kind": "skill_pack",                    // 源 kind,必填(目标快速裁决)
+  "position": { "before": "/shell/tab/app-9z2b" } // 可选:插入位置(排序/嵌放)
+}
+```
 
-| 手势 | 落点动作 | exec |
+任何 widget 只要按这个 envelope 产出/消费,**任意两 widget 之间的拖拽
+都互通**——新 kind 上线不需要和既有组件逐一配对。
+
+### 15.2 manifest 声明
+
+```jsonc
+// 目标 widget(shell 的 tab 条/卡面容器/任意 app)
+{
+  "drop": {
+    "accept": ["skill_pack", "run"],        // 接受的 source_kind 清单(必填)
+    "exec": { "mode": "local", "ref": "shell.tab.open" },  // 归态 + 绑定
+    "label": "拖到此处打开"                  // copy key(高亮提示)
+  }
+}
+```
+
+- `accept` 不在清单 → 落点不高亮不接收(不静默吞);
+- drop 调用 = 目标 manifest 的 drop.exec,参数 = envelope(经 args_input
+  同款 schema 校验)——**拖拽只是另一种 action 触发,授权面不绕过**;
+- 无 drop 声明的 widget 不可作为落点(防任意元素被拖进)。
+
+### 15.3 v1 标准实现(两对互通)
+
+| 源 → 目标 | 目标的 drop.exec | exec |
 |---|---|---|
-| tab 条内拖拽重排 | `shell.layout.move_tab`(布局持久化,M5 随 shell state 落) | local |
-| 卡面从对话拖到 tab 条 | `shell.tab.open`(spawn/聚焦,等价点"打开") | local(登记) |
+| tab(拖) → tab 条(重排) | `shell.layout.move_tab`(position.before 排序) | local |
+| 卡面(拖) → tab 条(打开) | `shell.tab.open`(与点"打开"同一 action) | local(登记) |
 
-后续候选(用时再加,不预留):卡拖到"最近关闭"重开、run 卡拖到
-debug tab 附加会话、widget 拖出成游离窗(§11 不做的分屏前提)。
+### 15.4 纪律
 
-### 15.3 纪律
-
-- 落点动作**必须**走管道(exec 归态/args_input 校验),组件不直接改
-  state——拖拽只是另一种点击;
-- 非法落点(kind 不符)无反馈态(不高亮不接收),不静默吞;
-- 触屏降级:tab 重排提供长按菜单备选(拖拽不是唯一通道,a11y);
-- 测试:载荷路径正确、kind 校验、重排持久化、卡→tab 条=open 动作
-  同源(与点击"打开"同一管道断言)、非法落点不接收。
+- envelope 三键是**强制最小集**;扩展键(如 position)目标不识必须可
+  忽略(向前兼容);
+- 触屏降级:长按菜单 = 同一 drop action 的非手势触发(a11y);
+- 测试:envelope schema 合规、accept 校验、两对标准实现与点击同源断言、
+  未知 kind 源被拒不静默、扩展键可忽略。

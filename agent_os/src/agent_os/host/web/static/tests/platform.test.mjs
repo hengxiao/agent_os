@@ -388,7 +388,6 @@ const assertClean = (html, who) => {
 }
 
 /* ── M2 嵌套层级(docs/APP-MODEL.md §6):第 3 层卡只读 ────────── */
-
 {
   const card = {
     type: "gate_report", v: 1,
@@ -399,6 +398,26 @@ const assertClean = (html, who) => {
   assert.ok(summaryHtml(card, 2).includes("data-detail-kind"), "第 2 层(tab 内嵌)有打开链接");
   assert.ok(!summaryHtml(card, 3).includes("data-detail-kind"), "第 3 层只读,无打开链接(防套娃)");
   assert.ok(summaryHtml(card, 3).includes("pf-card-lead"), "第 3 层内容照渲(只读 ≠ 不读)");
+}
+
+{
+  // M3 新 kind 的 Card Surface(debug/lab_draft):人话摘要,禁忌词纪律沿用
+  const dbg = summaryHtml({
+    type: "debug", v: 1,
+    data: { state: "paused", pause_point: { signal: "pre:tool.call", frame_id: "f2" } },
+    actions: [],
+  });
+  const dt = assertClean(dbg, "debug");
+  assert.ok(dt.includes("暂停在"), "debug 卡:暂停点人话");
+  assert.ok(dt.includes("等你放行"), "debug 卡:待决人话");
+  const draft = summaryHtml({
+    type: "lab_draft", v: 1,
+    data: { name: "lab.dinner", tier: "reversible", gate_status: "pass" },
+    actions: [],
+  });
+  const tt = assertClean(draft, "lab_draft");
+  assert.ok(tt.includes("lab.dinner"), "草稿卡带名");
+  assert.ok(!tt.includes("reversible"), "tier 术语不进摘要");
 }
 
 /* ── app.js 对话流(fetch stub)───────────────────────────────── */
@@ -477,6 +496,30 @@ const assertClean = (html, who) => {
       return reply({ ok: true, text: "已记录你的决定。", state: { resolved: "approve-once" },
         instance: { id: "app-e1", kind: "escalation", state: { resolved: "approve-once" } } });
     }
+    // M3:debug 会话(创建/快照)+ lab-draft 读取 + tab 面动作
+    if (url === "/api/debug/sessions" && options.method === "POST") {
+      return reply({ session_id: "sess-1", run_id: "run-1", mode: "replay" });
+    }
+    if (url === "/api/debug/sessions/sess-1") {
+      return reply({ session_id: "sess-1", run_id: "run-1", state: "paused",
+        pause_point: { signal: "pre:tool.call", frame_id: "f2" },
+        breakpoints: [{ kind: "tool", match: "*", hits: 1 }],
+        frame_stack: [{ frame_id: "f0", skill: "demo.fib" }, { frame_id: "f2", skill: "demo.fib" }],
+        rerunnable: false });
+    }
+    if (url === "/api/lab/drafts/lab.dinner") {
+      return reply({ name: "lab.dinner", manifest: { description: "晚餐推荐" },
+        prompt: "你是晚餐规划师。", tests: {} });
+    }
+    if (url === "/platform/api/apps/app-spawn-sess-1/actions/debug.continue") {
+      return reply({ ok: true, text: "已放行。", state: { last_command: "continue" },
+        instance: { id: "app-spawn-sess-1", kind: "debug", state: {} } });
+    }
+    if (url === "/platform/api/apps/app-spawn-lab.dinner/actions/draft.check") {
+      return reply({ ok: true, text: "检查完成: pass",
+        cards: [{ type: "gate_report", v: 1, data: { draft: "lab.dinner", status: "pass", gates: {} }, actions: [] }],
+        instance: { id: "app-spawn-lab.dinner", kind: "lab-draft", state: {} } });
+    }
     if (url === "/api/lab/packages/lab.dinner/closure?mode=runtime") {
       return reply({ root: "lab.dinner", root_tier: "reversible", members: [
         { name: "lab.dinner", depth: 0, tier: "reversible", status: "draft" },
@@ -484,7 +527,7 @@ const assertClean = (html, who) => {
       ], errors: [] });
     }
     if (url === "/api/runs/run-1") {
-      return reply({ id: "run-1", skill: "ops.janitor", status: "failed", error: "outputs 错", result: null });
+      return reply({ run_id: "run-1", skill: "ops.janitor", status: "failed", error: "outputs 错", result: null });
     }
     if (url === "/api/runs/run-1/signals") return reply([]);
     if (url === "/api/runs/bad-run") {
@@ -654,9 +697,13 @@ const assertClean = (html, who) => {
   assert.ok(calls.some((c) => c.url === "/api/runs/run-1/signals"), "run 详情拉 signals");
   assert.ok(detailHtml().includes("ops.janitor"), "run 详情渲染 skill");
   assert.ok(detailHtml().includes("outputs 错"), "run 详情渲染失败原因");
-  assert.ok(
-    !calls.some((c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes("run-1")),
-    "run 是 M3 kind:M2 不 spawn(内部分发兜底)");
+  const runSpawn = calls.find(
+    (c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes('"run"')
+  );
+  assert.ok(runSpawn, "M3:run tab 也 spawn(run app kind)");
+  assert.equal(JSON.parse(runSpawn.body).ref, "run-1");
+  assert.equal(JSON.parse(runSpawn.body).state.run_id, "run-1", "spawn state 带 run_id(动作参数源)");
+  assert.ok(detailHtml().includes('data-debug-run="run-1"'), "failed run 给开调试链接(M3)");
 
   // diff 详情:数据在卡内,红绿行全量渲染(摘要只留人话)
   const diffLink = new StubEl("button");
@@ -816,6 +863,69 @@ const assertClean = (html, who) => {
   assert.ok(
     calls.some((c) => c.url === "/platform/api/apps/app-e1/actions/approve-once"),
     "决策作答走新管道(action id = answer)");
+
+  /* ── M3 闭环(docs/APP-MODEL.md §8):run tab → 开 debug → 放行;
+     包 tab → 草稿编辑;每步 spawn/去重/聚焦正确 ─────────────── */
+
+  // run tab(failed)给"开调试"链接;点击 → replay 会话 → debug tab(spawn 登记)
+  const dbgBtn = new StubEl("button");
+  dbgBtn.dataset.debugRun = "run-1";
+  dbgBtn.parentNode = doc.body;
+  doc.trigger("click", { target: dbgBtn });
+  await tick();
+  const dbgPost = calls.find((c) => c.url === "/api/debug/sessions");
+  assert.ok(dbgPost, "创建调试会话");
+  assert.equal(JSON.parse(dbgPost.body).replay_run_id, "run-1", "replay 形态(从产物回放)");
+  assert.equal(probe.state.active, "d:debug:sess-1", "debug tab 激活");
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes('"debug"')),
+    "debug app spawn 登记");
+  assert.ok(detailHtml().includes("暂停在"), "debug tab 暂停点人话");
+  assert.ok(detailHtml().includes("demo.fib"), "debug tab 帧栈渲染");
+  assert.ok(detailHtml().includes('data-tab-act="debug.continue"'), "放行按钮在(暂停态)");
+
+  // 放行:tab 面动作与卡面同一 action 管道(surface="tab"),结果回插对话
+  const contBtn = new StubEl("button");
+  contBtn.dataset.tabAct = "debug.continue";
+  contBtn.parentNode = doc.body;
+  doc.trigger("click", { target: contBtn });
+  await tick();
+  const contPost = calls.find(
+    (c) => c.url === "/platform/api/apps/app-spawn-sess-1/actions/debug.continue"
+  );
+  assert.ok(contPost, "放行走 action 管道(instance = debug tab 的 spawn)");
+  assert.equal(JSON.parse(contPost.body).surface, "tab", "全面 surface 标注");
+  assert.ok(probe.state.messages.at(-1).text.includes("已放行"), "结果回插对话(因果可见)");
+
+  // 包 tab:草稿成员带"编辑"链接;点击 → lab-draft tab(spawn + 拉取)
+  doc.trigger("click", { target: packLink }); // 回包详情(去重聚焦)
+  await tick();
+  assert.ok(detailHtml().includes('data-detail-kind="draft"'), "草稿成员带编辑链接(M3)");
+  const editLink = new StubEl("button");
+  editLink.dataset.detailKind = "draft";
+  editLink.dataset.detailRef = "lab.dinner";
+  editLink.dataset.detail = "{}";
+  editLink.parentNode = doc.body;
+  doc.trigger("click", { target: editLink });
+  await tick();
+  assert.equal(probe.state.active, "d:draft:lab.dinner", "lab-draft tab 激活");
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes('"lab-draft"')),
+    "lab-draft app spawn 登记");
+  assert.ok(detailHtml().includes("在 Lab 中编辑"), "深链旧 Lab 编辑器(降级面)");
+  assert.ok(detailHtml().includes('data-tab-act="draft.check"'), "检查动作在 tab 面");
+
+  // 去重聚焦:再点包详情,不重复 tab、不重复 spawn
+  const packSpawns = calls.filter(
+    (c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes('"skill_pack"')
+  ).length;
+  doc.trigger("click", { target: packLink });
+  await tick();
+  assert.equal(
+    calls.filter((c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes('"skill_pack"')).length,
+    packSpawns,
+    "同 kind+ref 再开:不重复 spawn(M2 去重)");
+  assert.equal(probe.state.active, "d:pack:lab.dinner", "去重聚焦已有 tab");
 }
 
 console.log("platform.test.mjs: all assertions passed");

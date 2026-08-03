@@ -290,10 +290,11 @@ const _DETAIL_META = {
   diff: { title: copy("platform.detail.diff") },
   esc: { title: copy("platform.detail.esc") },
   decompose: { title: copy("platform.detail.decompose") },
+  debug: { title: copy("platform.detail.debug") },
+  draft: { title: copy("platform.detail.draft") },
 };
 
-/* 详情 kind → app kind(M2 spawn 接入;run 等 M3 kind 缺席——先内部分发,
-   文档 §10:M3 才接 run/debug/lab-draft) */
+/* 详情 kind → app kind(M3 全解开,docs/APP-MODEL.md §8:run/debug/lab-draft) */
 const _APP_KIND = {
   gate: "gate_report",
   pack: "skill_pack",
@@ -301,8 +302,22 @@ const _APP_KIND = {
   diff: "diff",
   esc: "escalation",
   decompose: "plan",
-  run: null,
+  run: "run",
+  debug: "debug",
+  draft: "lab-draft",
 };
+
+/* spawn 的 state 归一(M3):args_from 的参数源——run 要 run_id、debug 要
+   session_id、lab-draft 要 name/root(绑定便利键,与 app.py _register_cards 同哲学) */
+function _spawnState(tab, data) {
+  if (tab.kind === "run") return { run_id: tab.ref, status: "" };
+  if (tab.kind === "debug") return { session_id: tab.ref, run_id: data?.run_id ?? "" };
+  if (tab.kind === "draft") {
+    const name = data?.name ?? tab.ref;
+    return { ...(data ?? {}), name, root: name };
+  }
+  return data ?? {};
+}
 
 /* spawn(M2):详情 tab 从"页面"升格为 app 的 Tab Surface——开 tab 时在服务端
    登记/解析 instance(失败不阻断展示:数据面增强,不是依赖) */
@@ -317,7 +332,7 @@ async function _spawnForTab(tab, data) {
         kind: appKind,
         ref: tab.ref,
         title: tab.title,
-        state: data ?? {},
+        state: _spawnState(tab, data),
         created_by: state.current ?? "",
       }),
     });
@@ -372,6 +387,15 @@ async function _loadDetail(kind, ref, data) {
         (await fetch(`/api/runs/${encodeURIComponent(ref)}/signals`)).json(),
       ]);
       return { kind, ref, html: renderTabSurface(kind, { detail, signals }) };
+    }
+    if (kind === "debug") {
+      // M3:简化调试台(快照 = 旧 web 调试端点同形)
+      const doc = await (await fetch(`/api/debug/sessions/${encodeURIComponent(ref)}`)).json();
+      return { kind, ref, html: renderTabSurface(kind, doc) };
+    }
+    if (kind === "draft") {
+      const doc = await (await fetch(`/api/lab/drafts/${encodeURIComponent(ref)}`)).json();
+      return { kind, ref, html: renderTabSurface(kind, doc) };
     }
     return { kind, ref, error: `unknown detail kind: ${kind}` };
   } catch (e) {
@@ -464,6 +488,55 @@ async function pollDecisions() {
   }
 }
 
+/* tab 面动作(M3,docs/APP-MODEL.md §4):全面动作与卡面同一管道——
+   instance 取当前激活 tab(spawn 登记),surface="tab";动作后重渲当前 tab(活面) */
+async function tabAction(btn) {
+  const tab = state.tabs.find((t) => t.id === state.active);
+  if (!tab?.instance) {
+    toast(copy("platform.detail.loading"), "info"); // spawn 竞态:稍等再点
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const res = await fetch(
+      `/platform/api/apps/${encodeURIComponent(tab.instance)}/actions/${encodeURIComponent(btn.dataset.tabAct)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ surface: "tab", args: {}, session_id: state.current }),
+      }
+    );
+    if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+    const result = await res.json();
+    if (result.text) {
+      state.messages.push({ role: "agent", text: result.text, cards: result.cards ?? [] });
+    }
+    state.detail = await _loadDetail(tab.kind, tab.ref, null);
+    renderMain();
+  } catch (e) {
+    state.messages.push({ role: "agent", text: `${copy("platform.error")}: ${e.message ?? e}`, cards: [] });
+    renderMain();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* 开调试(M3 闭环:run tab → replay 调试会话 → debug tab;复用旧 web debug 端点) */
+async function openDebug(runId) {
+  try {
+    const res = await fetch("/api/debug/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ replay_run_id: runId }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+    const doc = await res.json();
+    await openDetail("debug", doc.session_id, { run_id: doc.run_id ?? runId });
+  } catch (e) {
+    toast(`${copy("platform.error")}: ${e.message ?? e}`, "error");
+  }
+}
+
 /* ── 事件 ─────────────────────────────────────────────────────── */
 
 function bind() {
@@ -498,6 +571,10 @@ function bind() {
     }
     const decision = e.target.closest("[data-decision]");
     if (decision) return answerDecision(decision);
+    const dbg = e.target.closest("[data-debug-run]");
+    if (dbg) return openDebug(dbg.dataset.debugRun);
+    const tAct = e.target.closest("[data-tab-act]");
+    if (tAct) return tabAction(tAct);
     const act = e.target.closest("[data-card-act]");
     if (act) return cardAction(act);
     const example = e.target.closest("[data-example]");

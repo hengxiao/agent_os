@@ -233,8 +233,28 @@ v0.1 说"action = skill 调用 → 内核仲裁自动覆盖 UI 全部副作用,U
 |---|---|
 | M1 ✅ | AppManifest 注册表 + action 管道(替代 cards/action)+ 对话 app 归一(现状卡型全部转成六个 app kind 的表面) |
 | M2 ✅ | Compositor 正式化(关闭≠销毁/嵌套 ≤2/图标列)+ app.state 持久化 |
-| M3 | run/debug/lab-draft 三个 app kind 接入(对话 → 包 → run → debug 闭环) |
+| M3 ✅ | run/debug/lab-draft 三个 app kind 接入(对话 → 包 → run → debug 闭环) |
 | M4 | legacy 五页以 tab surface 接入 + SSE transport + 主动汇报(app 状态推送进对话) |
+
+> **M3 实现注**(2026-08-03,分支 debugger):
+> - **三 kind 注册**(apps.py):run(stop/resume/rerun)、debug(continue/stop,
+>   command 由管道按 action id 末段注入,与 decision.answer 同模式)、
+>   lab-draft(check/promote;**promote 仅 tab 面**——重动作不上卡面,§3
+>   卡面 ≤2 轻动作的首次应用);
+> - **handlers**(app.py):五个薄转发(stop_run/resume_run/start_run 按产物
+>   meta 重跑/debug_command/validate_draft),async 经理同款 asyncio.run,
+>   异常归类与旧 web 端点一致(409 不在途/404 无 checkpoint/404 无会话);
+> - **Tab Surface**(前端 details.js):run 详情复用 + 状态动作按钮 + failed/
+>   running 给"开调试"链接(POST 旧 web /api/debug/sessions replay 形态 →
+>   debug tab);debug = 简化调试台(暂停点/帧栈/断点 + 放行/停止,改参/注入/
+>   单步留旧调试台);lab-draft = 摘要 + 检查/提交 + 深链旧 Lab(不改 lab.js
+>   的最简路径,精确编辑一律回专家模式);pack 详情草稿成员带"编辑"链接;
+> - **tab 面动作**:data-tab-act + 当前 tab 的 spawn instance → 同一 action
+>   管道(surface="tab"),动作后重渲当前 tab(活面),结果回插对话(因果可见);
+> - **Card Surface**(cards.js):debugSummary(暂停点人话)/draftSummary
+>   (名称+档+检查人话)——协议面先行,对话流产出点属 M4 主动汇报;
+> - **闭环**(前端测试分段):run tab → 开调试(replay)→ debug tab → 放行 →
+>   回插对话;包 tab → 草稿编辑;去重聚焦不重复 spawn 有断言。
 
 > **M1 实现注**(2026-08-03,分支 debugger):
 > - **文件**:`web_platform/apps.py`(manifest 校验 + AppRegistry +

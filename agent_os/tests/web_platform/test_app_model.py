@@ -33,6 +33,9 @@ KNOWN = {
     "platform.candidate.accept", "platform.candidate.discard",
     "platform.version.rewind", "platform.plan.recheck",
     "platform.plan.confirm", "platform.decision.answer",
+    # M3:run/debug/lab-draft 三 kind 的绑定键
+    "platform.run.stop", "platform.run.resume", "platform.run.rerun",
+    "platform.debug.command", "platform.draft.check",
 }
 
 
@@ -57,12 +60,13 @@ def _manifest(**over):
 
 
 def test_default_manifests_all_valid():
-    """首批八 kind 全部合法(conversation + 六卡型 + escalation)。"""
+    """首批 kind 全部合法(M1 八个 + M3 三个:run/debug/lab-draft)。"""
     reg = AppRegistry(known_skills=KNOWN)
     for m in default_manifests():
         reg.register(m)
     assert set(reg.kinds()) == {
         "conversation", "plan", "skill_pack", "gate_report", "diff", "publish", "table", "escalation",
+        "run", "debug", "lab-draft",
     }
 
 
@@ -110,11 +114,15 @@ def test_bind_args_from_state():
 
 
 class _FakeManager:
-    """与 test_platform_w2 同形:supervisor 收件箱 + 装配失败(LLM 关)的安全态。"""
+    """与 test_platform_w2 同形:supervisor 收件箱 + 装配失败(LLM 关)的安全态;
+    M3 增补 run/debug 的 async 能力面(stop/resume/debug_command,记录调用)。"""
 
     def __init__(self, pending: list[dict[str, Any]] | None = None) -> None:
         self._pending = list(pending or [])
         self.answered: list[tuple[str, str]] = []
+        self.stopped: list[str] = []
+        self.resumed: list[str] = []
+        self.debug_cmds: list[tuple[str, str]] = []
 
     def supervisor_pending(self) -> list[dict[str, Any]]:
         return self._pending
@@ -130,6 +138,24 @@ class _FakeManager:
 
     def assemble_lab_kernel(self, overlay: Any) -> Any:
         raise RuntimeError("无内核(测试面)")
+
+    # ── M3:run/debug 能力面(async,与 RunManager 同签名) ──
+    async def stop_run(self, run_id: str) -> bool:
+        if run_id == "running-1":
+            self.stopped.append(run_id)
+            return True
+        return False
+
+    async def resume_run(self, run_id: str) -> dict[str, Any]:
+        if run_id == "no-ckpt":
+            raise FileNotFoundError(f"找不到 checkpoint: {run_id}")
+        self.resumed.append(run_id)
+        return {"status": "done"}
+
+    async def debug_command(self, session_id: str, command: str) -> None:
+        if session_id == "missing":
+            raise KeyError(f"找不到调试会话: {session_id}")
+        self.debug_cmds.append((session_id, command))
 
 
 ESC_ROW: dict[str, Any] = {
@@ -323,3 +349,64 @@ def test_pipeline_scaffold_approve_end_to_end(full_client):
                       json={"action_id": "scaffold.approve",
                             "payload": {"name": create_name, "template": "prompt_query"}})
     assert old.status_code == 409, "旧入口同 handler(重名撞同一 FileExistsError 归类)"
+
+
+# ---------------------------------------------------------------------------
+# M3:run/debug/lab-draft 三 kind 的 action 转发(docs/APP-MODEL.md §8)
+# ---------------------------------------------------------------------------
+
+
+def _spawn(client, kind, ref, state):
+    r = client.post("/api/apps/spawn", json={"kind": kind, "ref": ref, "state": state})
+    assert r.status_code == 201, r.text
+    return r.json()["instance"]["id"]
+
+
+def test_m3_run_actions(client):
+    """run.stop:在途 → 200 + state 回写;不在途 → 409。run.resume:无 checkpoint → 404。"""
+    inst = _spawn(client, "run", "running-1", {"run_id": "running-1", "status": "running"})
+    r = client.post(f"/api/apps/{inst}/actions/run.stop", json={"surface": "tab"})
+    assert r.status_code == 200, r.text
+    assert client.manager.stopped == ["running-1"], "薄 handler 转发既有 stop_run"
+    assert r.json()["instance"]["state"]["status"] == "stopping", "state 回写"
+
+    inst2 = _spawn(client, "run", "done-1", {"run_id": "done-1", "status": "done"})
+    r409 = client.post(f"/api/apps/{inst2}/actions/run.stop", json={"surface": "tab"})
+    assert r409.status_code == 409, "不在途 → 409(与旧 web stop 同归类)"
+
+    inst3 = _spawn(client, "run", "no-ckpt", {"run_id": "no-ckpt", "status": "failed"})
+    r404 = client.post(f"/api/apps/{inst3}/actions/run.resume", json={"surface": "tab"})
+    assert r404.status_code == 404
+
+
+def test_m3_debug_actions(client):
+    """debug.continue/stop:command 由管道按 action id 注入;会话不存在 → 404。"""
+    inst = _spawn(client, "debug", "s-1", {"session_id": "s-1", "run_id": "r1"})
+    r = client.post(f"/api/apps/{inst}/actions/debug.continue", json={"surface": "tab"})
+    assert r.status_code == 200, r.text
+    r2 = client.post(f"/api/apps/{inst}/actions/debug.stop", json={"surface": "tab"})
+    assert r2.status_code == 200, r2.text
+    assert client.manager.debug_cmds == [("s-1", "continue"), ("s-1", "stop")]
+
+    inst2 = _spawn(client, "debug", "missing", {"session_id": "missing"})
+    r404 = client.post(f"/api/apps/{inst2}/actions/debug.continue", json={"surface": "tab"})
+    assert r404.status_code == 404
+
+
+def test_m3_draft_check_and_promote_surface(full_client):
+    """lab-draft:draft.check 五关(与 Lab validate 同逻辑,返回 gate_report 卡);
+    draft.promote 仅 tab 面(manifest 表面裁决,卡面调用 → 400)。"""
+    client = full_client
+    client.post("/api/lab/drafts", json={"name": "lab.m3"})
+    # full_client 走旧 web 挂载:平台端点在 /platform 前缀下
+    r0 = client.post("/platform/api/apps/spawn",
+                     json={"kind": "lab-draft", "ref": "lab.m3", "state": {"name": "lab.m3", "root": "lab.m3"}})
+    assert r0.status_code == 201, r0.text
+    inst = r0.json()["instance"]["id"]
+    r = client.post(f"/platform/api/apps/{inst}/actions/draft.check", json={"surface": "tab"})
+    assert r.status_code == 200, r.text
+    cards = r.json()["cards"]
+    assert cards and cards[0]["type"] == "gate_report", "检查产出 gate_report 卡(同源逻辑)"
+
+    r400 = client.post(f"/platform/api/apps/{inst}/actions/draft.promote", json={"surface": "card"})
+    assert r400.status_code == 400 and "表面" in r400.json()["detail"], "promote 仅全面(重动作不上卡面)"

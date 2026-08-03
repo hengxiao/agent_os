@@ -356,4 +356,83 @@ def default_manifests() -> list[dict[str, Any]]:
                 },
             ],
         },
+        # ── M3:run/debug/lab-draft(docs/APP-MODEL.md §8/§10)─────────────
+        {
+            "kind": "run",
+            "v": 1,
+            "title": "{run_id}",
+            "surfaces": {"card": "run.card", "tab": "run.tab"},
+            "state_schema": obj(
+                run_id={"type": "string"}, status={"type": "string"}, result={"type": "object"}
+            ),
+            "actions": [
+                {
+                    "id": "run.stop",
+                    "label": "platform.run.stop",
+                    "skill": "platform.run.stop",
+                    "args_from": ["state.run_id"],
+                    "surface": ["card", "tab"],
+                },
+                {
+                    "id": "run.resume",
+                    "label": "platform.run.resume",
+                    "skill": "platform.run.resume",
+                    "args_from": ["state.run_id"],
+                    "surface": ["card", "tab"],
+                },
+                {
+                    "id": "run.rerun",
+                    "label": "platform.run.rerun",
+                    "skill": "platform.run.rerun",
+                    "args_from": ["state.run_id"],
+                    "surface": ["card", "tab"],
+                },
+            ],
+        },
+        {
+            "kind": "debug",
+            "v": 1,
+            "title": "{session_id}",
+            "surfaces": {"card": "debug.card", "tab": "debug.tab"},
+            "state_schema": obj(session_id={"type": "string"}, run_id={"type": "string"}),
+            "actions": [
+                {
+                    "id": "debug.continue",
+                    "label": "platform.debug.continue",
+                    "skill": "platform.debug.command",
+                    "args_from": ["state.session_id"],
+                    "surface": ["card", "tab"],
+                },
+                {
+                    "id": "debug.stop",
+                    "label": "platform.debug.stop",
+                    "skill": "platform.debug.command",
+                    "args_from": ["state.session_id"],
+                    "surface": ["card", "tab"],
+                },
+            ],
+        },
+        {
+            "kind": "lab-draft",
+            "v": 1,
+            "title": "{name}",
+            "surfaces": {"card": "lab_draft.card", "tab": "lab_draft.tab"},
+            "state_schema": obj(name={"type": "string"}, root={"type": "string"}),
+            "actions": [
+                {
+                    "id": "draft.check",
+                    "label": "platform.draft.check",
+                    "skill": "platform.draft.check",
+                    "args_from": ["state.name"],
+                    "surface": ["card", "tab"],
+                },
+                {
+                    "id": "draft.promote",
+                    "label": "platform.draft.promote",
+                    "skill": "platform.plan.recheck",
+                    "args_from": ["state.root"],
+                    "surface": ["tab"],  # 提交是重动作:只在全面出,不上卡面(§3 卡面 ≤2 轻动作)
+                },
+            ],
+        },
     ]

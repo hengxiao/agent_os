@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -38,6 +39,7 @@ from agent_os.host.web_platform.artifacts import (
     build_gate_report_card,
     build_publish_card,
     build_skill_pack_card,
+    build_table_card,
     validate_card,
 )
 from agent_os.host.web_platform.orchestrator import Orchestrator
@@ -534,6 +536,97 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             raise HTTPException(status_code=400, detail=str(e)) from e
         return {"ok": True, "text": "已记录你的决定。", "state": {"resolved": answer}}
 
+    # ── M3 handlers(docs/APP-MODEL.md §8):run/debug/lab-draft 三 kind 的
+    # skill 绑定——每件都是既有 manager 能力的薄转发(manager 方法是 async,
+    # 与 LLM 路由同款 asyncio.run 私有循环),零新权限通道 ─────────────────
+
+    def _act_run_stop(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.run.stop:中止在途 run(不在途 → 409,与旧 web stop 同归类)。"""
+        run_id = str(payload.get("run_id") or "")
+        ok = asyncio.run(manager.stop_run(run_id))
+        if not ok:
+            raise HTTPException(status_code=409, detail=f"run 不在在途状态,无法停止: {run_id}")
+        return {"ok": True, "text": "已发送停止请求(run 在下一个安全点中止)。", "state": {"status": "stopping"}}
+
+    def _act_run_resume(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.run.resume:从 checkpoint 恢复(404/400/409 同旧 web resume)。"""
+        run_id = str(payload.get("run_id") or "")
+        try:
+            record = asyncio.run(manager.resume_run(run_id))
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:  # ResumeConflictError 等状态冲突归 409
+            if "Conflict" in type(e).__name__:
+                raise HTTPException(status_code=409, detail=str(e)) from e
+            raise
+        return {
+            "ok": True,
+            "text": f"恢复运行完成: {record.get('status')}",
+            "state": {"status": record.get("status", "")},
+        }
+
+    def _act_run_rerun(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.run.rerun:按产物 meta 的 skill+input 重跑(新 run;结果卡挂新锚)。"""
+        run_id = str(payload.get("run_id") or "")
+        meta = _read_json(Path(artifacts_root) / "runs" / run_id / "meta.json")
+        if meta is None:
+            raise HTTPException(status_code=404, detail=f"找不到 run 产物: {run_id}")
+        new_id = asyncio.run(manager.start_run(meta.get("skill") or "", meta.get("input") or {}))
+        return {
+            "ok": True,
+            "text": f"已按原参数重跑,新 run: {new_id[:8]}。",
+            "cards": [
+                build_table_card(
+                    title="重跑",
+                    columns=["run", "skill", "摘要"],
+                    rows=[[new_id[:8], meta.get("skill") or "", "已启动"]],
+                    ref={"kind": "run", "id": new_id},
+                )
+            ],
+        }
+
+    def _act_debug_command(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.debug.command:放行/停止(command 由管道按 action_id 注入:
+        debug.continue→continue,debug.stop→stop;非 paused → 409)。"""
+        sid = str(payload.get("session_id") or "")
+        command = str(payload.get("command") or "continue")
+        try:
+            asyncio.run(manager.debug_command(sid, command))
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:  # AgentOSError(非 paused)归 409
+            if "Error" in type(e).__name__:
+                raise HTTPException(status_code=409, detail=str(e)) from e
+            raise
+        human = "已放行。" if command == "continue" else "已发送停止。"
+        return {"ok": True, "text": human, "state": {"last_command": command}}
+
+    def _act_draft_check(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.draft.check:草稿五关(与 Lab validate 端点同逻辑;返回 gate_report 卡)。"""
+        name = str(payload.get("name") or "")
+        draft = lab_store.read(name)
+        report = validate_draft(
+            draft,
+            production=manager.shared_skills_registry(),
+            tools=manager.shared_tools_registry(),
+            store=lab_store,
+        )
+        lab_store.save_gate_report(name, report)
+        return {
+            "ok": True,
+            "text": f"检查完成: {report['status']}",
+            "cards": [
+                build_gate_report_card(
+                    draft=name, status=report["status"], gates=report["gates"],
+                    plan_payload={"root": name},
+                )
+            ],
+        }
+
     SKILL_BINDINGS = {
         "platform.scaffold.approve": _act_scaffold_approve,
         "platform.iterate.generate": _act_iterate_generate,
@@ -543,6 +636,12 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         "platform.plan.recheck": _act_plan_recheck,
         "platform.plan.confirm": _act_plan_confirm,
         "platform.decision.answer": _act_decision_answer,
+        # M3(docs/APP-MODEL.md §8):run/debug/lab-draft 三 kind 的绑定
+        "platform.run.stop": _act_run_stop,
+        "platform.run.resume": _act_run_resume,
+        "platform.run.rerun": _act_run_rerun,
+        "platform.debug.command": _act_debug_command,
+        "platform.draft.check": _act_draft_check,
     }
 
     registry = AppRegistry(known_skills=set(SKILL_BINDINGS))
@@ -599,6 +698,9 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         payload.update(body.args)  # 事件参数优先(warnings_ack/version 等)
         if action["skill"] == "platform.decision.answer":
             payload["answer"] = action_id  # 作答 = action id(approve-once/approve-run/deny)
+        if action["skill"] == "platform.debug.command":
+            # 调试命令 = action id 末段(debug.continue→continue,debug.stop→stop)
+            payload["command"] = action_id.split(".")[-1]
         result = _run_handler(SKILL_BINDINGS[action["skill"]], payload)
         if isinstance(result.get("state"), dict):
             instances.update_state(instance_id, result["state"])

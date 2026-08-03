@@ -366,6 +366,31 @@ function escalationSummary(d, inst) {
   );
 }
 
+/* debug 摘要卡(M3,docs/APP-MODEL.md §8):调试状态一句人话
+   ("暂停在 pre:tool.call,等你放行";M1 对话流暂无产出点,协议面先行) */
+function debugSummary(d) {
+  const paused = d?.state === "paused";
+  const lead = paused
+    ? copy("platform.debug.paused").replace("{where}", esc(d?.pause_point?.signal ?? ""))
+    : esc(d?.state ?? "");
+  return (
+    `<div class="pf-card-lead">${lead}</div>` +
+    (paused ? `<div class="pf-card-sub">${esc(copy("platform.debug.waiting"))}</div>` : "")
+  );
+}
+
+/* lab_draft 摘要卡(M3):名称 + 推导档人话 + 检查状态人话 */
+function draftSummary(d) {
+  const tierKey = { none: "none", reversible: "reversible", irreversible: "irreversible" }[d?.tier];
+  return (
+    `<div class="pf-card-lead">${_t("platform.draft.lead", { name: esc(d?.name ?? "") })}</div>` +
+    `<div class="pf-card-sub">` +
+    (tierKey ? esc(copy(`platform.sum.pack.tier.${tierKey}`)) : "") +
+    (d?.gate_status ? ` · ${esc(copy(`lab.gate.${d.gate_status}`))}` : "") +
+    `</div>`
+  );
+}
+
 /* 摘要卡渲染入口:一句结论(加粗)+ 补充行 + 详情链接/动作区(右下)。
    ``depth``(M2,docs/APP-MODEL.md §6):嵌套层级——对话流卡 = 1,tab 内嵌卡 = 2;
    第 3 层起卡只读,不加"打开"链接(防俄罗斯套娃)。 */
@@ -373,7 +398,7 @@ export function summaryHtml(card, depth = 1) {
   const type = card?.type ?? "";
   const d = card?.data ?? {};
   const render = { plan: planSummary, skill_pack: packSummary, gate_report: gateSummary,
-    diff: diffSummary, publish: publishSummary }[type];
+    diff: diffSummary, publish: publishSummary, debug: debugSummary, lab_draft: draftSummary }[type];
   const body = type === "escalation" ? escalationSummary(d, card?.instance)
     : render ? render(d) : type === "table" ? tableSummary(card)
     : `<pre class="mono">${esc(JSON.stringify(d, null, 2))}</pre>`;

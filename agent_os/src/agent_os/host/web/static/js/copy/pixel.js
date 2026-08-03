@@ -200,4 +200,5 @@ export const COPY = {
   "platform.act.accept": "ACCEPT",
   "platform.act.discard": "DISCARD",
   "platform.act.confirm": "SHIP IT",
+  "platform.tabs.recent": "RECENTLY CLOSED",
 };

@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from agent_os.host.web.app import create_app
 from agent_os.host.web_platform.app import create_platform_app
 from agent_os.host.web_platform.apps import (
+    AppInstanceStore,
     AppRegistry,
     bind_args,
     default_manifests,
@@ -203,6 +204,53 @@ def test_spawn_dedupe_and_unknown_kind(client):
     assert r2.json()["opened"] is False
     assert r2.json()["instance"]["id"] == r1.json()["instance"]["id"], "kind+ref 去重"
     assert client.post("/api/apps/spawn", json={"kind": "evil", "ref": "x"}).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# M2 app.state 持久化(docs/APP-MODEL.md §10):写/读/坏文件隔离/重启解析
+# ---------------------------------------------------------------------------
+
+
+def test_instance_store_persistence(tmp_path):
+    """写穿透 → 重启(新 store 同 root)可解析;kind+ref 去重跨重启;坏文件隔离;id 防穿越。"""
+    root = tmp_path / "platform_apps"
+    store = AppInstanceStore(root)
+    inst, opened = store.register(kind="plan", ref="lab.x", state={"name": "lab.x"})
+    assert opened
+    assert (root / f"{inst['id']}.json").is_file(), "register 即落盘"
+    store.update_state(inst["id"], {"resolved": "yes"})
+
+    store2 = AppInstanceStore(root)  # 模拟进程重启
+    got = store2.get(inst["id"])
+    assert got is not None, "重启后 instance 可解析(M1 旧卡 404 缺口关闭)"
+    assert got["state"]["resolved"] == "yes", "update_state 回写也落盘"
+    again, opened2 = store2.register(kind="plan", ref="lab.x")
+    assert not opened2 and again["id"] == inst["id"], "kind+ref 去重索引随加载重建"
+
+    (root / "broken.json").write_text("{bad json", encoding="utf-8")  # 坏 JSON
+    (root / "evil.json").write_text("{}", encoding="utf-8")  # 非法文件名(id 面外)
+    store3 = AppInstanceStore(root)
+    assert store3.get(inst["id"]) is not None, "坏文件不拖垮加载"
+    assert store3.get("../../etc/passwd") is None, "id 防穿越"
+    assert store3.get("app-zzzzzzzz") is None, "非法 id 查无"
+
+
+def test_instance_resolvable_after_restart(tmp_path):
+    """端点级:卡 dict 上的 instance id 在新 app(同 artifacts_root)仍可 GET。"""
+    manager = _FakeManager()
+    app1 = create_platform_app(manager=manager, lab_store=None, artifacts_root=tmp_path)
+    c1 = TestClient(app1)
+    sid = c1.post("/api/sessions").json()["id"]
+    msg = c1.post(f"/api/sessions/{sid}/messages", json={"text": "你好"}).json()
+    # help 卡(table)也登记 instance
+    inst_id = msg["cards"][0]["instance"]
+    assert (tmp_path / "platform_apps" / f"{inst_id}.json").is_file()
+
+    app2 = create_platform_app(manager=manager, lab_store=None, artifacts_root=tmp_path)  # "重启"
+    c2 = TestClient(app2)
+    r = c2.get(f"/api/apps/{inst_id}")
+    assert r.status_code == 200, "重启后旧卡 instance 可解析"
+    assert r.json()["kind"] == "table"
 
 
 # ---------------------------------------------------------------------------

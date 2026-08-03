@@ -26,11 +26,20 @@ export function openTab(tabs, tab) {
   return { tabs: next, active: tab.id, opened: true };
 }
 
-/* 关 tab:关闭后回退到 conversation(或剩余最后一个) */
+/* 关 tab(M2 关闭≠销毁,docs/APP-MODEL.md §6):关闭只是隐藏——返回
+   {tabs, active, closed},closed 交给"最近关闭"列表(重开回同 instance);
+   关闭后回退到 conversation(或剩余最后一个) */
 export function closeTab(tabs, id, fallbackId = "conv") {
+  const closed = (tabs ?? []).find((t) => t.id === id) ?? null;
   const next = (tabs ?? []).filter((t) => t.id !== id);
   const active = next.some((t) => t.id === fallbackId) ? fallbackId : (next[0]?.id ?? fallbackId);
-  return { tabs: next, active };
+  return { tabs: next, active, closed };
+}
+
+/* 最近关闭列表(重开入口;去重按 id,新关在前,上限 3) */
+export function pushClosed(closed, tab, cap = 3) {
+  const next = [tab, ...(closed ?? []).filter((t) => t.id !== tab.id)];
+  return next.slice(0, cap);
 }
 
 const state = {
@@ -39,6 +48,7 @@ const state = {
   messages: [],
   busy: false,
   tabs: [{ id: "conv", kind: "conversation", title: "", ref: "conv" }],
+  closedTabs: [], // M2:最近关闭(重开入口;销毁是显式动作,本期不做)
   active: "conv",
   detail: null, // {kind, ref, loading, error, html}
 };
@@ -73,11 +83,25 @@ function renderTabs() {
           : "";
       const label = t.kind === "conversation" ? copy("platform.tab.chat") : t.title;
       return (
-        `<div class="pf-tab" data-tab="${esc(t.id)}" role="tab" tabindex="0" aria-selected="${active}">` +
+        `<div class="pf-tab" data-tab="${esc(t.id)}" role="tab" tabindex="0" aria-selected="${active}"` +
+        ` title="${esc(label)}">` + // 窄屏图标列时悬停给全文(M2)
+        `<span class="pf-tab-ico" aria-hidden="true">${esc((label || "?").trim().charAt(0))}</span>` +
         `<span class="pf-tab-label">${esc(label)}</span>${close}</div>`
       );
     })
     .join("");
+  // M2 关闭≠销毁:最近关闭小列表(重开回同 instance;销毁是显式动作,本期不做)
+  host.innerHTML += state.closedTabs.length
+    ? `<div class="pf-recent"><div class="pf-recent-title">${esc(copy("platform.tabs.recent"))}</div>` +
+      state.closedTabs
+        .map(
+          (t) =>
+            `<button class="pf-recent-item" data-reopen="${esc(t.id)}" title="${esc(t.title)}">` +
+            `${esc(t.title)}</button>`
+        )
+        .join("") +
+      `</div>`
+    : "";
   const sel = $("#sessionSel");
   sel.innerHTML =
     state.sessions
@@ -268,6 +292,41 @@ const _DETAIL_META = {
   decompose: { title: copy("platform.detail.decompose") },
 };
 
+/* 详情 kind → app kind(M2 spawn 接入;run 等 M3 kind 缺席——先内部分发,
+   文档 §10:M3 才接 run/debug/lab-draft) */
+const _APP_KIND = {
+  gate: "gate_report",
+  pack: "skill_pack",
+  plan: "publish",
+  diff: "diff",
+  esc: "escalation",
+  decompose: "plan",
+  run: null,
+};
+
+/* spawn(M2):详情 tab 从"页面"升格为 app 的 Tab Surface——开 tab 时在服务端
+   登记/解析 instance(失败不阻断展示:数据面增强,不是依赖) */
+async function _spawnForTab(tab, data) {
+  const appKind = _APP_KIND[tab.kind];
+  if (!appKind) return;
+  try {
+    const res = await fetch("/platform/api/apps/spawn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: appKind,
+        ref: tab.ref,
+        title: tab.title,
+        state: data ?? {},
+        created_by: state.current ?? "",
+      }),
+    });
+    if (res.ok) tab.instance = (await res.json()).instance.id;
+  } catch {
+    /* spawn 失败静默:tab 渲染不受影响 */
+  }
+}
+
 function activateTab(id) {
   state.active = id;
   renderTabs();
@@ -290,6 +349,7 @@ async function openDetail(kind, ref, data) {
   state.detail = { kind, ref, loading: true };
   renderTabs();
   renderMain();
+  _spawnForTab(tab, data); // M2:登记 app instance(fire-and-forget,不阻断渲染)
   state.detail = await _loadDetail(kind, ref, data);
   renderMain();
 }
@@ -320,10 +380,23 @@ async function _loadDetail(kind, ref, data) {
 }
 
 function closeDetail(id) {
-  const { tabs, active } = closeTab(state.tabs, id, "conv");
+  const { tabs, active, closed } = closeTab(state.tabs, id, "conv");
   state.tabs = tabs;
   state.active = active;
+  if (closed) state.closedTabs = pushClosed(state.closedTabs, closed); // M2:关闭≠销毁
   if (state.active === "conv") state.detail = null;
+  renderTabs();
+  renderMain();
+}
+
+/* 重开(M2):从最近关闭回到 tab 条并聚焦(同一 tab id/ref → 同 instance) */
+function reopenTab(id) {
+  const tab = state.closedTabs.find((t) => t.id === id);
+  if (!tab) return;
+  state.closedTabs = state.closedTabs.filter((t) => t.id !== id);
+  const { tabs, active } = openTab(state.tabs, tab);
+  state.tabs = tabs;
+  state.active = active;
   renderTabs();
   renderMain();
 }
@@ -411,6 +484,8 @@ function bind() {
       e.stopPropagation(); // ✕ 不触发 tab 激活
       return closeDetail(tabX.dataset.tabX);
     }
+    const reopen = e.target.closest("[data-reopen]");
+    if (reopen) return reopenTab(reopen.dataset.reopen);
     const tab = e.target.closest("[data-tab]");
     if (tab) return activateTab(tab.dataset.tab);
     const link = e.target.closest("[data-detail-kind]");
@@ -460,5 +535,5 @@ _decisionTimer.unref?.();
 
 // 测试探针(node 冒烟用;浏览器无副作用)
 if (typeof globalThis !== "undefined") {
-  globalThis.__platform = { state, renderTabs, renderMain, loadSessions, openDetail, closeDetail, pollDecisions };
+  globalThis.__platform = { state, renderTabs, renderMain, loadSessions, openDetail, closeDetail, reopenTab, pollDecisions };
 }

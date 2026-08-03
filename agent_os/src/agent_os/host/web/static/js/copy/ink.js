@@ -194,4 +194,5 @@ export const COPY = {
   "platform.act.accept": "✓ 纳",
   "platform.act.discard": "弃",
   "platform.act.confirm": "确认发布",
+  "platform.tabs.recent": "近阖",
 };

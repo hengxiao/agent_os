@@ -387,6 +387,20 @@ const assertClean = (html, who) => {
   assert.ok(dt.includes("dinner.planner"), "详情层分解成员");
 }
 
+/* ── M2 嵌套层级(docs/APP-MODEL.md §6):第 3 层卡只读 ────────── */
+
+{
+  const card = {
+    type: "gate_report", v: 1,
+    data: { draft: "lab.dinner", status: "pass", gates: {} },
+    actions: [],
+  };
+  assert.ok(summaryHtml(card, 1).includes("data-detail-kind"), "第 1 层(对话流)有打开链接");
+  assert.ok(summaryHtml(card, 2).includes("data-detail-kind"), "第 2 层(tab 内嵌)有打开链接");
+  assert.ok(!summaryHtml(card, 3).includes("data-detail-kind"), "第 3 层只读,无打开链接(防套娃)");
+  assert.ok(summaryHtml(card, 3).includes("pf-card-lead"), "第 3 层内容照渲(只读 ≠ 不读)");
+}
+
 /* ── app.js 对话流(fetch stub)───────────────────────────────── */
 
 {
@@ -447,6 +461,12 @@ const assertClean = (html, who) => {
           data: { name: "lab.dinner", tier: "reversible", members: ["lab.dinner"] }, actions: [] }] });
     }
     // M1 新 action 管道(docs/APP-MODEL.md §4):服务端按 manifest 绑定参数
+    if (url === "/platform/api/apps/spawn") {
+      const body = JSON.parse(options.body ?? "{}");
+      return reply({ instance: { id: `app-spawn-${body.ref}`, kind: body.kind, ref: body.ref,
+        title: body.title, state: body.state ?? {}, created_by: body.created_by ?? "", created_at: 1 },
+        opened: true });
+    }
     if (url === "/platform/api/apps/app-p1/actions/scaffold.approve") {
       return reply({ ok: true, text: "首稿完成: lab.dinner",
         cards: [{ type: "skill_pack", v: 1, instance: "app-p2",
@@ -584,6 +604,15 @@ const assertClean = (html, who) => {
   assert.equal(probe.state.active, "d:gate:lab.dinner", "详情 tab 激活");
   assert.ok(tabsHtml().includes('data-tab="d:gate:lab.dinner"'), "详情 tab 上条");
   assert.ok(tabsHtml().includes("data-tab-x"), "详情 tab 可关闭(✕)");
+  const spawnPost = calls.find((c) => c.url === "/platform/api/apps/spawn");
+  assert.ok(spawnPost, "M2:开详情 tab 即 spawn 登记 instance");
+  assert.equal(JSON.parse(spawnPost.body).kind, "gate_report", "详情 kind → app kind 映射");
+  assert.equal(JSON.parse(spawnPost.body).ref, "lab.dinner");
+  await tick();
+  assert.equal(
+    probe.state.tabs.find((t) => t.id === "d:gate:lab.dinner")?.instance,
+    "app-spawn-lab.dinner",
+    "tab 自此带 app instance(Tab Surface 升格)");
   assert.ok(doc.querySelector("#log").hidden, "详情态隐藏对话流");
   assert.ok(doc.querySelector("#inputBar").hidden, "详情态隐藏输入区");
   assert.ok(!doc.querySelector("#detailHost").hidden, "详情宿主可见");
@@ -625,6 +654,9 @@ const assertClean = (html, who) => {
   assert.ok(calls.some((c) => c.url === "/api/runs/run-1/signals"), "run 详情拉 signals");
   assert.ok(detailHtml().includes("ops.janitor"), "run 详情渲染 skill");
   assert.ok(detailHtml().includes("outputs 错"), "run 详情渲染失败原因");
+  assert.ok(
+    !calls.some((c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes("run-1")),
+    "run 是 M3 kind:M2 不 spawn(内部分发兜底)");
 
   // diff 详情:数据在卡内,红绿行全量渲染(摘要只留人话)
   const diffLink = new StubEl("button");
@@ -660,16 +692,32 @@ const assertClean = (html, who) => {
   assert.ok(detailHtml().includes("ops.janitor"), "重试后详情渲染成功");
   assert.ok(!detailHtml().includes("加载失败"), "错误占位已撤");
 
-  // ✕ 关闭:回落 conversation,对话流恢复
+  // ✕ 关闭(M2 关闭≠销毁):回落 conversation,进"最近关闭";重开回同 instance
   const x = new StubEl("button");
   x.dataset.tabX = "d:run:bad-run";
   x.parentNode = doc.body;
   doc.trigger("click", { target: x, stopPropagation: () => {} });
   await tick();
   assert.equal(probe.state.active, "conv", "关闭后回落 conversation");
-  assert.ok(!tabsHtml().includes("d:run:bad-run"), "已关 tab 下条");
+  assert.ok(!tabsHtml().includes('data-tab="d:run:bad-run"'), "已关 tab 下条");
   assert.ok(!doc.querySelector("#log").hidden, "对话流恢复可见");
   assert.ok(doc.querySelector("#detailHost").hidden, "详情宿主隐藏");
+  assert.equal(probe.state.closedTabs.length, 1, "关闭≠销毁:进最近关闭");
+  assert.ok(tabsHtml().includes("最近关闭"), "最近关闭列表上屏");
+  assert.ok(tabsHtml().includes('data-reopen="d:run:bad-run"'), "重开入口在");
+
+  // 重开:回 tab 条并聚焦,同一 tab id(→ 同 instance)
+  const reopenBtn = new StubEl("button");
+  reopenBtn.dataset.reopen = "d:run:bad-run";
+  reopenBtn.parentNode = doc.body;
+  doc.trigger("click", { target: reopenBtn });
+  await tick();
+  assert.equal(probe.state.active, "d:run:bad-run", "重开聚焦");
+  assert.ok(tabsHtml().includes('data-tab="d:run:bad-run"'), "重开回 tab 条(同 instance)");
+  assert.equal(probe.state.closedTabs.length, 0, "重开后出最近关闭列表");
+  // 还原:重关 run tab,后续决策流程在 conversation 面进行
+  probe.closeDetail("d:run:bad-run");
+  await tick();
 
   /* ── 升权决策(W2):轮询汇聚 → 就地作答 → 已决置灰 ────────────── */
 

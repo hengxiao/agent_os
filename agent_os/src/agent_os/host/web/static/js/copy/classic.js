@@ -201,4 +201,5 @@ export const COPY = {
   "platform.act.accept": "✓ 接受",
   "platform.act.discard": "放弃",
   "platform.act.confirm": "确认发布",
+  "platform.tabs.recent": "最近关闭",
 };

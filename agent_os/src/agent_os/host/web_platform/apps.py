@@ -17,12 +17,21 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import re
 import time
 import uuid
+from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger("agent_os.platform.apps")
 
 #: action 可声明的表面(§3 两张面孔;action 至少出其一)
 SURFACES = ("card", "tab")
+
+#: instance id 合法面(``app-`` + hex;文件持久化的路径穿越防护,与 SessionStore 同哲学)
+_INSTANCE_ID_RE = re.compile(r"^app-[0-9a-f]{8}$")
 
 
 def validate_manifest(manifest: dict[str, Any], *, known_skills: set[str]) -> None:
@@ -97,15 +106,51 @@ class AppRegistry:
 
 
 class AppInstanceStore:
-    """AppInstance 存储(M1 内存态;kind+ref 去重注册,state 回写)。
+    """AppInstance 存储(M2 文件持久化;kind+ref 去重注册,state 回写即落盘)。
 
-    持久化(docs/APP-MODEL.md §10 M2:app.state 可序列化恢复)不在本期——
-    但 instance 形态已按可序列化设计(dict 直通 json)。
+    持久化(docs/APP-MODEL.md §10 M2):``<root>/<instance_id>.json`` 单文件单
+    instance,写穿透(register/update_state 即写;与 SessionStore 同哲学——
+    平台状态也是宿主产物)。启动时全量加载重建索引(kind+ref 去重在重启后
+    依然成立,卡 dict 上的 instance id 由此可跨重启解析);坏文件隔离
+    (JSON 坏/形态不合跳过记日志,不拖垮装配);id 合法面防路径穿越。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, root: str | Path | None = None) -> None:
         self._by_id: dict[str, dict[str, Any]] = {}
         self._by_ref: dict[tuple[str, str], str] = {}  # (kind, ref) → id
+        self._root = Path(root) if root is not None else None
+        if self._root is not None:
+            self._root.mkdir(parents=True, exist_ok=True)
+            self._load()
+
+    def _load(self) -> None:
+        """启动加载:合法文件重建 _by_id/_by_ref;坏文件隔离(跳过 + 记日志)。"""
+        assert self._root is not None
+        for f in sorted(self._root.glob("*.json")):
+            if not _INSTANCE_ID_RE.match(f.stem):
+                _log.warning("platform_apps 跳过非法文件名: %s", f.name)
+                continue
+            try:
+                doc = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
+                _log.warning("platform_apps 坏文件隔离: %s(%s)", f.name, e)
+                continue
+            if not isinstance(doc, dict) or doc.get("id") != f.stem or not doc.get("kind"):
+                _log.warning("platform_apps 形态不合隔离: %s", f.name)
+                continue
+            self._by_id[doc["id"]] = doc
+            self._by_ref[(doc["kind"], str(doc.get("ref") or ""))] = doc["id"]
+
+    def _write(self, inst: dict[str, Any]) -> None:
+        """写穿透(M2):单 instance 单文件;写失败记日志不炸调用方(内存仍真)。"""
+        if self._root is None:
+            return
+        try:
+            (self._root / f"{inst['id']}.json").write_text(
+                json.dumps(inst, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError as e:
+            _log.warning("platform_apps 写盘失败(内存态仍有效): %s", e)
 
     def register(
         self,
@@ -117,7 +162,7 @@ class AppInstanceStore:
         created_by: str = "",
     ) -> tuple[dict[str, Any], bool]:
         """登记 instance;同 kind+ref 已存在 → 返回既有 + ``opened=False``
-        (与 Compositor 打开去重同语义,docs/APP-MODEL.md §6)。"""
+        (与 Compositor 打开去重同语义,docs/APP-MODEL.md §6)。新登记即落盘。"""
         key = (kind, ref)
         existing = self._by_ref.get(key)
         if existing is not None:
@@ -133,17 +178,21 @@ class AppInstanceStore:
         }
         self._by_id[inst["id"]] = inst
         self._by_ref[key] = inst["id"]
+        self._write(inst)
         return inst, True
 
     def get(self, instance_id: str) -> dict[str, Any] | None:
+        if not _INSTANCE_ID_RE.match(instance_id or ""):
+            return None  # id 合法面(防穿越;非法 id 一律查无)
         return self._by_id.get(instance_id)
 
     def update_state(self, instance_id: str, patch: dict[str, Any]) -> None:
-        """结果回写(§4 action 管道:skill 调用结果写回 app.state)。"""
-        inst = self._by_id.get(instance_id)
+        """结果回写(§4 action 管道:skill 调用结果写回 app.state)+ 落盘。"""
+        inst = self.get(instance_id)
         if inst is None:
             raise KeyError(f"找不到 app instance: {instance_id}")
         inst["state"].update(patch)
+        self._write(inst)
 
 
 def resolve_state_path(state: dict[str, Any], path: str) -> Any:

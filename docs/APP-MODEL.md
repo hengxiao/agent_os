@@ -172,7 +172,7 @@ send(text):
 | 期 | 内容 |
 |---|---|
 | M1 ✅ | AppManifest 注册表 + action 管道(替代 cards/action)+ 对话 app 归一(现状卡型全部转成六个 app kind 的表面) |
-| M2 | Compositor 正式化(关闭≠销毁/嵌套 ≤2/图标列)+ app.state 持久化 |
+| M2 ✅ | Compositor 正式化(关闭≠销毁/嵌套 ≤2/图标列)+ app.state 持久化 |
 | M3 | run/debug/lab-draft 三个 app kind 接入(对话 → 包 → run → debug 闭环) |
 | M4 | legacy 五页以 tab surface 接入 + SSE transport + 主动汇报(app 状态推送进对话) |
 
@@ -190,6 +190,22 @@ send(text):
 >   前端自动回落);两管道共享同一 handler 映射(`_run_handler` 统一异常归类),
 >   M3 退役旧入口。manifest 的 action label 是 copy key(六主题已同步),
 >   M1 前端仍用卡 JSON 自带 label,tab surface 从 manifest 渲染动作归 M2+。
+>
+> **M2 实现注**(2026-08-03,分支 debugger):
+> - **持久化**:AppInstanceStore(root) 写穿透到 `<artifacts>/platform_apps/
+>   <instance_id>.json`(单文件单 instance,与 SessionStore 同哲学);启动全量
+>   加载重建 kind+ref 索引(去重跨重启成立),坏文件/非法文件名/形态不合
+>   隔离,id 合法面 `app-[0-9a-f]{8}` 防穿越;conversation instance 同样持久;
+> - **Compositor**:closeTab 返回 closed → state.closedTabs(上限 3,新关在前),
+>   tab 条底部"最近关闭"小列表重开(同 tab id → 同 instance);嵌套层级经
+>   `summaryHtml(card, depth)` 透传,depth ≥3 剥"打开"链接(对话流=1,
+>   tab 内嵌=2;当前 tab surface 无嵌卡卡面,机制 + 单测先行);窄屏
+>   <720px tab 条收图标列(首字符 + title 悬停全文);
+> - **spawn 前端接入**:openDetail 按 `_APP_KIND` 映射 POST /api/apps/spawn
+>   (fire-and-forget,失败不阻断展示),tab 带 instance 升格 Tab Surface;
+>   run 属 M3 kind(映射 null)先内部分发,有测试守着不 spawn;
+> - **销毁不做**(显式动作,本期无 UI 面;最近关闭只进不出,重启即清——
+>   closedTabs 是前端内存态,不持久化)。
 
 ## 11. 不做
 

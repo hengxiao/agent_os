@@ -366,8 +366,10 @@ function escalationSummary(d, inst) {
   );
 }
 
-/* 摘要卡渲染入口:一句结论(加粗)+ 补充行 + 详情链接/动作区(右下) */
-export function summaryHtml(card) {
+/* 摘要卡渲染入口:一句结论(加粗)+ 补充行 + 详情链接/动作区(右下)。
+   ``depth``(M2,docs/APP-MODEL.md §6):嵌套层级——对话流卡 = 1,tab 内嵌卡 = 2;
+   第 3 层起卡只读,不加"打开"链接(防俄罗斯套娃)。 */
+export function summaryHtml(card, depth = 1) {
   const type = card?.type ?? "";
   const d = card?.data ?? {};
   const render = { plan: planSummary, skill_pack: packSummary, gate_report: gateSummary,
@@ -375,8 +377,10 @@ export function summaryHtml(card) {
   const body = type === "escalation" ? escalationSummary(d, card?.instance)
     : render ? render(d) : type === "table" ? tableSummary(card)
     : `<pre class="mono">${esc(JSON.stringify(d, null, 2))}</pre>`;
-  const link =
-    type === "plan"
+  const allowOpen = depth < 3; // M2:层级 ≤2;第 3 层只读
+  const link = !allowOpen
+    ? ""
+    : type === "plan"
       ? _detailLink("decompose", d.create?.[0]?.name ?? "", copy("platform.detail.decompose"), d) // N6:结构 + 路由角标在详情层
       : type === "skill_pack"
       ? _detailLink("pack", d.name ?? "", copy("platform.detail.pack"), { name: d.name, tier: d.tier, members: d.members ?? [] })
@@ -400,7 +404,8 @@ export function summaryHtml(card) {
 }
 
 /* Card Surface 分发(docs/APP-MODEL.md §3/§8;M1 概念归位):
-   渲染按 "app kind + surface" 寻址——卡型即 app kind,摘要渲染即 card surface。 */
-export function renderCardSurface(card) {
-  return summaryHtml(card);
+   渲染按 "app kind + surface" 寻址——卡型即 app kind,摘要渲染即 card surface。
+   ``depth``(M2 §6):嵌套层级透传(第 3 层只读,见 summaryHtml)。 */
+export function renderCardSurface(card, depth = 1) {
+  return summaryHtml(card, depth);
 }

@@ -115,8 +115,9 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         model=route_model,
         name_taken=lambda n: _name_taken(manager, lab_store, n),
     )
-    #: app instance 存储(M1 内存态;卡创建即登记,kind+ref 去重)
-    instances = AppInstanceStore()
+    #: app instance 存储(M2 文件持久化:卡创建即登记,kind+ref 去重,
+    #: 重启后卡 dict 上的 instance id 仍可解析——M1 旧卡 404 的缺口在此关闭)
+    instances = AppInstanceStore(Path(artifacts_root) / "platform_apps")
 
     # ------------------------------------------------------------------
     # app instance 登记(docs/APP-MODEL.md §2;M1:创建卡时登记,卡上带 instance id)

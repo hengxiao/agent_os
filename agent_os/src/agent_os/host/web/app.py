@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import secrets
 import time
 from collections.abc import AsyncIterator
@@ -70,7 +71,7 @@ from agent_os.skills.draft_store import (
 )
 from agent_os.skills.gate import GateError, promote_draft
 from agent_os.skills.gate import validate_draft as validate_gate_draft
-from agent_os.skills.iterate import collect_package_docs, package_diff
+from agent_os.skills.iterate import candidate_diff, edit_members, run_iterate
 from agent_os.skills.lab_assistant import (
     ASSISTANT_NAME,
     ITERATOR_NAME,
@@ -79,9 +80,11 @@ from agent_os.skills.lab_assistant import (
 )
 from agent_os.skills.manifest import validate_manifest
 from agent_os.skills.package import build_plan, promote_package
-from agent_os.tools.lab_tools import register_iterate_tools, register_lab_tools
+from agent_os.tools.lab_tools import register_lab_tools
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+_log = logging.getLogger("agent_os.web")
 
 #: SSE 空闲 keepalive 间隔(秒):防代理/浏览器断连,dev 工具取保守值
 _SSE_KEEPALIVE = 15.0
@@ -1196,50 +1199,26 @@ def create_app(
                 extra={ITERATOR_NAME: iterator_skill()},
             )
         )
-        register_iterate_tools(
-            kernel.tools,
-            store=lab_store,
-            production=manager.shared_skills_registry(),
-            tools_registry=manager.shared_tools_registry(),
-            pkg=name,
-        )
-        request_text = json.dumps(
-            {"note": body.note, "comments": body.comments}, ensure_ascii=False
-        )
         try:
-            result = asyncio.run(
-                kernel.run(ITERATOR_NAME, {"request": request_text, "draft": name})
+            return run_iterate(
+                kernel,
+                store=lab_store,
+                production=manager.shared_skills_registry(),
+                tools_registry=manager.shared_tools_registry(),
+                name=name,
+                comments=body.comments,
+                note=body.note,
             )
         except Exception as e:
             raise HTTPException(
                 status_code=503, detail=f"助手暂不可用: {type(e).__name__}: {e}"
             ) from e
-        return {
-            "candidate": True,
-            "reply": (result or {}).get("reply", ""),
-            "diff": _lab_candidate_diff(name),
-        }
-
-    def _lab_edit_members(name: str) -> list[str]:
-        """编辑闭包的 draft 成员(working 集;快照/diff 共用)。"""
-        closure = compute_closure(
-            name, lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(),
-            mode="edit",
-        )
-        return [m["name"] for m in closure["members"] if m["status"] == "draft"]
 
     def _lab_candidate_diff(name: str) -> dict[str, Any]:
         """working vs candidate 的结构化 diff(skills/iterate.py 纯函数)。"""
-        working = collect_package_docs(lab_store, name, _lab_edit_members(name))
-        candidate: dict[str, Any] = {}
-        for member in lab_store.candidate_members(name):
-            data = lab_store.read_candidate_member(name, member)
-            candidate[member] = {
-                "manifest": data["manifest"] or {},
-                "prompt": data["prompt"],
-                "tests": sorted((data["tests"] or {}).keys()),
-            }
-        return package_diff(working, candidate)
+        return candidate_diff(
+            lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(), name
+        )
 
     @app.get("/api/lab/drafts/{name}/candidate/diff")
     def lab_candidate_diff_get(name: str) -> dict[str, Any]:
@@ -1257,7 +1236,9 @@ def create_app(
     def lab_candidate_accept(name: str) -> dict[str, Any]:
         """接受候选(§1.2:接受是人的动作):快照新版本 → 候选覆盖 working → 清候选。"""
         try:
-            members = _lab_edit_members(name)
+            members = edit_members(
+                lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(), name
+            )
             cand = lab_store.candidate_members(name)
             if not cand:
                 raise FileNotFoundError(f"无候选: {name}")
@@ -1634,5 +1615,18 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    # 新平台(docs/AGENTIC-UI.md 方案 A 对话中枢;docs/WEB-PLATFORM.md):
+    # 挂载到 /platform;装配失败只记日志不拖垮主 app(降级策略 §8——旧页即专家模式)
+    try:
+        from agent_os.host.web_platform import create_platform_app
+
+        app.mount(
+            "/platform",
+            create_platform_app(manager=manager, lab_store=lab_store, artifacts_root=root),
+            name="platform",
+        )
+    except Exception:  # noqa: BLE001 — 平台是并列宿主,主 app 必须照常可用
+        _log.warning("web_platform 装配失败,跳过 /platform 挂载", exc_info=True)
 
     return app

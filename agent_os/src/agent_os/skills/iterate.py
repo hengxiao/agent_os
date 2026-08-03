@@ -122,3 +122,59 @@ def collect_package_docs(store: Any, pkg: str, members: list[str]) -> dict[str, 
             "tests": sorted((data["tests"] or {}).keys()),
         }
     return docs
+
+
+def edit_members(store: Any, production: Any, tools: Any, pkg: str) -> list[str]:
+    """编辑闭包的 draft 成员(working 集;快照/diff/平台编排共用)。"""
+    from agent_os.skills.closure import compute_closure
+
+    closure = compute_closure(pkg, store, production, tools, mode="edit")
+    return [m["name"] for m in closure["members"] if m["status"] == "draft"]
+
+
+def candidate_diff(store: Any, production: Any, tools: Any, pkg: str) -> dict[str, Any]:
+    """working vs candidate 的结构化 diff(host/web 与 web_platform 共用)。"""
+    working = collect_package_docs(store, pkg, edit_members(store, production, tools, pkg))
+    candidate: dict[str, Any] = {}
+    for member in store.candidate_members(pkg):
+        data = store.read_candidate_member(pkg, member)
+        candidate[member] = {
+            "manifest": data["manifest"] or {},
+            "prompt": data["prompt"],
+            "tests": sorted((data["tests"] or {}).keys()),
+        }
+    return package_diff(working, candidate)
+
+
+def run_iterate(
+    kernel: Any,
+    *,
+    store: Any,
+    production: Any,
+    tools_registry: Any,
+    name: str,
+    comments: list[dict[str, Any]],
+    note: str,
+) -> dict[str, Any]:
+    """迭代生成执行体(host/web 的 iterate 端点与 web_platform 共用).
+
+    调用方负责:装配好内核(overlay 注入 iterator 技能)并先落批注;
+    本函数注册迭代工具面、跑生成 run、返回 diff。provider 故障原样上抛
+    (路由层归 503"助手暂不可用")。
+    """
+    import asyncio
+    import json as _json
+
+    from agent_os.skills.lab_assistant import ITERATOR_NAME
+    from agent_os.tools.lab_tools import register_iterate_tools
+
+    register_iterate_tools(
+        kernel.tools, store=store, production=production, tools_registry=tools_registry, pkg=name
+    )
+    request_text = _json.dumps({"note": note, "comments": comments}, ensure_ascii=False)
+    result = asyncio.run(kernel.run(ITERATOR_NAME, {"request": request_text, "draft": name}))
+    return {
+        "candidate": True,
+        "reply": (result or {}).get("reply", ""),
+        "diff": candidate_diff(store, production, tools_registry, name),
+    }

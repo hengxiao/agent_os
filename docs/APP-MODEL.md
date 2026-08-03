@@ -1,12 +1,18 @@
 # App 化 UI 模型(App-Model UI)技术文档
 
-> 版本:v0.1(设计)
+> 版本:v0.2(设计;按独立评审修订——三态 exec、state 服务端权威、安全论断重写)
 > 对象:web_platform 的下一代 UI 架构——把 UI 看作一个操作系统,
->   对话 app 只是它的终端(PowerShell/cmd),一切操作都是 skill 调用。
-> 关系:概念承接 `AGENTIC-UI.md` 方案 A;实现基础是 web_platform 现状
->   (会话/卡型/tab/双层化);双层化已被本模型吸收并泛化(§3)。
-> 一句话:**UI 里的每个 app 都有两张面孔——嵌进别处的卡片,和独占一屏
->   的标签页;每个点击都是一次带状态的 skill 调用。**
+>   对话 app 只是它的终端(PowerShell/cmd),世界改变动作经受仲裁的通道。
+> v0.2 修订(评审驱动,逐条见 §12):
+>   1. **推翻 v0.1 "每个动作都是 skill 调用 → 内核仲裁自动覆盖" 的论断**——
+>      该论断在其招牌例子上为假(promote 是 host 函数不走升权闸;工具分发
+>      需要帧上下文,宿主调工具=自我授权)。改为**三态 exec**(§4/§7):
+>      endpoint / run / local,各自的授权面显式声明;
+>   2. **app.state 服务端权威**,客户端只发事件不发状态(§4);
+>   3. 不变量措辞修正:改变外部世界的动作经受仲裁通道;纯 UI 动作不需要。
+> 关系:概念承接 `AGENTIC-UI.md` 方案 A;实现基础是 web_platform 现状;
+>   红线遵守 `WEB-PLATFORM.md` §7(本模型的 exec 表是它的显式化,§7)。
+> 一句话:**每个 app 两张面孔;每个改变世界的动作都走在明说的仲裁通道里。**
 
 ---
 
@@ -27,8 +33,8 @@
 ### 1.2 不变量
 
 1. **每个 app 必须有两张面孔**:Tab Surface(详情+操作)与 Card Surface(摘要+少量关键动作)。没有"只有卡片的东西"或"只有页面的东西"。
-2. **每个动作都是 skill 调用**:UI 不直接改世界;按钮 = `skill.<x>(args)`,args = `f(app.state, event)`。升权/数据闸/闸门因此**自动覆盖 UI 的全部副作用**——UI 不需要自己的权限体系。
-3. **状态在 app 里,不在 DOM 里**:app.state 可序列化(刷新/重启可恢复);DOM 只是 state 的渲染。
+2. **每个改变外部世界的动作,都走在一条明说的仲裁通道里**(三态 exec,§4 表)——没有第四条通道;纯 UI 动作(pin/close/focus)不改变世界,不需要也不应该走仲裁。
+3. **app.state 服务端权威**:state 存服务端、可序列化(刷新/重启可恢复);客户端只发事件不发状态;DOM 只是 state 的渲染。
 4. **卡面可以嵌进任何容器**:对话消息、其他 app 的 tab、列表行——同一渲染函数,不同宿主。
 5. **对话 app 没有特权**:它只是第一个被打开的 app;任何 app 都能孵化其他 app(技能的 run app 可以孵化调试 app)。
 
@@ -76,25 +82,54 @@
 - **Card Surface**:一句结论 + 至多两个动作。禁忌词纪律(18 词表)在这里执行——**卡面只说人话**;
 - **Tab Surface**:完整数据 + 全部动作 + 原文/JSON/hash 都可以有;
 - 两表面共用同一 `state` 与同一份数据,**渲染各自独立**——现在的 summaryHtml/cardHtml 就是它未泛化的雏形;
-- 卡面动作与全面动作**同一 action id、同一 skill 调用**——卡面是全面的遥控器,不是另一套逻辑。
+- 卡面动作与全面动作**同一 action id、同一 exec 通道**——卡面是全面的遥控器,不是另一套逻辑。
 
-## 4. Action 管道:点击如何变成 skill 调用
+## 4. Action 管道:三态 exec
+
+**核心修正(v0.2)**:action 的执行方式不是单一的"skill 调用"——那是错误
+抽象(promote 是 host 函数、pin/spawn 无世界副作用、工具分发需要帧上下文)。
+正确模型是三态,每态的授权面显式声明:
+
+| exec | 语义 | 例子 | 授权面 |
+|---|---|---|---|
+| `endpoint` | 确定性写,转发既有端点(host 函数) | plan.confirm、rewind、promote | 白名单 + **人确认**(promote 的确认行就是它唯一的授权,不得当冗余删) |
+| `run` | agentic,起 run 跑 skill | iterate.generate、scaffold | 内核全套(帧白名单/升权闸/数据闸) |
+| `local` | 纯 state,不出海,不改变世界 | pin、spawn、close | 无(不需要) |
+
+manifest 的 action 字段因此是:
+
+```jsonc
+{
+  "id": "publish",
+  "label": "发布",
+  "exec": { "mode": "endpoint", "ref": "lab.pkg.promote" },  // endpoint→既有 handler 键;run→skill 名;local→无 ref
+  "args_from": ["state.plan_id"],     // 服务端权威 state 绑定(客户端不可控)
+  "args_input": ["warnings_ack"],     // 客户端事件载荷,须过 schema 校验——
+                                      // "哪些参数用户能控"在 manifest 上一眼可见
+  "surface": ["card", "tab"],
+  "confirm": "summary"
+}
+```
+
+管道:
 
 ```
 用户点击(卡面或全面)
-  → UI 收集 args:f(app.state, event)
+  → 前端只发事件(action_id + args_input 载荷,不发 state)
   → POST /platform/api/apps/{id}/actions/{action_id}
-  → 服务端:AppManifest 校验(action 存在、args 齐、表面合法)
-  → skill 调用(经 Agent OS 内核:白名单/升权闸/数据闸全过)
-  → 结果写回 app.state(服务端)+ 可选产生新 app(发布成功 → Skills app)
+  → 服务端:manifest 裁决(action 存在/表面合法)→ args_input 过 schema
+  → args_from 从服务端 state 绑定(客户端改不了)
+  → 按 exec.mode 执行:endpoint→薄 handler(同 cards/action 现状)/
+    run→起 run(产出 run app,持有 run_id)/local→仅改 state
+  → 结果写回 state(服务端)+ 可选 spawn 新 instance
   → UI 增量刷新两张面孔
 ```
 
 关键性质:
 
-- **前端永不直接调业务端点**:actions 是唯一出海口,服务端按 manifest 做参数绑定(防前端越权构造);
-- **可中断**:action 对应长任务时,app.state 进入 `running` 态(两表面都显示进度),完成/失败回写;
-- **升权请求回到发起它的 app**:L3 action 触发的 escalation pending,呈现为该 app 卡面上的待决状态(不污染对话流,除非用户让它进对话)。
+- **app.state 服务端权威**(§1.2-3):args_from 绑定的是服务端数据,防越权构造是真实成立的——因为它绑定的不经过客户端;`warnings_ack` 这类"人已阅读"凭据走 args_input,它是客户端**声明**而非证明,闸门语义仍由服务端 promote 复跑兜底;
+- **长任务 = 一个 run,不是 state 标志位**(评审④):action 触发长任务时 spawn 一个 **run app** 并持有 `run_id`,直接复用既有 RunRecord/SSE/trace——app 的 running 态 = 持有 run_id 且 run 未终态,两机制不分叉;
+- **升权请求只有一份权威清单**(评审⑤):supervisor 收件箱是权威存储(pending 落盘),app 卡面/对话决策卡都只是同一 pending 的**视图**——app 关闭不影响 pending 存活,重开/收件箱里仍在。
 
 ## 5. 对话 app(终端)的底层逻辑
 
@@ -115,19 +150,22 @@ send(text):
   6. 持久化(会话可刷新恢复)
 ```
 
-- **接收**:现轮询(2s);留 SSE 接口(state.transport);
+- **接收**:decisions 轮询 5s(现状;消息本体是请求-响应,无独立轮询);留 SSE 接口(state.transport);
 - **互动**:卡面动作走 §4 action 管道;动作结果以 agent 消息回插对话(因果可见);
 - **失败**:sending/waiting 可重试;failed 消息带重发按钮,不静默;
 - **路由标注**:agent 消息带 meta(route: llm/rule),降体验可观测(N6 已落地此雏形)。
 
 ### 5.3 对话 app 的 actions
 
-| action | skill | 说明 |
+| action | exec | 说明 |
 |---|---|---|
-| send | platform.orchestrate | 意图 → 编排(规则/LLM 路由) |
-| spawn | (内嵌) | 从卡/消息孵化新 app |
-| retry | platform.orchestrate | 重发失败消息 |
-| pin | (本地) | 会话置顶(纯 state) |
+| send | run(platform.orchestrate) | 意图 → 编排(规则/LLM 路由) |
+| spawn | local | 从卡/消息孵化新 app(不改变世界) |
+| retry | run(platform.orchestrate) | 重发失败消息 |
+| pin | local | 会话置顶(纯 state) |
+
+> 注:v0.1 的不变量 2 被这张表证伪(spawn/pin 无 skill)——v0.2 已修正:
+> 纯 UI 动作不需要仲裁通道;改变世界的动作(send/retry)走 run。
 
 ## 6. Compositor(窗口管理器)
 
@@ -138,10 +176,28 @@ send(text):
 - **嵌套**:tab 内可再嵌卡面(技能包 tab 里嵌 run 卡面),层级 ≤2,防俄罗斯套娃;
 - **布局**:窄屏 tab 条收成图标列。
 
-## 7. 安全与信任面(与内核对齐)
+## 7. 安全与信任面(v0.2 重写:授权面按 exec 态显式声明)
 
-- action → skill 调用意味着:**升权闸、数据 authZ、闸门、原子提交自动覆盖 UI 全部副作用**;UI 没有也不该有自己的权限层;
-- AppManifest 的服务端校验 = UI 层的白名单(防前端构造任意 skill 调用),与 ACTION_WHITELIST 同一哲学但泛化为 skill 粒度;
+v0.1 说"action = skill 调用 → 内核仲裁自动覆盖 UI 全部副作用,UI 不需要
+自己的权限层"——**这个论断是错的**,三处:
+
+1. 招牌例子是反例:`lab.pkg.promote` 这个 skill 不存在;promote 是 host
+   函数(`promote_package()`),经 `POST /api/lab/packages/promote`,**不走
+   升权闸**——它的授权面是"web 单用户 principal + 人工确认行"。把 promote
+   卡上的人确认当成冗余删掉,就会拆掉它目前唯一的授权。
+2. 工具分发需要帧上下文(`ToolDispatchContext` 含帧 manifest 白名单):
+   宿主直接调工具 = 自己造帧给自己授权,不是继承,是自欺。
+3. 与 `WEB-PLATFORM.md` §7 红线("零新 promote 通道、升级动作仍过人")
+   冲突。本节是它的显式化而非推翻:**授权面按 exec 态分别定义**:
+
+| exec | 授权面(必须显式声明在 manifest 与代码评审中) |
+|---|---|
+| `endpoint` | ACTION_WHITELIST/AppManifest 服务端裁决 + **该动作固有的人工确认**(如 promote 的确认行、升权的人审)——继承自既有端点的语义,不新增、不削弱 |
+| `run` | 内核全套:帧 manifest 白名单 ∩ 工具等级 ∩ RunConfig 上限 + 升权闸(低档进高档人审)+ 数据 authZ(principal 继承,不放大) |
+| `local` | 无(不改变世界);只允许动 state |
+
+- 任何 action 归错态(该 endpoint 的写成 run,或该有确认的写成 local)=
+  授权漏洞,评审必须拦;manifest 里 exec 字段是强制项,缺省拒绝注册;
 - 卡面人话/全面技术面的禁忌词纪律继续有效(信息分层不变);
 - principal 透传:UI 操作以 web 单用户 principal 执行,审计信号可关联。
 
@@ -160,8 +216,12 @@ send(text):
 
 ## 9. 测试模型
 
-- **协议测试**:每个 app kind 的 manifest 合法(双表面存在、actions 的 skill 已注册、args_from 在 state_schema 内);
-- **action 管道**:点击 → 正确 skill 调用(参数绑定正确)→ state 回写 → 两表面重渲;
+- **协议测试**:每个 app kind 的 manifest 合法(双表面存在、exec 三态合法且 ref 已注册、args_from 在 state_schema 内、args_input 有 schema);
+- **授权测试(评审⑥,与功能测试并列一等)**:
+  ① 越权构造被拒——伪造 action id / 越表面调用 / 篡改 args 来源(客户端伪装 args_from 的字段)一律 4xx;
+  ② state 服务端权威——客户端提交篡改后的 state 字段(如 warnings_ack=true)不影响 args_from 绑定结果;args_input 不合 schema 被拒;
+  ③ exec 归态——endpoint 动作不带 run 副作用、local 动作零出海(无网络调用断言);
+- **action 管道**:点击 → 正确 exec 调用(参数绑定正确)→ state 回写 → 两表面重渲;
 - **表面纪律**:卡面禁忌词扫描(沿用)+ 全面技术字段存在;
 - **Compositor**:去重聚焦/关闭回落/嵌套层级 ≤2;
 - **持久化**:app.state 序列化往返;刷新恢复;
@@ -213,3 +273,30 @@ send(text):
 - 不做用户自定义 app 编辑器(manifest 是代码贡献,与主题系统同政策);
 - 不做前端直连业务端点的过渡形态(action 管道一步到位);
 - 不把对话 app 做成唯一入口(它很重要,但没有特权)。
+
+## 12. v0.2 修订记录(独立评审的裁决,2026-08-03)
+
+评审三条主要意见及处置(全部接受):
+
+1. **§7 安全论断方向性错误**(promote 非 skill、工具分发需帧上下文、与
+   WEB-PLATFORM 红线冲突)→ §4 三态 exec 表 + §7 按态授权面重写;
+   manifest 的 `skill` 字段改 `exec: {mode, ref}`,成为强制项;
+   promote 的人确认明写为"唯一的授权,不得当冗余删"。
+2. **state 权威侧未定义,args_from 防越权悬空** → §1.2-3 服务端权威;
+   §4 拆 `args_from`(服务端绑定,客户端不可控)与 `args_input`(客户端
+   载荷,schema 校验),"哪些参数用户能控"manifest 上一眼可见;
+   warnings_ack 定性为"客户端声明,服务端 promote 复跑兜底"。
+3. **不变量 2 被 §5.3 表证伪** → 措辞改为"改变外部世界的动作经受仲裁
+   通道;纯 UI 动作不需要"(§1.2-2,§5.3 加注)。
+4. **run 与 running 态两套机制** → §4"长任务 = spawn run app 持有
+   run_id,复用 RunRecord/SSE/trace"。
+5. **升权两个收件箱** → §4"supervisor 收件箱是唯一权威存储,app 卡面
+   与对话决策卡都是视图"。
+6. **§9 缺授权测试** → 新增授权测试三件套(与功能测试并列)。
+7. **事实误差**(轮询 2s)→ §5.2 改"decisions 轮询 5s,消息无独立轮询"。
+
+**对分期的影响(M3.5 插入)**:M1/M2 已按旧字段(`skill` 绑定薄 handler)
+实现——实现行为恰好是 endpoint 态,模型落地只需**同构迁移**:manifest
+schema 加 exec 字段(skill 键映射为 exec:{mode:"endpoint", ref}),
+args_input 通道分离,授权测试补齐;行为零变化(现有测试应全绿)。
+M3 的三个 kind 直接按 exec 模型注册。

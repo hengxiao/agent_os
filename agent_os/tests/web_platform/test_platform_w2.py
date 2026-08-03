@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -253,3 +254,135 @@ def test_no_provider_is_pure_rules():
     """未装配 provider(装配失败安全态)→ 纯规则,不碰 LLM。"""
     orch = Orchestrator(runs_provider=list)
     assert orch.handle({"messages": []}, "最近有哪些 run")["cards"][0]["data"]["title"] == "最近的运行"
+
+
+# ---------------------------------------------------------------------------
+# 实测断点回归( orchestrator 层三个"根本不可用")
+# ---------------------------------------------------------------------------
+
+
+def _registry(tmp_path: Path, extra: str = ""):
+    """两技能的生产 registry:weather.query(生产)+ 可选附加(如 lab.* 草稿名)。"""
+    from agent_os.skills.local_file import LocalFileSkillRegistry
+
+    (tmp_path / "skills.yaml").write_text(
+        "skills:\n"
+        "  - name: weather.query\n"
+        "    version: 1.0.0\n"
+        "    kind: prompt\n"
+        "    description: 按天气推荐晚餐。Use when 查晚餐;Do not use when 其他。\n"
+        "    permissions: { tools: [], skills: [] }\n"
+        "    prompt: 查。\n"
+        + extra,
+        encoding="utf-8",
+    )
+    return LocalFileSkillRegistry(str(tmp_path / "skills.yaml"))
+
+
+def test_plan_create_name_unique_and_mutex(tmp_path):
+    """断点 1:create 名撞占用 → 自动唯一后缀;reuse 与 create 互斥。"""
+    production = _registry(tmp_path)
+    orch = Orchestrator(
+        skills=production,
+        name_taken=lambda n: n in {"lab.weather", "lab.weather2"},  # 草稿层已有两个
+    )
+    msg = orch.handle({"messages": []}, "帮我做个 weather 相关的技能")
+    data = msg["cards"][0]["data"]
+    create_name = data["create"][0]["name"]
+    assert create_name == "lab.weather3", "跳过两个占用名"
+    reuse_names = [r["name"] for r in data["reuse"]]
+    assert create_name not in reuse_names, "reuse/create 互斥"
+    approve = msg["cards"][0]["actions"][0]
+    assert approve["payload"]["name"] == create_name, "批准载荷 = 唯一名"
+
+
+def test_plan_llm_name_adopted(tmp_path):
+    """断点 1:LLM 路由的 name 建议被采用(不合规 name 清洗后回落规则命名)。"""
+    production = _registry(tmp_path)
+    orch = Orchestrator(
+        skills=production,
+        provider=ProviderManager([MockProvider(script=[_resp('{"intent": "create_skill", "goal": "dinner", "name": "Dinner.Planner!"}')])]),
+        model="mock/x",
+    )
+    msg = orch.handle({"messages": []}, "帮我规划晚餐")
+    assert msg["cards"][0]["data"]["create"][0]["name"] == "dinner.planner", "清洗后采用"
+
+    orch2 = Orchestrator(
+        skills=production,
+        provider=ProviderManager([MockProvider(script=[_resp('{"intent": "create_skill", "goal": "dinner", "name": "!!!"}')])]),
+        model="mock/x",
+    )
+    msg2 = orch2.handle({"messages": []}, "帮我规划晚餐")
+    assert msg2["cards"][0]["data"]["create"][0]["name"] == "lab.dinner", "不合规 name → 规则命名"
+
+
+def test_plan_rule_fallback_unique_name(tmp_path):
+    """断点 1:规则回落(无 LLM)也保唯一;topic 是兜底 custom 时 reuse 给空。"""
+    production = _registry(tmp_path)
+    orch = Orchestrator(skills=production, name_taken=lambda n: n == "lab.custom")
+    msg = orch.handle({"messages": []}, "帮我做个技能")
+    data = msg["cards"][0]["data"]
+    assert data["create"][0]["name"] == "lab.custom2"
+    assert data["reuse"] == [], "custom 无语义依据,不硬塞复用"
+
+
+def test_reuse_only_production_and_semantic(tmp_path):
+    """断点 2:草稿(lab.*)不进 reuse;生产技能须主题词命中名字/描述才进。"""
+    production = _registry(
+        tmp_path,
+        extra=(
+            "  - name: lab.weather\n"
+            "    version: 0.1.0\n"
+            "    kind: prompt\n"
+            "    description: weather 草稿(未发布)。\n"
+            "    permissions: { tools: [], skills: [] }\n"
+            "    prompt: 草稿。\n"
+            "  - name: ops.janitor\n"
+            "    version: 1.0.0\n"
+            "    kind: prompt\n"
+            "    description: 清理日志。Use when 清理;Do not use when 其他。\n"
+            "    permissions: { tools: [], skills: [] }\n"
+            "    prompt: 清。\n"
+        ),
+    )
+    orch = Orchestrator(skills=production)
+    data = orch.handle({"messages": []}, "帮我做个 weather 相关的技能")["cards"][0]["data"]
+    names = [r["name"] for r in data["reuse"]]
+    assert names == ["weather.query"], "草稿 lab.weather 不进;不相关的 ops.janitor 不进"
+
+
+def test_browse_reads_artifacts_layer(tmp_path):
+    """断点 3:runs 数据源 = 产物层(重启后内存空依然有数据),browse/why_failed 共用。"""
+    from agent_os.host.web_platform.app import _recent_runs
+
+    runs_dir = tmp_path / "runs"
+    for run_id, skill, status, error, started in [
+        ("aaa111", "demo.fib", "done", "", "2026-08-01T10:00:00+00:00"),
+        ("bbb222", "demo.fib", "failed", "outputs 校验失败: 缺 answer", "2026-08-02T10:00:00+00:00"),
+    ]:
+        d = runs_dir / run_id
+        d.mkdir(parents=True)
+        (d / "meta.json").write_text(
+            json.dumps({"run_id": run_id, "skill": skill, "started_at": started}), encoding="utf-8"
+        )
+        (d / "result.json").write_text(
+            json.dumps({"status": status, "result": None, "error": error, "usage": {}}), encoding="utf-8"
+        )
+
+    class _EmptyManager:  # 内存态为空 = 进程重启后
+        def active_items(self) -> list:
+            return []
+
+    runs = _recent_runs(_EmptyManager(), tmp_path)
+    assert [r["run_id"] for r in runs] == ["aaa111", "bbb222"], "产物层枚举,ts 升序"
+    assert runs[1]["status"] == "failed"
+    assert "outputs" in runs[1]["error"], "失败行带错误摘要"
+
+    # 经 orchestrator:browse 出非空行 + 逐行锚;why_failed 取最新失败
+    orch = Orchestrator(runs_provider=lambda: _recent_runs(_EmptyManager(), tmp_path))
+    browse = orch.handle({"messages": []}, "最近有哪些 run")["cards"][0]["data"]
+    assert len(browse["rows"]) == 2
+    assert browse["row_refs"][1] == {"kind": "run", "id": "bbb222"}
+    why = orch.handle({"messages": []}, "为什么挂了")["cards"][0]["data"]
+    assert why["rows"][0][1] == "demo.fib"
+    assert why["ref"] == {"kind": "run", "id": "bbb222"}

@@ -91,9 +91,9 @@ Message  {id, role: user|agent, text?, cards: [artifact], ts}
 
 | 意图 | 触发(规则) | 产物 |
 |---|---|---|
-| ① create_skill(做个/写个 X 技能) | 做个/写个/帮我做…+技能 | plan 卡:复用检索(名字/描述含主题词的生产技能,≤3)+ 新建建议;批准动作 scaffold.approve |
-| ② why_failed(为什么挂/失败) | 为什么…挂/失败/fail | table 卡:最近失败 run 的摘要(runs_provider 注入,隔离装配细节) |
-| ③ browse(W2;哪些/列表/记录 + run/失败) | 哪些…失败/最近…run | table 卡:最近运行摘要 + 逐行 run 详情锚(row_refs) |
+| ① create_skill(做个/写个 X 技能) | 做个/写个/帮我做…+技能 | plan 卡:复用检索(仅**生产**技能,名字/描述含主题词,≤3;草稿不进,兜底 topic 不硬塞)+ 新建建议(**create 名唯一**:LLM `name` 建议 > 规则 lab.<topic>,撞草稿/生产占用自动加后缀;reuse/create 互斥);批准动作 scaffold.approve |
+| ② why_failed(为什么挂/失败) | 为什么…挂/失败/fail | table 卡:最近失败 run 的摘要(runs_provider 注入;**产物层枚举**,与旧 web /api/runs 同一数据源,重启不丢) |
+| ③ browse(W2;哪些/列表/记录 + run/失败) | 哪些…失败/最近…run | table 卡:最近运行摘要 + 逐行 run 详情锚(row_refs;与 ② 共用产物层数据源) |
 | ④ 其他 | — | help 卡(三句引导) |
 
 **工具面红线**:编排只**读**生产 registry 与 run 记录;一切写动作走

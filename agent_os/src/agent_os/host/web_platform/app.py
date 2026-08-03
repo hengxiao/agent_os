@@ -13,7 +13,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -78,9 +80,10 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     providers, route_model = _llm_route_backend(manager, lab_store)
     orch = Orchestrator(
         skills=manager.shared_skills_registry(),
-        runs_provider=lambda: _recent_runs(manager),
+        runs_provider=lambda: _recent_runs(manager, artifacts_root),
         provider=providers,
         model=route_model,
+        name_taken=lambda n: _name_taken(manager, lab_store, n),
     )
 
     # ------------------------------------------------------------------
@@ -435,23 +438,87 @@ def _llm_route_backend(manager: Any, lab_store: Any) -> tuple[Any, str | None]:
         return None, None
 
 
-def _recent_runs(manager: Any) -> list[dict[str, Any]]:
-    """最近 run 列表(意图②/③数据源):从 run_manager 的活跃记录读(读不到 → [])。"""
+def _name_taken(manager: Any, lab_store: Any, name: str) -> bool:
+    """create 名占用判定:草稿层(DraftStore)+ 生产层(共享 registry)都查。"""
+    try:
+        if lab_store is not None and any(d.get("name") == name for d in lab_store.list()):
+            return True
+    except Exception as e:  # noqa: BLE001 — 存储面异常不阻塞命名(批准时闸门还会拦)
+        _log.info("草稿层占用查询失败,按未占用继续: %s", e)
+    try:
+        registry = manager.shared_skills_registry()
+    except Exception as e:  # noqa: BLE001 — registry 未装配:生产层无可占用
+        _log.info("生产 registry 不可用,占用判定只看草稿层: %s", e)
+        return False
+    if registry is None:
+        return False
+    try:
+        registry.get_by_name(name)
+    except SkillLoadError:
+        return False  # 未注册 = 可用(正常分支)
+    except Exception as e:  # noqa: BLE001 — 查询面异常同样按可用,批准闸门兜底
+        _log.info("生产层占用查询失败,按未占用继续: %s", e)
+        return False
+    return True
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    """读产物 JSON(半写窗口/坏文件 → None,与旧 web 同一容忍口径)。"""
+    try:
+        if path.is_file():
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            return doc if isinstance(doc, dict) else None
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def _iso_ts(value: Any) -> float:
+    """started_at → epoch 秒:ISO 串(产物层)或数值(内存态)都接;认不出 → 0。"""
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return datetime.fromisoformat(str(value)).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _recent_runs(manager: Any, artifacts_root: Path) -> list[dict[str, Any]]:
+    """最近 run 列表(意图②/③数据源):**产物层枚举**(与旧 web ``/api/runs``
+    同一数据源语义——``runs/*/meta.json`` + ``result.json``,进程重启不丢)
+    合并内存态(在途 run 以内存为准)。返回按 ts 升序(orchestrator 取尾=最新)。
+    """
+    runs: dict[str, dict[str, Any]] = {}
+    runs_dir = Path(artifacts_root) / "runs"
+    try:
+        run_dirs = sorted(p for p in runs_dir.iterdir() if p.is_dir()) if runs_dir.is_dir() else []
+    except OSError:
+        run_dirs = []
+    for run_dir in run_dirs:
+        meta = _read_json(run_dir / "meta.json")
+        if meta is None:
+            continue
+        result = _read_json(run_dir / "result.json") or {}
+        run_id = meta.get("run_id") or run_dir.name
+        runs[run_id] = {
+            "run_id": run_id,
+            "skill": meta.get("skill") or "",
+            # meta 在、result 未落:视为在途(崩溃/断电遗留),与旧 web 列表同口径
+            "status": result.get("status") or "running",
+            "error": result.get("error") or "",
+            "ts": _iso_ts(meta.get("started_at")),
+        }
     try:
         items = manager.active_items()
-    except Exception:  # noqa: BLE001 — run 记录面异常时降级为"无失败可报"
-        return []
-    runs = []
+    except Exception:  # noqa: BLE001 — 内存面异常不拖垮产物枚举
+        items = []
     for run_id, state in items:
         record = state.get("record") or {}
-        runs.append(
-            {
-                "run_id": run_id,
-                "skill": state.get("skill") or record.get("skill") or "",
-                "status": state.get("status"),
-                "error": record.get("error") or state.get("error") or "",
-                # W2 browse 的时间窗过滤;没有就 0(orchestrator 不过滤无 ts 记录)
-                "ts": state.get("started_at") or record.get("started_at") or 0,
-            }
-        )
-    return runs
+        runs[run_id] = {
+            "run_id": run_id,
+            "skill": state.get("skill") or record.get("skill") or "",
+            "status": state.get("status"),
+            "error": record.get("error") or state.get("error") or "",
+            "ts": _iso_ts(state.get("started_at")),
+        }
+    return sorted(runs.values(), key=lambda r: r["ts"])

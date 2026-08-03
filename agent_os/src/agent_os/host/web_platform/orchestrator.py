@@ -46,8 +46,9 @@ INTENTS = ("create_skill", "why_failed", "browse", "help")
 #: LLM 路由提示词(输出唯一 JSON;分类器不写解释,省 token 也省解析面)
 _ROUTE_PROMPT = """\
 你是意图分类器。把用户的话分进四类之一,只输出一行 JSON,不要别的文字:
-{"intent": "create_skill"|"why_failed"|"browse"|"help", "goal": "...", "timeframe": "..."}
-- create_skill:想做一个新技能/能力;goal = 主题词(英文小写,没有就空串)
+{"intent": "create_skill"|"why_failed"|"browse"|"help", "goal": "...", "name": "...", "timeframe": "..."}
+- create_skill:想做一个新技能/能力;goal = 主题词(英文小写,没有就空串);
+  name = 建议的技能名(英文小写"域名.动作",如 dinner.planner;没有就空串)
 - why_failed:问某次运行为何失败/报错
 - browse:想看一段时间内的运行列表(哪些失败/最近的运行);timeframe = 如 "上周"/"最近"
 - help:其它(闲聊/不会分)
@@ -67,6 +68,7 @@ class Orchestrator:
         runs_provider: Any = None,
         provider: Any = None,
         model: str | None = None,
+        name_taken: Any = None,
     ) -> None:
         self._skills = skills  # 生产 SkillRegistry(只读:manifests())
         #: 最近 run 列表来源(注入:``() -> [{run_id, skill, status, error, ts?}]``;
@@ -76,13 +78,18 @@ class Orchestrator:
         #: 默认 model;None = 纯规则(装配失败/未装配时的安全态)
         self._provider = provider
         self._model = model
+        #: 名字占用判定(注入:``(name) -> bool``,查草稿层 + 生产层;
+        #: create 名必须唯一——批准一个已存在的名必撞 FileExistsError 409)
+        self._name_taken = name_taken or (lambda _name: False)
 
     def handle(self, session: dict[str, Any], text: str) -> dict[str, Any]:
         """用户意图 → agent 消息(文本 + 卡)。LLM 路由优先,故障回落规则。"""
         routed = self._route(text)
         intent = routed["intent"]
         if intent == "create_skill":
-            return self._make_skill(text, goal=routed.get("goal") or "")
+            return self._make_skill(
+                text, goal=routed.get("goal") or "", name=routed.get("name") or ""
+            )
         if intent == "why_failed":
             return self._why_failed()
         if intent == "browse":
@@ -141,6 +148,7 @@ class Orchestrator:
         return {
             "intent": data["intent"],
             "goal": str(data.get("goal") or ""),
+            "name": _sanitize_name(data.get("name")),
             "timeframe": str(data.get("timeframe") or ""),
         }
 
@@ -148,14 +156,16 @@ class Orchestrator:
     # 意图①:做个 X 技能 → plan 卡
     # ------------------------------------------------------------------
 
-    def _make_skill(self, text: str, *, goal: str = "") -> dict[str, Any]:
+    def _make_skill(self, text: str, *, goal: str = "", name: str = "") -> dict[str, Any]:
         topic = goal or _topic_of(text)  # LLM 给了主题词就用,没有走规则提取
-        reuse = self._search_existing(topic)
-        # 分解(规则骨架):有能复用的就复用,主技能建议新建——复用是默认动作,
-        # 新建是补齐(docs/WEB-PLATFORM.md §5 意图①)
+        # create 名:LLM 建议 > 规则"域名.动作"(lab.<topic>);冲突自动加唯一后缀,
+        # 绝不批准一个已存在的名(草稿层/生产层占用都查,批准即 409 的坑)
+        create_name = self._unique_name(name or f"lab.{topic}")
+        # reuse 与 create 必须互斥(同一名只出现在一处)
+        reuse = [r for r in self._search_existing(topic) if r["name"] != create_name]
         create = [
             {
-                "name": f"lab.{topic}" if topic else "lab.custom",
+                "name": create_name,
                 "template": "prompt_query",
                 "reason": "主技能:按意图生成首稿(模板可改)",
             }
@@ -164,18 +174,30 @@ class Orchestrator:
             goal=text,
             reuse=reuse,
             create=create,
-            approve_payload={"name": create[0]["name"], "template": create[0]["template"]},
+            approve_payload={"name": create_name, "template": create[0]["template"]},
         )
         summary = (
             f"计划如下:复用 {len(reuse)} 个已有技能"
             + (f"({', '.join(r['name'] for r in reuse)})" if reuse else "")
-            + f",新建 {create[0]['name']}。批准即生成首稿。"
+            + f",新建 {create_name}。批准即生成首稿。"
         )
         return new_message("agent", text=summary, cards=[card])
 
+    def _unique_name(self, base: str) -> str:
+        """唯一名:base 未被占用直接用;否则 base2/base3…(lab.custom2 风格)。"""
+        if not self._name_taken(base):
+            return base
+        i = 2
+        while self._name_taken(f"{base}{i}"):
+            i += 1
+        return f"{base}{i}"
+
     def _search_existing(self, topic: str) -> list[dict[str, str]]:
-        """复用检索(规则版):名字/描述含主题词的生产技能(上限 3 个)。"""
-        if self._skills is None or not topic:
+        """复用检索(规则版):**只认已发布生产技能**——名字/描述含主题词
+        (上限 3 个)。草稿不在此面(没发布无从复用;lab.* 前缀防御性跳过);
+        主题词是兜底 "custom"(无语义依据)时直接给空——宁可全部新建,不硬塞复用。
+        """
+        if self._skills is None or not topic or topic == "custom":
             return []
         found = []
         try:
@@ -183,6 +205,8 @@ class Orchestrator:
         except Exception:  # noqa: BLE001 — registry 未装配时降级为"无可复用"
             return []
         for m in manifests:
+            if m.name.startswith("lab."):
+                continue  # 草稿命名空间防御:reuse 只认生产层
             if topic in m.name or topic in (m.description or ""):
                 found.append({"name": m.name, "reason": f"已覆盖相关能力({m.description[:30]})"})
         return found[:3]
@@ -302,6 +326,12 @@ def _topic_of(text: str) -> str:
     if words:
         return words[0][:24]
     return "custom"
+
+
+def _sanitize_name(raw: Any) -> str:
+    """LLM 建议技能名清洗:小写 [a-z0-9_.],须含字母;不合 → ""(回落规则命名)。"""
+    s = re.sub(r"[^a-z0-9_.]", "", str(raw or "").lower())[:48]
+    return s if re.search(r"[a-z]", s) else ""
 
 
 def _timeframe_cutoff(timeframe: str) -> float | None:

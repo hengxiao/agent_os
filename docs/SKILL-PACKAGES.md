@@ -225,7 +225,7 @@ L2 时 promote 只支持单文件 skills.yaml(多文件归并报错留 L5)。包
 
 | 期 | 内容 | 关闭的断点 |
 |---|---|---|
-| P1 ✅ | `compute_closure` + closure API + 包视图(含悬空节点/一键成稿)+ G2 引用完整性 | 1.1-B。已实现:`skills/closure.py`(四态/环/外链不下传)、`/api/lab/packages/{root}/closure` + drafts 别名、G2 悬空引用(tool/skill)与环判、Lab 包面板(四态徽标/根高亮/一键成稿);819 Python + 24 前端测试全绿 |
+| P1 ✅ | `compute_closure` + closure API + 包视图(含悬空节点/一键成稿)+ G2 引用完整性 | 1.1-B。已实现:`skills/closure.py`(四态/环/外链不下传)、`/api/lab/packages/{root}/closure` + drafts 别名、G2 悬空引用(tool/skill)与环判、Lab 包面板(四态徽标/根高亮/一键成稿);819 Python + 24 前端测试全绿。**P2 修正**:G2 悬空改两阶段(草稿期 warn / 提交期 fail,docs/SKILL-PACKAGES-V2.md §6.2),闭包改 edit/runtime 两模式(§6.1) |
 
 > 实现注(P1):
 > 1. "不引用不存在的 skill/tool"归 G2 而非 G5(gate.py 注释同改):它查的是
@@ -235,7 +235,15 @@ L2 时 promote 只支持单文件 skills.yaml(多文件归并报错留 L5)。包
 > 3. closure 的 tier 用完整推导档(derive_skill_tier),与包档语义一致;
 > 4. 包面板点击草稿节点仅切换选中(不重拉 closure);悬空一键成稿走空模板,
 >    模板化成稿(P3 功能包模板)再升级。
-| P2 | 原子提交(批量写入 + 单 reload + .bak + promotions 记录) | 1.1-C |
+| P2 ✅ | 原子提交(批量写入 + 单 reload + .bak + promotions 记录) | 1.1-C。**按 docs/SKILL-PACKAGES-V2.md §5 推荐路线实现**(以 A 为骨架 + C 的两切片):死锁修复(gate.py:412 / lab_tools.py 漏传 store=)、edit/runtime 两种闭包(编辑闭包生产即叶子)、两阶段 strict_refs(草稿期 warn+修复提示 / 提交期 fail)、plan + package_hash(审的就是要执行的)、先证后换原子事务(staging 全量加载验证 → 整文件单 .bak → 原子 rename → 单 reload)、unchanged 不重写不 bump、blockers.fix 一键成稿、前端 plan 面板;830 Python + 24 前端测试全绿 |
+
+> 实现注(P2):
+> 1. 单稿 promote 遇"引用未发布兄弟草稿"在**写入前**拒绝并指路包级提交
+>    (V2 §6.2 尾段;复跑错误信息两分:哈希不符 = 报告不一致 / 新 fail = 判定不一致);
+> 2. 事务成员 = 编辑闭包里的 draft 节点;production/external 纯展示;
+> 3. 版本比较内容面含 prompt(_manifest_to_dict 不含指令体,手动并入);
+> 4. plan 存 `drafts_root/_plans/`(根可能是生产技能,不一定有自己的草稿目录);
+> 5. G4 按成员各自的入口冒烟(smoke_runner 是 fn(name, draft) 工厂)。
 | P3 | 助手包级化(create/closure 工具 + prompt)+ 功能包模板两件 | 1.1-A |
 | P4 | 目录形态 set 落盘 + Skills 树包徽标 + G4 包级报告分组呈现 | 打磨 |
 

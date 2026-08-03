@@ -2318,6 +2318,42 @@ th.is-sorted .us-sort { color: var(--live); }
 .lab-pkg-tier-none { color: var(--fg-2); }
 .lab-pkg-error { color: var(--danger); font-size: var(--text-xs); }
 
+/* Skill Lab 提交计划面板(docs/SKILL-PACKAGES-V2.md §6.3/§6.8;P2) */
+.lab-plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.lab-plan-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.lab-plan-hash { color: var(--fg-2); font-size: var(--text-2xs); }
+.lab-plan-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-xs);
+  padding: var(--s1) var(--s2);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+}
+.lab-plan-row[data-action="unchanged"] { opacity: 0.7; }
+.lab-plan-action { color: var(--fg-2); }
+.lab-plan-row[data-action="create"] .lab-plan-action { color: var(--perm-read); }
+.lab-plan-row[data-action="replace"] .lab-plan-action { color: var(--perm-write); }
+.lab-plan-blocker {
+  font-size: var(--text-xs);
+  color: var(--danger);
+  padding: var(--s1) var(--s2);
+  border-left: var(--stroke-strong) solid var(--danger);
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+.lab-plan-warning { font-size: var(--text-xs); color: var(--perm-write); }
+
 /* 命名空间树(docs/NAMING.md §2;Skills/Tools 浏览器共用):折叠箭头 + 计数,
    缩进走 --ns-depth(结构行为,零主题分支,只消费 token) */
 .ns-row {

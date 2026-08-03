@@ -127,6 +127,7 @@ def validate_draft(
     tools: Any,
     smoke_runner: Any = None,
     store: Any = None,
+    strict_refs: bool = False,
 ) -> dict[str, Any]:
     """跑提交闸门(§1.4 五关),返回报告 dict(不落盘;落盘见 DraftStore)。
 
@@ -136,6 +137,9 @@ def validate_draft(
     的冒烟执行器(test-run 同逻辑,同步小预算);None 时 G4 按 skip(单测/嵌入路径)。
     ``store``(P1,G2 引用完整性):DraftStore——给了它,skills 引用在 草稿 ∪ 生产
     全量检查;不给则只查生产(嵌入路径,跨草稿引用查不到会被误报,调用方自酌)。
+    ``strict_refs``(P2,docs/SKILL-PACKAGES-V2.md §6.2):False = 草稿期
+    (UI 检查/助手/CLI 缺省)悬空引用 warn + 修复提示;True = 提交期
+    (promote 复跑/包级提交)悬空引用 fail。
     """
     gates: dict[str, Any] = {}
     raw = draft.get("manifest") if isinstance(draft.get("manifest"), dict) else None
@@ -209,7 +213,11 @@ def validate_draft(
                         )
                     )
         # 引用完整性(docs/SKILL-PACKAGES.md §3.4 G2 行;P1 落地,实现注:校勘记里
-        # "G5 不引用不存在的 skill/tool 未实现"归入本关——它查的是契约面,不是辞卫)
+        # "G5 不引用不存在的 skill/tool 未实现"归入本关——它查的是契约面,不是辞卫)。
+        # 两阶段严格性(docs/SKILL-PACKAGES-V2.md §6.2):草稿期 warn + 修复提示
+        # (创作过程的不完整是过程状态),提交期 strict_refs=True → fail。
+        ref_level = "fail" if strict_refs else "warn"
+        ref_fix = "" if strict_refs else "(修复:补建同名草稿,或删除该引用)"
         draft_name = str(draft.get("name") or (raw or {}).get("name") or "")
         for tool_name in (raw.get("permissions") or {}).get("tools", []):
             if not tools.has(tool_name) and tool_name not in (
@@ -218,18 +226,18 @@ def validate_draft(
             ):
                 g2.append(
                     _finding(
-                        "fail",
+                        ref_level,
                         "SKILL-PACKAGES.md §3.4 G2",
-                        f"悬空工具引用: {draft_name} 声明了不存在的工具 {tool_name}",
+                        f"悬空工具引用: {draft_name} 声明了不存在的工具 {tool_name}{ref_fix}",
                     )
                 )
         for dep in (raw.get("permissions") or {}).get("skills", []):
             if not _skill_resolvable(dep, draft_name, store, production):
                 g2.append(
                     _finding(
-                        "fail",
+                        ref_level,
                         "SKILL-PACKAGES.md §3.4 G2",
-                        f"悬空引用: {draft_name} 引用了不存在的子技能 {dep}",
+                        f"悬空引用: {draft_name} 引用了不存在的子技能 {dep}{ref_fix}",
                     )
                 )
         if store is not None:
@@ -430,15 +438,38 @@ def promote_draft(
         raise GateError("报告与当前草稿不一致:草稿在上次检查后有改动,请重新运行检查")
     if report.get("status") == "fail":
         raise GateError("闸门报告含 fail,不能 promote——先修红关再提交")
-    # 复跑 G1-G3(§1.4:防报告过期/篡改;G4/G5 信报告)
-    fresh = validate_draft(draft, production=production, tools=tools)
+    # 复跑 G1-G3(§1.4:防报告过期/篡改;G4/G5 信报告)。
+    # P2(docs/SKILL-PACKAGES-V2.md §6.2):复跑必须带 store(§2.2 实测死锁:
+    # 漏传时"根引用未发布兄弟草稿"在 validate 通过、复跑误报悬空)且按提交期
+    # 严格档(strict_refs=True,悬空即 fail)
+    fresh = validate_draft(draft, production=production, tools=tools,
+                           store=store, strict_refs=True)
+    # 根草稿引用了未发布的兄弟草稿(草稿层存在、生产层不存在)——单稿 promote
+    # 写出去生产即刻损坏(loader 依赖存在性),这是包,指路包级提交(§6.2 尾段)
+    if store is not None:
+        for dep in (draft.get("manifest") or {}).get("permissions", {}).get("skills", []):
+            if dep == name:
+                continue
+            try:
+                production.get(SkillRef(name=dep))
+                continue  # 已发布,不是兄弟草稿
+            except SkillLoadError:
+                pass
+            try:
+                store.load_skill(dep)
+            except (FileNotFoundError, SkillLoadError, ValueError):
+                continue  # 真悬空由 strict_refs 的 G2 拦,不在此重复
+            raise GateError(
+                f"根草稿引用了未发布的兄弟草稿 {dep}——这是一个包,"
+                f"请用包级提交(POST /api/lab/packages/{name}/plan → promote)"
+            )
     for gate_id in ("g1", "g2", "g3"):
         if fresh["gates"][gate_id]["status"] == "fail":
             first = next(
                 (f["message"] for f in fresh["gates"][gate_id]["findings"] if f["level"] == "fail"),
                 "",
             )
-            raise GateError(f"复跑 {gate_id} 出现 fail(报告已过期): {first}")
+            raise GateError(f"复跑 {gate_id} 出现新 fail(与报告判定不一致,非报告过期): {first}")
     has_warn = report.get("status") == "warn" or any(
         fresh["gates"][g]["status"] == "warn" for g in ("g1", "g2", "g3")
     )

@@ -170,7 +170,10 @@ def register_lab_tools(
             data = store.read(draft)
         except (FileNotFoundError, ValueError) as e:
             return ToolResult(ok=False, value=None, error=_err("not_found", str(e)))
-        report = validate_draft(data, production=production, tools=tools_registry)
+        # §6.2 两阶段:助手在草稿期(strict_refs=False,悬空 warn + 修复提示);
+        # store 必须传——否则"根引用兄弟草稿"被判悬空,助手与 UI 结论不一致(§2.2)
+        report = validate_draft(data, production=production, tools=tools_registry,
+                                store=store, strict_refs=False)
         return ToolResult(
             value={
                 "status": report["status"],

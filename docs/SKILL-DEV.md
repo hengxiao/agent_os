@@ -101,7 +101,7 @@ SkillManifest 契约全集分组进编辑器,**无隐藏字段**:
 | 关 | 内容 | 依据 |
 |---|---|---|
 | G1 metadata | name 合 NAMING.md 层级规范;description 是 "Use when / Do not use when" 路由式;version 语义化 | 现状 lint |
-| G2 契约 | inputs/outputs 是合法 JSON Schema;L2+ 每个参数有 `type`;inputs 示例骨架可生成;**引用完整性(tools/skills 引用必须存在,dangling = fail)** | 契约冻结面 |
+| G2 契约 | inputs/outputs 是合法 JSON Schema;L2+ 每个参数有 `type`;inputs 示例骨架可生成;**引用完整性两阶段(docs/SKILL-PACKAGES-V2.md §6.2):草稿期 dangling = warn + 修复提示,提交期(strict_refs)= fail** | 契约冻结面 |
 | G3 分档合规 | 推导档计算;≥L2 禁 inline;L3 禁 confirm:first;L2 `reversal` 必填;L3 `blast_radius` 必填;白名单内工具的 side_effect 清单列出(让人看见档从哪来) | ESCALATION/TIER-STANDARDS(E3 把必填 lint 落到这里) |
 | G4 冒烟试跑 | 用草稿自带 tests/ 用例跑真 run(MockProvider replay 优先,无 mock 则真实 provider 小预算);**outputs 必须过 outputs schema**;步数/token 不超 limits | RUNNERS §3.4 |
 | G5 提示词卫生 | prompt 不含"跳过确认/直接执行/无视用户"类注入诱导(TIER-STANDARDS §8 反模式) | 反模式表 |

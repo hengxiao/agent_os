@@ -91,4 +91,6 @@ export const COPY = {
   "lab.pkg.external": "外",
   "lab.pkg.missing": "阙",
   "lab.pkg.create": "补此草",
+  "lab.plan.title": "呈案",
+  "lab.plan.blockers": "碍",
 };

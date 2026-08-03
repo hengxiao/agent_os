@@ -4,7 +4,7 @@
    运行:node static/tests/lab.test.mjs(无需真实 DOM、无第三方依赖)。 */
 
 import assert from "node:assert/strict";
-import { makeDocument } from "./dom-stub.mjs";
+import { makeDocument, StubEl } from "./dom-stub.mjs";
 
 const {
   draftToForm,
@@ -353,7 +353,7 @@ const DRAFT = {
 
 /* ── L2 DOM 冒烟:validate → 卡片/ack 门 → promote(fetch stub)────────── */
 {
-  const { openLab, closeLab, runCheck } = await import("../js/components/lab.js");
+  const { openLab, closeLab, runCheck, promoteReady, planPanelHtml } = await import("../js/components/lab.js");
   const doc = makeDocument();
   globalThis.document = doc;
   const toastStack = doc.createElement("div");
@@ -369,12 +369,6 @@ const DRAFT = {
       permissions: { tools: [], skills: [] } },
     prompt: "你是天气员。", handler: null, parse_error: null, tests: {},
   };
-  const REPORT = {
-    report_id: "r-1", status: "warn", created_at: 100, manifest_hash: "h",
-    gates: { g1: { status: "warn", findings: [{ level: "warn", clause: "c", message: "m" }] },
-      g2: { status: "pass", findings: [] }, g3: { status: "pass", findings: [] },
-      g4: { status: "skip", findings: [] }, g5: { status: "skip", findings: [] } },
-  };
   globalThis.fetch = async (path, options = {}) => {
     const url = String(path);
     calls.push({ url, method: options.method ?? "GET", body: options.body });
@@ -384,49 +378,71 @@ const DRAFT = {
     if (url.startsWith("/api/lab/drafts/weather.query/tier")) return reply({ tier: "none", sources: [], top: [] });
     if (url === "/api/tools") return reply([]);
     if (url === "/api/skills") return reply([]);
-    if (url === "/api/lab/drafts/weather.query/validate") return reply(REPORT);
-    if (url === "/api/lab/drafts/weather.query/promote") {
-      return reply({ name: "weather.query", version: "0.1.0", action: "appended" });
-    }
     throw new Error(`未 stub 的请求: ${url}`);
   };
 
   const main = doc.createElement("main");
   doc.body.appendChild(main);
-  openLab(main);
+  const view = openLab(main);
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 
-  const { confirmPromote } = await import("../js/components/lab.js");
-  const report = await runCheck();
-  assert.equal(report.report_id, "r-1");
-  const promotePost = () => calls.find((c) => c.url.endsWith("/promote"));
-  assert.ok(!promotePost(), "未确认前不发 promote");
-
-  // warn + ack → promote 请求体带 report_id / warnings_ack / version
-  const result = await confirmPromote({ version: "1.0.0", warningsAck: true });
-  assert.equal(result.action, "appended");
-  const body = JSON.parse(promotePost().body);
-  assert.deepEqual(body, { report_id: "r-1", version: "1.0.0", warnings_ack: true });
-
-  // 报告已消费:再提交返回 null(下一次迭代需重新检查)
-  assert.equal(await confirmPromote({ warningsAck: true }), null);
-
-  // 被拒路径(409):上抛给调用方(按钮处理器 toast)
-  globalThis.fetch = async (path, options = {}) => {
-    const reply = (data) => ({ ok: true, status: 200, json: async () => data });
-    if (String(path) === "/api/lab/drafts") return reply([{ name: "weather.query" }]);
-    if (String(path) === "/api/lab/drafts/weather.query") return reply(DRAFT_MIN);
-    if (String(path).startsWith("/api/lab/drafts/weather.query/tier")) return reply({ tier: "none", sources: [], top: [] });
-    if (String(path) === "/api/tools" || String(path) === "/api/skills") return reply([]);
-    if (String(path) === "/api/lab/drafts/weather.query/validate") return reply(REPORT);
-    return { ok: false, status: 409, json: async () => ({ detail: "报告与当前草稿不一致" }) };
+  const PLAN = {
+    plan_id: "plan-1", package_hash: "abc123", root: "weather.query", created_at: 100,
+    members: [{ name: "weather.query", action: "create", from_version: null, to_version: "0.1.0",
+      manifest_hash: "h", gate_status: "pass", gate_report_id: "r-1" }],
+    blockers: [], warnings: ["存在 warn 成员,提交须人工确认(warnings_ack)"],
   };
-  openLab(main);
+  globalThis.fetch = async (path, options = {}) => {
+    const url = String(path);
+    calls.push({ url, method: options.method ?? "GET", body: options.body });
+    const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (url === "/api/lab/drafts") return reply([{ name: "weather.query" }]);
+    if (url === "/api/lab/drafts/weather.query") return reply(DRAFT_MIN);
+    if (url.startsWith("/api/lab/drafts/weather.query/tier")) return reply({ tier: "none", sources: [], top: [] });
+    if (url === "/api/tools" || url === "/api/skills") return reply([]);
+    if (url === "/api/lab/packages/weather.query/plan") return reply(PLAN);
+    if (url === "/api/lab/packages/promote") {
+      return reply({ root: "weather.query", package_hash: "abc123",
+        members: [{ name: "weather.query", action: "create", from_version: null, to_version: "0.1.0" }] });
+    }
+    throw new Error(`未 stub 的请求: ${url}`);
+  };
+
+  // plan 面板渲染(纯函数):成员 action/gate_status/warnings/ack 行
+  const panelHtml = planPanelHtml({ plan: PLAN, ackWarn: false });
+  assert.ok(panelHtml.includes('data-action="create"'), "成员 action 行");
+  assert.ok(panelHtml.includes('data-status="pass"'), "gate_status 色点");
+  assert.ok(panelHtml.includes("abc123"), "package_hash 摘要");
+  assert.ok(panelHtml.includes("data-lab-ack"), "warnings 的 ack 勾选");
+
+  const plan = await runCheck();
+  assert.equal(plan.plan_id, "plan-1", "检查 = 生成提交计划(P2)");
+  const promotePost = () => calls.find((c) => c.url.endsWith("/packages/promote"));
+  assert.ok(!promotePost(), "未确认前不发 promote");
+  assert.equal(promoteReady({ plan: PLAN, ackWarn: false }), false, "warnings 未 ack 不亮");
+  assert.equal(promoteReady({ plan: PLAN, ackWarn: true }), true, "ack 后点亮");
+
+  // ack → 提交按钮点亮 → 点击提交(plan 即确认面,无二次弹窗)
+  const ack = new StubEl("input");
+  ack.setAttribute("data-lab-ack", "1");
+  ack.checked = true;
+  ack.parentNode = view.root;
+  view.root.trigger("change", { target: ack });
+  const promoteBtn = new StubEl("button");
+  promoteBtn.dataset.lab = "promote";
+  promoteBtn.parentNode = view.root;
+  view.root.trigger("click", { target: promoteBtn });
   await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
-  await runCheck();
-  await assert.rejects(confirmPromote({ warningsAck: true }), /不一致/, "409 被拒原因上抛");
+  const posted = JSON.parse(promotePost().body);
+  assert.deepEqual(posted, { plan_id: "plan-1", warnings_ack: true }, "promote 按 plan_id 提交");
+
+  // blockers 存在 → 提交不亮(纯函数)
+  const blocked = { ...PLAN, blockers: [{ kind: "dangling", member: "lab.ghost", message: "悬空", fix: { action: "create_draft", name: "lab.ghost" } }] };
+  assert.equal(promoteReady({ plan: blocked, ackWarn: true }), false, "blockers 未清不亮");
+  const blockedHtml = planPanelHtml({ plan: blocked, ackWarn: true });
+  assert.ok(blockedHtml.includes("dangling"), "blocker 呈现");
+  assert.ok(blockedHtml.includes('data-pkg-create="lab.ghost"'), "blocker fix 一键成稿");
   closeLab();
 }
 

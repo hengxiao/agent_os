@@ -97,4 +97,6 @@ export const COPY = {
   "lab.pkg.external": "ext",
   "lab.pkg.missing": "MISSING",
   "lab.pkg.create": "CREATE",
+  "lab.plan.title": "SHIP PLAN",
+  "lab.plan.blockers": "BLOCKERS",
 };

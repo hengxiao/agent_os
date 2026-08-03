@@ -90,4 +90,6 @@ export const COPY = {
   "lab.pkg.external": "外链",
   "lab.pkg.missing": "还缺着",
   "lab.pkg.create": "补上它",
+  "lab.plan.title": "提交计划",
+  "lab.plan.blockers": "挡路的",
 };

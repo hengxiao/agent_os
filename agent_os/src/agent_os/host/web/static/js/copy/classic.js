@@ -98,4 +98,6 @@ export const COPY = {
   "lab.pkg.external": "外链",
   "lab.pkg.missing": "悬空",
   "lab.pkg.create": "创建该草稿",
+  "lab.plan.title": "提交计划",
+  "lab.plan.blockers": "阻塞项",
 };

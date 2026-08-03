@@ -207,8 +207,52 @@ def test_tier_endpoints_errors(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# P1:closure API(docs/SKILL-PACKAGES.md §4.2)
+# P2:packages plan / promote(docs/SKILL-PACKAGES-V2.md §6.3/§6.4)
 # ---------------------------------------------------------------------------
+
+
+def test_package_plan_and_promote_api(tmp_path):
+    """plan:成员 action + blockers + package_hash;promote:原子写入、
+    plan 后改动 → 409;blockers → 409。"""
+    client = _client(tmp_path)
+    _create(client, "lab.child")
+    _create(client, "lab.root")
+    good = _good_weather_manifest(name="lab.root") | {
+        "permissions": {"tools": [], "skills": ["lab.child"]},
+    }
+    client.put("/api/lab/drafts/lab.root", json={"manifest": good, "prompt": "p", "handler": None})
+    child_manifest = _good_weather_manifest(name="lab.child")
+    client.put("/api/lab/drafts/lab.child", json={"manifest": child_manifest, "prompt": "p", "handler": None})
+
+    r = client.post("/api/lab/packages/lab.root/plan")
+    assert r.status_code == 200, r.text
+    plan = r.json()
+    assert plan["package_hash"]
+    assert {m["name"] for m in plan["members"]} == {"lab.root", "lab.child"}
+    assert all(m["action"] == "create" for m in plan["members"])
+    assert plan["blockers"] == []
+
+    r = client.post("/api/lab/packages/promote", json={"plan_id": plan["plan_id"], "warnings_ack": True})
+    assert r.status_code == 200, r.text
+    names = [s["name"] for s in client.get("/api/skills").json()]
+    assert "lab.root" in names and "lab.child" in names, "原子提交后两个成员都进生产"
+
+    # plan 后改动成员 → package_hash 不一致 409
+    plan2 = client.post("/api/lab/packages/lab.root/plan").json()
+    client.put("/api/lab/drafts/lab.child",
+               json={"manifest": child_manifest | {"description": "改过了。Use when x;Do not use when y"},
+                     "prompt": "改过了", "handler": None})
+    r = client.post("/api/lab/packages/promote", json={"plan_id": plan2["plan_id"], "warnings_ack": False})
+    assert r.status_code == 409
+
+    # 悬空成员 → blockers 带 fix,promote 409
+    client.put("/api/lab/drafts/lab.root",
+               json={"manifest": good | {"permissions": {"tools": [], "skills": ["lab.ghost"]}},
+                     "prompt": "p", "handler": None})
+    plan3 = client.post("/api/lab/packages/lab.root/plan").json()
+    assert any(b["kind"] == "dangling" and b["fix"] for b in plan3["blockers"])
+    r = client.post("/api/lab/packages/promote", json={"plan_id": plan3["plan_id"], "warnings_ack": True})
+    assert r.status_code == 409
 
 
 def test_closure_api_statuses_and_alias(tmp_path):

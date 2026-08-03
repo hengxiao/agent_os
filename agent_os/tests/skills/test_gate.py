@@ -222,9 +222,13 @@ def test_g2_dangling_skill_and_tool_refs(production, tools, tmp_path):
     report = validate_draft(_draft("lab.weather", dangling), production=production, tools=tools,
                             store=store)
     messages = [f["message"] for f in report["gates"]["g2"]["findings"]]
-    assert report["gates"]["g2"]["status"] == "fail"
+    assert report["gates"]["g2"]["status"] == "warn", "草稿期悬空 = warn(两阶段,§6.2)"
     assert any("no.such.skill" in m and "悬空引用" in m for m in messages)
     assert any("no.such.tool" in m and "悬空工具引用" in m for m in messages)
+    # 提交期(strict_refs=True):悬空即 fail
+    strict = validate_draft(_draft("lab.weather", dangling), production=production, tools=tools,
+                            store=store, strict_refs=True)
+    assert strict["gates"]["g2"]["status"] == "fail"
 
     # 合法:引用生产技能 + 真实工具;自引用合法递归
     ok = _good_manifest(

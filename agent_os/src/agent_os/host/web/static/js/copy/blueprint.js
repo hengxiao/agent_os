@@ -91,4 +91,6 @@ export const COPY = {
   "lab.pkg.external": "外链",
   "lab.pkg.missing": "缺幅",
   "lab.pkg.create": "补开此幅",
+  "lab.plan.title": "归档计划",
+  "lab.plan.blockers": "障碍",
 };

@@ -310,9 +310,22 @@ export function isReportStale(view) {
   );
 }
 
-/* 提交按钮点亮条件(§1.4):报告在、无 fail、不过期、warn 已确认 */
+/* plan 过期判定(docs/SKILL-PACKAGES-V2.md §6.3):保存晚于 plan 生成 → 旧 plan 作废
+   (服务端另有 package_hash 校验兜底) */
+export function isPlanStale(view) {
+  return Boolean(view?.plan && view.savedAt && view.savedAt > view.plan.created_at * 1000);
+}
+
+/* 提交按钮点亮条件(§1.4/§6.3):plan 在、无 blockers、不过期、warnings 已确认;
+   无 plan 时回落旧单稿报告路径 */
 export function promoteReady(view) {
   if (view?.dirty) return false; // F6:有未保存改动时禁提交(防把旧版本发进生产)
+  if (view?.plan) {
+    if (isPlanStale(view)) return false;
+    if ((view.plan.blockers ?? []).length) return false;
+    if ((view.plan.warnings ?? []).length && !view.ackWarn) return false;
+    return true;
+  }
   if (!view?.report || isReportStale(view)) return false;
   if (view.report.status === "fail") return false;
   if (view.report.status === "warn" && !view.ackWarn) return false;
@@ -323,11 +336,67 @@ export function promoteReady(view) {
 export function promoteDisabledReason(view) {
   if (promoteReady(view)) return "";
   if (view?.dirty) return copy("lab.promote.disabled.dirty"); // 未保存优先报(F6)
-  if (!view?.report) return copy("lab.promote.disabled.noreport");
-  if (isReportStale(view)) return copy("lab.promote.disabled.stale");
-  if (view.report.status === "fail") return copy("lab.promote.disabled.fail");
-  if (view.report.status === "warn" && !view.ackWarn) return copy("lab.promote.disabled.ack");
+  if (view?.plan) {
+    if (isPlanStale(view)) return copy("lab.promote.disabled.stale");
+    if ((view.plan.blockers ?? []).length) return copy("lab.plan.blockers");
+    if ((view.plan.warnings ?? []).length && !view.ackWarn) return copy("lab.promote.disabled.ack");
+  }
+  if (!view?.report && !view?.plan) return copy("lab.promote.disabled.noreport");
+  if (view?.report && isReportStale(view)) return copy("lab.promote.disabled.stale");
+  if (view?.report?.status === "fail") return copy("lab.promote.disabled.fail");
+  if (view?.report?.status === "warn" && !view.ackWarn) return copy("lab.promote.disabled.ack");
   return "";
+}
+
+/* 提交计划面板(docs/SKILL-PACKAGES-V2.md §6.3/§6.8;P2):成员表(action 三态 +
+   from→to 版本 + gate_status 色点)+ blockers(带 fix 按钮)+ warnings(ack 勾选)。
+   展示的成员集与将要写入的内容由 package_hash 绑定(审的就是要执行的)。 */
+export function planPanelHtml(view) {
+  const plan = view.plan;
+  if (!plan) return "";
+  const memberRows = (plan.members ?? [])
+    .map((m) => {
+      const version = m.action === "create"
+        ? `<span class="mono">${esc(m.to_version ?? "")}</span>`
+        : `<span class="mono">${esc(m.from_version ?? "—")} → ${esc(m.to_version ?? "")}</span>`;
+      return (
+        `<div class="lab-plan-row" data-action="${esc(m.action)}">` +
+        `<span class="lab-gate-status" data-status="${esc(m.gate_status)}">${esc(copy(`lab.gate.${m.gate_status}`))}</span>` +
+        `<span class="mono">${esc(m.name)}</span>` +
+        `<span class="lab-plan-action mono">${esc(m.action)}</span>${version}` +
+        `</div>`
+      );
+    })
+    .join("");
+  const blockers = (plan.blockers ?? [])
+    .map(
+      (b) =>
+        `<div class="lab-plan-blocker">⚠ <b>${esc(b.kind)}</b> ${esc(b.member ?? "")} ${esc(b.message ?? "")}` +
+        (b.fix?.name
+          ? `<button class="lab-pkg-act" data-pkg-create="${esc(b.fix.name)}">${esc(copy("lab.pkg.create"))}</button>`
+          : "") +
+        `</div>`
+    )
+    .join("");
+  const warnings = (plan.warnings ?? [])
+    .map((w) => `<div class="lab-plan-warning">⚠ ${esc(w)}</div>`)
+    .join("");
+  const ackRow = (plan.warnings ?? []).length
+    ? `<label class="lab-ack"><input type="checkbox" data-lab-ack="1"${view.ackWarn ? " checked" : ""}>` +
+      `<span>${esc(copy("lab.gate.ack"))}</span></label>`
+    : "";
+  return (
+    `<div class="lab-plan">` +
+    `<div class="lab-plan-head"><span class="lab-gate-title">${esc(copy("lab.plan.title"))}</span>` +
+    `<span class="mono lab-plan-hash">${esc(String(plan.package_hash ?? "").slice(0, 8))}</span></div>` +
+    memberRows +
+    (blockers
+      ? `<div class="lab-plan-blockers"><div class="lab-gate-title">${esc(copy("lab.plan.blockers"))}</div>${blockers}</div>`
+      : "") +
+    warnings +
+    ackRow +
+    `</div>`
+  );
 }
 
 /* 五关卡片(§1.4/§2.1):绿 pass / 黄 warn / 红 fail / 灰 skip;findings 可展开,
@@ -375,7 +444,7 @@ export function statusLine(view) {
     parts.push(`${copy("lab.saved")} ${hh}:${mm}`);
   }
   parts.push(copy("lab.uncommitted"));
-  if (isReportStale(view)) parts.push(copy("lab.status.stale"));
+  if (isReportStale(view) || isPlanStale(view)) parts.push(copy("lab.status.stale"));
   return parts.join(" · ");
 }
 
@@ -550,21 +619,28 @@ export async function saveCurrentDraft() {
 /* 检查(§1.4):跑闸门 → 五关卡片进右栏;warn 时需勾选"我已阅读警告"才亮提交 */
 export async function runCheck() {
   if (!lab?.form) return null;
-  const report = await postJson(
-    `/api/lab/drafts/${encodeURIComponent(lab.form.name)}/validate`
+  // P2(docs/SKILL-PACKAGES-V2.md §6.3):检查 = 生成提交计划(成员闸门 + blockers +
+  // package_hash 绑定);单稿是包大小为 1 的退化,同一条路径
+  const plan = await postJson(
+    `/api/lab/packages/${encodeURIComponent(lab.form.name)}/plan`
   );
-  lab.report = report;
+  lab.plan = plan;
+  lab.report = null;
   lab.ackWarn = false;
   lab.confirming = false;
   _renderGate();
   _renderTop();
   _renderStatus();
-  return report;
+  return plan;
 }
 
 function _renderGate() {
   const host = lab.root?.querySelector(".lab-gate-host");
   if (!host) return;
+  if (lab.plan) {
+    host.innerHTML = planPanelHtml(lab);
+    return;
+  }
   if (!lab.report) {
     host.innerHTML = emptyBlock(copy("lab.test.empty"), "", "inbox");
     return;
@@ -734,6 +810,27 @@ export async function confirmPromote({ version = null, warningsAck = false } = {
   return result;
 }
 
+/* 包级提交(docs/SKILL-PACKAGES-V2.md §6.3;P2):按 plan_id 原子提交,
+   成功复用 F15 promoted 出路(状态条"去 Skills 查看") */
+async function _doPackagePromote() {
+  const result = await postJson("/api/lab/packages/promote", {
+    plan_id: lab.plan.plan_id,
+    warnings_ack: lab.ackWarn,
+  });
+  lab.plan = null; // 已进生产:旧 plan 消费掉,下一次迭代重新生成
+  lab.ackWarn = false;
+  const members = result.members ?? [];
+  lab.promoted = {
+    name: result.root,
+    version: members.length > 1 ? `${members.length} 成员` : (members[0]?.to_version ?? ""),
+  };
+  _renderGate();
+  _renderTop();
+  _renderStatus();
+  toast(`${copy("lab.promote.done")}: ${result.root}`, "success");
+  return result;
+}
+
 /* 推导档实时刷新:?tools=&skills= 用未保存白名单覆盖(§1.3;不必先保存) */
 export async function refreshTier() {
   if (!lab?.form) return null;
@@ -802,6 +899,7 @@ async function _selectDraft(name) {
   lab.savedAt = null;
   lab.dirty = false; // 换草稿:脏标不跨草稿
   lab.report = null; // 换草稿:旧报告不属于新对象
+  lab.plan = null; // 换草稿:旧提交计划不属于新对象(P2)
   lab.promoted = null; // 换草稿:发布成功横幅不跨草稿
   lab.ackWarn = false;
   lab.confirming = false;
@@ -910,6 +1008,7 @@ function _bindEvents() {
       if (action === "chat-send") return await sendChat();
       if (action === "promote") {
         if (!promoteReady(lab)) return; // 未点亮不响应(与 disabled 双保险)
+        if (lab.plan) return await _doPackagePromote(); // P2:plan 即确认面,直接提交
         lab.confirming = true;
         return _renderTop();
       }
@@ -1027,6 +1126,7 @@ export function openLab(main, name = null) {
     dirty: false, // 有未保存修改(保存按钮圆点指示)
     parseError: null,
     report: null, // 最近一次闸门报告(§1.4;保存后过期)
+    plan: null, // 最近一次提交计划(docs/SKILL-PACKAGES-V2.md §6.3;P2 提交流程主路径)
     promoted: null, // 最近一次发布结果(F15:状态条出路)
     ackWarn: false, // warn 报告的"我已阅读警告"勾选
     confirming: false, // promote 内联确认行开关

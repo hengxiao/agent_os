@@ -67,6 +67,7 @@ from agent_os.skills.gate import GateError, promote_draft
 from agent_os.skills.gate import validate_draft as validate_gate_draft
 from agent_os.skills.lab_assistant import ASSISTANT_NAME, assistant_skill
 from agent_os.skills.manifest import validate_manifest
+from agent_os.skills.package import build_plan, promote_package
 from agent_os.tools.lab_tools import register_lab_tools
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -217,6 +218,13 @@ class LabAssistantBody(BaseModel):
 
     request: str
     draft: str
+
+
+class LabPackagePromoteBody(BaseModel):
+    """``POST /api/lab/packages/promote``(docs/SKILL-PACKAGES-V2.md §6.3;P2)。"""
+
+    plan_id: str
+    warnings_ack: bool = False
 
 
 class DebugBreakpointBody(BaseModel):
@@ -978,6 +986,52 @@ def create_app(
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/lab/packages/{root}/plan")
+    def lab_package_plan(root: str) -> dict[str, Any]:
+        """提交计划(docs/SKILL-PACKAGES-V2.md §6.3;P2):成员三态 + blockers + warnings。
+
+        每个 draft 成员过完整闸门(提交期严格档);plan 落盘 ``_plans/``,
+        package_hash 绑定"审的就是要执行的"。
+        """
+        try:
+            return build_plan(
+                root,
+                store=lab_store,
+                production=manager.shared_skills_registry(),
+                tools=manager.shared_tools_registry(),
+                smoke_runner=lambda name, draft: _lab_smoke_runner(name, draft),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except RunValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/lab/packages/promote")
+    def lab_package_promote(body: LabPackagePromoteBody) -> dict[str, Any]:
+        """按 plan 原子提交(docs/SKILL-PACKAGES-V2.md §6.3/§6.4;P2)。
+
+        409:package_hash 不一致(成员在计划后改动)/ blockers 未清 / warnings 未 ack。
+        """
+        try:
+            return promote_package(
+                store=lab_store,
+                plan_id=body.plan_id,
+                warnings_ack=body.warnings_ack,
+                production=manager.shared_skills_registry(),
+                tools=manager.shared_tools_registry(),
+                principal=manager.principal().subject,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except GateError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except SkillLoadError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
     @app.post("/api/lab/assistant")

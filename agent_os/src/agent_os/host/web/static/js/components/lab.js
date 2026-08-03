@@ -743,12 +743,19 @@ function _renderTop() {
   if (host) host.innerHTML = topbarHtml(lab) + (lab.confirming ? _promoteConfirmHtml() : "");
 }
 
-async function _createDraft() {
-  const nameEl = lab.root.querySelector('[data-lab="new-name"]');
-  const fromEl = lab.root.querySelector('[data-lab="new-from"]');
+export async function createDraft() {
+  // 先经 .lab-top-host 再取输入(真实 DOM 嵌套结构与测试区域提取都可达)
+  const topHost = lab.root.querySelector(".lab-top-host");
+  const nameEl = topHost?.querySelector(".lab-new-name") ?? lab.root.querySelector(".lab-new-name");
+  const fromEl = topHost?.querySelector(".lab-new-from") ?? lab.root.querySelector(".lab-new-from");
   const name = nameEl?.value?.trim() ?? "";
   if (!isValidDraftName(name)) {
+    // 空名/非法名:toast 是瞬态的,可能错过(WebBridge 排障报告缺陷 #1)——
+    // 同时把输入框标红并聚焦,让反馈驻留到用户修正为止
     toast(copy("lab.name.invalid"), "error");
+    nameEl?.classList.add("is-invalid");
+    nameEl?.focus();
+    nameEl?.addEventListener("input", () => nameEl.classList.remove("is-invalid"), { once: true });
     return;
   }
   const from = fromEl?.value ?? "";
@@ -781,7 +788,7 @@ function _bindEvents() {
     const btn = e.target.closest("[data-lab]");
     const action = btn?.dataset.lab;
     try {
-      if (action === "create") return await _createDraft();
+      if (action === "create") return await createDraft();
       if (action === "delete") return await _deleteDraft(btn);
       if (action === "save") return await saveCurrentDraft();
       if (action === "check") return await runCheck();

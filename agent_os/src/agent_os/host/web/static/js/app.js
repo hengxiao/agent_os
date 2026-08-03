@@ -41,7 +41,7 @@ import {
   workbenchKeydown,
 } from "./workbench.js";
 import { installGlobalKeys } from "./shortcuts.js";
-import { initTheme, mountThemePicker, syncTheme } from "./themes.js";
+import { initTheme, mountThemePicker, syncTheme, copy } from "./themes.js";
 import { COMMANDS, openCommandPalette } from "./components/command-palette.js";
 import { openShortcutsPanel } from "./components/shortcuts-panel.js";
 
@@ -510,6 +510,32 @@ installGlobalKeys({
 });
 
 window.addEventListener("hashchange", applyRoute);
+
+/* ── 页面冻结恢复(WebBridge 排障报告根因):Chrome 后台标签页被冻结(Energy
+   Saver / Tab Freeze)时 JS 事件循环整体停摆,按钮点击被静默吞掉且无任何
+   提示——表象即"页面不 work"。恢复可见时:提示"刚才是休眠"+ 立即补一轮
+   轮询(数据面各自轮询自愈,这里消除恢复期滞后并告知原因)。bfcache 恢复
+   (pageshow.persisted)时 DOM 是旧快照,同样补提示与刷新。── */
+let _hiddenAt = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    _hiddenAt = Date.now();
+    return;
+  }
+  if (_hiddenAt && Date.now() - _hiddenAt > 30_000) {
+    toast(copy("app.resumed"), "info");
+    poll();
+    pollInbox();
+  }
+  _hiddenAt = 0;
+});
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted) {
+    toast(copy("app.resumed"), "info");
+    poll();
+    pollInbox();
+  }
+});
 
 /* ── 启动:深链接恢复(§4.1)→ 首次轮询 → 5s 周期 ─────────────────── */
 

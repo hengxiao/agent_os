@@ -81,4 +81,6 @@ export const COPY = {
   "lab.tpl.prompt_query": "模板:查询类(L1)",
   "lab.tpl.file_process": "模板:文件处理(L2)",
   "lab.tpl.danger_op": "模板:危险操作(L3)",
+  /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
+  "app.resumed": "页面刚从休眠恢复,数据已刷新",
 };

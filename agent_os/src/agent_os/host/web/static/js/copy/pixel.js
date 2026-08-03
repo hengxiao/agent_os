@@ -80,4 +80,6 @@ export const COPY = {
   "lab.tpl.prompt_query": "TPL: QUERY (L1)",
   "lab.tpl.file_process": "TPL: FILE (L2)",
   "lab.tpl.danger_op": "TPL: DANGER (L3)",
+  /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
+  "app.resumed": "CONTINUE! data refreshed",
 };

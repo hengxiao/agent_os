@@ -74,4 +74,6 @@ export const COPY = {
   "lab.tpl.prompt_query": "图幅:查询类(L1)",
   "lab.tpl.file_process": "图幅:文件处理(L2)",
   "lab.tpl.danger_op": "图幅:危险操作(L3)",
+  /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
+  "app.resumed": "页面已从休眠恢复(REFRESH)",
 };

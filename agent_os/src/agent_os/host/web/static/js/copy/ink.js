@@ -74,4 +74,6 @@ export const COPY = {
   "lab.tpl.prompt_query": "帖:查询(L1)",
   "lab.tpl.file_process": "帖:文件(L2)",
   "lab.tpl.danger_op": "帖:危(L3)",
+  /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
+  "app.resumed": "醒墨,数据已新",
 };

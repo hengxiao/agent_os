@@ -233,6 +233,44 @@ const DRAFT = {
   closeLab();
 }
 
+/* ── 空名新建:toast + 输入框标红聚焦(WebBridge 排障报告缺陷 #1;
+      toast 是瞬态的,反馈必须驻留到用户修正)── */
+{
+  const { createDraft } = await import("../js/components/lab.js");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const toastStack = doc.createElement("div");
+  toastStack.setAttribute("id", "toastStack");
+  doc.body.appendChild(toastStack);
+  doc.querySelector = (sel) => doc.body.querySelector(sel);
+  const calls = [];
+  globalThis.fetch = async (path, options = {}) => {
+    const url = String(path);
+    calls.push({ url, method: options.method ?? "GET" });
+    const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (url === "/api/lab/drafts") return reply([]);
+    if (url === "/api/tools") return reply([]);
+    if (url === "/api/skills") return reply([]);
+    throw new Error(`未 stub 的请求: ${url}`);
+  };
+  const main = doc.createElement("main");
+  doc.body.appendChild(main);
+  openLab(main);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0)); // 异步装载(drafts + catalogs)
+  const topHost = main.querySelector(".lab").querySelector(".lab-top-host");
+  const nameEl = topHost.querySelector(".lab-new-name");
+  nameEl.value = "   "; // 空名(仅空白)
+  await createDraft();
+  assert.ok(nameEl.classList.contains("is-invalid"), "空名 → 输入框标红驻留");
+  assert.ok(!calls.some((c) => c.method === "POST"), "空名不发 POST");
+  assert.ok(toastStack.children.length > 0, "toast 提示发出");
+  nameEl.value = "demo.ok";
+  nameEl.trigger("input");
+  assert.ok(!nameEl.classList.contains("is-invalid"), "输入后红标解除(once)");
+  closeLab();
+}
+
 /* ── L2:五关卡片 / promoteReady / 过期提示(§1.4/§2.3)──────────────── */
 {
   const {

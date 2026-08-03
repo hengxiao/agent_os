@@ -425,7 +425,15 @@ $("#collapseBtn").addEventListener("click", () => {
   const bar = $("#sidebar");
   const collapsed = bar.classList.toggle("collapsed");
   $("#collapseBtn").title = collapsed ? "展开侧栏" : "折叠侧栏";
+  try { // UX 评审 P1-9:折叠状态跨会话记忆(Lab 三栏页尤其需要宽度)
+    localStorage.setItem("agent-os.sidebar.collapsed", collapsed ? "1" : "0");
+  } catch { /* 隐私模式等:仅本次会话有效 */ }
 });
+try { // 启动恢复折叠状态
+  if (localStorage.getItem("agent-os.sidebar.collapsed") === "1") {
+    $("#sidebar").classList.add("collapsed");
+  }
+} catch { /* 同上 */ }
 
 $("#liveIndicator").addEventListener("click", () => {
   if (store.get("liveConn") === "down") {

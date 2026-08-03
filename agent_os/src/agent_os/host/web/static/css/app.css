@@ -2030,6 +2030,21 @@ th.is-sorted .us-sort { color: var(--live); }
 .lab-top .lab-new-name { width: 20ch; }
 .lab-top-tier { display: inline-flex; align-items: center; }
 .lab-top-actions { margin-left: auto; display: flex; gap: var(--s2); }
+/* 脏状态指示(UX 评审 P1-7):保存按钮右上角警示圆点,保存后熄灭 */
+.lab-top [data-dirty] { position: relative; }
+.lab-top [data-dirty]::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 4px var(--warn);
+}
+/* 空态 CTA(UX 评审 P1-6) */
+.lab-empty-cta { margin-top: var(--s3); }
 .lab-cols {
   flex: 1;
   display: grid;

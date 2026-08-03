@@ -293,9 +293,11 @@ export function topbarHtml(view) {
     `${tierBadgeHtml(view.tier)}</span>` +
     `<span class="lab-top-actions">` +
     `<button class="btn" data-lab="check">${esc(copy("lab.check"))}</button>` +
-    `<button class="btn" data-lab="promote"${promoteReady(view) ? "" : " disabled"}>` +
+    `<button class="btn" data-lab="promote"${promoteReady(view) ? "" : " disabled"}` +
+    ` title="${esc(promoteDisabledReason(view))}">` +
     `${esc(copy("lab.promote"))}</button>` +
-    `<button class="btn btn-primary" data-lab="save">${esc(copy("lab.save"))}</button>` +
+    `<button class="btn btn-primary" data-lab="save"${view.dirty ? ` data-dirty title="${esc(copy("lab.dirty"))}"` : ""}>` +
+    `${esc(copy("lab.save"))}</button>` +
     `</span></div>`
   );
 }
@@ -313,6 +315,16 @@ export function promoteReady(view) {
   if (view.report.status === "fail") return false;
   if (view.report.status === "warn" && !view.ackWarn) return false;
   return true;
+}
+
+/* 置灰理由(UX 评审 P0-3:disabled 必须说明解锁条件,hover tooltip 展示) */
+export function promoteDisabledReason(view) {
+  if (promoteReady(view)) return "";
+  if (!view?.report) return copy("lab.promote.disabled.noreport");
+  if (isReportStale(view)) return copy("lab.promote.disabled.stale");
+  if (view.report.status === "fail") return copy("lab.promote.disabled.fail");
+  if (view.report.status === "warn" && !view.ackWarn) return copy("lab.promote.disabled.ack");
+  return "";
 }
 
 /* 五关卡片(§1.4/§2.1):绿 pass / 黄 warn / 红 fail / 灰 skip;findings 可展开,
@@ -480,6 +492,7 @@ export async function saveCurrentDraft() {
     { manifest, prompt: lab.form.prompt, handler: lab.form.handler || null }
   );
   lab.savedAt = Date.now();
+  lab.dirty = false; // 保存即清脏(圆点熄灭,_renderTop 随下方调用重绘)
   toast(copy("lab.saved"), "success");
   _renderStatus(); // 保存晚于上次检查 → "距上次检查有改动 ⚠"(§2.3)
   _renderTop(); // 报告过期 → 提交按钮立即熄灭(服务端哈希校验兜底)
@@ -715,6 +728,7 @@ async function _selectDraft(name) {
   lab.form = draftToForm(draft);
   lab.parseError = draft.parse_error ?? null;
   lab.savedAt = null;
+  lab.dirty = false; // 换草稿:脏标不跨草稿
   lab.report = null; // 换草稿:旧报告不属于新对象
   lab.ackWarn = false;
   lab.confirming = false;
@@ -732,7 +746,10 @@ function _renderEditor() {
   const host = lab.root?.querySelector(".lab-editor");
   if (!host) return;
   if (!lab.form) {
-    host.innerHTML = emptyBlock(copy("lab.no.selection"), copy("lab.no.selection.hint"), "inbox");
+    // 空状态 CTA 化(UX 评审 P1-6):纯文本引导改为可点动作——聚焦命名框开始新建
+    host.innerHTML =
+      emptyBlock(copy("lab.no.selection"), copy("lab.no.selection.hint"), "inbox") +
+      `<button class="btn btn-primary lab-empty-cta" data-lab="focus-new">${esc(copy("lab.no.selection.cta"))}</button>`;
     return;
   }
   host.innerHTML = editorHtml(lab);
@@ -751,11 +768,15 @@ export async function createDraft() {
   const name = nameEl?.value?.trim() ?? "";
   if (!isValidDraftName(name)) {
     // 空名/非法名:toast 是瞬态的,可能错过(WebBridge 排障报告缺陷 #1)——
-    // 同时把输入框标红并聚焦,让反馈驻留到用户修正为止
+    // 同时把输入框标红并聚焦,让反馈驻留到用户修正为止(aria-invalid 同步,UX 复测遗留①)
     toast(copy("lab.name.invalid"), "error");
     nameEl?.classList.add("is-invalid");
+    nameEl?.setAttribute("aria-invalid", "true");
     nameEl?.focus();
-    nameEl?.addEventListener("input", () => nameEl.classList.remove("is-invalid"), { once: true });
+    nameEl?.addEventListener("input", () => {
+      nameEl.classList.remove("is-invalid");
+      nameEl.removeAttribute("aria-invalid");
+    }, { once: true });
     return;
   }
   const from = fromEl?.value ?? "";
@@ -789,6 +810,13 @@ function _bindEvents() {
     const action = btn?.dataset.lab;
     try {
       if (action === "create") return await createDraft();
+      if (action === "focus-new") {
+        // 空态 CTA:聚焦命名框(引导从空状态直达新建动作)
+        const topHost = lab.root.querySelector(".lab-top-host");
+        const nameEl = topHost?.querySelector(".lab-new-name") ?? lab.root.querySelector(".lab-new-name");
+        nameEl?.focus();
+        return;
+      }
       if (action === "delete") return await _deleteDraft(btn);
       if (action === "save") return await saveCurrentDraft();
       if (action === "check") return await runCheck();
@@ -857,6 +885,10 @@ function _bindEvents() {
     const field = e.target.closest("[data-field]")?.dataset.field;
     if (!field || !lab.form) return;
     lab.form[field] = e.target.value;
+    if (!lab.dirty) { // 脏状态强化(UX 评审 P1-7):保存按钮圆点指示,首次变脏才重绘
+      lab.dirty = true;
+      _renderTop();
+    }
     if (field === "inputsText" || field === "outputsText") {
       const hint = lab.root.querySelector(`[data-json-hint="${field}"]`);
       if (hint) {
@@ -880,6 +912,7 @@ export function openLab(main, name = null) {
     tier: "none",
     tierDetail: null,
     savedAt: null,
+    dirty: false, // 有未保存修改(保存按钮圆点指示)
     parseError: null,
     report: null, // 最近一次闸门报告(§1.4;保存后过期)
     ackWarn: false, // warn 报告的"我已阅读警告"勾选

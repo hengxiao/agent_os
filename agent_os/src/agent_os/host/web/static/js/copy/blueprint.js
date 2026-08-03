@@ -38,7 +38,7 @@ export const COPY = {
   "lab.saved": "已落图",
   "lab.uncommitted": "草图(未归档)",
   "lab.json.invalid": "JSON 不合图规",
-  "lab.name.invalid": "命名须 ≥2 段点分小写(docs/NAMING.md)",
+  "lab.name.invalid": "命名须 ≥2 段点分小写,如 weather.query",
   "lab.inline.blocked": "推导档 ≥L2 禁 inline(docs/ESCALATION.md §3.4)",
   "lab.no.selection": "图档为空",
   "lab.no.selection.hint": "在上方命名开图,或从生产技能复制",
@@ -75,5 +75,11 @@ export const COPY = {
   "lab.tpl.file_process": "图幅:文件处理(L2)",
   "lab.tpl.danger_op": "图幅:危险操作(L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
-  "app.resumed": "页面已从休眠恢复(REFRESH)",
+  "app.resumed": "页面已从休眠恢复(REFRESH)(若频繁冻结,Chrome 设置→性能将本站保持活动)",
+  "lab.promote.disabled.noreport": "需先校核通过",
+  "lab.promote.disabled.stale": "校核后有改动,需重新校核",
+  "lab.promote.disabled.fail": "校核存在未修复失败项",
+  "lab.promote.disabled.ack": "存在批注警告,需确认已阅",
+  "lab.dirty": "图面有未落图改动",
+  "lab.no.selection.cta": "开新图 →",
 };

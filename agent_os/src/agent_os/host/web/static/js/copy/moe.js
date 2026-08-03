@@ -37,7 +37,7 @@ export const COPY = {
   "lab.saved": "存好啦",
   "lab.uncommitted": "草稿(还没提交)",
   "lab.json.invalid": "JSON 写坏啦",
-  "lab.name.invalid": "名字要 ≥2 段小写点点哦(docs/NAMING.md)",
+  "lab.name.invalid": "名字要 ≥2 段小写点点哦,比如 weather.query",
   "lab.inline.blocked": "≥L2 不能 inline 哦(docs/ESCALATION.md §3.4)",
   "lab.no.selection": "还没有草稿",
   "lab.no.selection.hint": "在上方写个名字捏一个,或从生产技能复制",
@@ -74,5 +74,11 @@ export const COPY = {
   "lab.tpl.file_process": "模板:文件处理(L2)",
   "lab.tpl.danger_op": "模板:危险操作(L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
-  "app.resumed": "🌸 睡醒啦,数据刷新一下~",
+  "app.resumed": "🌸 睡醒啦,数据刷新一下~(老被冻住?在 Chrome 设置→性能里把咱家保持活动吧)",
+  "lab.promote.disabled.noreport": "先点「检查」过关才能提交哦",
+  "lab.promote.disabled.stale": "检查后又改过啦,再检查一次吧",
+  "lab.promote.disabled.fail": "还有红卡没修好,加油!",
+  "lab.promote.disabled.ack": "有警告要勾选「我明白啦」才能提交",
+  "lab.dirty": "有改动还没存哦",
+  "lab.no.selection.cta": "捏一个新技能 →",
 };

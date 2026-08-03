@@ -263,11 +263,13 @@ const DRAFT = {
   nameEl.value = "   "; // 空名(仅空白)
   await createDraft();
   assert.ok(nameEl.classList.contains("is-invalid"), "空名 → 输入框标红驻留");
+  assert.equal(nameEl.getAttribute("aria-invalid"), "true", "aria-invalid 同步(读屏可感知)");
   assert.ok(!calls.some((c) => c.method === "POST"), "空名不发 POST");
   assert.ok(toastStack.children.length > 0, "toast 提示发出");
   nameEl.value = "demo.ok";
   nameEl.trigger("input");
   assert.ok(!nameEl.classList.contains("is-invalid"), "输入后红标解除(once)");
+  assert.equal(nameEl.getAttribute("aria-invalid"), null, "aria-invalid 同步解除");
   closeLab();
 }
 
@@ -319,6 +321,30 @@ const DRAFT = {
   assert.ok(/data-lab="promote"[^>]*disabled/.test(topNoReport), "无报告提交熄灭");
   assert.ok(/data-lab="check"/.test(topNoReport) && !/data-lab="check"[^>]*disabled/.test(topNoReport),
     "检查按钮 L2 起解锁");
+
+  // 置灰理由(UX 评审 P0-3):disabled 的 hover tooltip 必须说明解锁条件
+  const { promoteDisabledReason } = await import("../js/components/lab.js");
+  const { copy } = await import("../js/themes.js");
+  assert.equal(promoteDisabledReason({}), copy("lab.promote.disabled.noreport"), "无报告 → 先检查");
+  assert.equal(
+    promoteDisabledReason({ report: { status: "pass", created_at: 1 }, savedAt: 2000 }),
+    copy("lab.promote.disabled.stale"), "过期 → 重新检查");
+  assert.equal(
+    promoteDisabledReason({ report: { status: "fail", created_at: 1 } }),
+    copy("lab.promote.disabled.fail"), "fail → 有失败项");
+  assert.equal(
+    promoteDisabledReason({ report: { status: "warn", created_at: 1 }, ackWarn: false }),
+    copy("lab.promote.disabled.ack"), "warn 未 ack → 需勾选");
+  assert.equal(
+    promoteDisabledReason({ report: { status: "warn", created_at: 1 }, ackWarn: true }),
+    "", "就绪 → 无理由");
+  assert.ok(topNoReport.includes(promoteDisabledReason({})), "tooltip 进 topbar HTML");
+
+  // 脏状态圆点(UX 评审 P1-7):dirty 时保存按钮带 data-dirty
+  assert.ok(topbarHtml({ name: "a.b", drafts: [], skillsCatalog: [], tier: "none", dirty: true })
+    .includes("data-dirty"), "dirty → 圆点");
+  assert.ok(!topbarHtml({ name: "a.b", drafts: [], skillsCatalog: [], tier: "none" })
+    .includes("data-dirty"), "干净 → 无圆点");
 
   // 状态栏:过期提示
   assert.match(statusLine({ report, savedAt: 1000 * 1000 + 1 }), /改动|changed|改/);

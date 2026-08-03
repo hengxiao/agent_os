@@ -44,7 +44,7 @@ export const COPY = {
   "lab.saved": "SAVED",
   "lab.uncommitted": "draft (not shipped)",
   "lab.json.invalid": "bad JSON",
-  "lab.name.invalid": "name: >=2 dotted lowercase parts (docs/NAMING.md)",
+  "lab.name.invalid": "name: >=2 dotted lowercase parts, e.g. weather.query",
   "lab.inline.blocked": "inline locked: tier >= L2 (docs/ESCALATION.md §3.4)",
   "lab.no.selection": "NO SAVE DATA",
   "lab.no.selection.hint": "name a draft above, or copy from production",
@@ -81,5 +81,11 @@ export const COPY = {
   "lab.tpl.file_process": "TPL: FILE (L2)",
   "lab.tpl.danger_op": "TPL: DANGER (L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
-  "app.resumed": "CONTINUE! data refreshed",
+  "app.resumed": "CONTINUE! data refreshed (freeze? keep site ACTIVE in Chrome settings)",
+  "lab.promote.disabled.noreport": "LOCKED: pass CHECK first",
+  "lab.promote.disabled.stale": "LOCKED: changed after CHECK — re-run",
+  "lab.promote.disabled.fail": "LOCKED: gate FAILED",
+  "lab.promote.disabled.ack": "LOCKED: accept warnings first",
+  "lab.dirty": "UNSAVED CHANGES",
+  "lab.no.selection.cta": "NEW FROM TPL →",
 };

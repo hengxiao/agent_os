@@ -45,7 +45,7 @@ export const COPY = {
   "lab.saved": "已保存",
   "lab.uncommitted": "草稿(未提交)",
   "lab.json.invalid": "JSON 不合法",
-  "lab.name.invalid": "命名应为 ≥2 段点分小写(docs/NAMING.md)",
+  "lab.name.invalid": "命名应为 ≥2 段点分小写,如 weather.query",
   "lab.inline.blocked": "推导档 ≥L2 禁止 inline(docs/ESCALATION.md §3.4)",
   "lab.no.selection": "没有草稿",
   "lab.no.selection.hint": "在上方输入名字新建,或从生产技能复制",
@@ -82,5 +82,11 @@ export const COPY = {
   "lab.tpl.file_process": "模板:文件处理(L2)",
   "lab.tpl.danger_op": "模板:危险操作(L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
-  "app.resumed": "页面刚从休眠恢复,数据已刷新",
+  "app.resumed": "页面刚从休眠恢复,数据已刷新(若频繁冻结,可在 Chrome 设置→性能将本站保持活动)",
+  "lab.promote.disabled.noreport": "需先点「检查」并通过闸门",
+  "lab.promote.disabled.stale": "检查后有改动,需重新检查",
+  "lab.promote.disabled.fail": "闸门存在未修复的失败项",
+  "lab.promote.disabled.ack": "存在警告,需勾选「我已阅读警告」",
+  "lab.dirty": "有未保存的修改",
+  "lab.no.selection.cta": "从模板新建 →",
 };

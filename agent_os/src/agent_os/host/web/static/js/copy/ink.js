@@ -38,7 +38,7 @@ export const COPY = {
   "lab.saved": "已存",
   "lab.uncommitted": "草(未呈)",
   "lab.json.invalid": "JSON 不合律",
-  "lab.name.invalid": "名须 ≥2 段小写(docs/NAMING.md)",
+  "lab.name.invalid": "名须 ≥2 段点分小写,如 weather.query",
   "lab.inline.blocked": "≥L2 禁 inline(docs/ESCALATION.md §3.4)",
   "lab.no.selection": "无稿",
   "lab.no.selection.hint": "于上题名新作,或抄生产技能",
@@ -75,5 +75,11 @@ export const COPY = {
   "lab.tpl.file_process": "帖:文件(L2)",
   "lab.tpl.danger_op": "帖:危(L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
-  "app.resumed": "醒墨,数据已新",
+  "app.resumed": "醒墨,数据已新(若常眠不醒,可于 Chrome 设置将本站保持活动)",
+  "lab.promote.disabled.noreport": "先校后呈",
+  "lab.promote.disabled.stale": "校后有改,需再校",
+  "lab.promote.disabled.fail": "有未合之项",
+  "lab.promote.disabled.ack": "有警示需批阅",
+  "lab.dirty": "有墨未落",
+  "lab.no.selection.cta": "起新稿 →",
 };

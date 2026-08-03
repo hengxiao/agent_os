@@ -44,7 +44,7 @@ export const COPY = {
   "lab.saved": "written",
   "lab.uncommitted": "draft (uncommitted)",
   "lab.json.invalid": "invalid JSON",
-  "lab.name.invalid": "name: >=2 dotted lowercase segments (docs/NAMING.md)",
+  "lab.name.invalid": "name: >=2 dotted lowercase segments, e.g. weather.query",
   "lab.inline.blocked": "inline blocked: tier >= L2 (docs/ESCALATION.md §3.4)",
   "lab.no.selection": "no drafts",
   "lab.no.selection.hint": "create above, or copy from a production skill",
@@ -81,5 +81,11 @@ export const COPY = {
   "lab.tpl.file_process": "tpl: file-ops (L2)",
   "lab.tpl.danger_op": "tpl: danger (L3)",
   /* 页面冻结恢复 toast(Chrome Tab Freeze 回前台时) */
-  "app.resumed": "[resumed from suspend] data refreshed",
+  "app.resumed": "[resumed from suspend] data refreshed (freeze? keep site active in chrome://settings/performance)",
+  "lab.promote.disabled.noreport": "[locked] run check first",
+  "lab.promote.disabled.stale": "[locked] changed after check — re-run check",
+  "lab.promote.disabled.fail": "[locked] gate has failing items",
+  "lab.promote.disabled.ack": "[locked] acknowledge warnings first",
+  "lab.dirty": "unsaved changes",
+  "lab.no.selection.cta": "new from template →",
 };

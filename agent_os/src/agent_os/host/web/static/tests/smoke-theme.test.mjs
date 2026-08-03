@@ -388,6 +388,11 @@ const {
   }
   assert.ok(moeCss.includes(".dbg-trace-list::before"), "时间线粉色虚线竖轨");
   assert.ok(moeCss.includes(".dbg-sec-title::before"), "检视面板小节标题 🌸");
+  assert.ok(
+    moeCss.includes('.live-indicator[data-state="ok"]::before') &&
+      moeCss.includes('content: "❤️"') &&
+      moeCss.includes("@keyframes moe-heartbeat"),
+    "连接正常 = 跳动的心");
   assert.match(moeCss, /@keyframes moe-pop-in/, "卡片入场动画");
   assert.ok(moeCss.includes("prefers-reduced-motion"), "reduced-motion 兜底");
   assert.ok(!classicCss.includes("moe-pop-in"), "classic 无入场动画");

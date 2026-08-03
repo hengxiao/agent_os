@@ -328,3 +328,28 @@
   background-image:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Cg fill='%23ffc9d6' fill-opacity='.45'%3E%3Ccircle cx='48' cy='42' r='7'/%3E%3Ccircle cx='57' cy='49' r='7'/%3E%3Ccircle cx='53' cy='59' r='7'/%3E%3Ccircle cx='43' cy='59' r='7'/%3E%3Ccircle cx='39' cy='49' r='7'/%3E%3C/g%3E%3Ccircle cx='48' cy='50' r='3.5' fill='%23ff9eb0' fill-opacity='.55'/%3E%3Cg fill='%23ffd9e2' fill-opacity='.5'%3E%3Ccircle cx='144' cy='138' r='5'/%3E%3Ccircle cx='150' cy='143' r='5'/%3E%3Ccircle cx='147' cy='150' r='5'/%3E%3Ccircle cx='141' cy='150' r='5'/%3E%3Ccircle cx='138' cy='143' r='5'/%3E%3C/g%3E%3Ccircle cx='144' cy='144' r='2.5' fill='%23ffb3c2' fill-opacity='.6'/%3E%3C/svg%3E");
 }
+
+/* live 指示:连接正常 = 跳动的心(替代蓝点脉冲;文字通道由 title/aria 承担) */
+[data-theme="moe"] .live-indicator[data-state="ok"] {
+  background: transparent;
+  animation: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+[data-theme="moe"] .live-indicator[data-state="ok"]::before {
+  content: "❤️";
+  font-size: 13px;
+  line-height: 1;
+  display: inline-block;
+  animation: moe-heartbeat 1.2s ease-in-out infinite;
+}
+@keyframes moe-heartbeat {
+  0%, 100% { transform: scale(1); }
+  20% { transform: scale(1.28); }
+  35% { transform: scale(1.06); }
+  50% { transform: scale(1.22); }
+  65% { transform: scale(1); }
+}

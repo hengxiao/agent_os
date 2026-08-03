@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html data-theme="classic" lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Lab 迭代工作流 · 交互原型对比</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/themes/classic.css">
+<link rel="stylesheet" href="/static/css/themes/moe.css">
+<link rel="stylesheet" href="/static/css/themes/terminal.css">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css">
+<link rel="stylesheet" href="/static/css/themes/ink.css">
+<link rel="stylesheet" href="/static/css/themes/pixel.css">
+<style>
+  /* 原型页局部样式(不进 app.css;全部消费契约 token) */
+  body { background: var(--bg-0); color: var(--fg-0); font-family: var(--font-sans, system-ui); margin: 0; }
+  .proto-watermark {
+    position: fixed; right: var(--s3); bottom: var(--s3); z-index: 99;
+    font-size: var(--text-2xs); color: var(--fg-2);
+    border: var(--stroke) dashed var(--line-strong); border-radius: var(--r-sm);
+    padding: var(--s1) var(--s2); background: var(--bg-1); opacity: .85;
+  }
+  .proto-themes {
+    display: flex; gap: var(--s1); align-items: center;
+    font-size: var(--text-2xs); color: var(--fg-2);
+  }
+  .proto-themes button {
+    border: var(--stroke) solid var(--line); background: var(--bg-2); color: var(--fg-1);
+    border-radius: var(--r-sm); padding: 0 var(--s2); cursor: pointer; font-size: var(--text-2xs);
+    line-height: var(--s4);
+  }
+  .proto-themes button[data-on="1"] { color: var(--live); border-color: var(--live); }
+  .proto-wrap { max-width: 960px; margin: 0 auto; padding: var(--s6) var(--s4); }
+  .proto-title { font-size: var(--text-lg); font-weight: 700; margin-bottom: var(--s1); }
+  .proto-sub { color: var(--fg-1); font-size: var(--text-sm); margin-bottom: var(--s5); }
+  .proto-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s3); }
+  .proto-card {
+    display: flex; flex-direction: column; gap: var(--s2);
+    background: var(--bg-2); border: var(--stroke) solid var(--line);
+    border-radius: var(--r-md); padding: var(--s4); text-decoration: none; color: var(--fg-0);
+  }
+  .proto-card:hover { border-color: var(--live); }
+  .proto-card h2 { margin: 0; font-size: var(--text-md); }
+  .proto-card .ascii {
+    font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--fg-1);
+    background: var(--bg-0); border-radius: var(--r-sm); padding: var(--s2);
+    white-space: pre; overflow-x: auto;
+  }
+  .proto-card p { margin: 0; font-size: var(--text-xs); color: var(--fg-1); }
+</style>
+</head>
+<body>
+<div class="proto-wrap">
+  <div style="display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s4)">
+    <div class="proto-title">Lab 迭代工作流 · 三个交互原型</div>
+    <div class="proto-themes" id="themes">
+      主题:
+      <button data-t="classic">classic</button>
+      <button data-t="moe">moe</button>
+      <button data-t="terminal">terminal</button>
+      <button data-t="blueprint">blueprint</button>
+      <button data-t="ink">ink</button>
+      <button data-t="pixel">pixel</button>
+    </div>
+  </div>
+  <p class="proto-sub">
+    同一个包(dinner.planner + weather.query 外链 + 3 个用例),三份一模一样的假数据——
+    只有交互模型不同。对比报告见 <code>docs/LAB-ITERATION-FLOWS.md</code>。
+  </p>
+  <div class="proto-cards">
+    <a class="proto-card" href="./flow-a.html">
+      <h2>方案 A · 三栏批注驱动</h2>
+      <div class="ascii">既有 v003 │ 批注 → ✨生成 │ 候选 v004
+(结构化只读)  (列表+补充)   (diff摘要+分数)</div>
+      <p>spec 原版:左侧每个字段/段落/用例都有批注锚点,批注汇聚成一轮,一次生成一个候选。
+        适合精细评审。</p>
+    </a>
+    <a class="proto-card" href="./flow-b.html">
+      <h2>方案 B · 对话驱动</h2>
+      <div class="ascii">既有 ⇆ 候选(并排紧凑)
+─────────────────
+对话流(批注=气泡)→ 输入框</div>
+      <p>chat-native:没有独立批注面板,批注就是聊天。随手说一句就重生一版。
+        适合快改快走。</p>
+    </a>
+    <a class="proto-card" href="./flow-c.html">
+      <h2>方案 C · 双栏 diff + 内嵌批注</h2>
+      <div class="ascii">既有(边注💬挂在内容旁) │ diff(红绿增删)
+                     │ 字段新旧两列 / tests +新增</div>
+      <p>GitHub PR review 心智:diff 是第一公民,批注以边注钉在内容上。
+        适合小步迭代、逐处确认。</p>
+    </a>
+  </div>
+</div>
+<div class="proto-watermark">原型 PROTOTYPE · 数据为假</div>
+<script>
+  // 主题切换:与正式主题系统同一契约(data-theme 属性驱动,六主题 css 已全链)
+  const root = document.documentElement;
+  const btns = document.querySelectorAll("#themes button");
+  function setTheme(id) {
+    root.dataset.theme = id;
+    btns.forEach((b) => { b.dataset.on = b.dataset.t === id ? "1" : "0"; });
+  }
+  btns.forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.t)));
+  setTheme("classic");
+</script>
+</body>
+</html>

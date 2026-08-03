@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html data-theme="classic" lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>方案 C · 双栏 diff + 内嵌批注 — Lab 迭代原型</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/themes/classic.css">
+<link rel="stylesheet" href="/static/css/themes/moe.css">
+<link rel="stylesheet" href="/static/css/themes/terminal.css">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css">
+<link rel="stylesheet" href="/static/css/themes/ink.css">
+<link rel="stylesheet" href="/static/css/themes/pixel.css">
+<style>
+  /* 原型页局部样式(不进 app.css;全部消费契约 token) */
+  body { background: var(--bg-0); color: var(--fg-0); margin: 0; font-family: var(--font-sans, system-ui); }
+  .proto-watermark {
+    position: fixed; right: var(--s3); bottom: var(--s3); z-index: 99;
+    font-size: var(--text-2xs); color: var(--fg-2);
+    border: var(--stroke) dashed var(--line-strong); border-radius: var(--r-sm);
+    padding: var(--s1) var(--s2); background: var(--bg-1); opacity: .85;
+  }
+  .proto-themes { display: flex; gap: var(--s1); align-items: center; font-size: var(--text-2xs); color: var(--fg-2); }
+  .proto-themes button {
+    border: var(--stroke) solid var(--line); background: var(--bg-2); color: var(--fg-1);
+    border-radius: var(--r-sm); padding: 0 var(--s2); cursor: pointer; font-size: var(--text-2xs); line-height: var(--s4);
+  }
+  .proto-themes button[data-on="1"] { color: var(--live); border-color: var(--live); }
+
+  .c-top {
+    display: flex; align-items: center; gap: var(--s3);
+    padding: var(--s2) var(--s4); border-bottom: var(--stroke) solid var(--line);
+  }
+  .c-pkg { font-weight: 700; font-family: var(--font-mono); }
+  .c-cols {
+    display: grid; grid-template-columns: minmax(0,5fr) minmax(0,7fr);
+    gap: var(--s3); padding: var(--s3) var(--s4); align-items: start;
+  }
+  .c-col-head { font-size: var(--text-sm); font-weight: 600; color: var(--fg-1); margin-bottom: var(--s2); }
+
+  .c-unit { position: relative; margin-bottom: var(--s2); }
+  .c-sec {
+    background: var(--bg-2); border: var(--stroke) solid var(--line);
+    border-radius: var(--r-md); padding: var(--s3);
+  }
+  .c-sec h4 { margin: 0 0 var(--s1); font-size: var(--text-xs); color: var(--fg-2); }
+  .c-kv { font-size: var(--text-xs); color: var(--fg-1); font-family: var(--font-mono); white-space: pre-wrap; }
+  .c-note-btn {
+    position: absolute; right: var(--s2); top: var(--s2);
+    border: none; background: none; cursor: pointer; color: var(--fg-2);
+  }
+  .c-note-btn:hover { color: var(--live); }
+  /* 边注(margin note):挂在内容旁边的小框(已写/新写两种) */
+  .c-note {
+    margin: var(--s1) 0 0 var(--s4);
+    background: var(--bg-1); border: var(--stroke) solid var(--live);
+    border-radius: var(--r-sm); padding: var(--s2);
+    font-size: var(--text-2xs);
+  }
+  .c-note .who { color: var(--live); font-family: var(--font-mono); }
+  .c-note-form { display: none; margin: var(--s1) 0 0 var(--s4); }
+  .c-note-form[data-open="1"] { display: flex; gap: var(--s1); }
+
+  /* diff 视图(评审第一公民) */
+  .c-diff-add { background: color-mix(in srgb, var(--perm-read) 16%, transparent); border-radius: var(--r-sm); }
+  .c-diff-del { background: color-mix(in srgb, var(--danger) 16%, transparent); border-radius: var(--r-sm); text-decoration: line-through; }
+  .c-diff-line { font-family: var(--font-mono); font-size: var(--text-xs); padding: var(--s1) var(--s2); white-space: pre-wrap; }
+  .c-diff-block { background: var(--bg-2); border: var(--stroke) solid var(--line); border-radius: var(--r-md); padding: var(--s2); margin-bottom: var(--s2); }
+  .c-diff-block h4 { margin: 0 0 var(--s1); font-size: var(--text-xs); color: var(--fg-2); }
+  .c-twocol { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); font-size: var(--text-2xs); }
+  .c-twocol > div { background: var(--bg-0); border-radius: var(--r-sm); padding: var(--s2); font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<div class="c-top">
+  <span class="c-pkg">dinner.planner</span>
+  <span class="perm-badge" data-perm="WRITE"><span class="perm-dot" aria-hidden="true"></span>reversible</span>
+  <select class="input" aria-label="版本">
+    <option>v003(当前)</option><option>v002</option><option>v001</option>
+  </select>
+  <button class="btn">⟲ rewind</button>
+  <span style="flex:1"></span>
+  <button class="btn btn-primary" id="accept">✓ 接受 v004</button>
+  <button class="btn">↻ 重生成</button>
+  <div class="proto-themes" id="themes">
+    主题:
+    <button data-t="classic">classic</button><button data-t="moe">moe</button>
+    <button data-t="terminal">terminal</button><button data-t="blueprint">blueprint</button>
+    <button data-t="ink">ink</button><button data-t="pixel">pixel</button>
+  </div>
+  <a class="btn" href="./index.html">← 对比首页</a>
+</div>
+
+<div class="c-cols">
+  <!-- 左栏:既有版本 + 内嵌边注(点 💬 在内容旁弹边注小框) -->
+  <section>
+    <div class="c-col-head">v003(边注钉在内容上)</div>
+
+    <div class="c-unit">
+      <div class="c-sec">
+        <h4>manifest.description</h4>
+        <div class="c-kv">根据天气与日程推荐晚餐,综合温度、降水与用户偏好,输出菜名与理由,尽量家常。</div>
+      </div>
+      <button class="c-note-btn" data-note="n1" title="写边注">💬</button>
+      <div class="c-note"><span class="who">我:</span> 太啰嗦了,一句话够了。</div>
+      <div class="c-note-form" id="n1">
+        <input class="input" placeholder="写边注…"><button class="btn">记</button>
+      </div>
+    </div>
+
+    <div class="c-unit">
+      <div class="c-sec">
+        <h4>prompt · 第 2 段</h4>
+        <div class="c-kv">雨天优先热汤面/炖菜,高温天优先清爽凉拌;不要连续两天重复同一道菜。</div>
+      </div>
+      <button class="c-note-btn" data-note="n2" title="写边注">💬</button>
+      <div class="c-note"><span class="who">我:</span> case2 雨天只有 41 分,加班场景没给便携建议——加一条大雨反例。</div>
+      <div class="c-note-form" id="n2">
+        <input class="input" placeholder="写边注…"><button class="btn">记</button>
+      </div>
+    </div>
+
+    <div class="c-unit">
+      <div class="c-sec">
+        <h4>trust</h4>
+        <div class="c-kv">confirm: first(推导档 reversible ●WRITE)</div>
+      </div>
+      <button class="c-note-btn" data-note="n3" title="写边注">💬</button>
+      <div class="c-note"><span class="who">我:</span> trust 不该是 L2——这只是推荐,不写文件。</div>
+      <div class="c-note-form" id="n3">
+        <input class="input" placeholder="写边注…"><button class="btn">记</button>
+      </div>
+    </div>
+
+    <div class="c-unit">
+      <div class="c-sec">
+        <h4>tests</h4>
+        <div class="c-kv">case1 晴天工作日 92 / case2 雨天通勤 41 / case3 高温周末 88(聚合 71)</div>
+      </div>
+      <button class="c-note-btn" data-note="n4" title="写边注">💬</button>
+      <div class="c-note-form" id="n4">
+        <input class="input" placeholder="写边注…"><button class="btn">记</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 右栏:diff 视图(红绿增删 + 字段新旧两列 + tests 新增) -->
+  <section>
+    <div class="c-col-head">v003 → v004 diff(评审第一公民)</div>
+
+    <div class="c-diff-block">
+      <h4>prompt 段落</h4>
+      <div class="c-diff-line c-diff-del">- 你是晚餐规划师。根据日期与天气给出一份家常晚餐建议,附上简短理由。</div>
+      <div class="c-diff-line c-diff-add">+ 你是晚餐规划师,按天气给一份家常晚餐建议。</div>
+      <div class="c-diff-line">  雨天优先热汤面/炖菜,高温天优先清爽凉拌;不要连续两天重复同一道菜。</div>
+      <div class="c-diff-line c-diff-add">+ 雨天加班场景优先便携/可带饭(饭团、三明治类),理由一句话。</div>
+      <div class="c-diff-line">  输出 JSON:menu 为菜名,reason 不超过 30 字。</div>
+    </div>
+
+    <div class="c-diff-block">
+      <h4>字段(旧 → 新)</h4>
+      <div class="c-twocol">
+        <div>description: 根据天气与日程推荐晚餐,综合温度、降水与用户偏好,输出菜名与理由,尽量家常。</div>
+        <div>description: 按天气推荐一份家常晚餐。</div>
+      </div>
+      <div class="c-twocol" style="margin-top:var(--s1)">
+        <div>trust.confirm: first(推导档 reversible)</div>
+        <div>trust.confirm: first + 批注"档建议人工复核"(未擅改)</div>
+      </div>
+    </div>
+
+    <div class="c-diff-block">
+      <h4>tests</h4>
+      <div class="c-diff-line">  case1 晴天工作日 92 → <b class="c-diff-add">95</b></div>
+      <div class="c-diff-line">  case2 雨天通勤 41 → <b class="c-diff-add">78</b></div>
+      <div class="c-diff-line c-diff-add">+ case2b 大雨加班(新用例,便携/可带饭)78</div>
+      <div class="c-diff-line">  case3 高温周末 88 → <b class="c-diff-add">90</b> · 聚合 71 → <b class="c-diff-add">88</b></div>
+    </div>
+  </section>
+</div>
+
+<div class="proto-watermark">原型 PROTOTYPE · 数据为假</div>
+<script>
+  const root = document.documentElement;
+  const btns = document.querySelectorAll("#themes button");
+  function setTheme(id) {
+    root.dataset.theme = id;
+    btns.forEach((b) => { b.dataset.on = b.dataset.t === id ? "1" : "0"; });
+  }
+  btns.forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.t)));
+  setTheme("classic");
+
+  // 边注小框开关(margin note;正式版会把内容写进 comments/<round>.json)
+  document.querySelectorAll(".c-note-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      const form = document.getElementById(b.dataset.note);
+      form.dataset.open = form.dataset.open === "1" ? "0" : "1";
+    });
+  });
+  document.getElementById("accept").addEventListener("click", () => {
+    document.getElementById("accept").textContent = "已接受(假)";
+  });
+</script>
+</body>
+</html>

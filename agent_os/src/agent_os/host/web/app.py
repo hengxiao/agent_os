@@ -525,7 +525,8 @@ def create_app(
                 )
             return await call_next(request)
 
-    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+    # html=True:目录索引(static/proto/ 等原型页直接以目录路径访问,仅静态语义)
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
 
     @app.middleware("http")
     async def _static_no_cache(request: Request, call_next):  # type: ignore[no-untyped-def]

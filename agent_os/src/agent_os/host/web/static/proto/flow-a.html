@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html data-theme="classic" lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>方案 A · 三栏批注驱动 — Lab 迭代原型</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/themes/classic.css">
+<link rel="stylesheet" href="/static/css/themes/moe.css">
+<link rel="stylesheet" href="/static/css/themes/terminal.css">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css">
+<link rel="stylesheet" href="/static/css/themes/ink.css">
+<link rel="stylesheet" href="/static/css/themes/pixel.css">
+<style>
+  /* 原型页局部样式(不进 app.css;全部消费契约 token) */
+  body { background: var(--bg-0); color: var(--fg-0); margin: 0; font-family: var(--font-sans, system-ui); }
+  .proto-watermark {
+    position: fixed; right: var(--s3); bottom: var(--s3); z-index: 99;
+    font-size: var(--text-2xs); color: var(--fg-2);
+    border: var(--stroke) dashed var(--line-strong); border-radius: var(--r-sm);
+    padding: var(--s1) var(--s2); background: var(--bg-1); opacity: .85;
+  }
+  .proto-themes { display: flex; gap: var(--s1); align-items: center; font-size: var(--text-2xs); color: var(--fg-2); }
+  .proto-themes button {
+    border: var(--stroke) solid var(--line); background: var(--bg-2); color: var(--fg-1);
+    border-radius: var(--r-sm); padding: 0 var(--s2); cursor: pointer; font-size: var(--text-2xs); line-height: var(--s4);
+  }
+  .proto-themes button[data-on="1"] { color: var(--live); border-color: var(--live); }
+
+  .a-top {
+    display: flex; align-items: center; gap: var(--s3);
+    padding: var(--s2) var(--s4); border-bottom: var(--stroke) solid var(--line);
+  }
+  .a-pkg { font-weight: 700; font-family: var(--font-mono); }
+  .a-cols {
+    display: grid; grid-template-columns: minmax(0,5fr) minmax(0,3fr) minmax(0,4fr);
+    gap: var(--s3); padding: var(--s3) var(--s4); align-items: start;
+  }
+  .a-col-head { font-size: var(--text-sm); font-weight: 600; color: var(--fg-1); margin-bottom: var(--s2); }
+  .a-sec {
+    background: var(--bg-2); border: var(--stroke) solid var(--line);
+    border-radius: var(--r-md); padding: var(--s3); margin-bottom: var(--s2);
+  }
+  .a-sec h4 { margin: 0 0 var(--s1); font-size: var(--text-xs); color: var(--fg-2); display: flex; justify-content: space-between; }
+  .a-anchor {
+    border: none; background: none; cursor: pointer; color: var(--fg-2); font-size: var(--text-xs);
+  }
+  .a-anchor:hover { color: var(--live); }
+  .a-anchor[data-on="1"] { color: var(--live); }
+  .a-para {
+    font-family: var(--font-mono); font-size: var(--text-xs); padding: var(--s2);
+    border: var(--stroke) solid transparent; border-radius: var(--r-sm); cursor: pointer;
+    background: var(--bg-0); margin-bottom: var(--s1);
+  }
+  .a-para[data-sel="1"] { border-color: var(--live); }
+  .a-kv { font-size: var(--text-xs); color: var(--fg-1); font-family: var(--font-mono); white-space: pre-wrap; }
+  .a-member { display: flex; gap: var(--s2); align-items: center; font-size: var(--text-xs); }
+  .a-comment {
+    background: var(--bg-2); border: var(--stroke) solid var(--line);
+    border-left: var(--stroke-accent) solid var(--live);
+    border-radius: var(--r-md); padding: var(--s2) var(--s3); margin-bottom: var(--s2);
+  }
+  .a-comment .to { font-size: var(--text-2xs); color: var(--live); font-family: var(--font-mono); }
+  .a-comment .tx { font-size: var(--text-xs); margin-top: var(--s1); }
+  .a-gen { width: 100%; margin-top: var(--s2); font-size: var(--text-md); padding: var(--s2) 0; }
+  .a-score { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
+  .a-score td, .a-score th { border-bottom: var(--stroke) solid var(--line); padding: var(--s1) var(--s2); text-align: left; }
+  .a-delta-up { color: var(--perm-read); }
+  .a-diff li { font-size: var(--text-xs); margin-bottom: var(--s1); }
+  .a-wait { color: var(--fg-2); font-size: var(--text-xs); }
+  .a-actions { display: flex; gap: var(--s2); margin-top: var(--s3); }
+</style>
+</head>
+<body>
+<!-- 顶栏:包名 + tier 徽标 + 版本下拉 + rewind + 主题切换(与正式页同一契约) -->
+<div class="a-top">
+  <span class="a-pkg">dinner.planner</span>
+  <span class="perm-badge" data-perm="WRITE"><span class="perm-dot" aria-hidden="true"></span>reversible</span>
+  <select class="input" aria-label="版本">
+    <option>v003(当前)</option><option>v002</option><option>v001</option>
+  </select>
+  <button class="btn" title="回到上一版(工作副本恢复,历史不可变)">⟲ rewind</button>
+  <span style="flex:1"></span>
+  <div class="proto-themes" id="themes">
+    主题:
+    <button data-t="classic">classic</button><button data-t="moe">moe</button>
+    <button data-t="terminal">terminal</button><button data-t="blueprint">blueprint</button>
+    <button data-t="ink">ink</button><button data-t="pixel">pixel</button>
+  </div>
+  <a class="btn" href="./index.html">← 对比首页</a>
+</div>
+
+<div class="a-cols">
+  <!-- 左栏:既有版本 v003 结构化只读渲染(每个单元带批注锚点;prompt 段落可选中) -->
+  <section>
+    <div class="a-col-head">既有版本 v003 · dinner.planner(只读)</div>
+    <div class="a-sec">
+      <h4>manifest.description <button class="a-anchor" data-on="1" title="已有 1 条批注">💬1</button></h4>
+      <div class="a-kv">根据天气与日程推荐晚餐,综合温度、降水与用户偏好,输出菜名与理由,尽量家常。</div>
+    </div>
+    <div class="a-sec">
+      <h4>inputs / outputs <button class="a-anchor" title="加批注">💬</button></h4>
+      <div class="a-kv">inputs: { date: string, preferences?: string }
+outputs: { menu: string, reason: string }</div>
+    </div>
+    <div class="a-sec">
+      <h4>prompt(点选段落写批注)<button class="a-anchor" title="加批注">💬</button></h4>
+      <div class="a-para" data-para="p1">你是晚餐规划师。根据日期与天气给出一份家常晚餐建议,附上简短理由。</div>
+      <div class="a-para" data-para="p2">雨天优先热汤面/炖菜,高温天优先清爽凉拌;不要连续两天重复同一道菜。</div>
+      <div class="a-para" data-para="p3">输出 JSON:menu 为菜名,reason 不超过 30 字。</div>
+    </div>
+    <div class="a-sec">
+      <h4>permissions <button class="a-anchor" title="加批注">💬</button></h4>
+      <div class="a-member"><span class="chip mono">dinner.weather</span><span class="lab-pkg-status" data-status="draft">草稿</span></div>
+      <div class="a-member" style="margin-top:var(--s1)"><span class="chip mono">weather.query</span><span class="lab-pkg-status" data-status="external">外链</span></div>
+    </div>
+    <div class="a-sec">
+      <h4>trust <button class="a-anchor" data-on="1" title="已有 1 条批注">💬1</button></h4>
+      <div class="a-kv">confirm: first(推导档 reversible ●WRITE)</div>
+    </div>
+    <div class="a-sec">
+      <h4>tests(3 用例)<button class="a-anchor" data-on="1" title="已有 1 条批注">💬1</button></h4>
+      <table class="a-score">
+        <tr><td>case1 晴天工作日</td><td>92</td></tr>
+        <tr><td>case2 雨天通勤</td><td>41</td></tr>
+        <tr><td>case3 高温周末</td><td>88</td></tr>
+        <tr><th>聚合</th><th>71</th></tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- 中栏:批注列表 + 补充说明 + 生成 -->
+  <section>
+    <div class="a-col-head">批注(第 4 轮)</div>
+    <div class="a-comment">
+      <div class="to">→ manifest.description</div>
+      <div class="tx">太啰嗦了,一句话够了。</div>
+    </div>
+    <div class="a-comment">
+      <div class="to">→ tests/case2</div>
+      <div class="tx">加一个"大雨+加班"的反例,41 分主要是没给便携建议。</div>
+    </div>
+    <div class="a-comment">
+      <div class="to">→ trust</div>
+      <div class="tx">trust 不该是 L2——这只是推荐,又不写文件。</div>
+    </div>
+    <textarea class="input" rows="3" placeholder="补充说明(可选,随本轮批注一起进生成上下文)"></textarea>
+    <button class="btn btn-primary a-gen" id="gen">✨ 生成候选 v004</button>
+    <div class="a-wait" id="genHint">生成会带上 brief + 既有版本 + 全部批注。</div>
+  </section>
+
+  <!-- 右栏:候选 v004(diff 摘要 + 双侧分数 + 接受/重生成) -->
+  <section>
+    <div class="a-col-head">候选 v004</div>
+    <div id="candWait" class="a-sec a-wait">尚无候选——点左侧"✨ 生成"后,这里出现候选与双侧对比。</div>
+    <div id="cand" hidden>
+      <div class="a-sec">
+        <h4>diff 摘要</h4>
+        <ul class="a-diff">
+          <li>description 精简为一句(批注 1)</li>
+          <li>prompt P1 精简;P3 增"雨天给便携/可带饭选项"(批注 2)</li>
+          <li>trust 标注"档建议人工复核"(批注 3,未擅改)</li>
+          <li>tests +case2b 大雨加班反例</li>
+        </ul>
+      </div>
+      <div class="a-sec">
+        <h4>双侧测试分数</h4>
+        <table class="a-score">
+          <tr><th></th><th>v003</th><th>v004</th></tr>
+          <tr><td>case1 晴天工作日</td><td>92</td><td class="a-delta-up">95 ↑</td></tr>
+          <tr><td>case2 雨天通勤</td><td>41</td><td class="a-delta-up">78 ↑</td></tr>
+          <tr><td>case3 高温周末</td><td>88</td><td class="a-delta-up">90 ↑</td></tr>
+          <tr><th>聚合</th><th>71</th><th class="a-delta-up">88 ↑</th></tr>
+        </table>
+      </div>
+      <div class="a-actions">
+        <button class="btn btn-primary" id="accept">✓ 接受为 v004</button>
+        <button class="btn" id="regen">↻ 重生成</button>
+      </div>
+      <div class="a-wait" id="acceptHint" style="margin-top:var(--s2)"></div>
+    </div>
+  </section>
+</div>
+
+<div class="proto-watermark">原型 PROTOTYPE · 数据为假</div>
+<script>
+  const root = document.documentElement;
+  const btns = document.querySelectorAll("#themes button");
+  function setTheme(id) {
+    root.dataset.theme = id;
+    btns.forEach((b) => { b.dataset.on = b.dataset.t === id ? "1" : "0"; });
+  }
+  btns.forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.t)));
+  setTheme("classic");
+
+  // prompt 段落选中(批注锚点的高亮语义;原型不做真实锚定)
+  document.querySelectorAll(".a-para").forEach((p) => {
+    p.addEventListener("click", () => {
+      p.dataset.sel = p.dataset.sel === "1" ? "0" : "1";
+    });
+  });
+
+  // 假生成:进度条 → 候选区出现(全部本地,无后端)
+  const gen = document.getElementById("gen");
+  const cand = document.getElementById("cand");
+  const candWait = document.getElementById("candWait");
+  const genHint = document.getElementById("genHint");
+  gen.addEventListener("click", () => {
+    gen.disabled = true;
+    gen.textContent = "生成中…(假)";
+    genHint.textContent = "brief + v003 + 3 条批注 → v004";
+    setTimeout(() => {
+      candWait.hidden = true;
+      cand.hidden = false;
+      gen.textContent = "✨ 再次生成";
+      gen.disabled = false;
+    }, 700);
+  });
+  document.getElementById("accept").addEventListener("click", () => {
+    document.getElementById("acceptHint").textContent =
+      "已接受(假):v004 封存为不可变版本,工作副本已更新。接受永远是人的动作。";
+  });
+  document.getElementById("regen").addEventListener("click", () => {
+    document.getElementById("acceptHint").textContent = "已丢弃该候选(假),可补充批注后再生成。";
+  });
+</script>
+</body>
+</html>

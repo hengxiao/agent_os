@@ -37,3 +37,11 @@
 
 - [reports/](reports/) — 书稿章节笔记(ch00-ch10)与审计/评审报告(code-quality-audit、dev-status、usability-review、stdlib-vs-agent-book、synthesis-microkernel)。
 - [research/](research/) — 前期调研:library-design-plan(标准库设计方案)、stdlib-research(标准库调研)。
+
+## Lab 与能力包(Skill Dev / Packages)
+
+- [SKILL-DEV.md](SKILL-DEV.md) — Skill Lab 设计方案:草稿存储/编辑器/五关闸门/promote/测试面板/Agent 助手(L1-L5 已实现)。
+- [SKILL-PACKAGES.md](SKILL-PACKAGES.md) — 能力包设计报告:包 = 根技能依赖闭包,闭包 API/包视图/原子提交/助手包级化/set 落盘(P1-P4 已实现)。
+- [SKILL-PACKAGES-V2.md](SKILL-PACKAGES-V2.md) — 能力包详细设计:业界对照与四方案,推荐路线(两闭包/两阶段严格性/plan/先证后换,P2 按此实现)。
+- [LAB-ITERATION.md](LAB-ITERATION.md) — Lab 迭代工作流 spec:访谈初始化 → 首稿 → 批注式迭代 → 版本回溯(spec,未实现)。
+- [LAB-ITERATION-FLOWS.md](LAB-ITERATION-FLOWS.md) — 迭代交互流对比报告:三栏批注 / 对话驱动 / diff+边注 三方案对比与选型指引(静态原型见 `agent_os/src/agent_os/host/web/static/proto/`)。

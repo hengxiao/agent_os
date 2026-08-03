@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from agent_os.api.v1 import derive_skill_tier
@@ -46,10 +48,15 @@ class MessageBody(BaseModel):
 
 
 class CardActionBody(BaseModel):
-    """卡片按钮动作(统一入口;action_id 必须在白名单,endpoint 不采客户端声明)。"""
+    """卡片按钮动作(统一入口;action_id 必须在白名单,endpoint 不采客户端声明)。
+
+    ``session_id``(可选):给了就把动作结果作为 agent 消息追加进该会话
+    (卡片动作的对话持久化——刷新后结果仍在,§3)。
+    """
 
     action_id: str
     payload: dict[str, Any] = {}
+    session_id: str | None = None
 
 
 def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -> FastAPI:
@@ -112,7 +119,14 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         if handler is None:
             raise HTTPException(status_code=400, detail=f"action {body.action_id!r} 本期未接线")
         try:
-            return handler(body.payload)
+            result = handler(body.payload)
+            # 对话持久化(§3):带 session_id 时,动作结果以 agent 消息落进会话
+            if body.session_id and result.get("text"):
+                sessions.append(
+                    body.session_id,
+                    new_message("agent", text=result["text"], cards=result.get("cards") or []),
+                )
+            return result
         except GateError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:
@@ -279,6 +293,14 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         "plan.recheck": _act_plan_recheck,
         "iterate.generate": _act_iterate_generate,
     }
+
+    # 前端样品(docs/WEB-PLATFORM.md §10):static/ 直接可访问(/platform/ → index.html)
+    static_dir = Path(__file__).resolve().parent / "static"
+    app.mount("/static", StaticFiles(directory=static_dir, html=True), name="platform-static")
+
+    @app.get("/", include_in_schema=False)
+    def index() -> FileResponse:
+        return FileResponse(static_dir / "index.html")
 
     return app
 

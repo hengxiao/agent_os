@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html data-theme="classic" lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Agent OS · 对话中枢</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/themes/classic.css">
+<link rel="stylesheet" href="/static/css/themes/moe.css">
+<link rel="stylesheet" href="/static/css/themes/terminal.css">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css">
+<link rel="stylesheet" href="/static/css/themes/ink.css">
+<link rel="stylesheet" href="/static/css/themes/pixel.css">
+<link rel="stylesheet" href="./platform.css">
+</head>
+<body>
+<div class="pf-shell">
+  <!-- 顶栏:产品名 + 主题切换(与正式主题系统同一契约,data-theme 属性驱动) -->
+  <header class="pf-top">
+    <span class="pf-brand">Agent OS</span>
+    <span class="pf-sub" data-i18n="sub">对话中枢</span>
+    <span class="pf-spacer"></span>
+    <div class="pf-themes" id="themes">
+      <button data-t="classic">classic</button>
+      <button data-t="moe">moe</button>
+      <button data-t="terminal">terminal</button>
+      <button data-t="blueprint">blueprint</button>
+      <button data-t="ink">ink</button>
+      <button data-t="pixel">pixel</button>
+    </div>
+  </header>
+  <div class="pf-cols">
+    <!-- 左栏:会话列表(任务/产物索引) -->
+    <aside class="pf-side" aria-label="会话列表">
+      <div class="pf-side-head">
+        <span data-i18n="sessions">会话</span>
+        <button class="btn" id="newSession" aria-label="新会话">+</button>
+      </div>
+      <div class="pf-sessions" id="sessions" role="listbox"></div>
+    </aside>
+    <!-- 主区:对话流 + 意图输入 -->
+    <main class="pf-main">
+      <div class="pf-log" id="log" role="log" aria-live="polite" aria-label="对话流"></div>
+      <div class="pf-input">
+        <textarea id="intent" rows="2" aria-label="意图输入"
+          placeholder="说意图,比如:帮我做个查天气的技能"></textarea>
+        <button class="btn btn-primary" id="send" aria-label="发送">发送</button>
+      </div>
+    </main>
+  </div>
+</div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

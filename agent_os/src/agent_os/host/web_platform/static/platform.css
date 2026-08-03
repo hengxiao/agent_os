@@ -1,0 +1,240 @@
+/* Agent OS · 对话中枢样式(docs/WEB-PLATFORM.md §10;全部消费契约 token,
+   零主题分支——主题差异由 tokens/themes css 承担,本文件不写主题条件) */
+
+.pf-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg-0);
+  color: var(--fg-0);
+}
+.pf-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s4);
+  border-bottom: var(--stroke) solid var(--line);
+}
+.pf-brand { font-weight: 700; }
+.pf-sub { color: var(--fg-2); font-size: var(--text-xs); }
+.pf-spacer { flex: 1; }
+.pf-themes { display: flex; gap: var(--s1); align-items: center; font-size: var(--text-2xs); color: var(--fg-2); }
+.pf-themes button {
+  border: var(--stroke) solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  border-radius: var(--r-sm);
+  padding: 0 var(--s2);
+  cursor: pointer;
+  font-size: var(--text-2xs);
+  line-height: var(--s4);
+}
+.pf-themes button[data-on="1"] { color: var(--live); border-color: var(--live); }
+
+.pf-cols {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  min-height: 0;
+}
+.pf-side {
+  border-right: var(--stroke) solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.pf-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s2) var(--s3);
+  border-bottom: var(--stroke) solid var(--line);
+  font-size: var(--text-xs);
+  color: var(--fg-1);
+}
+.pf-sessions { flex: 1; overflow-y: auto; padding: var(--s2); }
+.pf-session {
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  margin-bottom: var(--s1);
+  border: var(--stroke) solid transparent;
+}
+.pf-session:hover { background: var(--bg-2); }
+.pf-session[aria-selected="true"] { background: var(--bg-2); border-color: var(--line-strong); }
+.pf-session:focus-visible { outline: var(--stroke-strong) solid var(--live); outline-offset: 1px; }
+.pf-session-title { font-size: var(--text-xs); font-weight: 600; }
+.pf-dim { color: var(--fg-2); font-size: var(--text-2xs); }
+
+.pf-main { display: flex; flex-direction: column; min-height: 0; }
+.pf-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.pf-msg { display: flex; }
+.pf-msg[data-role="user"] { justify-content: flex-end; }
+.pf-bubble {
+  max-width: 78%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.pf-bubble-text {
+  padding: var(--s2) var(--s3);
+  border-radius: var(--r-md);
+  background: var(--bg-2);
+  border: var(--stroke) solid var(--line);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.pf-msg[data-role="user"] .pf-bubble-text { border-color: var(--live); }
+.pf-msg[data-error] .pf-bubble-text, .pf-bubble[data-error] { border-color: var(--danger); }
+
+/* 空态(help 引导,§2.2) */
+.pf-empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  align-items: flex-start;
+  max-width: 420px;
+}
+.pf-empty-title { font-size: var(--text-md); font-weight: 600; }
+.pf-example {
+  border: var(--stroke) solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  border-radius: var(--r-md);
+  padding: var(--s2) var(--s3);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  text-align: left;
+}
+.pf-example:hover { border-color: var(--live); color: var(--fg-0); }
+.pf-example:focus-visible { outline: var(--stroke-strong) solid var(--live); }
+
+/* 骨架 loading(发消息后的"思考中") */
+.pf-skel { display: flex; flex-direction: column; gap: var(--s2); }
+.pf-skel-line {
+  display: block;
+  height: var(--s3);
+  width: 220px;
+  border-radius: var(--r-sm);
+  background: linear-gradient(90deg, var(--bg-2), var(--bg-3), var(--bg-2));
+  background-size: 200% 100%;
+  animation: pf-skel 1.2s linear infinite;
+}
+.pf-skel-line.w60 { width: 140px; }
+@keyframes pf-skel { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .pf-skel-line { animation: none; } }
+
+/* 输入区 */
+.pf-input {
+  display: flex;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-top: var(--stroke) solid var(--line);
+}
+.pf-input textarea { flex: 1; }
+.pf-input .btn:disabled { opacity: 0.5; }
+
+/* ── 产物卡(§4 六卡型)── */
+.pf-card {
+  background: var(--bg-1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 320px;
+  max-width: 640px;
+}
+.pf-card-tag {
+  font-size: var(--text-2xs);
+  color: var(--fg-2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.pf-card-actions {
+  display: flex;
+  gap: var(--s2);
+  border-top: var(--stroke) solid var(--line);
+  padding-top: var(--s2);
+  flex-wrap: wrap;
+}
+.pf-card-actions .btn:hover { border-color: var(--live); }
+.pf-card-actions .btn:disabled { opacity: 0.5; }
+.pf-sec { font-size: var(--text-xs); }
+.pf-sec ul { margin: var(--s1) 0 0; padding-left: var(--s4); }
+.pf-table { border-collapse: collapse; font-size: var(--text-xs); width: 100%; }
+.pf-table th, .pf-table td {
+  border-bottom: var(--stroke) solid var(--line);
+  padding: var(--s1) var(--s2);
+  text-align: left;
+}
+
+/* gate_report 五关色点(状态色 = 语义 token 双编码) */
+.pf-gate { display: flex; align-items: center; gap: var(--s2); font-size: var(--text-xs); }
+.pf-gate-dot {
+  width: var(--s2);
+  height: var(--s2);
+  border-radius: 50%;
+  background: var(--fg-2);
+}
+.pf-gate[data-status="pass"] .pf-gate-dot { background: var(--perm-read); }
+.pf-gate[data-status="warn"] .pf-gate-dot { background: var(--perm-write); }
+.pf-gate[data-status="fail"] .pf-gate-dot { background: var(--danger); }
+
+/* diff 卡(与 Flow C 同构的红绿呈现) */
+.pf-dmember { display: flex; flex-direction: column; gap: var(--s1); }
+.pf-twocol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+.pf-twocol > div {
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  padding: var(--s2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.pf-twocol[data-kind="changed"] > div:first-child { border-left: var(--stroke-strong) solid var(--danger); }
+.pf-twocol[data-kind="changed"] > div:last-child { border-left: var(--stroke-strong) solid var(--perm-read); }
+.pf-twocol[data-kind="added"] > div:last-child { border-left: var(--stroke-strong) solid var(--perm-read); }
+.pf-twocol[data-kind="removed"] > div:first-child { border-left: var(--stroke-strong) solid var(--danger); }
+.pf-dline {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: var(--s1) var(--s2);
+  white-space: pre-wrap;
+}
+.pf-dline[data-kind="add"] { background: color-mix(in srgb, var(--perm-read) 16%, transparent); border-radius: var(--r-sm); }
+.pf-dline[data-kind="del"] {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-radius: var(--r-sm);
+  text-decoration: line-through;
+}
+
+/* publish 卡(成员三态 + ack 勾选门) */
+.pf-prow {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-xs);
+  padding: var(--s1) var(--s2);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-sm);
+}
+.pf-prow[data-action="unchanged"] { opacity: 0.7; }
+.pf-prow[data-action="create"] .pf-dim { color: var(--perm-read); }
+.pf-prow[data-action="replace"] .pf-dim { color: var(--perm-write); }
+.pf-ack { display: flex; align-items: center; gap: var(--s2); font-size: var(--text-xs); }

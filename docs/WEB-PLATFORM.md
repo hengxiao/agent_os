@@ -148,5 +148,30 @@ POST /api/cards/action                 卡片按钮统一入口(白名单 → �
 - 产物卡全屏展开视图(Runs/Skills/Tools/Lab 的卡片化外壳);
 - 决策统一队列(supervisor pending + gate warn + publish plan 统一成
   "待决策"卡列——B 方案最大的结构红利,不占本期);
-- `static/` 前端(下一步:对话流 + 六卡型渲染组件);
 - sessions 搜索/归档;多用户会话隔离(等 DATA-AUTHZ D3)。
+
+## 10. 前端样品(本期落地)
+
+`web_platform/static/`(独立入口 `/platform/`):
+
+- **骨架**(`index.html` + `app.js`,ES module):左栏会话索引(摘要 + 新建)、
+  主区对话流(`role="log"`,气泡 + 产物卡)、底部意图输入(Enter 发送,
+  Shift+Enter 换行)、空态 help 引导(三句示例意图,点击回填输入框);
+  刷新恢复 = 会话列表重载 + 选中会话重载(持久化在服务端,§3);
+- **卡渲染**(`cards.js`,纯函数 `cardHtml(card)` 按 type 分发):
+  plan(分解表 + 批准)、skill_pack(成员 + tier 徽标)、gate_report(五关色点
+  + findings 可展开 + 去修复跳 Lab)、diff(字段两列 + 红绿行,Flow C 同构)、
+  publish(成员三态 + warnings 勾选门)、table(通用表);actions 按钮统一走
+  `POST /api/cards/action`(带 `session_id`,结果作为 agent 消息追加进会话);
+- **widget 标准**(与 Flow C 同一清单):可交互元素四态(hover/focus-visible/
+  active/disabled)、骨架 loading(发送后"思考中",reduced-motion 停用动画)、
+  错误态(action/发送失败以 agent 消息呈现原因)、空态、aria(role=log/按钮
+  label)、焦点管理(新消息滚动到底);
+- **文案契约**:`platform.*` copy key 六主题同步(themes-contract 自动扫);
+  样式 `platform.css` 全 token 零主题分支;
+- **降级**:本页只覆盖意图级闭环;精确操作(改单字段/逐关报告/断点调试)
+  一律回旧页(§8 专家模式),gate_report 卡的"去修复"就是这个出口的形态。
+
+测试:`static/tests/platform.test.mjs`(六卡型渲染断言 + fetch stub 对话流
++ 错误态);浏览器绝对路径 import(`/static/js/` 共享模块)在 node 侧经
+`platform-loader.mjs` 钩子映射(测试基建,非运行时)。

@@ -353,3 +353,29 @@
   50% { transform: scale(1.22); }
   65% { transform: scale(1); }
 }
+
+/* live 指示:连接异常/断开 = 碎了的心 💔(fail 静态;down 慢脉冲求重连) */
+[data-theme="moe"] .live-indicator[data-state="fail"],
+[data-theme="moe"] .live-indicator[data-state="down"] {
+  background: transparent;
+  animation: none;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+[data-theme="moe"] .live-indicator[data-state="fail"]::before,
+[data-theme="moe"] .live-indicator[data-state="down"]::before {
+  content: "💔";
+  font-size: 13px;
+  line-height: 1;
+  display: inline-block;
+}
+[data-theme="moe"] .live-indicator[data-state="down"]::before {
+  animation: moe-broken-pulse 2s ease-in-out infinite; /* 断开:慢闪烁求重连 */
+}
+@keyframes moe-broken-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}

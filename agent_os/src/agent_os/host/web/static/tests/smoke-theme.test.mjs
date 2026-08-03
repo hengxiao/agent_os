@@ -393,6 +393,11 @@ const {
       moeCss.includes('content: "❤️"') &&
       moeCss.includes("@keyframes moe-heartbeat"),
     "连接正常 = 跳动的心");
+  assert.ok(
+    moeCss.includes('.live-indicator[data-state="fail"]::before') &&
+      moeCss.includes('.live-indicator[data-state="down"]::before') &&
+      moeCss.includes('content: "💔"'),
+    "连接异常/断开 = 碎了的心");
   assert.match(moeCss, /@keyframes moe-pop-in/, "卡片入场动画");
   assert.ok(moeCss.includes("prefers-reduced-motion"), "reduced-motion 兜底");
   assert.ok(!classicCss.includes("moe-pop-in"), "classic 无入场动画");

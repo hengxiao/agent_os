@@ -2396,6 +2396,151 @@ th.is-sorted .us-sort { color: var(--live); }
   cursor: pointer;
 }
 
+/* Skill Lab 迭代模式(docs/LAB-ITERATION.md;Flow C 样板):双栏 diff + 内嵌边注 */
+.it {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  height: 100%;
+  padding: var(--s4);
+  overflow: hidden;
+}
+.it-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+}
+.it-pkg { font-weight: 600; }
+.it-ver { width: auto; }
+.it-cols {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--s3);
+  min-height: 0;
+}
+.it-left, .it-right {
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg-2);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s3);
+}
+.it-member-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin-bottom: var(--s2);
+  color: var(--fg-1);
+}
+.it-unit { position: relative; margin-bottom: var(--s2); }
+.it-sec {
+  background: var(--bg-2);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--s3);
+}
+.it-sec h4 {
+  margin: 0 0 var(--s1);
+  font-size: var(--text-xs);
+  color: var(--fg-2);
+  display: flex;
+  justify-content: space-between;
+}
+.it-kv { font-size: var(--text-xs); color: var(--fg-1); white-space: pre-wrap; }
+.it-para {
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: var(--s2);
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  margin-bottom: var(--s1);
+}
+.it-case {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: var(--text-xs);
+  padding: var(--s1) 0;
+}
+.it-note-btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--fg-2);
+  font-size: var(--text-xs);
+  padding: 0 var(--s1);
+}
+.it-note-btn:hover { color: var(--live); }
+.it-note {
+  display: flex;
+  gap: var(--s2);
+  margin: var(--s1) 0 var(--s1) var(--s4);
+  padding: var(--s1) var(--s2);
+  background: var(--bg-1);
+  border: var(--stroke) solid var(--live);
+  border-radius: var(--r-sm);
+  font-size: var(--text-2xs);
+}
+.it-note-to { color: var(--live); flex-shrink: 0; }
+.it-note-form {
+  display: flex;
+  gap: var(--s1);
+  margin: var(--s1) 0 0 var(--s4);
+}
+.it-wait { color: var(--fg-2); font-size: var(--text-xs); margin-bottom: var(--s2); }
+.it-error { color: var(--danger); }
+.it-gen { width: 100%; padding: var(--s2) 0; }
+.it-reply {
+  font-size: var(--text-xs);
+  color: var(--fg-1);
+  padding: var(--s2);
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  margin-bottom: var(--s2);
+}
+.it-actions { display: flex; gap: var(--s2); margin-top: var(--s3); }
+.it-diff-member { margin-bottom: var(--s3); }
+.it-diff-head { display: flex; align-items: center; gap: var(--s2); font-size: var(--text-sm); }
+.it-diff-sec {
+  font-size: var(--text-2xs);
+  color: var(--fg-2);
+  margin: var(--s2) 0 var(--s1);
+}
+.it-twocol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s2);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  margin-bottom: var(--s1);
+}
+.it-twocol > div {
+  background: var(--bg-0);
+  border-radius: var(--r-sm);
+  padding: var(--s2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.it-twocol[data-kind="added"] > div:last-child { border-left: var(--stroke-strong) solid var(--perm-read); }
+.it-twocol[data-kind="removed"] > div:first-child { border-left: var(--stroke-strong) solid var(--danger); }
+.it-twocol[data-kind="changed"] > div:first-child { border-left: var(--stroke-strong) solid var(--danger); }
+.it-twocol[data-kind="changed"] > div:last-child { border-left: var(--stroke-strong) solid var(--perm-read); }
+.it-dline {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: var(--s1) var(--s2);
+  white-space: pre-wrap;
+}
+.it-dline[data-kind="add"] { background: color-mix(in srgb, var(--perm-read) 16%, transparent); border-radius: var(--r-sm); }
+.it-dline[data-kind="del"] {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-radius: var(--r-sm);
+  text-decoration: line-through;
+}
+
 /* run 头"等待上级裁决"Banner(帧拿不到精确标注时的兜底,S3 §5) */
 .wb-wait { align-items: center; }
 .wb-wait .banner-main { flex: 1; }

@@ -326,6 +326,83 @@ def register_lab_tools(
         return ToolResult(value=result)
 
 
+def register_iterate_tools(
+    registry: Any,
+    *,
+    store: Any,
+    production: Any,
+    tools_registry: Any,
+    pkg: str,
+) -> None:
+    """迭代模式(Flow C 样板)的工具面:**读得到,写不到 working**。
+
+    只注册三件:``lab.draft.read``(读 working)、``lab.pkg.closure``(看包树)、
+    ``lab.cand.write``(只能写 ``drafts/<pkg>/candidate/`` 子树——信任边界:
+    助手产物先落候选,接不接受是人点,与"能改不能发"同根)。
+    """
+
+    @registry.tool(name="lab.draft.read", permission=Permission.READ, side_effect="none")
+    def draft_read(draft: str, ctx: Any = None) -> ToolResult:
+        """读草稿(manifest + prompt + 用例清单 + parse_error)。
+
+        Use when 需要查看当前版本内容再决定怎么改;Do not use when 要列全部草稿。
+        """
+        try:
+            data = store.read(draft)
+        except (FileNotFoundError, ValueError) as e:
+            return ToolResult(ok=False, value=None, error=_err("not_found", str(e)))
+        return ToolResult(
+            value={
+                "name": data["name"],
+                "manifest": data["manifest"],
+                "prompt": data["prompt"],
+                "tests": sorted((data["tests"] or {}).keys()),
+                "parse_error": data["parse_error"],
+            }
+        )
+
+    @registry.tool(name="lab.pkg.closure", permission=Permission.READ, side_effect="none")
+    def pkg_closure(root: str = "", ctx: Any = None) -> ToolResult:
+        """读当前包的闭包树(成员/状态/档位/ref_by)。
+
+        Use when 动手前需要看全包成员;Do not use when 只看单个成员内容。
+        """
+        target = root or pkg
+        try:
+            result = compute_closure(target, store, production, tools_registry, mode="edit")
+        except FileNotFoundError as e:
+            return ToolResult(ok=False, value=None, error=_err("not_found", str(e)))
+        return ToolResult(value=result)
+
+    @registry.tool(name="lab.cand.write", permission=Permission.WRITE, side_effect="reversible")
+    def cand_write(
+        member: str,
+        manifest: dict[str, Any] | None = None,
+        prompt: str | None = None,
+        tests: dict[str, Any] | None = None,
+        ctx: Any = None,
+    ) -> ToolResult:
+        """写候选成员(只能写 drafts/<pkg>/candidate/ 子树,写不到 working/生产)。
+
+        Use when 生成改进版成员(manifest/prompt 全量给出;tests 传则整体替换用例);
+        Do not use when 想直接改 working(你没有这个能力——接不接受是用户点)。
+        manifest/prompt 缺省时取 working 现值(只改一部分的写法)。
+        """
+        try:
+            current = store.read(member)
+        except (FileNotFoundError, ValueError) as e:
+            return ToolResult(ok=False, value=None, error=_err("not_found", str(e)))
+        new_manifest = manifest if manifest is not None else (current["manifest"] or {})
+        new_prompt = prompt if prompt is not None else current["prompt"]
+        try:
+            store.save_candidate_member(pkg, member, new_manifest, new_prompt, tests=tests)
+        except ValueError as e:
+            return ToolResult(ok=False, value=None, error=_err("invalid_args", str(e)))
+        return ToolResult(
+            value={"written": member, "note": "已写入候选区(未影响 working);等待用户评审"}
+        )
+
+
 def _outputs_check(outputs: dict[str, Any], result: Any) -> dict[str, Any]:
     """outputs schema 校验(与 app.py 的 test-run check 同语义;L3 的双保险)。"""
     import jsonschema

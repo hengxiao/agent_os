@@ -296,6 +296,11 @@ export function topbarHtml(view) {
     `<button class="btn" data-lab="delete">${esc(copy("lab.delete"))}</button>` +
     `<span class="lab-top-tier" data-lab-tier-badge title="${esc(tierTitle(view.tierDetail))}">` +
     `${tierBadgeHtml(view.tier)}</span>` +
+    // 迭代模式入口(docs/LAB-ITERATION.md;Flow C;与专家模式并列,不改其交互)
+    (view.form
+      ? `<a class="btn" href="#/lab/${encodeURIComponent(view.form.name)}/iterate"` +
+        ` title="${esc(copy("it.mode"))}">⟲ ${esc(copy("it.mode"))}</a>`
+      : "") +
     `<span class="lab-top-actions">` +
     `<button class="btn" data-lab="check">${esc(copy("lab.check"))}</button>` +
     `<button class="btn" data-lab="promote"${promoteReady(view) ? "" : " disabled"}` +

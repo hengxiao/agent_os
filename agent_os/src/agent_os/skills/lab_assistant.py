@@ -19,6 +19,9 @@ from agent_os.tools.lab_tools import LAB_DRAFT_TOOLS
 
 ASSISTANT_NAME = "skill.dev.assistant"
 
+#: 迭代模式(Flow C 样板)的生成技能名
+ITERATOR_NAME = "skill.dev.iterator"
+
 _PROMPT = """你是 Skill Lab 的开发助手,工作单元是**能力包**(docs/SKILL-PACKAGES.md:
 用户要的是功能,功能 = 根技能 + 它的依赖闭包)。当前包根由输入的 draft 字段给出。
 
@@ -67,6 +70,53 @@ def assistant_skill() -> Skill:
         limits=SkillLimits(max_steps=12, timeout=120),
     )
     return Skill(manifest=manifest, prompt=_PROMPT)
+
+
+_ITERATOR_PROMPT = """你是 Skill Lab 迭代生成器(Flow C 样板:边注驱动迭代)。
+
+输入的 request 里有:当前 working 版本指引、本轮边注(锚定到成员/字段/段落/用例)、
+以及用户的补充说明。你的任务:
+
+1. 用 lab.pkg.closure 看包树,用 lab.draft.read 读相关成员的 working 内容;
+2. 逐条落实边注:改 description/prompt/permissions/trust/tests——
+   产出**改进版**,不是重写(能保留的尽量保留,diff 越小越好评审);
+3. 每个要改的成员,用 lab.cand.write 写出**完整新 manifest 与 prompt**
+   (没改的成员不用写,候选缺失 = 保持现状);
+4. 纪律:不改 tier 语义不擅自扩白名单;边注说"档不对"时只做标注建议,
+   不擅改(档由权限面推导);**你只能写候选区**,接不接受是用户点。
+
+最终答案输出一个 JSON 对象,reply 字段是这轮的改动摘要(逐成员一句)。"""
+
+
+def iterator_skill() -> Skill:
+    """迭代生成技能(Flow C 样板;工具面 = 读 working + 写候选,写不到 working)。"""
+    manifest = SkillManifest(
+        name=ITERATOR_NAME,
+        version="0.1.0",
+        description=(
+            "Skill Lab 迭代生成器。Use when 按边注批量产出候选版本;"
+            "Do not use when 要直接改 working 或 promote(它没有这两个能力)。"
+        ),
+        inputs={
+            "type": "object",
+            "properties": {
+                "request": {"type": "string", "description": "边注 + 补充说明(结构化)"},
+                "draft": {"type": "string", "description": "包根草稿名"},
+            },
+            "required": ["request", "draft"],
+        },
+        outputs={
+            "type": "object",
+            "properties": {"reply": {"type": "string"}},
+            "required": ["reply"],
+        },
+        permissions=SkillPermissions(
+            tools=["lab.draft.read", "lab.pkg.closure", "lab.cand.write"],
+            skills=[],
+        ),
+        limits=SkillLimits(max_steps=16, timeout=120),
+    )
+    return Skill(manifest=manifest, prompt=_ITERATOR_PROMPT)
 
 
 def assistant_ref() -> SkillRef:

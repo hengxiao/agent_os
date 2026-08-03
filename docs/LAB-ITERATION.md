@@ -7,6 +7,19 @@
 >   plan/promote 进生产)。助手信任边界沿用 V2 §6.7(能改能建,不能发不能删)。
 > 一句话:**访谈定义"做什么",批注驱动"怎么改",版本承载"改到哪"**。
 >
+> **交互选型(2026-08-04 用户定):Flow C(双栏 diff + 内嵌边注)已选定**,
+>   A(三栏批注)/B(对话驱动)归档。对比报告与静态原型见
+>   `LAB-ITERATION-FLOWS.md` 与 `static/proto/`。
+>   **功能样板已实现**(样板级,非 V1):边注存储(`DraftStore` comments)、
+>   版本快照/rewind、生成端点 `POST /api/lab/drafts/{name}/iterate`、
+>   diff 纯函数(`skills/iterate.py`)、候选写工具 `lab.cand.write`、
+>   前端 `components/lab-iterate.js`(路由 `#/lab/<name>/iterate`)。
+>   样板与 V1-V4 的关系:①样板期边注/版本/候选都挂在 `drafts/<pkg>/` 下,
+>   **§5 的 `drafts/.packages/<root>/` 布局推迟到 V1**(B1 的正确性修正,
+>   不随样板抢跑);②访谈初始化(阶段一)与 judge(§4.4)未做,属 V1+;
+>   ③V1 应把样板的交互骨架(iterate 端点/diff 组件/版本下拉)原样承接,
+>   只换存储布局与生成管线(访谈 → scaffold → 同一迭代循环)。
+>
 > **v0.2 改动**(评审后,三条结构性 + 四条收口):
 > ① judge 从宿主模块改为**技能**(`skill.dev.judge`)走内核——否则会开出内核之外
 >    的第二条 LLM 路径,绕过信号总线/BudgetGuard/replay(§4.4、§6 B4);

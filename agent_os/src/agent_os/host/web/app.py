@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
@@ -69,10 +70,16 @@ from agent_os.skills.draft_store import (
 )
 from agent_os.skills.gate import GateError, promote_draft
 from agent_os.skills.gate import validate_draft as validate_gate_draft
-from agent_os.skills.lab_assistant import ASSISTANT_NAME, assistant_skill
+from agent_os.skills.iterate import collect_package_docs, package_diff
+from agent_os.skills.lab_assistant import (
+    ASSISTANT_NAME,
+    ITERATOR_NAME,
+    assistant_skill,
+    iterator_skill,
+)
 from agent_os.skills.manifest import validate_manifest
 from agent_os.skills.package import build_plan, promote_package
-from agent_os.tools.lab_tools import register_lab_tools
+from agent_os.tools.lab_tools import register_iterate_tools, register_lab_tools
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -222,6 +229,23 @@ class LabAssistantBody(BaseModel):
 
     request: str
     draft: str
+
+
+class LabIterateBody(BaseModel):
+    """``POST /api/lab/drafts/{name}/iterate``(docs/LAB-ITERATION.md §4;Flow C 样板)。
+
+    ``comments``:本轮边注 [{id?, anchor:{member,kind,path,span?}, text, at?}];
+    ``note``:补充说明(可选,随边注一起进生成上下文)。
+    """
+
+    comments: list[dict[str, Any]] = []
+    note: str = ""
+
+
+class LabRewindBody(BaseModel):
+    """``POST /api/lab/drafts/{name}/rewind``:回到指定版本(working 恢复,历史不动)。"""
+
+    version: str
 
 
 class LabPackagePromoteBody(BaseModel):
@@ -1149,6 +1173,162 @@ def create_app(
         except (RunValidationError, SkillLoadError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return {"run_id": run_id}
+
+    @app.post("/api/lab/drafts/{name}/iterate")
+    def lab_iterate(name: str, body: LabIterateBody) -> dict[str, Any]:
+        """边注驱动迭代(docs/LAB-ITERATION.md §4;Flow C 样板)。
+
+        存本轮边注 → 生成技能(skill.dev.iterator,工具面 = 读 working + 写候选,
+        写不到 working)产候选 → 返回 working vs candidate 的 diff。
+        助手不可用(provider 故障/凭证)→ 503 明确错误(前端显示"助手暂不可用")。
+        """
+        try:
+            lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        lab_store.save_comments(name, str(int(time.time() * 1000)), body.comments)
+        kernel = manager.assemble_lab_kernel(
+            OverlaySkillRegistry(
+                manager.shared_skills_registry(),
+                lab_store,
+                extra={ITERATOR_NAME: iterator_skill()},
+            )
+        )
+        register_iterate_tools(
+            kernel.tools,
+            store=lab_store,
+            production=manager.shared_skills_registry(),
+            tools_registry=manager.shared_tools_registry(),
+            pkg=name,
+        )
+        request_text = json.dumps(
+            {"note": body.note, "comments": body.comments}, ensure_ascii=False
+        )
+        try:
+            result = asyncio.run(
+                kernel.run(ITERATOR_NAME, {"request": request_text, "draft": name})
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+        return {
+            "candidate": True,
+            "reply": (result or {}).get("reply", ""),
+            "diff": _lab_candidate_diff(name),
+        }
+
+    def _lab_edit_members(name: str) -> list[str]:
+        """编辑闭包的 draft 成员(working 集;快照/diff 共用)。"""
+        closure = compute_closure(
+            name, lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(),
+            mode="edit",
+        )
+        return [m["name"] for m in closure["members"] if m["status"] == "draft"]
+
+    def _lab_candidate_diff(name: str) -> dict[str, Any]:
+        """working vs candidate 的结构化 diff(skills/iterate.py 纯函数)。"""
+        working = collect_package_docs(lab_store, name, _lab_edit_members(name))
+        candidate: dict[str, Any] = {}
+        for member in lab_store.candidate_members(name):
+            data = lab_store.read_candidate_member(name, member)
+            candidate[member] = {
+                "manifest": data["manifest"] or {},
+                "prompt": data["prompt"],
+                "tests": sorted((data["tests"] or {}).keys()),
+            }
+        return package_diff(working, candidate)
+
+    @app.get("/api/lab/drafts/{name}/candidate/diff")
+    def lab_candidate_diff_get(name: str) -> dict[str, Any]:
+        """候选 diff(§4;Flow C 右栏数据源;无候选 → 404)。"""
+        try:
+            if not lab_store.candidate_members(name):
+                raise FileNotFoundError(f"无候选: {name}")
+            return _lab_candidate_diff(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.post("/api/lab/drafts/{name}/candidate/accept")
+    def lab_candidate_accept(name: str) -> dict[str, Any]:
+        """接受候选(§1.2:接受是人的动作):快照新版本 → 候选覆盖 working → 清候选。"""
+        try:
+            members = _lab_edit_members(name)
+            cand = lab_store.candidate_members(name)
+            if not cand:
+                raise FileNotFoundError(f"无候选: {name}")
+            latest = lab_store.list_versions(name)
+            _, comments = lab_store.latest_comments(name)
+            vid = lab_store.snapshot(
+                name,
+                members,
+                source="iterate",
+                parent=latest[0]["version"] if latest else None,
+                comments_digest=f"{len(comments)} 条边注",
+            )
+            for member in cand:
+                data = lab_store.read_candidate_member(name, member)
+                current = lab_store.read(member)
+                lab_store.save(
+                    member,
+                    manifest=data["manifest"] or {},
+                    prompt=data["prompt"],
+                    handler=current["handler"],
+                    tests=data["tests"] or None,
+                )
+            lab_store.clear_candidate(name)
+            return {"version": vid, "versions": lab_store.list_versions(name)}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.post("/api/lab/drafts/{name}/candidate/discard")
+    def lab_candidate_discard(name: str) -> dict[str, Any]:
+        """放弃候选(清候选区,working 不动)。"""
+        try:
+            lab_store.clear_candidate(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"ok": True}
+
+    @app.get("/api/lab/drafts/{name}/versions")
+    def lab_list_versions(name: str) -> list[dict[str, Any]]:
+        """版本列表(新→旧;版本下拉数据源)。"""
+        try:
+            return lab_store.list_versions(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.post("/api/lab/drafts/{name}/rewind")
+    def lab_rewind(name: str, body: LabRewindBody) -> dict[str, Any]:
+        """rewind(docs/LAB-ITERATION.md §1.2):恢复快照到 working,历史不动。"""
+        try:
+            lab_store.restore_version(name, body.version)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"ok": True, "version": body.version}
+
+    @app.get("/api/lab/drafts/{name}/comments")
+    def lab_latest_comments(name: str) -> dict[str, Any]:
+        """最近一轮边注(左栏边注卡数据源)。"""
+        try:
+            round_id, comments = lab_store.latest_comments(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        return {"round": round_id, "comments": comments}
 
     @app.post("/api/lab/drafts/{name}/promote")
     def lab_promote_draft(name: str, body: LabPromoteBody) -> dict[str, Any]:

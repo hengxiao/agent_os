@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -342,8 +343,182 @@ class DraftStore:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     # ------------------------------------------------------------------
-    # 装配面(OverlaySkillRegistry / tier 推导用)
+    # 迭代模式存储(docs/LAB-ITERATION.md §5;Flow C 样板):边注 / 版本快照 / 候选
+    # 布局(样板期):全部挂在成员草稿目录下——
+    #   drafts/<pkg>/comments/<round>.json   边注(按轮次)
+    #   drafts/<pkg>/versions/vNNN/          不可变快照(全成员 + meta.json)
+    #   drafts/<pkg>/candidate/<member>/     候选(未接受前不影响 working)
     # ------------------------------------------------------------------
+
+    def _iter_dir(self, pkg: str, *parts: str) -> Path:
+        d = self._dir(pkg)
+        if not d.is_dir():
+            raise FileNotFoundError(f"草稿不存在: {pkg}")
+        return d.joinpath(*parts)
+
+    def save_comments(self, pkg: str, round_id: str, comments: list[dict[str, Any]]) -> None:
+        """边注落盘(docs/LAB-ITERATION.md §5 comments 结构):
+        ``[{id, anchor: {member, kind: field|span|case, path, span?}, text, at}]``。"""
+        cdir = self._iter_dir(pkg, "comments")
+        cdir.mkdir(exist_ok=True)
+        (cdir / f"{round_id}.json").write_text(
+            json.dumps(comments, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def load_comments(self, pkg: str, round_id: str) -> list[dict[str, Any]]:
+        """按轮次读边注;不存在 → [](首轮)。"""
+        f = self._iter_dir(pkg, "comments", f"{round_id}.json")
+        if not f.is_file():
+            return []
+        return json.loads(f.read_text(encoding="utf-8"))
+
+    def latest_comments(self, pkg: str) -> tuple[str | None, list[dict[str, Any]]]:
+        """最近一轮边注(边注显示与生成上下文用);无 → (None, [])。"""
+        cdir = self._iter_dir(pkg, "comments")
+        if not cdir.is_dir():
+            return None, []
+        rounds = sorted(f.stem for f in cdir.glob("*.json"))
+        if not rounds:
+            return None, []
+        return rounds[-1], self.load_comments(pkg, rounds[-1])
+
+    def snapshot(
+        self,
+        pkg: str,
+        members: list[str],
+        *,
+        source: str,
+        parent: str | None = None,
+        comments_digest: str = "",
+    ) -> str:
+        """版本快照(docs/LAB-ITERATION.md §1.2 不变量:版本不可变)。
+
+        ``members`` 由调用方按编辑闭包给出(包语义;单稿即 [pkg])。快照 =
+        versions/vNNN/<member>/{manifest.yaml,prompt.md,handler.py,tests/}
+        + meta.json(source/parent/at/members/comments_digest)。返回版本号 vNNN。
+        """
+        vdir = self._iter_dir(pkg, "versions")
+        vdir.mkdir(exist_ok=True)
+        existing = sorted(p.name for p in vdir.iterdir() if p.is_dir() and p.name.startswith("v"))
+        vid = f"v{int(existing[-1][1:]) + 1:03d}" if existing else "v001"
+        target = vdir / vid
+        target.mkdir()
+        for member in members:
+            src = self._dir(member)
+            if not src.is_dir():
+                continue  # 悬空成员(未创建)不进快照
+            dst = target / member
+            shutil.copytree(src, dst, ignore=shutil.ignore_patterns("versions", "candidate", "gate", "comments"))
+        (target / "meta.json").write_text(
+            json.dumps(
+                {
+                    "version": vid,
+                    "source": source,
+                    "parent": parent,
+                    "at": time.time(),
+                    "members": members,
+                    "comments_digest": comments_digest,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return vid
+
+    def list_versions(self, pkg: str) -> list[dict[str, Any]]:
+        """版本列表(新→旧;版本下拉数据源)。"""
+        vdir = self._iter_dir(pkg, "versions")
+        if not vdir.is_dir():
+            return []
+        out = []
+        for p in sorted(vdir.iterdir(), reverse=True):
+            if not p.is_dir() or not (p / "meta.json").is_file():
+                continue
+            out.append(json.loads((p / "meta.json").read_text(encoding="utf-8")))
+        return out
+
+    def restore_version(self, pkg: str, version: str) -> None:
+        """rewind:把快照覆盖回 working(**历史不动**——版本不可变,恢复的是工作副本)。
+
+        快照里有的成员写回(含新建);快照没有的 working 成员保持原样(不删)。
+        """
+        vdir = self._iter_dir(pkg, "versions", version)
+        if not vdir.is_dir():
+            raise FileNotFoundError(f"版本不存在: {version}")
+        for src in vdir.iterdir():
+            if not src.is_dir():
+                continue
+            dst = self._dir(src.name)
+            dst.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+
+    def save_candidate_member(
+        self,
+        pkg: str,
+        member: str,
+        manifest: dict[str, Any],
+        prompt: str,
+        tests: dict[str, Any] | None = None,
+    ) -> None:
+        """写候选成员(drafts/<pkg>/candidate/<member>/;lab.cand.write 的唯一写面)。"""
+        self.check_name(member)
+        d = self._iter_dir(pkg, "candidate", member)
+        d.mkdir(parents=True, exist_ok=True)
+        manifest = {**manifest, "name": member}
+        (d / "manifest.yaml").write_text(
+            yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+        (d / "prompt.md").write_text(prompt, encoding="utf-8")
+        if tests is not None:
+            tests_dir = d / "tests"
+            tests_dir.mkdir(exist_ok=True)
+            for old in tests_dir.glob("*.json"):
+                old.unlink()
+            for fname, case in tests.items():
+                if not re.fullmatch(r"[A-Za-z0-9_.-]+\.json", fname):
+                    raise ValueError(f"用例文件名不合法: {fname!r}")
+                text = case if isinstance(case, str) else json.dumps(case, ensure_ascii=False, indent=2)
+                (tests_dir / fname).write_text(text, encoding="utf-8")
+
+    def read_candidate_member(self, pkg: str, member: str) -> dict[str, Any]:
+        """读候选成员(manifest 原文容错,与 read 同语义)。"""
+        d = self._iter_dir(pkg, "candidate", member)
+        if not d.is_dir():
+            raise FileNotFoundError(f"候选成员不存在: {member}")
+        manifest_raw: dict[str, Any] | None = None
+        manifest_text = (d / "manifest.yaml").read_text(encoding="utf-8") if (d / "manifest.yaml").is_file() else ""
+        try:
+            data = yaml.safe_load(manifest_text)
+            manifest_raw = data if isinstance(data, dict) else None
+        except yaml.YAMLError:
+            manifest_raw = None
+        return {
+            "name": member,
+            "manifest": manifest_raw,
+            "prompt": (d / "prompt.md").read_text(encoding="utf-8")
+            if (d / "prompt.md").is_file()
+            else "",
+            "tests": {
+                f.name: f.read_text(encoding="utf-8")
+                for f in sorted((d / "tests").glob("*.json"))
+            }
+            if (d / "tests").is_dir()
+            else {},
+        }
+
+    def candidate_members(self, pkg: str) -> list[str]:
+        """候选成员名列表(无候选 → [])。"""
+        cdir = self._iter_dir(pkg, "candidate")
+        if not cdir.is_dir():
+            return []
+        return sorted(p.name for p in cdir.iterdir() if p.is_dir())
+
+    def clear_candidate(self, pkg: str) -> None:
+        """清候选(接受/放弃共用;不存在是空操作)。"""
+        cdir = self._iter_dir(pkg, "candidate")
+        if cdir.is_dir():
+            shutil.rmtree(cdir)
 
     def load_skill(self, name: str) -> Skill:
         """草稿 → Skill 对象(manifest 走 parse_manifest;prompt.md 作指令体)。

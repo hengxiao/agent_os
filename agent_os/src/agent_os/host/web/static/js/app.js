@@ -12,6 +12,7 @@ import { openLaunchDialog } from "./components/launch-dialog.js";
 import { closeSkillsView, openSkillsView } from "./components/skills-view.js";
 import { closeToolsView, openToolsView } from "./components/tools-view.js";
 import { closeLab, openLab } from "./components/lab.js";
+import { closeIterate, openIterate } from "./components/lab-iterate.js";
 import { closeDebugHome, openDebugHome } from "./components/debug-home.js";
 import {
   closeDebugView,
@@ -70,8 +71,12 @@ function parseRoute(hash) {
   }
   if (seg[0] === "skills") return { name: "skills", runId: null, itemName: seg[1] ?? null, set };
   if (seg[0] === "tools") return { name: "tools", runId: null, itemName: seg[1] ?? null, set };
-  // Skill Lab(docs/SKILL-DEV.md;L1):#/lab 与 #/lab/<draft> 深链接
-  if (seg[0] === "lab") return { name: "lab", runId: null, draft: seg[1] ?? null, set };
+  // Skill Lab(docs/SKILL-DEV.md;L1):#/lab 与 #/lab/<draft> 深链接;
+  // 迭代模式(docs/LAB-ITERATION.md;Flow C):#/lab/<draft>/iterate
+  if (seg[0] === "lab") {
+    if (seg[2] === "iterate") return { name: "lab-iterate", runId: null, draft: seg[1] ?? null, set };
+    return { name: "lab", runId: null, draft: seg[1] ?? null, set };
+  }
   if (seg[0] === "debug") {
     return seg[1]
       ? { name: "debug-session", sessionId: seg[1], runId: null, set }
@@ -94,7 +99,10 @@ function applyRoute() {
 function renderNav() {
   const name = store.get("route").name;
   const page =
-    name === "run-detail" ? "runs" : name.startsWith("debug") ? "debug" : name;
+    name === "run-detail" ? "runs"
+    : name.startsWith("debug") ? "debug"
+    : name === "lab-iterate" ? "lab" // 迭代模式归 Lab 导航(docs/LAB-ITERATION.md)
+    : name;
   document.body.dataset.route = page; // 侧栏仅 Runs 页显示(app.css 按此驱动)
   document.querySelectorAll(".nav-item").forEach((a) => {
     if (a.dataset.nav === page) a.setAttribute("aria-current", "page");
@@ -246,6 +254,7 @@ function renderMain() {
   if (route.name !== "debug-home") closeDebugHome();
   if (route.name !== "debug-session") closeDebugView(); // 离开调试台:SSE/轮询收尾
   if (route.name !== "lab") closeLab(); // 离开 Lab:丢弃页面状态(草稿在服务端,随时可回)
+  if (route.name !== "lab-iterate") closeIterate(); // 离开迭代模式同理(版本/批注在服务端)
   if (route.name === "skills") {
     openSkillsView(main, route.itemName); // §4.6(#/skills 与 #/skills/<name> 深链接恢复)
     return;
@@ -264,6 +273,10 @@ function renderMain() {
   }
   if (route.name === "lab") {
     openLab(main, route.draft); // Skill Lab(docs/SKILL-DEV.md;L1)
+    return;
+  }
+  if (route.name === "lab-iterate") {
+    openIterate(main, route.draft); // 迭代模式(docs/LAB-ITERATION.md;Flow C)
     return;
   }
   if (route.name === "run-detail") {

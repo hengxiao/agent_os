@@ -1,9 +1,15 @@
 # 能力包(Capability Package)详细设计:业界对照与四份方案
 
-> 版本:v2.0(方案稿) · 日期:2026-08-03
+> 版本:v2.1 · 日期:2026-08-03
+> **实施状态:P1-P4 + P1.5 已落地**(commit 9129e72 / 361e6dc / 08438c2 /
+>   6ce01ed + 本次注册表分层重构;基线 844 passed)。本文由方案稿转为
+>   **设计依据 + 实施记录**:§2 的四项现状发现逐条标注关闭情况,§6 的设计
+>   条目标注已实现/未实现,剩余项(P2.5 / P5)见 §7。
 > 前作:`SKILL-PACKAGES.md`(v0.1 报告)——本文不推翻它的洞察,而是补齐它
 >   没回答的七个问题,并给出**可选择的四份方案**与推荐路线。
-> 依据:本文所有关于现状的论断都经代码核对或实测复现(§2 有可复跑的复现脚本);
+> 并行稿:「Skill Pack 设计方案」(Kimi Code,方案 A/B/C)——其贡献与冲突
+>   裁决已合并进本文,逐条见 **§9**。
+> 依据:本文所有关于现状的论断都经代码核对或实测复现(§2 有可复跑的复现步骤);
 >   业界对照来自公开资料(§3 附来源)。
 > 相关:`SKILL-DEV.md`(Lab)、`ESCALATION.md`(推导档)、`TIER-STANDARDS.md`
 >   (分档标准)、`DESIGN.md` §6(加载与依赖)、`NAMING.md`(命名空间)。
@@ -30,16 +36,21 @@ v0.1 由此给出的结论是"包 = 根技能的依赖闭包,推导不声明"。
 | Q7 | 助手获得"建草稿"能力后,信任面扩张到哪里为止? | "能改不能发"的边界需要重新划,否则注入面变大 |
 
 本文的结构:先把现状钉死(§2),再看业界怎么解同类问题(§3),提炼出可迁移
-的规律,然后给**四份方案**(§4)与推荐路线(§5),最后是推荐方案的详细设计
-(§6)、分期与验收(§7)。
+的规律,然后给**四份方案**(§4)与推荐路线(§5),接着是推荐方案的详细设计
+(§6)、分期与验收(§7)、明确不抄的清单(§8),最后是与并行设计稿的
+**对照裁决**(§9)。
 
 ---
 
 ## 2. 现状盘点(经代码核对与实测)
 
-### 2.1 P1 已经落地了一半(未提交,在工作树中)
+> **本节是写作当时(P1 刚落地一半)的发现记录,四项全部已关闭**——保留原文是
+> 因为后续设计的每一条都是从这些发现推出来的,删掉就只剩结论没有论证。逐条
+> 关闭情况见各小节末的「关闭」行。
 
-工作树里已有 v0.1 的 P1 部分实现,这是本文的起点而非空地:
+### 2.1 P1 当时只落地了一半(写作时尚在工作树)
+
+写作时工作树里已有 v0.1 的 P1 部分实现,这是本文的起点而非空地:
 
 - `skills/closure.py`(新增,122 行):`compute_closure(root, drafts, production, tools)`
   → `{root, root_status, root_tier, members, errors}`,成员四态
@@ -51,6 +62,10 @@ v0.1 由此给出的结论是"包 = 根技能的依赖闭包,推导不声明"。
 - `host/cli/main.py`:CLI validate 传入 `store=`。
 
 **尚未落地**:包视图(前端)、原子提交、助手包级化、目录形态 set。
+
+> **关闭**:P1 已提交(9129e72,含前端包面板与悬空一键成稿);当时列的四项
+> "尚未落地"分别由 P2(361e6dc,原子提交)、P3(08438c2,助手包级化)、
+> P4(6ce01ed,目录形态 set)补齐。
 
 ### 2.2 实测到的死锁:检查绿灯、提交永远失败
 
@@ -90,6 +105,21 @@ v0.1 由此给出的结论是"包 = 根技能的依赖闭包,推导不声明"。
 **引用完整性闸门一旦落地,原子提交就从"打磨项"变成了必需品**。二者是同一
 个设计的两半,不能只落一半。P2 的优先级因此应当高于 v0.1 的排期。
 
+> **关闭**(361e6dc):`promote_draft` 复跑补传 `store=` 且 `strict_refs=True`;
+> 助手 `lab.draft.validate` 同步补 `store=`(三宿主判定口径统一);复跑错误
+> 信息两分——哈希不符 = "报告不一致",哈希相符但判定变了 = "判定不一致,
+> 非报告过期"。同一场景现在的实测输出:
+>
+> ```
+> ① validate(store=store)  → pass | g2: pass
+> ② validate(store=None)   → warn | g2: warn   ← 两阶段严格性,草稿期不再误判 fail
+> ③ promote → GateError: 根草稿引用了未发布的兄弟草稿 lab.child
+>              ——这是一个包,请用包级提交(POST /api/lab/packages/lab.root/plan → promote)
+> ```
+>
+> 注意 ③ 仍然拒绝,但**拒绝得诚实**:它不再谎称报告过期,而是指出这是包并
+> 给出包级提交的路径。这正是 §6.2 尾段要的结果。
+
 ### 2.3 闭包边界靠命名空间巧合
 
 `closure.py` 用根技能的**第一段命名空间**判定生产节点是"包内"还是"外链":
@@ -108,6 +138,10 @@ v0.1 由此给出的结论是"包 = 根技能的依赖闭包,推导不声明"。
 **closure bloat**(闭包膨胀)失败模式的翻版:自动推导的闭包很容易把不该进来的
 东西吸进来。正确的判据在 §6.1。
 
+> **关闭**(361e6dc):命名空间启发式已被 §6.1 的两种闭包取代——`edit` 模式
+> **只有 draft 节点下传**(生产/外链都是纯显示叶子),`runtime` 模式全展开;
+> 闭包 >8 成员或深度 >4 出告警。closure 端点加 `?mode=runtime`(6ce01ed)。
+
 ### 2.4 生产写入面的三个硬限制
 
 `write_production_entry`(gate.py:452-478)当前:
@@ -116,6 +150,12 @@ v0.1 由此给出的结论是"包 = 根技能的依赖闭包,推导不声明"。
 - 每次写入前 `shutil.copy2` 到**同一个** `.bak`——N 个成员逐个写就是 N 次覆盖,
   最早的版本立刻丢失,`.bak` 在包场景下形同虚设;
 - 写完直接 `production.reload()`,**没有"装不起来就别换"的证明步骤**。
+
+> **关闭**(361e6dc + 6ce01ed):三条逐一——① 目录形态由 P4 的 set 落盘支持
+> (编辑闭包 ≥2 成员落为 `<ns>/` 目录形态,单成员仍写单文件);② 一次事务
+> **整文件单 `.bak`**,不再每成员一次覆盖;③ 先证后换落地——候选全集先写
+> staging 并**过 loader 全流水线加载验证**,通过才原子 rename + 单次 reload,
+> staging 失败时生产零变化(有断言测试)。
 
 ---
 
@@ -227,6 +267,61 @@ Backstage 的 software template 用多步骤 YAML 一次生成整套骨架文件
 **可迁移的一条**:功能包模板值得做,但**不要设计模板继承体系**——业界在这上面
 摔过跤。保持模板扁平、少而具体。
 
+同一家族里,**扣子(Coze)/ Dify 的"模板即闭包、一键复制"**给出了冷启动体验的
+标杆:一个模板 = 智能体 + 工作流 + 插件引用的完整组合,复制到自己的空间即可用;
+插件是独立审核的生态单位,模板**引用**插件而不内嵌。可迁移的一条是**官方模板
+是生态早期唯一的质量杠杆**——种子期由官方维护少量高质量包,比开放投稿更有效。
+对应到本文:P4 的两件功能包模板(`pkg.inspect_clean` / `pkg.research_report`)
+就是这个位置。
+
+### 3.8 检测缺失 → 一键补齐:ComfyUI Manager(最贴近的交互参照)
+
+用户导入一个 workflow(≈ 用户的目标产物),Manager 扫描发现缺失节点 →
+**「Install Missing Custom Nodes」一键安装整个闭包**。用户从不手工逐个装依赖。
+
+三条记录在案的坑,对本设计都是预警:
+
+1. **命名不一致导致自动解析失败**——节点在 workflow 里存 type name,registry 里
+   登记 display name,对不上就解析不到。**依赖标识必须全局唯一且稳定。**
+   Agent OS 在这一条上**已经安全**(NAMING.md 的点分层次名 + 草稿名即目录名 +
+   `manifest` 里 `name` 由目录名钉死),这是确认而非待办——也正是 §6.10 拒绝
+   "草稿加前缀"的直接理由:前缀会**主动制造**这个 bug 类别。
+2. **依赖地狱**(多个包要求同一库的不同版本)→ 需要版本范围与冲突检测。
+   本设计明确不做(§8 第 2 条),因为基线是单版本。
+3. **装完要重启才生效** → 依赖变更需要有"生效时机"概念。Agent OS 对应的是
+   `reload()` 只影响后续新建的 run(在跑的 run 钉住旧版)。
+
+**可迁移的核心**:「检测缺失 → 一键补齐」是闭包体验的核心交互。这与 v0.1 从
+命名空间树推出的"悬空节点一键成稿"是**同一个交互的两次独立发现**,已在 P1
+落地、P2 把它接进了 plan 的 `blockers[].fix`。
+
+### 3.9 组合交给运行时:Anthropic Agent Skills
+
+Skill = 一个文件夹(SKILL.md + scripts/references/assets),渐进式披露(启动只
+加载 name+description);**skill 之间没有显式依赖清单**,可组合性由 agent 在
+运行时按任务自行触发;`allowed-tools` 前置声明工具权限。
+
+**评价**:这把正确性责任推给了运行时——对 L1 检索类能力没问题,**对 L3 不可逆
+操作不可接受**(Agent OS 的整个升权模型正是建立在"闭包在装配期已知"之上:
+推导档取 max 需要静态闭包)。值得拿走的两条:`allowed-tools` 式的前置权限声明
+(Agent OS 的 `permissions` 已是同构),以及**validate 工具独立于编辑器存在**
+(对应 `agent-os lab validate` 的 headless 入口)。
+
+### 3.10 传递依赖是攻击面:GlassWorm(反面教材)
+
+已核实的真实攻击:2025-10 由 Koi Security 发现,不到两周内污染 **72 个 Open VSX
+扩展 + 88 个 npm 包 + 151 个 GitHub 仓库**,约 35,800 次安装受影响;
+2026-05 由 CrowdStrike 联合 Google、Shadowserver 捣毁基础设施。
+
+关键机制**恰好落在包设计的要害上**:攻击者先发布正常扩展积累信任,
+**在后续更新里才往 `extensionPack` / `extensionDependencies` 里塞入恶意依赖**,
+让一个看起来独立的扩展变成传递投递载体——初始审查完全失效。
+
+**可迁移的一条(而且不需要 registry,今天就成立)**:**传递依赖的"静默变化"
+必须被当作高危事件**。这直接推出 §6.9 的依赖变更档位告警——在 Agent OS 里,
+上游依赖换个版本就可能**静默抬高下游技能的推导档**,而下游作者不会收到任何
+通知。详见 §6.9。
+
 ---
 
 ## 4. 四份方案
@@ -315,10 +410,18 @@ Backstage 的 software template 用多步骤 YAML 一次生成整套骨架文件
 
 **依据**:Backstage scaffolder、Rails generator;审阅面沿用 Terraform plan 模式。
 
+**复用优先(关键子设计)**:分解需求时**先搜注册表,能复用不新建**
+(`system.skill.search` 已在助手可及的工具面上)。这是包思路真正的复利——
+**用户的新需求很可能大部分已经被现有 skill 拼出来了**,包越多,新需求需要
+新建的成员越少。它决定了助手的第一步动作:先搜,再决定建什么,而不是上来
+就生成一整套。分解提案里每个节点都应标注"新建 / 复用已有 `name@version`",
+每行可被用户拒绝。
+
 **优点**
 - 最贴用户的原始表述——"根据一个功能需求,用户需要的其实是一个 skill 库";
 - 把 Lab 的心智从"技能工坊"真正变成"功能工坊";
-- 让 §3.7 的模板痛点绕过去:模板保持扁平,组合性交给助手而不是模板引擎。
+- 让 §3.7 的模板痛点绕过去:模板保持扁平,组合性交给助手而不是模板引擎;
+- 复用优先让生态滚雪球,而不是每个功能都从零长一棵新树。
 
 **缺点**
 - 一次生成 6 个技能,人很可能一个都不细看——**必须配 plan 面板**,否则是负收益;
@@ -408,15 +511,31 @@ strict_refs=True(promote 复跑 / CLI --strict / 包级提交前)
 依据:Terraform 的 validate / plan / apply 三段严格性递增;IDE 里未解析的
 import 是 error 但带 quick fix。创作期的不完整是**过程状态**,不是缺陷。
 
+**修正:引用解析是三态,不是两态。** 上面的两档表述有一个陷阱——转发 `store=`
+之后,语义会反过来出错:根草稿引用兄弟草稿 `lab.child` 时,带 store 的 G2 会
+判 pass → promote 放行 → 生产写入了引用"尚未发布的 `lab.child`"的根技能 →
+**生产 registry 进入损坏态**(正是 v0.1 断点 1.1-C)。正确的判定要区分三态:
+
+| 引用解析结果 | 草稿期 `strict_refs=False` | 提交期 `strict_refs=True` |
+|---|---|---|
+| 生产已发布 | pass | pass |
+| **仅草稿存在** | pass(包内成员,创作常态) | **拒绝**:"这是包成员,请用包级提交" |
+| 查无此名 | warn + 修复提示 | fail:悬空引用 |
+
+**环(cycle)不参与两阶段**:它永远是 fail——它不是创作顺序的产物,任何时候
+都是错的。
+
 **同时必须修的三处**(否则两阶段严格性也救不了 §2.2):
 
-1. `gate.py:412` 的复跑加 `store=store`——**这是死锁的直接原因**;
-2. `lab_tools.py:173` 助手 validate 加 `store=`,否则助手与 UI 结论不一致;
+1. promote 复跑加 `store=store`——**这是死锁的直接原因**;
+2. 助手 `lab.draft.validate` 加 `store=`,否则助手与 UI 结论不一致;
 3. 复跑失败时的错误信息不能再说"报告已过期"——它撒谎。应当区分
-   "报告过期"(哈希不符)与"复跑出现新 fail"(哈希相符但判定变了)。
+   "报告不一致"(哈希不符)与"判定不一致"(哈希相符但判定变了)。
 
 修完之后,单稿 promote 的语义变成:**根草稿引用了未发布的兄弟草稿 → 明确
-拒绝,并指路"这是一个包,请用包级提交"**。这比现在的假"报告过期"诚实得多。
+拒绝,并指路"这是一个包,请用包级提交"**。这比假"报告过期"诚实得多。
+
+> **状态:已实现**(361e6dc)。实测输出见 §2.2 的关闭行。
 
 ### 6.3 提交计划(plan):把"审的就是要执行的"提升到包粒度
 
@@ -457,6 +576,18 @@ POST /api/lab/packages/promote { plan_id, warnings_ack }
 用户看到的东西(plan 面板)与服务端将要写入的东西,由 `package_hash` 绑定。
 这与升权卡片"展示的参数与注入子帧的参数是同一份 JSON"是同一条不变量。
 
+**plan 面板还应展示两项聚合信息(合并自 Kimi 稿的公理 1/2,§9)**——它们是包
+真正的"我要发布什么"的语义,而逐成员列表给不出:
+
+- **聚合 tier 与它的来源**:包档 = 闭包取 max,标题行给徽标,并注明**是谁把包
+  抬到了这一档**(点名那个成员)。一个 L1 的根因为一个 L3 子技能而整包变 L3,
+  用户必须在提交前看见这件事。
+- **闭包 tool 权限并集**:整个包会碰到的工具权限全集,整体展示、整体确认。
+
+两项的数据源都已存在(`derive_skill_tier` 已按白名单递归取 max,成员 manifest
+里就有 `permissions.tools`),是纯呈现,不新增机制。**状态:未实现**(P2 的
+plan 面板给了逐成员 action / gate 色点 / blockers,聚合两项待补)。
+
 ### 6.4 真正的原子性:先证后换,而不是先写后祈祷
 
 Q3 的解法。v0.1 说"全部成员一次落盘后统一 reload",但**如果 reload 失败,
@@ -484,6 +615,20 @@ Q3 的解法。v0.1 说"全部成员一次落盘后统一 reload",但**如果 re
 第 3 步是关键——它把 v0.1 的".bak 兜底"(事后补救)换成了"先证后换"(事前证明)。
 
 **同时解决 §2.4 的 `.bak` 失效问题**:一次事务只备份一次整文件。
+
+**「入口最后」不变量(合并自 Kimi 稿的「叶子先行」,§9)。** 拓扑序上根技能
+最后写入、叶子先写,这样**任何中断时刻生产都不含悬空引用**。这个洞察是对的,
+而且比 v0.1 的"写入顺序无关"更严谨。但实现上取一次性写入而非 N 次顺序 promote:
+
+| | N 次顺序 promote(叶子先行) | 一次性 staging + 加载验证 |
+|---|---|---|
+| 中断时生产是否损坏 | 否(叶子无悬空引用) | 否 |
+| 中断时是否留下中间态 | **是**——已发布的孤儿叶子 | 否,零中间态 |
+| reload 次数 | N 次 | 1 次 |
+| 装不起来能否事前发现 | 否,逐个试错 | 是,staging 全量加载 |
+
+所以「入口最后」作为**不变量**保留(候选全文合并时按拓扑序排列条目),
+执行取一次性写入——两者不冲突,后者严格更强。
 
 ### 6.5 版本与回滚
 
@@ -557,16 +702,143 @@ minor bumps";避免包提交把整个命名空间的版本号一起抬高,制造
   并给出理由(沿用现有置灰理由的 UX 约定);
 - **包体积提示**:编辑闭包 >8 成员或深度 >4 时的轻量提示,不硬拦。
 
+### 6.9 依赖变更的档位告警(**未实现**,P2.5)
+
+这一条来自 §3.10 GlassWorm,但**不需要任何 registry,今天就成立**——它是当前
+升权模型里一个真实的静默缺口。
+
+**缺口。** Agent OS 的推导档 = 闭包取 max。设 `X`(推导档 L1)依赖已发布的 `Y`。
+某天有人 promote 了新版 `Y`,而新版开始用 `system.file.delete`——于是 `X` 的
+推导档**静默变成 L3**。运行期的强制是对的(下次调 `X` 会拦人审),但:
+
+- `X` 的作者从头到尾没有被告知他的技能换了档;
+- 闸门只在有人主动点检查时才跑,不会因为上游变化而重跑;
+- 从 `X` 的角度看,它自己一个字节都没改。
+
+这与 GlassWorm 的机制同构:**信任是在依赖静止时建立的,而依赖会动**。差别只是
+Agent OS 里的"上游"目前是同一个人,所以是**误伤风险**而非攻击面;一旦将来有
+共享/分发,它就变成攻击面。
+
+**设计。** promote 任一技能时,服务端反查**谁依赖它**(反向闭包 = 遍历生产全量
+manifest 的 `permissions.skills`),计算这些下游技能在本次提交**前后**的:
+
+- 推导档(`derive_skill_tier`)差异;
+- tool 权限并集差异。
+
+有抬高时在确认行里列出「本次提交会抬高以下技能的档位:`X` L1 → L3(因为
+`Y` 新增了 `system.file.delete`)」,并要求显式确认。无变化时完全静默,不打扰。
+
+数据源全部已存在(`derive_skill_tier` + 生产 registry 的全量 manifest),
+**无新机制**,是一次反向遍历加一次差分。
+
+### 6.10 注册表分层与草稿身份(**已实现**,P1.5)
+
+**动机:同一语义曾有三处实现。** `OverlaySkillRegistry`(`draft_store.py`,完整
+协议面,解析序草稿 → extra → 生产)、`closure._Overlay`(`closure.py`,只有
+`get`,**且已与前者产生差异**——不处理 `extra` 槽)、`gate._SingleDraftStore`
+(把单个在编草稿伪装成 store)。P2 之后消费方还在增加。
+
+**方向:`DraftSkillRegistry` + `CompoundSkillRegistry`。** 前者把 `DraftStore`
+包成一个满足 `SkillRegistry` 协议的层;后者按**列表顺序**组合任意多层
+(`layers[0]` 优先),`extra` 槽退化为链上一个普通的静态 registry 而不再是特例
+参数。`visible_to` / `make_frame` / `manifests` 只实现一次、全部用 `self.get`
+表达——现有 overlay 已经是这个写法,照搬即可。
+
+**三条最容易在重构中丢掉的语义:**
+
+1. **不是纯 shadowing,是 try-and-continue。** 当前"草稿不合规时透明回落生产
+   同名"靠的是捕获 `SkillLoadError` 继续往下找。丢了这条,一个存了一半的草稿
+   会让整个 Lab 装配不起来——"半成品影子不遮蔽可用版本"这条性质就没了。
+2. **写入面不在协议里。** `reload()` / `path` 是 `write_production_entry` 用
+   duck-typing 摸的,`manifests()` 也是协议外的事实扩展。compound 必须显式指定
+   **哪一层可写**,否则会出现"promote 写进了草稿层"这类事故。
+3. **`make_frame` 按解析结果委托**,不是按方法委托——谁解析出这个 skill 就用
+   谁的帧构建。现在因为都共用 `local_file.build_child_frame` 看不出来。
+
+顺带修一个可读性陷阱:原构造签名是 `(production, store)`,而解析是**草稿
+优先**——参数顺序与解析顺序相反。用 `layers` 列表后,**顺序即优先级**。
+
+> **落地**(`skills/compound.py` 新增):`CompoundSkillRegistry(layers, *,
+> writable, names)` + `StaticSkillRegistry`(`extra` 槽退化成的普通层)+
+> `DraftSkillRegistry`(`draft_store.py`,把 DraftStore 包成一层)。
+> `OverlaySkillRegistry` 保留原构造签名,内部变成一个三层实例
+> (draft / extra / production,`writable=2`),既有调用点零改动;
+> `closure._Overlay` 已删除,推导档的 skills 视图改用两层组合。
+> `resolve(ref) -> (Skill, layer_index)` 与 `layer_name(i)` 提供层来源。
+> `gate._SingleDraftStore` 无需改动即可作为 `DraftSkillRegistry` 的底层
+> ——后者只要求 `load_skill`,这正是"三处收敛为一处"的兑现。
+>
+> 三条语义有回归锁(`tests/skills/test_compound.py`,7 例):顺序即优先级 +
+> 层来源、try-and-continue(坏层/缺层两种 MISS 都继续往后)、写入面只走
+> 显式可写层(未指定 `writable` 时 `path`/`reload()` 报错)。
+> 重构前后全仓基线一致(837 passed),新增 7 例后 **844 passed**。
+
+#### 为什么草稿**不**加 `dev.temp.draft.*` 前缀
+
+曾提出的另一个方案是给所有草稿强制命名空间前缀。**不采纳**,三条理由:
+
+1. **它制造"发布时改名"。** 草稿叫 `dev.temp.draft.ops.plan.write`、发布后叫
+   `ops.plan.write`,那么兄弟草稿的 `permissions.skills` 该写哪个?写带前缀的,
+   promote 时必须重写所有引用方;写不带前缀的,试跑期草稿之间解析不到对方。
+   **这正是 §3.8 ComfyUI「命名不一致导致自动解析失败」教训的翻版**——那是
+   本文调研里唯一一条"我们已经安全"的结论,加前缀等于主动把它作废。
+2. **推导档会失真。** `derive_skill_tier` 沿 `permissions.skills` 递归取 max。
+   草稿名 ≠ 生产名 → 闭包不同 → **Lab 里算出来的档不等于上生产后的档**,
+   而 G3 的全部意义就是"Lab 和生产是同一个档函数"。
+3. **与 NAMING.md 的轴冲突。** 第一段是**能力域**(`system`/`common`/`external`/
+   `project`/`user`),回答"这是什么种类的能力";`dev.temp.draft` 回答的是
+   "它处在什么生命周期阶段"。两个正交的轴不该塞进同一个命名空间——一个 skill
+   从草稿变成生产,它的**种类**并没有变。
+
+**前缀真正想要的东西,用更小的解法。** 底下的合理诉求是:**现在从 trace 看不出
+这个 run 用没用草稿**。解法是标记 **run**(给 Lab 试跑的 run 打 lab 标记)+
+让 compound 的解析结果带层来源(`resolve(ref) -> (Skill, layer)`),
+而不是重命名 **skill**。
+
+`compute_closure` 已经把这件事做对了:成员表里 `status`
+(`draft`/`production`/`external`/`missing`)与 `name` 是**分开的两个字段**——
+身份归身份,层归层。前缀是把层信息硬编码进身份,同一个信息放错了地方。
+
+想标"实验性"的作者可以用 NAMING.md 里已有的 `user.*` 域,作者自愿选,
+系统不强制、不改名。
+
+### 6.11 草稿层的持久性(**已知缺口**,只记录不改行为)
+
+草稿的存放现状:`drafts_root` 缺省 `<artifacts>/drafts`,即 `.agent-os/drafts`,
+而 `.gitignore` 忽略整个 `.agent-os/` → **草稿不进版本控制、无历史**。回滚面
+只有一层 `.bak`(连续两次保存丢失更早版本);`delete()` 直接 `shutil.rmtree`
+整个目录,**连 `.bak` 一起删**。
+
+但 `draft_store.py` 的 `delete()` 注释写的是"不做回收站——git/.bak 是回滚面"
+——**缺省配置下 git 并不是回滚面,注释与事实矛盾**。
+
+**对包的含义(这是为什么它值得单列)**:promote 之前,包的**全部 N 个成员**
+都只活在这个无历史的目录里。单技能时风险是一份,包化之后是 N 份,而且成员
+之间还有引用关系——丢一个成员,整个闭包就断了。另外 §6.4 的事务若打算用
+"失败就回到草稿态"兜底,这个前提比看上去脆。
+
+**本文不给出行为改动**:把 `drafts_root` 指向一个进 git 的路径是**配置层的
+决定**,不该由设计文档替用户定。记录在此作为待决问题;若要动,优先级最高的
+一条是让 `delete()` 不要连 `.bak` 一起删。
+
 ---
 
 ## 7. 分期、验收与测试
 
-| 期 | 内容 | 关闭 |
-|---|---|---|
-| **P1'**(修正) | ① 修 `gate.py:412` / `lab_tools.py:173` 漏传 `store=`;② 复跑失败错误信息区分"过期"与"新 fail";③ 编辑闭包语义(只经草稿下传)+ `mode` 参数;④ 两阶段严格性 `strict_refs` | §2.2 死锁、§2.3 边界、Q1、Q2 |
-| **P2**(升为必需) | plan 端点 + `package_hash` + 先证后换事务 + 整文件单 `.bak` + `previous_entries` + 包级 promotions | Q3、Q4、§2.4 |
-| **P3** | 包视图 + 提交计划面板 + 悬空一键成稿;助手 `lab.draft.create`/`lab.pkg.closure` + 三条围栏 + 包级 prompt;功能包模板(方案 D 入口) | Q7、v0.1 断点 1.1-A |
-| **P4** | `package:` 身份段(方案 B)+ 目录形态 set 落盘 + 包级 G4 覆盖率 + 回滚 UI | Q5、Q6 |
+| 期 | 内容 | 关闭 | 状态 |
+|---|---|---|---|
+| **P1** | `compute_closure` + closure API + 包视图 + G2 引用完整性 | v0.1 断点 1.1-B | ✅ 9129e72 |
+| **P1'**(修正) | ① 修 promote 复跑 / 助手 validate 漏传 `store=`;② 复跑失败错误信息区分"报告不一致"与"判定不一致";③ 编辑闭包语义(只经草稿下传)+ `mode` 参数;④ 两阶段严格性 `strict_refs` | §2.2 死锁、§2.3 边界、Q1、Q2 | ✅ 361e6dc |
+| **P2**(升为必需) | plan 端点 + `package_hash` + 先证后换事务 + 整文件单 `.bak` + 包级 promotions | Q3、Q4、§2.4 | ✅ 361e6dc |
+| **P3** | 提交计划面板 + 悬空一键成稿;助手 `lab.draft.create`/`lab.pkg.closure` + 信任四围栏 + 包级 prompt | Q7、v0.1 断点 1.1-A | ✅ 08438c2 |
+| **P4** | 目录形态 set 落盘 + Skills 树包徽标 + 功能包模板两件(方案 D 入口) | 断点打磨 | ✅ 6ce01ed |
+| **P1.5** | `DraftSkillRegistry` + `CompoundSkillRegistry`(§6.10)——纯重构,消掉 `closure._Overlay` 重复;`resolve()` 带层来源 | §6.10 三处重复 | ✅ 本次(844 passed) |
+| **P2.5** | 依赖变更档位告警(§6.9):反向闭包 + 档位/权限并集差分 + 确认行 | §3.10 静默抬档 | ⬜ 未实现 |
+| **P5** | plan 面板聚合两项(§6.3 尾:聚合 tier 来源 + tool 权限并集);`package:` 身份段与多入口(方案 B / Q5);包级 G4 覆盖率(Q6) | Q5、Q6 | ⬜ 未实现 |
+
+> **口径说明**:P1-P4 的实际落地顺序与本表初稿略有出入(包视图在 P1 就落了,
+> `package:` 身份段与 G4 覆盖率则推迟到 P5)。表中已按**实际 commit** 校正,
+> 不保留初稿排期——排期是手段,不是记录。
 
 **验收要点(每条都应有测试)**
 
@@ -602,6 +874,62 @@ minor bumps";避免包提交把整个命名空间的版本号一起抬高,制造
    保持扁平、少而具体;组合性交给助手。
 6. **不做 `package.yaml` 成员清单**(与 v0.1 一致)。方案 B 声明的只有身份
    (title/summary/entries),成员永远推导。
+7. **不给草稿加命名空间前缀**(§6.10)。分层解析已经解决撞名,前缀反而取消了
+   分层的核心能力(遮蔽),并制造"发布时改名"。
+
+---
+
+## 9. 与并行稿「Skill Pack 设计方案」的对照裁决
+
+另有一份并行设计稿(Kimi Code,方案 A 声明式技能包 / B 需求驱动脚手架 /
+C 完整包管理),参照系为 Anthropic Agent Skills、ComfyUI Manager、
+VS Code Extension Pack、扣子 & Dify、GlassWorm。两稿在最重要的地方**独立收敛**
+——闭包是交付单位、缺失依赖要"检测 + 一键补齐"、提交必须是事务。本节固化
+差异处的裁决,避免后续反复。
+
+### 9.1 已采纳(并入本文)
+
+| 来自并行稿 | 并入位置 |
+|---|---|
+| 包权限 = 闭包 tool 权限并集,提交前整体展示;聚合 tier 要点名"是谁抬高的" | §6.3 尾 |
+| 传递依赖静默变化是高危事件(GlassWorm)→ 依赖变更档位告警 | §3.10 + §6.9 |
+| 复用优先:分解需求时先搜注册表,能复用不新建 | §4 方案 D |
+| 「叶子先行」拓扑序 → 提炼为「入口最后」不变量 | §6.4 |
+| ComfyUI「检测缺失 → 一键补齐」 | §3.8(与 v0.1 悬空一键成稿是同一交互的独立发现) |
+| 官方模板是生态早期的质量杠杆(扣子) | §3.7 |
+
+其中 **§6.9 是本次合并最重要的增量**:它指出的缺口在当前代码里真实存在,
+而且不需要任何新基础设施就能修。
+
+### 9.2 未采纳(附理由)
+
+1. **`depends_on` 与 `permissions.skills` 解耦**(构建期图 vs 运行时授权)。
+   在别的系统里"允许调用"确实宽于"依赖",拆开有意义;但 Agent OS 的
+   `visible_to` 是**直接从 `permissions.skills` 生成伪工具 schema** 的,白名单外
+   的技能物理上调不到。两者是同一个集合,拆成两份清单只会制造必须手工对齐的
+   腐烂面——正是包设计要消灭的东西。
+2. **版本 `range` 约束**。白皮书第 02 章明确记载:版本约束求解是设计承诺、
+   代码不做,基线单版本、依赖只查存在。加 range 不是包特性,是一次独立的架构
+   变更,不该搭包的车(与 §8 第 2 条同)。
+3. **包清单里的 `members` 列表**。成员推导不腐烂,清单会。但**保留 `entry`**
+   ——它正是本文方案 B 的 `package.entries`,解决多入口(Q5),列入 P5。
+4. **新增 G6 关**。引用完整性 P1 已落在 G2;权限并集与 tier 抬升属 G3 语义。
+   不为同一批判定新开一关。
+5. **完整包管理(方案 C:registry + lockfile + 更新中心)**。单用户/早期阶段
+   过度设计,且有运营成分(审核、精选)。但其中**"依赖树 diff 必须重新确认"**
+   一条已被提取为 §6.9,不必等 registry。
+
+### 9.3 事实更正(并行稿成稿时比代码旧一个 commit)
+
+- **"跨 skill 检查五关都不查"**——P1(9129e72)已把依赖存在性与循环检测放进 G2。
+- **"试跑只跑表面 skill,跑挂了才知道依赖没就位"**——不成立。
+  `OverlaySkillRegistry.get` 解析序为草稿 → extra → 生产,且被换进
+  `kernel.skills` / `context._skills` / `tools._skills` 三个引用点,子技能草稿
+  正常解析、正常压帧。**试跑一直是闭包级的**——v0.1 自己就把这条列为"系统早已
+  按包工作"的第三个证据。
+- **"依赖 tier 比表面 skill 高,五关不查"**——G3 本来就按白名单递归取 max 推导档。
+  真正成立的点是**没有把权限并集和"谁抬高了 tier"展示出来**,那是呈现缺口
+  不是检查缺口(已并入 §6.3)。
 
 ---
 
@@ -617,3 +945,7 @@ minor bumps";避免包提交把整个命名空间的版本号一起抬高,制造
 - changesets(变更聚合与依赖 bump):[Changesets docs](https://changesets-docs.vercel.app/)、[Monorepo version management with changesets](https://blog.alec.coffee/monorepo-version-management-with-the-changesets-npm-package)
 - 工作区 vs 包:[Workspaces and Monorepos in Package Managers](https://nesbitt.io/2026/01/18/workspaces-and-monorepos-in-package-managers.html)、[VS Code multi-root workspaces for monorepos](https://medium.com/rewrite-tech/visual-studio-code-tips-for-monorepo-development-with-multi-root-workspaces-and-extension-6b69420ecd12)
 - Backstage scaffolder 与模板组合性:[Writing Templates](https://backstage.io/docs/features/software-templates/writing-templates/)、[Feature: scaffolder template composability #15241](https://github.com/backstage/backstage/issues/15241)
+- ComfyUI Manager(缺失依赖一键补齐 / 命名不一致 / registry 通道):[ComfyUI 官方文档](https://docs.comfy.org/)、[ComfyUI-Manager](https://github.com/ltdrdata/ComfyUI-Manager)
+- Anthropic Agent Skills(SKILL.md、渐进披露、allowed-tools、运行时组合):[skills/README — anthropics/skills](https://github.com/anthropics/skills/blob/main/README.md)、[Agent Skills 工程博客](https://www.anthropic.com/engineering)
+- GlassWorm 供应链攻击(传递依赖静默变更):[GlassWorm Supply-Chain Attack Abuses 72 Open VSX Extensions](https://thehackernews.com/2026/03/glassworm-supply-chain-attack-abuses-72.html)、[GlassWorm: The First Self-Propagating VS Code Extension Worm — Veracode](https://www.veracode.com/blog/glassworm-vs-code-extension/)、[Inside CrowdStrike's Takedown of a Developer-Targeting Botnet](https://www.crowdstrike.com/en-us/blog/inside-crowdstrike-takedown-of-a-developer-targeting-botnet/)
+- 扣子(Coze)/ Dify(模板即闭包、一键复制、官方模板作为质量杠杆):平台模板商店与生态对比资料

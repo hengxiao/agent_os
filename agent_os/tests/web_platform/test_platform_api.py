@@ -110,6 +110,14 @@ def test_cards_action_whitelist_and_scaffold(client):
     assert client.get("/api/lab/drafts/lab.dinner").status_code == 200
     assert client.get("/api/lab/drafts/lab.dinner").json()["manifest"]["name"] == "lab.dinner"
 
+    # 重复批准同名:FileExistsError → 409 友好信息,不允许 500(用户实测回归)
+    r = client.post(
+        "/platform/api/cards/action",
+        json={"action_id": "scaffold.approve", "payload": {"name": "lab.dinner", "template": "prompt_query"}},
+    )
+    assert r.status_code == 409, r.text
+    assert "同名草稿已存在" in r.json()["detail"]
+
 
 def test_cards_action_unwired_and_rewind(client):
     """未接线 action(plan.recheck 已接线)400 给明确信息;rewind 转发到既有版本面。"""

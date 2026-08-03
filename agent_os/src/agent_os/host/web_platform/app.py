@@ -127,6 +127,9 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
                     new_message("agent", text=result["text"], cards=result.get("cards") or []),
                 )
             return result
+        except FileExistsError as e:
+            # 草稿重名(重复批准/历史残留):友好 409,不 500(读屏层是人话,详情给原文)
+            raise HTTPException(status_code=409, detail=f"同名草稿已存在:{e}") from e
         except GateError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:

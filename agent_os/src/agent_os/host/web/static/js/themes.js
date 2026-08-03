@@ -195,8 +195,12 @@ function syncThemeUrl() {
 
 function themeFromUrl() {
   if (typeof location === "undefined") return null;
-  const qs = (location.hash || "").replace(/^#/, "").split("?")[1];
-  const id = new URLSearchParams(qs ?? "").get("theme");
+  // 两种携带形态都受理:#/lab?theme=moe(hash 内,主形态)与 /?theme=moe#...
+  // (hash 外;UX 评审第三轮实测 ?theme=classic 不生效即后者被忽略所致)
+  const hashQs = (location.hash || "").replace(/^#/, "").split("?")[1];
+  const id =
+    new URLSearchParams(hashQs ?? "").get("theme") ??
+    new URLSearchParams(location.search ?? "").get("theme");
   return id && THEMES.has(id) ? id : null;
 }
 

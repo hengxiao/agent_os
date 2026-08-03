@@ -1,6 +1,7 @@
 # App 化 UI 模型(App-Model UI)技术文档
 
-> 版本:v0.2(设计;按独立评审修订——三态 exec、state 服务端权威、安全论断重写)
+> 版本:v0.3(§13 Shell as App:整个界面也是 app;v0.2 按独立评审修订——
+>   三态 exec、state 服务端权威、安全论断重写,见 §12)
 > 对象:web_platform 的下一代 UI 架构——把 UI 看作一个操作系统,
 >   对话 app 只是它的终端(PowerShell/cmd),世界改变动作经受仲裁的通道。
 > v0.2 修订(评审驱动,逐条见 §12):

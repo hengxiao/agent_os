@@ -342,3 +342,56 @@ v0.1 说"action = skill 调用 → 内核仲裁自动覆盖 UI 全部副作用,U
 schema 加 exec 字段(skill 键映射为 exec:{mode:"endpoint", ref}),
 args_input 通道分离,授权测试补齐;行为零变化(现有测试应全绿)。
 M3 的三个 kind 直接按 exec 模型注册。
+
+## 13. Shell as App:递归到顶(v0.3)
+
+**问题**:widget 套 widget,最外面那层(整个操作系统的界面)是不是一个
+超级大 widget?它的操作(开 tab、关 tab、切主题、建会话)是不是也
+应该用 action 定义?
+
+**回答:是。** Shell 是 kind 为 `shell` 的根 app——唯一的特例是它由
+bootstrap 实例化,不由任何 action 孵化(递归有底,没有壳的壳)。
+
+### 13.1 shell app 的定义
+
+- **state**:{tabs: [{instance_id, kind, title}], active_tab, theme,
+  sessions, layout};持久化(重启恢复窗口布局,不是只恢复数据);
+- **surfaces**:Card Surface = 任务栏/状态条(它嵌在何处?——若 shell 被
+  嵌入,见 §13.3);Tab Surface = 整个屏幕(左 tab 条 + 主区);
+- **actions**(同样走 exec 三态与 args_input 纪律):
+  | action | exec | 说明 |
+  |---|---|---|
+  | `shell.tab.open` | local(登记) | 开 tab 或聚焦(kind+ref 去重) |
+  | `shell.tab.focus` / `shell.tab.close` | local | 焦点/关闭(关闭≠销毁) |
+  | `shell.theme.set` | endpoint | 切主题(持久化偏好) |
+  | `shell.session.create` | endpoint | 新会话(app 孵化) |
+  | `shell.layout.set` | local | 布局(图标列/宽度) |
+
+### 13.2 收益:UI 成为 agent 可寻址的
+
+shell 的操作一旦是 action,**agent 就能操作用户的界面**——这是"UI 操作
+系统"这句话的完整含义:
+
+- 助手说"我帮你打开调试 tab" → 它调 `shell.tab.open(debug)`(经管道,
+  用户可见、可撤销)——界面协作从"替你做"扩展到"替你摆好";
+- 测试可以像测业务一样测窗口管理(开/关/聚焦的授权与去重);
+- shell 的 manifest 与用户 app 同一份协议校验——**没有特例代码路径**。
+
+### 13.3 边界(诚实)
+
+- **递归有底**:shell 由 bootstrap 实例化;它的初始 state 来自本地启动
+  (服务端镜像随后建立);不存在"创建 shell 的 action";
+- **不是每个像素都是 action**:渲染是渲染,action 只覆盖**改变世界/改变
+  状态**的离散操作;键盘输入、滚动、hover 不进管道(性能与语义都不该);
+- **嵌入壳中壳(§13.1 Card Surface 的存在意义)**:shell 的卡面允许
+  整个环境被嵌进另一宿主(如把调试环境嵌进一张卡里)——这是可能性
+  声明,v0.3 不实现;
+- **agent 的 shell 权限要收口**:agent(非人)可调的 shell action 是
+  子集(open/focus/reopen 类"摆台"动作),destroy/publish 类永远只对人
+  ——沿用升权哲学:界面动作也有档位,高档只对人开放。
+
+### 13.4 对分期的影响
+
+- M4 不变(引擎与接入先行);**M5 = shell app 化**:state/布局持久化、
+  shell actions 进 manifest 与管道、agent 可寻址子集、窗口布局重启恢复;
+- 测试加一条:shell manifest 与普通 manifest 过同一协议校验(无特例)。

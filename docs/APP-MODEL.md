@@ -462,9 +462,12 @@ shell 的操作一旦是 action,**agent 就能操作用户的界面**——这�
 ## 15. Drag & Drop:drop 是目标 widget 的 action(v0.3 增补)
 
 **原则**:拖拽是手势,**drop 是被拖入方(drop target)manifest 里的一个
-标准 action**——每个 widget 可拖,每个 widget 可声明自己接受什么 drop;
-**输入全系统统一**,兼容性由 schema 保障,不由组件间约定。drop 的背后
-也是一次 exec 调用(local/endpoint/run,按动作语义归态)。
+标准 action**。职责一刀两断:**被 drag 的 widget 只负责提供标准化数据
+(§15.1 envelope,产出即义务,不关心谁接收);被 drop to 的 widget 负责
+接收与处理(声明 accept、执行 drop action,不关心数据怎么被拖来)**——
+每个 widget 可拖,每个 widget 可声明自己接受什么 drop;输入全系统统一,
+兼容性由 schema 保障,不由组件间约定。drop 的背后也是一次 exec 调用
+(local/endpoint/run,按动作语义归态)。
 
 ### 15.1 标准化输入(envelope)
 

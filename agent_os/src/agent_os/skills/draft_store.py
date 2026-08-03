@@ -25,15 +25,12 @@ import yaml
 
 from agent_os.api.v1 import (
     Skill,
-    SkillCall,
-    SkillFrame,
     SkillManifest,
     SkillRef,
-    SkillSchema,
 )
 from agent_os.kernel.errors import SkillLoadError
+from agent_os.skills.compound import CompoundSkillRegistry, StaticSkillRegistry
 from agent_os.skills.loader import materialize
-from agent_os.skills.local_file import build_child_frame
 from agent_os.skills.manifest import parse_manifest
 
 #: 草稿名合法面(docs/NAMING.md §2):≥2 段点分,段内小写 snake_case——
@@ -363,7 +360,34 @@ class DraftStore:
         return materialize(manifest)
 
 
-class OverlaySkillRegistry:
+class DraftSkillRegistry:
+    """草稿层的 registry 面(docs/SKILL-PACKAGES-V2.md §6.10;P1.5)。
+
+    把 :class:`DraftStore` 包成"一层":只负责 ``get`` 与 ``manifests``,
+    组合与协议面(visible_to/make_frame)由 :class:`CompoundSkillRegistry`
+    统一提供。``store`` 只需满足 ``load_skill(name)``——``gate._SingleDraftStore``
+    这类单草稿适配器因此可以直接当一层用,不必再自带解析逻辑。
+    """
+
+    def __init__(self, store: Any) -> None:
+        self._store = store
+
+    def get(self, ref: SkillRef) -> Skill:
+        return self._store.load_skill(ref.name)
+
+    def manifests(self) -> list[SkillManifest]:
+        """可解析的草稿清单(不合规草稿不进清单,半成品不遮蔽生产)。"""
+        listing = getattr(self._store, "list", None)
+        if listing is None:
+            return []  # 单草稿适配器无清单面
+        out: list[SkillManifest] = []
+        for row in listing():
+            if _loadable(self._store, row["name"]):
+                out.append(self._store.load_skill(row["name"]).manifest)
+        return out
+
+
+class OverlaySkillRegistry(CompoundSkillRegistry):
     """生产 registry + 草稿层,**草稿优先**(docs/SKILL-DEV.md §1.1)。
 
     L1 服务推导档;L3 起补齐 SkillRegistry 协议面(get/visible_to/make_frame/
@@ -372,60 +396,22 @@ class OverlaySkillRegistry:
     可用版本。只读装配面:loader 的热重载/写入仍属生产 registry。
     ``extra``(L4):额外注入的 Skill 对象(如 skill.dev.assistant meta-skill),
     解析序 = 草稿 → extra → 生产。
+
+    P1.5 起本类是 :class:`CompoundSkillRegistry` 的一个**三层实例**(草稿 /
+    extra / 生产),不再自带解析逻辑——构造签名保持不变以兼容既有调用点。
     """
 
     def __init__(
         self,
         production: Any,
-        store: DraftStore,
+        store: Any,
         extra: dict[str, Skill] | None = None,
     ) -> None:
-        self._production = production
-        self._store = store
-        self._extra = extra or {}
-
-    def get(self, ref: SkillRef) -> Skill:
-        try:
-            return self._store.load_skill(ref.name)
-        except (FileNotFoundError, SkillLoadError, ValueError):
-            pass
-        if ref.name in self._extra:
-            return self._extra[ref.name]
-        return self._production.get(ref)
-
-    def visible_to(self, frame: Any) -> list[SkillSchema]:
-        """帧白名单内子技能的伪工具 schema(同 local_file 先例;目标查找走草稿优先)。"""
-        caller = self.get(frame.skill)
-        schemas: list[SkillSchema] = []
-        for name in caller.manifest.permissions.skills:
-            try:
-                target = self.get(SkillRef(name=name))
-            except SkillLoadError:
-                continue  # 引用存在性由闸门判;此处防御性跳过(与 visible_to 同姿势)
-            schemas.append(
-                SkillSchema(
-                    name=f"skill.{name}",
-                    description=target.manifest.description,
-                    parameters=target.manifest.inputs,
-                )
-            )
-        return schemas
-
-    def make_frame(self, call: SkillCall, parent: SkillFrame) -> SkillFrame:
-        """压帧(草稿优先解析目标);构建走与生产同一函数(§2.4 所见即所得)。"""
-        target = self.get(SkillRef(name=call.name))
-        return build_child_frame(target, call, parent)
-
-    def manifests(self) -> list[SkillManifest]:
-        """生产清单 + 草稿清单 + extra(同名草稿覆盖;不合规草稿不进清单)。"""
-        merged = {m.name: m for m in self._production.manifests()}
-        for row in self._store.list():
-            if _loadable(self._store, row["name"]):
-                merged[row["name"]] = self._store.load_skill(row["name"]).manifest
-        for name, skill in self._extra.items():
-            merged.setdefault(name, skill.manifest)
-        ordered = [merged.pop(m.name) for m in self._production.manifests() if m.name in merged]
-        return ordered + list(merged.values())  # 生产拓扑序在前,草稿新增附后
+        super().__init__(
+            [DraftSkillRegistry(store), StaticSkillRegistry(extra), production],
+            writable=2,  # 生产层是唯一可写层(防 promote 写进草稿层)
+            names=["draft", "extra", "production"],
+        )
 
 
 def _loadable(store: DraftStore, name: str) -> bool:

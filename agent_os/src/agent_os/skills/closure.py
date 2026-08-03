@@ -24,6 +24,8 @@ from typing import Any
 
 from agent_os.api.v1 import SkillRef, derive_skill_tier
 from agent_os.kernel.errors import SkillLoadError
+from agent_os.skills.compound import CompoundSkillRegistry
+from agent_os.skills.draft_store import DraftSkillRegistry
 
 
 def compute_closure(
@@ -51,6 +53,11 @@ def compute_closure(
     if mode not in ("edit", "runtime"):
         raise ValueError(f"mode 应为 'edit' | 'runtime',得到: {mode!r}")
     root_seg = root_name.split(".")[0]
+    # 推导档的 skills 视图 = 草稿优先的两层组合(P1.5:与装配层同一份解析语义,
+    # 不再自带一个只有 get 的私有 overlay,docs/SKILL-PACKAGES-V2.md §6.10)
+    tier_skills = CompoundSkillRegistry(
+        [DraftSkillRegistry(drafts), production], names=["draft", "production"]
+    )
 
     def resolve(name: str) -> tuple[str, Any]:
         """四态解析(草稿 → 生产同空间 → 生产跨空间 → 悬空)。"""
@@ -94,7 +101,7 @@ def compute_closure(
             return  # 菱形合并(先达者持有 ref_by)
         status, manifest = resolve(name)
         tier = (
-            derive_skill_tier(manifest, tools, _Overlay(drafts, production))
+            derive_skill_tier(manifest, tools, tier_skills)
             if manifest is not None
             else None
         )
@@ -134,18 +141,3 @@ def compute_closure(
     }
 
 
-class _Overlay:
-    """闭包内推导档的 skills 视图(草稿优先;与 OverlaySkillRegistry 同语义,
-
-    但闭包计算只需要 ``get`` ——不引入装配层的完整协议面。
-    """
-
-    def __init__(self, drafts: Any, production: Any) -> None:
-        self._drafts = drafts
-        self._production = production
-
-    def get(self, ref: SkillRef) -> Any:
-        try:
-            return self._drafts.load_skill(ref.name)
-        except (FileNotFoundError, SkillLoadError, ValueError):
-            return self._production.get(ref)

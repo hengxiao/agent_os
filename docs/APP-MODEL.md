@@ -458,3 +458,39 @@ shell 的操作一旦是 action,**agent 就能操作用户的界面**——这�
 
 **对分期的影响**:与 M5 同批(shell app 化时 registry 随 state 落地);
 §13.2 的"agent 可寻址"由此从 app 粒度细化到 widget 粒度。
+
+## 15. Drag & Drop 标准化(v0.3 增补)
+
+**原则**:拖拽是手势,**落点才是动作**——每个 widget 可拖、每个容器
+声明接受什么,落点统一走 action 管道(不允许组件私有 DnD 逻辑)。
+
+### 15.1 协议
+
+- **拖拽载荷 = §14 的 widget 路径**:`dragstart` 时
+  `dataTransfer.setData("application/x-agent-os-widget", path)`——
+  拖的不是 DOM 节点,是可解析的地址(配合 §14 registry,语义随路径走);
+- **可拖声明**:Surface 渲染可拖 widget 时标 `data-drag-path`(与注册
+  一致);无声明不可拖(防任意元素被拖出);
+- **落点区(drop zone)**:容器声明 `data-drop-accept`(逗号分隔的
+  kind 前缀,如 `skill_pack,run`)与落点动作;`dragover` 只做高亮,
+  `drop` 时解析路径 → 校验 kind → **走 action 管道**(多为
+  exec: local 的 shell 动作)。
+
+### 15.2 v1 两个标准落点
+
+| 手势 | 落点动作 | exec |
+|---|---|---|
+| tab 条内拖拽重排 | `shell.layout.move_tab`(布局持久化,M5 随 shell state 落) | local |
+| 卡面从对话拖到 tab 条 | `shell.tab.open`(spawn/聚焦,等价点"打开") | local(登记) |
+
+后续候选(用时再加,不预留):卡拖到"最近关闭"重开、run 卡拖到
+debug tab 附加会话、widget 拖出成游离窗(§11 不做的分屏前提)。
+
+### 15.3 纪律
+
+- 落点动作**必须**走管道(exec 归态/args_input 校验),组件不直接改
+  state——拖拽只是另一种点击;
+- 非法落点(kind 不符)无反馈态(不高亮不接收),不静默吞;
+- 触屏降级:tab 重排提供长按菜单备选(拖拽不是唯一通道,a11y);
+- 测试:载荷路径正确、kind 校验、重排持久化、卡→tab 条=open 动作
+  同源(与点击"打开"同一管道断言)、非法落点不接收。

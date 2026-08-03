@@ -244,7 +244,15 @@ L2 时 promote 只支持单文件 skills.yaml(多文件归并报错留 L5)。包
 > 3. 版本比较内容面含 prompt(_manifest_to_dict 不含指令体,手动并入);
 > 4. plan 存 `drafts_root/_plans/`(根可能是生产技能,不一定有自己的草稿目录);
 > 5. G4 按成员各自的入口冒烟(smoke_runner 是 fn(name, draft) 工厂)。
-| P3 | 助手包级化(create/closure 工具 + prompt)+ 功能包模板两件 | 1.1-A |
+| P3 ✅ | 助手包级化(create/closure 工具 + prompt)+ 功能包模板两件 | 1.1-A。已实现:`lab.draft.create`(命名空间围栏 + 每 run 配额)+ `lab.pkg.closure`(包树读取)、`lab.draft.write` 编辑闭包围栏、assistant prompt 包视角化(先读包树 → 拆或改 → 引用只指包内/已发布 → 草稿期 validate)、前端改稿后草稿下拉与包面板即时刷新;833 Python + 24 前端测试全绿。功能包模板两件留后续(与 §3.2 新建流程一起) |
+
+> 实现注(P3,信任边界按 docs/SKILL-PACKAGES-V2.md §6.7 四条落实):
+> 1. 仍然没有 promote/delete——"能改不能发"扩展为"能改能建,不能发不能删";
+> 2. `lab.draft.create` 命名空间围栏 = 当前包根的第一段前缀(注册时注入
+>    `package_root`;嵌入方不注册则无围栏);
+> 3. `lab.draft.write` 编辑闭包围栏 = 只能写当前包 edit 闭包内的 draft 成员;
+> 4. 助手 validate 仍然只读不落盘(助手报告不能当 promote 依据);
+> 5. 创建配额每 run ≤5(防注入灌爆 drafts 目录)。
 | P4 | 目录形态 set 落盘 + Skills 树包徽标 + G4 包级报告分组呈现 | 打磨 |
 
 依赖:P1 是所有后续的数据源;P2 依赖 P1 的成员清单;P3 依赖 P1/P2;

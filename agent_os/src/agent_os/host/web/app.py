@@ -1062,6 +1062,9 @@ def create_app(
                 production=manager.shared_skills_registry(),
                 tools_registry=manager.shared_tools_registry(),
                 kernel_factory=lambda: manager.assemble_lab_kernel(_lab_overlay()),
+                # P3 信任边界(docs/SKILL-PACKAGES-V2.md §6.7):围栏以当前包根为界——
+                # create 只能建在同名空间内,write 只能写包编辑闭包内成员
+                package_root=body.draft,
             )
 
         try:

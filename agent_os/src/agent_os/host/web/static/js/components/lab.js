@@ -770,6 +770,9 @@ async function _refreshAfterAgent() {
   // P1:助手可能改了白名单(引用面变了)→ 包闭包同步刷新
   lab.pkg = await getJson(`/api/lab/drafts/${encodeURIComponent(lab.form.name)}/closure`)
     .catch(() => lab.pkg);
+  // P3:助手可能 lab.draft.create 了新成员 → 草稿下拉同步刷新
+  await _loadDrafts();
+  _renderTop();
   _renderEditor();
   _renderPkg();
   _renderTestPanel();

@@ -15,6 +15,8 @@
 <link rel="stylesheet" href="/static/css/themes/pixel.css">
 </head>
 <body data-route="runs">
+<!-- 跳过导航(docs/WEB-A11Y.md §4 P1-6;WCAG 2.4.1)——必须是 body 的第一个可聚焦元素 -->
+<a class="skip-link" href="#main">跳到主内容</a>
 <header class="app-topbar">
   <div class="brand"><span class="brand-mark" aria-hidden="true">▎</span>Agent OS</div>
   <nav class="topnav" aria-label="主导航">
@@ -66,7 +68,9 @@
     </div>
     <div class="run-list" id="runList" role="listbox" aria-label="Run 列表"></div>
   </aside>
-  <main class="app-main" id="main"></main>
+  <!-- tabindex="-1":skip-link 的落点必须可编程聚焦,否则焦点不会真的进来
+       (只滚动、不移焦是 skip link 最常见的失效方式);-1 不进 Tab 序列 -->
+  <main class="app-main" id="main" tabindex="-1"></main>
 </div>
 <div class="toast-stack" id="toastStack" aria-live="polite"></div>
 <script type="module" src="/static/js/app.js"></script>

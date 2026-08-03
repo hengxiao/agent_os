@@ -29,6 +29,8 @@
   --danger:  #b83747;
   --aborted: #7650b8;
   --live:    #c2245c;
+  /* 焦点环(docs/WEB-A11Y.md §5.2;契约 token,须对 --bg-0..3 均 ≥3:1) */
+  --focus-ring: #c2245c;
 
   /* 语义:信号类型(与语义色同锚点) */
   --sig-llm:      #3a63c8;
@@ -136,7 +138,6 @@
 [data-theme="moe"] .input:focus {
   border-color: var(--moe-primary);
   box-shadow: 0 0 12px var(--moe-primary-glow);
-  outline: none;
 }
 
 /* 导航:选中项粉色气泡(替代 classic 下划线);hover 浅粉 */

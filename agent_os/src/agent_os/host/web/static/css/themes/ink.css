@@ -28,6 +28,8 @@
   --danger:  #a93226;   /* 深朱砂(失败) */
   --aborted: #4a4a44;   /* 灰墨 */
   --live:    #2e4a6b;   /* 靛墨(进行) */
+  /* 焦点环(docs/WEB-A11Y.md §5.2;契约 token,须对 --bg-0..3 均 ≥3:1) */
+  --focus-ring: #2e4a6b;
 
   /* 语义:信号类型(同墨色谱系) */
   --sig-llm:      #2e4a6b;
@@ -139,7 +141,6 @@
 [data-theme="ink"] .input:focus {
   border-color: var(--fg-1);
   box-shadow: none;
-  outline: none;
 }
 
 /* StatusPill → 印章(§3.5):方形小章,文字状态保留(双编码不豁免) */

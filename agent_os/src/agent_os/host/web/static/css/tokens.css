@@ -70,6 +70,17 @@
   --ring-live:    rgb(59 158 255 / 0.28);
   --ring-neutral: rgb(93 107 130 / 0.25);
 
+  /* ── 焦点可见性(docs/WEB-A11Y.md §5.2;WCAG 2.4.7 + 1.4.11)──────────
+     --focus-ring 是**契约 token,每套主题必须自定义**(见 js/themes.js
+     CONTRACT_TOKENS),并由 tests/themes-contract.test.mjs 断言它对
+     --bg-0..3 四层背景的对比度 ≥3:1。
+     宽度/偏移**只在此处定义、主题不得覆盖**(同一测试静态断言)——它们是
+     策略常量而非主题风格,允许主题改就等于允许主题把焦点环调没。 */
+  --focus-ring: #3b9eff;      /* 未切换主题时的回退值(= classic --live) */
+  --focus-ring-width: 2px;    /* ≥2px */
+  --focus-ring-offset: 2px;   /* ≥1px:让环不被相邻内容压住 */
+  --target-min: 24px;         /* 交互目标最小边长(WCAG 2.2 §2.5.8 下限) */
+
   --s1: 4px; --s1-5: 6px; --s2: 8px; --s3: 12px; --s4: 16px; --s6: 24px; --s8: 32px;
   --r-sm: 4px; --r-conn: 6px; --r-md: 8px; --r-lg: 12px; /* r-conn:树连接线拐角 */
 

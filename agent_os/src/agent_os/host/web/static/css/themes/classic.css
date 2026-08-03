@@ -21,6 +21,8 @@
   --danger:  #e5534b;   /* failed / veto / error */
   --aborted: #9e6bde;   /* aborted(独立一色,中止≠失败) */
   --live:    #3b9eff;   /* running / live 指示(带脉冲动效) */
+  /* 焦点环(docs/WEB-A11Y.md §5.2;契约 token,须对 --bg-0..3 均 ≥3:1) */
+  --focus-ring: #3b9eff;
 
   /* 语义:信号类型 */
   --sig-llm:      #6f9fff;

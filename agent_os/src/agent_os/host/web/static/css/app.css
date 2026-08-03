@@ -1,6 +1,53 @@
 /* Agent OS 应用壳与组件样式(docs/WEB-UI.md §4.1 线框 / §5 交互与状态规范)。
    铁律:只消费 tokens.css 的 var(--*) token——本文件不得出现十六进制颜色与像素散值。 */
 
+/* ── 焦点可见性(docs/WEB-A11Y.md §5.2;WCAG 2.4.7 焦点可见 / 1.4.11 非文本对比)──
+   一条全局规则覆盖所有可聚焦元素,主题只换 --focus-ring token、不碰规则
+   (与"组件零分支"同哲学:差异收敛在契约层)。
+   用 outline 而非 box-shadow 作**基础**指示的两个理由:
+     ① box-shadow 在 Windows 高对比度模式(forced-colors)下会被丢弃,outline 不会;
+     ② outline 不参与布局,不会撑开或位移元素。
+   主题想要光晕可以**叠加** box-shadow,但不得移除 outline。
+   :focus-visible 而非 :focus——鼠标点击不显示环,只在键盘/程序化聚焦时显示。 */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* 高对比度模式(Windows HCM / forced-colors):系统接管配色,
+   box-shadow 被丢弃 → 焦点环必须走 outline 且用系统色关键字。 */
+@media (forced-colors: active) {
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: var(--focus-ring-width) solid CanvasText;
+    outline-offset: var(--focus-ring-offset);
+  }
+  /* 靠背景色区分的状态块在 HCM 下会塌成同色——补描边保住边界
+     (文字通道由双编码契约保证,见 docs/DEBUG-UI-THEMES.md §4 第 3 项) */
+  .status-pill,
+  .perm-badge,
+  .banner {
+    border: var(--stroke) solid CanvasText;
+  }
+}
+
+/* 跳过导航(docs/WEB-A11Y.md §4 P1-6;WCAG 2.4.1 区块跳过)——
+   平时视觉隐藏但**保留在焦点序列里**(不能用 display:none),聚焦即显形。 */
+.skip-link {
+  position: absolute;
+  left: var(--s2);
+  top: calc(-1 * var(--topbar-h) - var(--s8));
+  z-index: 100;
+  padding: var(--s2) var(--s3);
+  background: var(--bg-2);
+  color: var(--fg-0);
+  border: var(--stroke) solid var(--line-strong);
+  border-radius: var(--r-md);
+  font-size: var(--text-sm);
+  text-decoration: none;
+  transition: top 0.15s ease;
+}
+.skip-link:focus { top: var(--s2); }
+
 /* ── 布局(§4.1 应用壳)────────────────────────────────────── */
 body {
   display: flex;
@@ -306,7 +353,6 @@ body[data-route="debug"] .sidebar { display: none; }
 .search-input:focus {
   border-color: var(--live);
   box-shadow: 0 0 0 3px var(--ring-live);
-  outline: none;
 }
 
 /* D6 一站多 skill set:set 切换器(侧栏 / Skills 工具栏,复用 search-input 盒模型) */
@@ -1265,7 +1311,6 @@ body[data-route="debug"] .sidebar { display: none; }
 .input:focus {
   border-color: var(--live);
   box-shadow: 0 0 0 3px var(--ring-live);
-  outline: none;
 }
 textarea.input {
   resize: vertical;

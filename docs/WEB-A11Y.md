@@ -1,9 +1,13 @@
 # Web UI 无障碍(Accessibility)审计报告与执行标准
 
-> 版本:v0.1 · 日期:2026-08-04
+> 版本:v0.2 · 日期:2026-08-04
 > 范围:`agent_os/src/agent_os/host/web/static/`(index.html + 22 个组件 +
 >   6 套主题 + tokens/app.css,合计约 12,350 行)
 > 目标基线:**WCAG 2.2 AA**
+> **实施状态:A0 已完成**(焦点可见性 + skip link + 高对比度兜底 + 契约断言);
+>   A1-A4 未做。v0.2 相对 v0.1 的改动都来自实施反馈:§4 P0-2 补了 ink 主题
+>   "替代值也是 none"的漏检、§5.2 把尺寸 token 从逐主题改为 `:root` 单一
+>   事实源并记录两个层叠坑、§5.3 A7 从"必须有替代"收紧为"一律不得抑制"。
 > 关系:主题契约见 `DEBUG-UI-THEMES.md`(已有对比度/双编码机检);
 >   页面结构见 `WEB-UI.md` / `WEB-UI-BLOCKS.md`。
 > 一句话:**对比度和色觉这两块已经做得比多数项目好且有机检;缺的是
@@ -130,13 +134,20 @@ chip、卡片全部没有任何焦点样式**,只能依赖浏览器默认轮廓�
 `pixel`/`terminal`/`moe` 主题上可能与背景几乎无对比;而这些正是本项目
 可切换的一等特性。键盘用户在 6 套主题里的体验完全取决于运气。
 
-**注意一处澄清**:全仓 7 处 `outline: none` **都是有替代的**——每一处都在
-`.input:focus` / `.search-input:focus` 规则里、紧跟着一个 `box-shadow` 焦点环
-(如 `app.css:306-310`)。这是**正确做法**,不是问题。问题是这个待遇**只给了
-输入框**,没有推广到其他可聚焦元素,也没有沉淀成 token。
+**注意一处澄清**:全仓 7 处 `outline: none` 中,6 处**是有替代的**——在
+`.input:focus` / `.search-input:focus` 规则里紧跟着一个 `box-shadow` 焦点环。
+问题是这个待遇**只给了输入框**,没有推广到其他可聚焦元素,也没有沉淀成 token。
 
-**修法**:见 §5.2——引入 `--focus-ring` token,写一条全局
-`:focus-visible` 规则,主题必须提供该 token 并满足对比度契约。
+**但第 7 处是裸删**:`ink.css` 的 `.input:focus` 是
+`box-shadow: none; outline: none;`——**ink 主题的输入框此前没有任何焦点指示**,
+只有一个 `--fg-2 → --fg-1` 的低对比边框变化。这是实施 A0 时才发现的,
+原审计只统计了"有无替代"、没有逐条看替代值是不是 `none`。
+
+**修法**:见 §5.2。
+
+> **已修复(A0)**:`--focus-ring` token 化 + 一条全局 `:focus-visible` 规则,
+> 并**移除全部 7 处 `outline: none`**——光晕改为与 outline **叠加**而非替代。
+> 实施时踩到一个层叠陷阱,记录在 §5.2 的"两个坑"。
 
 ### P0-3 SSE 驱动的状态变化对屏幕阅读器完全静默
 
@@ -246,14 +257,24 @@ trace 行用 `title="..."` 承载信号全名与绝对时间戳(`trace.js:630`)�
 
 ### 5.2 L1:token 契约(扩展现有 `themes-contract.test.mjs`)
 
-在 `CONTRACT_TOKENS` 里新增,**6 套主题必须全部定义且非空**:
+**颜色逐主题声明,尺寸只在 `:root`**(这一条与本文 v0.1 初稿不同,实施时改的):
 
 ```css
---focus-ring:        /* 焦点环颜色,与所有 --bg-* 对比度 ≥ 3:1 */
+/* css/themes/<id>.css —— 契约 token,6 套主题必须各自定义且非空 */
+--focus-ring:        /* 焦点环颜色,与该主题 --bg-0..3 四层对比度均 ≥ 3:1 */
+
+/* css/tokens.css :root —— 策略常量,单一事实源,主题不得覆盖 */
 --focus-ring-width:  /* ≥ 2px */
 --focus-ring-offset: /* ≥ 1px,保证环不被内容压住 */
 --target-min:        /* 交互目标最小边长,≥ 24px;建议 28px */
 ```
+
+**为什么尺寸不做成逐主题契约**:宽度和偏移是**策略**不是风格。把它们交给
+主题定义,就等于允许某套主题写 `--focus-ring-width: 0` 把焦点环悄悄调没,
+而契约测试只会看到"已定义且非空"、判它通过。颜色必须逐主题(每套主题的
+背景不同,对比度只能各算各的),尺寸必须集中(它是下限,不是口味)。
+契约测试因此多一条:**任何主题文件里出现 `--focus-ring-width` /
+`--focus-ring-offset` 即判失败**。
 
 配套断言(复用现有 `contrast()` 实现,零新机制):
 
@@ -285,10 +306,34 @@ assert.ok(parseInt(tokens["--target-min"]) >= 24, `[${theme.id}] 目标尺寸 < 
 > 在 forced-colors 下存活、且不参与布局。主题想要光晕效果可以**叠加**
 > box-shadow,但不得把 outline 去掉——这一条由 L2 静态扫描守。
 
+#### 实施时踩到的两个坑(写下来免得重犯)
+
+**坑一:层叠顺序会让全局规则失效。** `index.html` 的加载顺序是
+tokens → app.css → **6 套主题**。而 `:where(...)` 的特异性是 0,
+`:focus-visible` 贡献 (0,1,0),与 `.input:focus` **同特异性**——于是后写的赢。
+既有的 7 处 `outline: none` 全都在全局规则之后(2 处在 app.css 下游、
+5 处在主题文件里),**会把新加的全局 outline 全部盖掉**,而且在
+forced-colors 下连 box-shadow 兜底都没有。
+
+正确做法不是提高特异性、也不是把规则挪到文件末尾(主题仍在其后),
+而是**把 7 处 `outline: none` 全部删掉**,让 outline 与各主题的光晕
+**叠加**。删完之后 A7 不变量(§5.3)才真正可执行——这也是为什么 A7 从
+"必须有替代"收紧成了"一律不得抑制"。
+
+**坑二:skip link 的落点必须可编程聚焦。** `<a href="#main">` 指向
+`<main id="main">` 时,浏览器只滚动、**不移动键盘焦点**(下一次 Tab 仍回到
+导航)。落点必须加 `tabindex="-1"`(不进 Tab 序列,但可编程聚焦)。
+这是 skip link 最常见的失效方式,契约测试已把它钉死。
+
 ### 5.3 L2:组件不变量(新增 `tests/a11y-contract.test.mjs`)
 
 与 `themes-contract` 同级、同风格(静态扫描 + fixture 渲染断言),进 CI。
 下面每条都是**可机器判定**的,给出判据而不是形容词:
+
+> **已落地部分(A0)**:A7、A9 与 token 契约已随 A0 一并实现,写在既有的
+> `tests/themes-contract.test.mjs` 第 7/8 组断言里(**不另起文件**——焦点环
+> 本就是主题契约的一部分)。剩余 A1–A6、A8、A10 待 A3 期新建
+> `a11y-contract.test.mjs`。
 
 | # | 不变量 | 判据(静态扫描 `js/components/*.js` + `index.html`) |
 |---|---|---|
@@ -298,7 +343,7 @@ assert.ok(parseInt(tokens["--target-min"]) >= 24, `[${theme.id}] 目标尺寸 < 
 | A4 | **焦点还原** | 同上文件必须含 `prevFocus`(或统一封装名) |
 | A5 | 可及名 | `<button` 模板串若无文字子节点,必须含 `aria-label` 或 `aria-labelledby` |
 | A6 | 装饰元素 | 每个 `<svg` 必须含 `aria-hidden="true"` 或(`role="img"` 且 `aria-label`) |
-| A7 | **outline 不得裸删** | 出现 `outline:\s*(none\|0)` 的 CSS 规则块内必须同时出现 `box-shadow` 或 `border`(现状已满足,防回归) |
+| A7 | **outline 一律不得抑制** ✅已落地 | 任何样式表出现 `outline:\s*(none\|0)` 即判 fail。**比初稿更严**——初稿写的是"必须有替代",但 ink 主题的替代恰好也是 `none`(§4 P0-2),且 box-shadow 在 HCM 下会被丢弃,所以"有替代"不是充分条件 |
 | A8 | 标题层级 | 每个路由根模板必须含且仅含一个 `<h1`;不得跳级(出现 `<h3` 则文件内须先有 `<h2` 或 `<h1`) |
 | A9 | 强制色 | `app.css` 必须含 `@media (forced-colors: active)` 段 |
 | A10 | live region | `index.html` 至少含一个 `aria-live="polite"` 的运行态区域(id 固定,见 §5.4) |
@@ -356,15 +401,32 @@ assert.ok(parseInt(tokens["--target-min"]) >= 24, `[${theme.id}] 目标尺寸 < 
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| **A0**(半天,止血) | skip link(P1-6)+ 全局 `:focus-visible` 规则与 `--focus-ring` token(P0-2)+ `forced-colors` 段(P1-7) | 键盘 Tab 一圈,每一步都看得见焦点;HCM 下焦点仍可见 |
+| **A0** ✅**已完成** | skip link + `<main tabindex="-1">`(P1-6)、`--focus-ring` 六主题 token 化 + 全局 `:focus-visible`(P0-2)、`forced-colors` 段(P1-7)、移除全部 7 处 `outline: none`、契约测试第 7/8 组断言 | 60 条新断言全过(**见下方验证说明**);后端 850 passed 无回归 |
 | **A1**(P0 收口) | 四个弹层迁 `<dialog>`/`trapFocus` + inbox 补焦点还原(P0-1);运行态 live region(P0-3) | Tab 出不去弹层;run 结束有播报 |
 | **A2**(结构) | 每路由 `<h1>` + 标题降级(P1-4);路由切换更新 title 与移焦(P1-5) | 屏幕阅读器按标题可导航;切路由有感知 |
 | **A3**(闸门) | `tests/a11y-contract.test.mjs` 落地(§5.3 A1–A7 fail、A8–A10 warn);token 契约并入 themes-contract(§5.2) | 故意写一个无 `aria-label` 的图标按钮 → CI 红 |
 | **A4**(补空白) | 一次真实 AT 走查(NVDA 或 Orca)+ 一次 axe 体检;把发现沉淀为新的 L2 不变量;A8–A10 转 fail | §1 列的三项方法空白被补上 |
 
-**依赖**:A0 与 A1 无依赖可并行;A3 依赖 A0/A1/A2 的产出(否则新写的闸门当场
-就是红的);A4 需要能跑 node 与浏览器的环境——**当前环境装不了 node,这是
-A3/A4 的现实前置条件**。
+**依赖**:A1 与 A2 无依赖可并行;A3 依赖 A0/A1/A2 的产出(否则新写的闸门当场
+就是红的);A4 需要能跑 node 与浏览器的环境。
+
+> ### A0 的验证说明(必读,涉及证据强度)
+>
+> **本机没有任何 JS 运行时**(node / bun / deno 均未安装),所以 A0 新写进
+> `themes-contract.test.mjs` 的第 7/8 组断言**在提交时没有被真正执行过**。
+>
+> 采取的替代验证:用 Python 复算了同一批断言——**刻意使用与 JS 测试逐字相同
+> 的正则与 WCAG 相对亮度算法**(包括 `themeTokens()` 的
+> `\[data-theme="<id>"\]\s*\{([^}]*)\}`、`:root\s*\{([\s\S]*?)\n\}`、
+> 以及 outline / skip-link 的匹配式),60 条全部通过。这能证明"这些断言对
+> 当前文件内容成立",**不能证明**该 `.mjs` 文件在 node 下语法/导入无误。
+>
+> **因此**:第一个有 node 的环境必须先跑一次
+> `node static/tests/themes-contract.test.mjs`,把这条证据补实。在那之前,
+> A0 的状态应读作"逻辑已验证、执行未验证"。
+>
+> 后端 `pytest agent_os/tests` 850 passed / 10 skipped / 32 xfailed,
+> 这条是真跑的——但它与前端改动正交,只说明没有连带回归。
 
 ---
 

@@ -28,6 +28,8 @@
   --danger:  #ffada0;   /* failed / REJECT 制图红(浅化保对比度) */
   --aborted: #d4b8ff;   /* aborted / VOID 淡紫 */
   --live:    #7fd6ff;   /* running / 晒图青 */
+  /* 焦点环(docs/WEB-A11Y.md §5.2;契约 token,须对 --bg-0..3 均 ≥3:1) */
+  --focus-ring: #7fd6ff;
 
   /* 语义:信号类型(与语义色同锚点) */
   --sig-llm:      #9cc3ff;
@@ -130,7 +132,6 @@
 [data-theme="blueprint"] .input:focus {
   border-color: var(--live);
   box-shadow: 0 0 0 1px var(--live);
-  outline: none;
 }
 
 /* 顶栏:图签栏下边线(虚线) */

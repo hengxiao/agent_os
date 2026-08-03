@@ -137,6 +137,16 @@ for (const theme of themes) {
   /* ══ 4. 文案键完整(§2.2:copy 表覆盖 COPY_KEYS 全量)══ */
   const missingKeys = COPY_KEYS.filter((k) => !(k in (theme.copy ?? {})));
   assert.deepEqual(missingKeys, [], `[${theme.id}] 文案 key 缺失:${missingKeys.join(", ")}`);
+
+  /* ══ 7. 焦点环对比度(docs/WEB-A11Y.md §5.2;WCAG 1.4.11 非文本对比 ≥3:1)══
+     焦点环要在**任何**背景层上都看得见——四层全查,而不是只查主背景。 */
+  for (const bg of ["--bg-0", "--bg-1", "--bg-2", "--bg-3"]) {
+    const ratio = contrast(tokens["--focus-ring"], tokens[bg]);
+    assert.ok(
+      ratio >= 3,
+      `[${theme.id}] 焦点环 --focus-ring(${tokens["--focus-ring"]}) vs ${bg}` +
+      `(${tokens[bg]}) = ${ratio.toFixed(2)}:1 < 3:1(WCAG 1.4.11)`);
+  }
 }
 
 /* ══ 6. 组件无分支(§2:差异必须走契约层;静态扫描 js/components)══
@@ -159,6 +169,70 @@ for (const theme of themes) {
       assert.ok(!re.test(src), `组件无分支:${file} 出现 ${desc}`);
     }
   }
+}
+
+/* ══ 8. 焦点可见性的策略常量与不可削弱性(docs/WEB-A11Y.md §5.2)══
+   宽度/偏移/目标尺寸是**策略**不是风格:只在 tokens.css :root 定义一份,
+   主题不得覆盖——允许主题改宽度,就等于允许主题把焦点环调成 0 悄悄消失。
+   同时守住 app.css 的全局规则与 forced-colors 段存在(防被"清理"掉)。 */
+{
+  const tokensCss = readFileSync(path.join(staticDir, "css/tokens.css"), "utf8");
+  const rootBlock = tokensCss.match(/:root\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+  const rootTokens = {};
+  for (const d of rootBlock.matchAll(/(--[\w-]+)\s*:\s*([^;]+)/g)) rootTokens[d[1]] = d[2].trim();
+
+  const MINIMA = [
+    ["--focus-ring-width", 2, "WCAG 2.4.11 焦点外观下限"],
+    ["--focus-ring-offset", 1, "环不被相邻内容压住"],
+    ["--target-min", 24, "WCAG 2.2 §2.5.8 目标尺寸(最小)"],
+  ];
+  for (const [name, min, why] of MINIMA) {
+    const px = parseFloat(rootTokens[name] ?? "");
+    assert.ok(
+      Number.isFinite(px) && px >= min,
+      `tokens.css :root 的 ${name} 应为 ≥${min}px(${why}),实为 ${rootTokens[name]}`);
+  }
+
+  /* 主题不得覆盖策略常量 */
+  for (const theme of listThemes()) {
+    const t = themeTokens(theme);
+    for (const [name] of MINIMA.slice(0, 2)) {
+      assert.ok(
+        !(name in t),
+        `[${theme.id}] 不得覆盖 ${name}——它是策略常量,只在 tokens.css :root 定义`);
+    }
+  }
+
+  /* app.css 的全局焦点规则与高对比度兜底必须在场 */
+  const appCss = readFileSync(path.join(staticDir, "css/app.css"), "utf8");
+  assert.match(
+    appCss, /:focus-visible\s*\{[^}]*outline:\s*var\(--focus-ring-width\)/,
+    "app.css 缺全局 :focus-visible outline 规则(docs/WEB-A11Y.md §5.2)");
+  assert.match(
+    appCss, /@media\s*\(forced-colors:\s*active\)/,
+    "app.css 缺 forced-colors 段——box-shadow 焦点环在 Windows 高对比度下会被丢弃");
+
+  /* 任何样式表都不得抑制 outline(docs/WEB-A11Y.md §4 P0-2 / §5.3 A7)。
+     全局焦点环靠 outline 实现,而主题在 app.css **之后**加载——一句
+     `outline: none` 就能把整套主题的焦点指示悄悄抹掉,且在高对比度模式下
+     没有 box-shadow 兜底。光晕效果请**叠加** box-shadow,不要替代 outline。 */
+  const allCss = ["css/tokens.css", "css/app.css",
+    ...listThemes().map((t) => t.css)];
+  for (const rel of allCss) {
+    const src = readFileSync(path.join(staticDir, rel), "utf8");
+    const hit = src.match(/outline:\s*(none|0)\b/);
+    assert.ok(
+      !hit,
+      `${rel} 出现 ${hit?.[0]}——焦点环靠 outline 实现,不得抑制` +
+      `(要光晕请叠加 box-shadow;docs/WEB-A11Y.md §5.3 A7)`);
+  }
+
+  /* skip link 必须在场且落点可编程聚焦(docs/WEB-A11Y.md §4 P1-6) */
+  const indexHtml = readFileSync(path.join(staticDir, "index.html"), "utf8");
+  assert.match(indexHtml, /class="skip-link"[^>]*href="#main"/, "index.html 缺跳过导航链接");
+  assert.match(
+    indexHtml, /<main[^>]*id="main"[^>]*tabindex="-1"/,
+    'skip link 落点 <main> 缺 tabindex="-1"(否则只滚动不移焦)');
 }
 
 console.log("themes-contract.test.mjs: all assertions passed");

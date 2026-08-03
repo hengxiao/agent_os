@@ -28,6 +28,9 @@ export const CONTRACT_TOKENS = [
   "--fg-0", "--fg-1", "--fg-2",
   // 状态
   "--ok", "--warn", "--danger", "--aborted", "--live",
+  // 焦点可见性(docs/WEB-A11Y.md §5.2):颜色须逐主题自定义并过 ≥3:1 对比度断言;
+  // 宽度/偏移是策略常量,只在 tokens.css :root 定义,主题不得覆盖(测试静态断言)
+  "--focus-ring",
   // 信号
   "--sig-llm", "--sig-tool", "--sig-sidecar", "--sig-compress", "--sig-budget", "--sig-frame",
   // 权限

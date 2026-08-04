@@ -69,6 +69,11 @@ from agent_os.skills.package import promote_package
 _log = logging.getLogger("agent_os.platform")
 
 
+#: severity 单源(D4 打磨;与前端 doc-editor.js 的 DOC_SEVERITIES 字面一致——
+#: 后端校验集在此,前端类名/copy 在 doc-editor.js,两端各一份单一事实源)
+DOC_SEVERITIES = ("must", "should", "nit")
+
+
 class MessageBody(BaseModel):
     text: str
 
@@ -202,6 +207,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         provider=providers,
         model=route_model,
         name_taken=lambda n: _name_taken(manager, lab_store, n),
+        docs_provider=lambda: doc_store.list(),  # D4:doc 意图数据源(只读)
     )
     #: app instance 存储(M2 文件持久化:卡创建即登记,kind+ref 去重,
     #: 重启后卡 dict 上的 instance id 仍可解析——M1 旧卡 404 的缺口在此关闭)
@@ -406,7 +412,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             if (
                 isinstance(note, dict)
                 and _ANCHOR_RE.match(str(note.get("anchor") or ""))
-                and note.get("severity") in ("must", "should", "nit")
+                and note.get("severity") in DOC_SEVERITIES
                 and str(note.get("text") or "").strip()
             ):
                 notes.append(

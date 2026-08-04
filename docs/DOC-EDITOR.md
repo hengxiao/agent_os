@@ -133,7 +133,84 @@ docs/<name>/
 | D1 ✅ | doc_store + doc app kind + 编辑器(分屏/大纲/dirty/save/snapshot/rewind) |
 | D2 ✅ | 段落锚点 + W-bubble 接入(comment.send/apply)+ doc_commenter 技能 |
 | D3 ✅ | 全文评审(锚点批注集自动挂段)+ lab NOTES.md 接点 |
-| D4 | 导出(.md/NOTES 写回)+ 对话卡片 + 打磨 |
+| D4 ✅ | 导出(.md 下载/复制降级)+ 对话卡片(doc_list 卡/新建入口)+ 打磨(未读增量/severity 单源/NOTES 读回) |
+
+> **D4 实现注**(2026-08-03,分支 debugger):
+> 导出菜单(顶栏 ▾:下载 .md = `exportDoc()` 生成 Blob 锚[data: URL 兜底]
+> + 复制全文[clipboard,失败降级提示];notes 空间显示"保存即写回 NOTES");
+> doc 意图(orchestrator 规则面:文档/新建文档 → `build_doc_list_card`
+> [协议型 doc_list;编排只读,新建由卡上按钮经 /api/docs 唯一名起稿]);
+> 打磨三件:未读 = assistant − seen 游标[打开/重开/跳转记已读,
+> module Map + localStorage 备份];severity 单源(后端
+> `app.DOC_SEVERITIES` / 前端 `doc-editor.DOC_SEVERITIES`,两端各一份
+> 单一事实源);NOTES 首开读回 manifest.notes 作初稿。
+
+## 架构实弹测试报告(终版;D1-D4 汇总,2026-08-03)
+
+> 本项目(doc 编辑器)从第一天起就是 APP-MODEL/WIDGETS 架构的实弹测试。
+> 四期下来,协议的每一面都被真实需求压过一遍。终版结论如下。
+
+### 顺畅点(协议替你省了什么,按价值排序)
+
+1. **协议闸零改动接住新 kind**(D1):doc manifest 一次通过
+   validate_manifest;"客户端不可控 state 绑定"对新 kind 自动成立,
+   没写一行新防御代码。这是整个架构最硬的一笔。
+2. **同构哲学直接复用**(D1):DocStore = DraftStore 的哲学(不可变版本/
+   .bak/坏文件隔离/路径穿越校验)换一层皮,测试几乎照搬一次全绿;
+   NOTES 写回靠 manifest 未知键容忍,零新通道。
+3. **消息流是耐生长的开放结构**(D2-D3):bubbles/ 从段落问答(D2)到
+   评审批注(D3)只加 role/severity/review 字段,协议零改动;预定义
+   schema 反而会成为阻力。
+4. **本地机制平滑扩展**(D1):`_LOCAL_MUTATORS` 一行接入 meta.set,
+   M3.5 的 local=400 裁决无需改;local mutator 注册面是协议里
+   设计得最好的接缝。
+5. **渲染正确性不重测**(D1):W-md 白名单/XSS/代码块语义 W4 已测,
+   doc 预览只测接线——控件库的复利。
+6. **专属端点与通用管道并存是正当的**(D2):comment.send 走专属端点
+   (大信封+即时回填),apply/写动作走管道。管道的 run 态服务用户
+   发起的长任务,不是每次问答——exec 三态给了这个区分合法的住所。
+7. **N4 花括号纪律提前三天抓住了真实坑**(D2):doc_commenter prompt
+   的 JSON 示例撞 str.format,正是 N4 预检防的运行时必炸。
+
+### 弯腰点(协议不够的地方,与最终处置)
+
+1. **字符串骨架 + 后挂载 vs 属性/寻址依赖**(D1/D2,全场最频繁):
+   W-text aria-label 必填、region 选择器缓存、innerHTML 重渲摘宿主。
+   处置:shim 弯过(显式补属性 + host 适配 + 引用挂回)。
+   **建议改协议**:W-text 加显式 ariaLabel 选项;宿主类组件的
+   reattach 回调标准化(W5 合并处理,这是项目常态模式)。
+2. **anchor 形态未协议化**(D2):W-bubble 要 {member,path} 对象,
+   doc 锚点是 "doc.md#Lx-Ly" 单串。处置:挂载包/提交拆。
+   建议:留特例,第三消费方出现时统一 anchor schema。
+3. **导航语义 ≠ 选择语义**(D1):大纲不是 W-list。处置:15 行自制。
+   建议:留特例,第二导航型列表(很可能 = 未来的气泡栏)出现时
+   提 W-nav 或扩 W-list。
+4. **兄弟控件联动无语义**(D1):编辑/预览滚动同步。处置:不同步,
+   只同源重渲。建议:W-text 补 scroll 事件,联动放 section 层
+   (协议不用改)。
+5. **两端语义手写对齐**(D3):severity 后端校验集 vs 前端类名/copy。
+   处置:D4 抽成两端各一份单一事实源(app.DOC_SEVERITIES /
+   doc-editor.DOC_SEVERITIES)+ 双侧断言。这是"跨语言单源"的
+   务实极限——真正的单源需要契约文件(codegen),YAGNI。
+6. **LLM 输出校验的松紧**(D3):宽容丢弃(不合条静默丢)。
+   处置:批注集本身落盘留证。建议:留特例,"能救则救"是
+   LLM 面的正确默认。
+
+### 裁决摘要(终版)
+
+| 项 | 结果 |
+|---|---|
+| validate_manifest 协议闸 | ✅ 零改动接住 doc kind(D1-D4 全程) |
+| 组合只向下 | ✅ app→section→widget 无反向(含气泡雨) |
+| 出海全经 app action / 专属端点 | ✅ 写动作管道化;send/review 专属端点有先例与理由 |
+| 控件零 fetch | ✅ widgets/ 目录静态扫描常绿 |
+| exec 归态 | ✅ 与 §3 设计表一致(endpoint/local/run 各有归属) |
+| 协议修改需求(遗留) | 2 项:W-text ariaLabel 选项、reattach 标准化(W5 候选) |
+
+### 一句话总结
+
+**协议在"骨架"上极其硬(闸/归态/组合方向零弯腰),在"DOM 生命周期
+与寻址细节"上需要 shim——下一代协议修订应主攻后者,而不是前者。**
 
 > **D3 实现注**(2026-08-03,分支 debugger):
 > `doc_reviewer_skill`(tools=[];输入 text/outline/diff,输出 {notes:

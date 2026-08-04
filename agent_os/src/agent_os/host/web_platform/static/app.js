@@ -1363,7 +1363,8 @@ function bind() {
     if (decision) return answerDecision(decision);
     const dbg = e.target.closest("[data-debug-run]");
     if (dbg) return openDebug(dbg.dataset.debugRun);
-    // D3 lab NOTES.md 接点:draft tab "编辑文档" → 建/开 notes.<draft> 的 doc tab
+    // D3 lab NOTES.md 接点:draft tab "编辑文档" → 建/开 notes.<draft> 的 doc tab;
+    // D4 打磨:manifest.notes 已存在时作初稿(不空种子)
     const notes = e.target.closest("[data-open-notes]");
     if (notes) {
       return (async () => {
@@ -1371,12 +1372,38 @@ function bind() {
         const draft = tab?.ref ?? "";
         if (!draft) return;
         const name = `notes.${draft}`;
-        // 首开建文档(空种子;已存在 409 即直接开——只读+另存模式,不碰生产)
+        let seed = `# ${draft} 笔记\n`;
+        try {
+          const d = await (await fetch(`/api/lab/drafts/${encodeURIComponent(draft)}`)).json();
+          if (d?.manifest?.notes) seed = d.manifest.notes; // D4:既有 notes 读回成初稿
+        } catch {
+          /* 草稿读不到 → 空种子(不阻断) */
+        }
         await fetch("/platform/api/docs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, title: `${draft} 笔记`, text: `# ${draft} 笔记\n` }),
+          body: JSON.stringify({ name, title: `${draft} 笔记`, text: seed }),
         }).catch(() => {});
+        await openDetail("doc", name, {});
+      })();
+    }
+    // D4 对话卡片:卡上"新建文档" → 唯一名(doc.untitledN)起稿 → 开 tab
+    if (e.target.closest("[data-doc-create]")) {
+      return (async () => {
+        let name = "doc.untitled";
+        for (let i = 2; ; i++) {
+          const res = await fetch("/platform/api/docs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, title: name, text: "" }),
+          }).catch(() => null);
+          if (res?.ok) break;
+          if (res?.status === 409) {
+            name = `doc.untitled${i}`;
+            continue;
+          }
+          break; // 其它错误不循环(降级:仍以当前名开 tab,读面会给 404 提示)
+        }
         await openDetail("doc", name, {});
       })();
     }

@@ -296,4 +296,12 @@ export const COPY = {
   "platform.doc.review": "评审一下",
   "platform.doc.notes": "编辑文档",
   "platform.doc.bubblebar": "讨论喵",
+  "platform.doc.list": "文档",
+  "platform.doc.none": "还没有文档喵,点下面新建",
+  "platform.doc.create": "新建文档",
+  "platform.doc.download": "下载 .md",
+  "platform.doc.copy": "复制全文",
+  "platform.doc.copied": "复制好啦",
+  "platform.doc.copy.fail": "没复制上,请手动全选喵",
+  "platform.doc.notes.saved": "保存就写回 NOTES 哦",
 };

@@ -303,4 +303,12 @@ export const COPY = {
   "platform.doc.review": "REVIEW",
   "platform.doc.notes": "EDIT DOC",
   "platform.doc.bubblebar": "DISCUSS",
+  "platform.doc.list": "DOCS",
+  "platform.doc.none": "NO DOCS, CREATE BELOW",
+  "platform.doc.create": "NEW DOC",
+  "platform.doc.download": "DOWNLOAD .MD",
+  "platform.doc.copy": "COPY ALL",
+  "platform.doc.copied": "COPIED",
+  "platform.doc.copy.fail": "COPY FAILED",
+  "platform.doc.notes.saved": "SAVE WRITES NOTES",
 };

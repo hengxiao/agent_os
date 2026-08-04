@@ -13,6 +13,26 @@ import { parseOutline } from "./details.js";
 // 长文档阈值(§2/§7 边界):>200KB 预览截断提示,不炸(编辑器本体不受影响)
 const PREVIEW_LIMIT = 200 * 1024;
 
+/* severity 单源(D4 打磨;与后端 app.py 的 DOC_SEVERITIES 字面一致——
+   后端校验集在 app.py,前端类名/copy 在此,两端各一份单一事实源) */
+export const DOC_SEVERITIES = ["must", "should", "nit"];
+
+/* 导出(D4,§3):生成下载锚(Blob;无 URL 对象时退化 data: URL——
+   返回 {href, filename} 供测试断言,真实浏览器由调用方 appendChild + click) */
+export function exportDoc({ text, filename, doc = null }) {
+  const d = doc ?? globalThis.document;
+  const a = d.createElement("a");
+  try {
+    a.href = globalThis.URL?.createObjectURL?.(new Blob([text], { type: "text/markdown" })) ?? "";
+  } catch {
+    a.href = "";
+  }
+  if (!a.href) a.href = `data:text/markdown;charset=utf-8,${encodeURIComponent(text)}`;
+  a.download = filename;
+  a.textContent = filename;
+  return a;
+}
+
 /* 段落块切分(D2 §2.1;与大纲解析同源,1-based 行号区间):
    空行分块;标题/列表项/表格行独占一块;连续普通行并成一块 */
 export function mdBlocks(text) {
@@ -75,6 +95,18 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
   };
   const editor = mountTextEditor(textHost, {});
   let dirty = false;
+  // D4 未读增量:seen 游标(module Map + localStorage 备份;打开气泡即记"已读")
+  const _seen = new Map();
+  const _seenKey = (anchor) => `doc.seen.${doc.name}.${anchor}`;
+  const _seenGet = (anchor) => {
+    if (_seen.has(anchor)) return _seen.get(anchor);
+    const raw = globalThis.localStorage?.getItem?.(_seenKey(anchor));
+    return raw ? Number(raw) : 0;
+  };
+  const _seenSet = (anchor, n) => {
+    _seen.set(anchor, n);
+    globalThis.localStorage?.setItem?.(_seenKey(anchor), String(n));
+  };
   // D2:气泡状态(seedFlows = DocStore bubbles/ 事实源;editsMap 存回复的替换建议)
   const seedByAnchor = Object.fromEntries((seedFlows ?? []).map((f) => [f.anchor, f.messages ?? []]));
   const bubbles = new Map(); // anchor → bubble widget
@@ -91,7 +123,12 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
   /* 开气泡(多条并存,各锚点独立;种子 = 持久化消息流,开关不丢) */
   function openBubble(anchor, blockEl) {
     const existing = bubbles.get(anchor);
-    if (existing) return existing;
+    if (existing) {
+      // D4:重开也记"已读"(seen 游标随聚焦前进)
+      _seenSet(anchor, existing.bubble.state.messages.filter((m) => m.role === "assistant").length);
+      renderBubbleBar();
+      return existing;
+    }
     const bubbleHost = document.createElement("div");
     bubbleHost.dataset.anchor = anchor; // 重渲后按引用挂回(见 renderPreview)
     blockEl.appendChild(bubbleHost);
@@ -124,6 +161,7 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
         const body = await res.json();
         editsMap.set(anchorStr, body.edits ?? []);
         bubble.receiveReply(body.reply ?? "");
+        renderBubbleBar(); // D4:新回复 → 未读增量刷新
       } catch (err) {
         bubble.receiveReply(`(评论助手暂不可用: ${err.message ?? err})`);
       }
@@ -152,7 +190,10 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     });
     const entry = { bubble, el: bubbleHost, anchor };
     bubbles.set(anchor, entry);
+    // D4:打开即记"已读"(seen 游标 = 当前 assistant 数)
+    _seenSet(anchor, bubble.state.messages.filter((m) => m.role === "assistant").length);
     bubble.focus();
+    renderBubbleBar();
     return entry;
   }
 
@@ -202,7 +243,7 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     dirtyEl.dataset.on = dirty ? "1" : "0";
   }
 
-  /* D3 气泡栏:聚合视图(锚点/severity/未读计数,点击跳转开泡) */
+  /* D3 气泡栏:聚合视图(锚点/severity/未读增量,点击跳转开泡) */
   function renderBubbleBar() {
     const bar = host.querySelector("[data-doc-bubblebar]");
     if (!bar) return;
@@ -211,7 +252,8 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
       ? `<div class="doc-bar-title">${esc(copy("platform.doc.bubblebar"))}</div>` +
         entries
           .map((entry) => {
-            const unread = entry.bubble.state.messages.filter((m) => m.role === "assistant").length;
+            const assistant = entry.bubble.state.messages.filter((m) => m.role === "assistant").length;
+            const unread = Math.max(0, assistant - Math.min(_seenGet(entry.anchor), assistant)); // D4:上次已读增量
             const sev = entry.severity ?? "";
             return (
               `<button class="doc-bar-item" data-bar-anchor="${esc(entry.anchor)}">` +
@@ -238,6 +280,7 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
       // 气泡雨:逐条挂段(锚点块在就开泡并注入批注;块不在记挂空)
       let hung = 0;
       for (const note of body.notes ?? []) {
+        if (!DOC_SEVERITIES.includes(note.severity)) continue; // D4:severity 单源校验
         const block = [...preview.children].find((c) => c.dataset?.anchor === note.anchor);
         const entry = openBubble(note.anchor, block ?? preview);
         entry.severity = note.severity;
@@ -287,7 +330,43 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     const anchor = block?.dataset?.anchor;
     if (anchor) openBubble(anchor, block);
   });
-  host.addEventListener("click", (e) => {
+  host.addEventListener("click", async (e) => {
+    // D4:导出菜单(开/合;下载走 exportDoc,复制走 clipboard 降级)
+    if (e.target.closest("[data-doc-export]")) {
+      const menu = host.querySelector("[data-export-menu]");
+      if (menu) menu.hidden = !menu.hidden;
+      return;
+    }
+    const exportMode = e.target.closest("[data-export-mode]")?.dataset.exportMode;
+    if (exportMode) {
+      const tab = getTabInstance?.();
+      if (!tab?.instance) return;
+      try {
+        const res = await fetch(
+          `/platform/api/apps/${encodeURIComponent(tab.instance)}/actions/doc.export`,
+          { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ surface: "tab", args: {} }) }
+        );
+        if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+        const body = await res.json();
+        if (exportMode === "download") {
+          const a = exportDoc({ text: body.text ?? "", filename: body.filename ?? `${doc.name}.md`, doc: host.ownerDocument });
+          host.ownerDocument.body?.appendChild?.(a);
+          a.click?.(); // 真实浏览器触发下载(stub 里仅生成锚,测试断 href/filename)
+          a.remove?.();
+        } else {
+          const ok = await globalThis.navigator?.clipboard?.writeText?.(body.text ?? "")
+            .then(() => true, () => false);
+          const toastFn = globalThis.__docToast ?? (() => {});
+          toastFn(ok ? copy("platform.doc.copied") : copy("platform.doc.copy.fail"));
+        }
+      } catch (err) {
+        (globalThis.__docToast ?? (() => {}))(err.message ?? String(err));
+      }
+      const menu = host.querySelector("[data-export-menu]");
+      if (menu) menu.hidden = true;
+      return;
+    }
     // D3:[评审] → review 流(批注集自动挂段)
     if (e.target.closest("[data-doc-review]")) return runReview();
     // D3:气泡栏点击 → 跳转开泡
@@ -297,7 +376,7 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
       if (entry) {
         const block = [...preview.children].find((c) => c.dataset?.anchor === entry.anchor);
         if (block) block.scrollIntoView?.();
-        entry.bubble.focus();
+        openBubble(entry.anchor, block ?? preview); // D4:跳转 = 重开(early-return 也记 seen)
       }
       return;
     }
@@ -331,6 +410,8 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     refresh,
     runReview,
     bubbles,
+    seenGet: _seenGet, // D4:seen 游标(测试面)
+    seenSet: _seenSet,
     editor,
     setText(text) {
       textarea.value = text ?? "";

@@ -385,6 +385,25 @@ function docSummary(d) {
   );
 }
 
+/* doc_list 摘要卡(D4 对话卡片):文档索引行(点开 doc tab)+ 新建按钮 */
+function docListSummary(d) {
+  const rows = (d.docs ?? [])
+    .map(
+      (doc) =>
+        `<div class="pf-pkgrow"><button class="pf-detail-link" data-detail-kind="doc" ` +
+        `data-detail-ref="${esc(doc.name)}" data-detail='{}'>${esc(doc.title ?? doc.name)}</button> ` +
+        `<span class="pf-dim">${esc(doc.first_line ?? "")} · ${doc.chars ?? 0} 字` +
+        `${doc.has_bubbles ? " · " + esc(copy("platform.doc.hasbubbles")) : ""}</span></div>`
+    )
+    .join("");
+  return (
+    `<div class="pf-card-lead">${esc(copy("platform.doc.list"))}</div>` +
+    (rows || `<div class="pf-card-sub">${esc(copy("platform.doc.none"))}</div>`) +
+    rows +
+    `<div class="pf-card-actions"><button class="btn" data-doc-create="1">${esc(copy("platform.doc.create"))}</button></div>`
+  );
+}
+
 /* 摘要卡渲染入口:一句结论(加粗)+ 补充行 + 详情链接/动作区(右下)。
    ``depth``(M2,docs/APP-MODEL.md §6):嵌套层级——对话流卡 = 1,tab 内嵌卡 = 2;
    第 3 层起卡只读,不加"打开"链接(防俄罗斯套娃)。 */
@@ -393,7 +412,7 @@ export function summaryHtml(card, depth = 1, regPath = "", ref = "") {
   const d = card?.data ?? {};
   const render = { plan: planSummary, skill_pack: packSummary, gate_report: gateSummary,
     diff: diffSummary, publish: publishSummary, debug: debugSummary, lab_draft: draftSummary,
-    doc: docSummary }[type];
+    doc: docSummary, doc_list: docListSummary }[type];
   const body = type === "escalation" ? escalationSummary(d, card?.instance)
     : render ? render(d) : type === "table" ? tableSummary(card)
     : `<pre class="mono">${esc(JSON.stringify(d, null, 2))}</pre>`;

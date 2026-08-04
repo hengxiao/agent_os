@@ -323,7 +323,15 @@ export function docTabHtml(doc) {
     `<span class="pf-dim mono">${esc(doc?.name ?? "")}</span>` +
     `<select class="input" data-rewind-version="1" aria-label="${esc(copy("platform.doc.rewind"))}">${versions}</select>` +
     `<button class="btn" data-tab-act="doc.rewind" data-doc-rewind="1">${esc(copy("platform.doc.rewind"))}</button>` +
-    `<button class="btn" data-tab-act="doc.export">${esc(copy("platform.doc.export"))}</button>` +
+    `<span class="doc-export">` +
+    `<button class="btn" data-doc-export="1">${esc(copy("platform.doc.export"))} ▾</button>` +
+    `<span class="doc-export-menu" data-export-menu="1" hidden>` +
+    `<button class="btn" data-export-mode="download">${esc(copy("platform.doc.download"))}</button>` +
+    `<button class="btn" data-export-mode="copy">${esc(copy("platform.doc.copy"))}</button>` +
+    (doc?.name?.startsWith("notes.")
+      ? `<span class="doc-export-note">${esc(copy("platform.doc.notes.saved"))}</span>`
+      : "") +
+    `</span></span>` +
     `<span class="pf-spacer"></span>` +
     `<button class="btn" data-doc-review="1">${esc(copy("platform.doc.review"))}</button>` +
     `</div>` +

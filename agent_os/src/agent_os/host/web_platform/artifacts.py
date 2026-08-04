@@ -16,7 +16,7 @@ import time
 from typing import Any
 
 #: 卡型注册表(v1;新增卡型 = 加一行 + 一个 build 函数 + schema 校验分支)
-CARD_TYPES = ("plan", "skill_pack", "gate_report", "diff", "publish", "table", "escalation")
+CARD_TYPES = ("plan", "skill_pack", "gate_report", "diff", "publish", "table", "escalation", "doc_list")
 
 #: action 白名单:action id → (method, endpoint 模板)。只允许指向既有端点
 #: (Lab / iterate / packages / candidate / versions),不引入新的 promote 路径。
@@ -183,8 +183,14 @@ def build_table_card(
     return _card("table", data)
 
 
-def build_escalation_card(
-    *,
+def build_doc_list_card(*, docs: list[dict[str, Any]]) -> dict[str, Any]:
+    """doc_list 卡(D4,docs/DOC-EDITOR.md §6 对话卡片):文档索引(标题/首行/
+    字数/状态)入对话;行内链接开 doc tab,卡上"新建"由前端经 /api/docs 完成
+    (编排只读,新建不入服务端编排)。"""
+    return _card("doc_list", {"docs": docs})
+
+
+def build_escalation_card(    *,
     question_id: str,
     skill: str,
     tier: str,

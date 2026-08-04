@@ -26,6 +26,7 @@ from typing import Any
 
 from agent_os.api.v1 import ChatRequest, Message, Role
 from agent_os.host.web_platform.artifacts import (
+    build_doc_list_card,
     build_plan_card,
     build_table_card,
 )
@@ -39,6 +40,10 @@ _MAKE_RE = re.compile(r"(做个|写个|建个|帮我做|帮我写|创建|新建)
 _FAIL_RE = re.compile(r"(为什么|为啥).*(挂|失败|错)|失败|挂了|报错|fail", re.IGNORECASE)
 #: 意图③关键词(浏览:集合语义的"哪些/列表/记录"——区别于单点排查的"为什么挂")
 _BROWSE_RE = re.compile(r"(哪些|所有|列表|记录|情况).*(run|运行|失败)|(run|运行).*(哪些|列表|记录)", re.IGNORECASE)
+
+#: 意图⑤关键词(D4;doc 文档:列表/新建——与 make_skill 的"写个 X 技能"区分)
+_DOC_NEW_RE = re.compile(r"新建文档|写个文档|写篇文档|写文档")
+_DOC_RE = re.compile(r"文档|文档列表|打开文档")
 
 #: LLM 意图枚举(schema 校验面;越界 → 回落规则)
 INTENTS = ("create_skill", "why_failed", "browse", "help")
@@ -88,11 +93,14 @@ class Orchestrator:
         provider: Any = None,
         model: str | None = None,
         name_taken: Any = None,
+        docs_provider: Any = None,
     ) -> None:
         self._skills = skills  # 生产 SkillRegistry(只读:manifests())
         #: 最近 run 列表来源(注入:``() -> [{run_id, skill, status, error, ts?}]``;
         #: 隔离 app 装配细节,测试用假数据驱动
         self._runs_provider = runs_provider or (list)
+        #: 文档索引来源(D4 doc 意图;``() -> DocStore.list()``,只读)
+        self._docs_provider = docs_provider or (list)
         #: LLM 意图路由(docs/WEB-PLATFORM.md §5;W2):既有 ProviderManager 门面 +
         #: 默认 model;None = 纯规则(装配失败/未装配时的安全态)
         self._provider = provider
@@ -120,6 +128,8 @@ class Orchestrator:
             msg = self._why_failed()
         elif intent == "browse":
             msg = self._browse(timeframe=routed.get("timeframe") or "")
+        elif intent == "doc":
+            msg = self._doc_list(is_new=_DOC_NEW_RE.search(text) is not None)
         else:
             msg = self._help()
         if meta:
@@ -143,6 +153,8 @@ class Orchestrator:
     def _route_rules(self, text: str) -> str:
         if _MAKE_RE.search(text):
             return "create_skill"
+        if _DOC_NEW_RE.search(text) or _DOC_RE.search(text):  # D4:doc 意图(本期只走规则面)
+            return "doc"
         if _BROWSE_RE.search(text):  # 集合语义先于单点排查("哪些失败" ≠ "为什么挂")
             return "browse"
         if _FAIL_RE.search(text):
@@ -337,9 +349,23 @@ class Orchestrator:
         )
 
     # ------------------------------------------------------------------
-    # 意图④:其他 → help 卡(三句引导)
+    # 意图⑤(D4):doc 文档 → 列表卡(新建意图带"点卡新建"引导;编排只读,
+    # 新建由前端卡上按钮经 /api/docs 完成——写动作不入编排,§工具面红线)
     # ------------------------------------------------------------------
 
+    def _doc_list(self, *, is_new: bool = False) -> dict[str, Any]:
+        docs = self._docs_provider() or []
+        card = build_doc_list_card(docs=docs)
+        hint = "点卡上「新建文档」我帮你起稿;" if is_new else ""
+        return new_message(
+            "agent",
+            text=f"{hint}共 {len(docs)} 篇文档,点开就进编辑器。",
+            cards=[card],
+        )
+
+    # ------------------------------------------------------------------
+    # 意图④:其他 → help 卡(三句引导)
+    # ------------------------------------------------------------------
     def _help(self) -> dict[str, Any]:
         return new_message(
             "agent",

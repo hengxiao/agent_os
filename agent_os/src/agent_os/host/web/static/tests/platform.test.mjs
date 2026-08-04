@@ -563,7 +563,7 @@ const assertClean = (html, who) => {
         rerunnable: false });
     }
     if (url === "/api/lab/drafts/lab.dinner") {
-      return reply({ name: "lab.dinner", manifest: { description: "晚餐推荐" },
+      return reply({ name: "lab.dinner", manifest: { description: "晚餐推荐", notes: "# 既有笔记\n已有内容\n" },
         prompt: "你是晚餐规划师。", tests: {} });
     }
     // M4b:runs legacy tab 摘要数据源 + 主动汇报
@@ -621,8 +621,11 @@ const assertClean = (html, who) => {
       return reply({ ok: true, text: "已保存。", state: { dirty: false, savedAt: 2 },
         instance: { id: "app-spawn-design.new_ui", kind: "doc", state: { dirty: false } } });
     }
-    if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/doc.snapshot") {
-      return reply({ ok: true, text: "已封存 v002。", state: { versions: ["v001", "v002"] },
+    if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/doc.export") {
+      return reply({ ok: true, text: "# 概述\n首段内容\n## 设计\n次段内容\n", filename: "design.new_ui.md",
+        instance: { id: "app-spawn-design.new_ui", kind: "doc", state: {} } });
+    }
+    if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/doc.snapshot") {      return reply({ ok: true, text: "已封存 v002。", state: { versions: ["v001", "v002"] },
         instance: { id: "app-spawn-design.new_ui", kind: "doc", state: {} } });
     }
     if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/doc.rewind") {
@@ -1543,6 +1546,134 @@ const assertClean = (html, who) => {
       (c.body ?? "").includes("notes.lab.dinner")),
     "首开建 notes.lab.dinner(空种子,只读+另存)");
   assert.equal(probe.state.active, "d:doc:notes.lab.dinner", "打开 notes doc tab");
+
+  /* ── D4:导出菜单 / doc 意图卡 / 未读增量 / severity 单源 / NOTES 读回 ─── */
+
+  // NOTES 读回:manifest.notes 已存在时作初稿(不空种子)
+  const notesPost = calls.find((c) => c.url === "/platform/api/docs" && c.method === "POST" &&
+    (c.body ?? "").includes("notes.lab.dinner"));
+  assert.ok(notesPost.body.includes("既有笔记"), "NOTES 读回成初稿(D4 打磨)");
+
+  // severity 单源(前端侧;与后端 DOC_SEVERITIES 字面一致)
+  const { DOC_SEVERITIES } = await import("../../../web_platform/static/doc-editor.js");
+  assert.deepEqual(DOC_SEVERITIES, ["must", "should", "nit"], "severity 单源(前端)");
+
+  // 未读增量:打开记 seen,新回复 +1,重开清 0
+  probe.state.active = "conv";
+  doc.trigger("click", { target: docLink }); // 重开 design.new_ui(dedupe 重载)
+  await tick();
+  const preview3 = docHost.querySelector("[data-doc-preview]");
+  const ab = new StubEl("button");
+  ab.dataset.anchorBtn = "1";
+  const pb = new StubEl("div");
+  pb.dataset.anchor = "doc.md#L2-L2";
+  ab.closest = (sel) => (sel === "[data-anchor-btn]" ? ab : sel === "[data-anchor]" ? pb : null);
+  pb.parentNode = preview3;
+  preview3.trigger("click", { target: ab });
+  await tick();
+  const bh = pb.children.at(-1);
+  const bar3 = docHost.querySelector("[data-doc-bubblebar]");
+  assert.ok(!bar3.innerHTML.includes("doc-bar-n"), "初开无未读(seen=assistant 数)");
+  const in3 = new StubEl("input");
+  in3.dataset.bubbleDraft = "";
+  in3.parentNode = bh;
+  in3.value = "再问一句";
+  bh.trigger("input", { target: in3 });
+  bh.trigger("keydown", { target: in3, key: "Enter" });
+  await tick();
+  await tick();
+  assert.ok(bar3.innerHTML.includes('doc-bar-n">1'), "新回复未读 +1(增量语义)");
+  const bi = new StubEl("button");
+  bi.dataset.barAnchor = "doc.md#L2-L2";
+  bi.parentNode = bar3;
+  docHost.trigger("click", { target: bi });
+  await tick();
+  assert.ok(!bar3.innerHTML.includes("doc-bar-n"), "重开气泡 → seen 前进 → 未读清 0");
+
+  // 导出菜单:开合 + 下载锚(Blob 文件名 + data URL 兜底)+ 复制降级
+  docHost.querySelector("[data-export-menu]").hidden = true; // 真实浏览器 hidden 属性初始态
+  const exportBtn = new StubEl("button");
+  exportBtn.dataset.docExport = "1";
+  exportBtn.parentNode = docHost;
+  docHost.trigger("click", { target: exportBtn });
+  assert.ok(!docHost.querySelector("[data-export-menu]").hidden, "导出菜单展开");
+  let downloaded = null;
+  const origCreate = doc.createElement.bind(doc);
+  doc.createElement = (tag) => {
+    const el = origCreate(tag);
+    if (tag === "a") downloaded = el;
+    return el;
+  };
+  const dlBtn = new StubEl("button");
+  dlBtn.dataset.exportMode = "download";
+  dlBtn.parentNode = docHost;
+  docHost.trigger("click", { target: dlBtn });
+  await tick();
+  assert.ok(
+    calls.some((c) => c.url.includes("doc.export")),
+    "导出走 doc.export 管道(endpoint)");
+  assert.equal(downloaded?.download, "design.new_ui.md", "导出文件名 = <name>.md");
+  assert.ok(
+    /^(blob:|data:text\/markdown)/.test(downloaded?.href ?? ""),
+    "下载锚 href(Blob 或 data URL 兜底)");
+  doc.createElement = origCreate;
+  Object.defineProperty(globalThis, "navigator", {
+    value: { clipboard: { writeText: async (t) => { globalThis.__copied = t; } } },
+    configurable: true,
+  });
+  globalThis.__docToast = (m) => { globalThis.__toastMsg = m; };
+  const cpBtn = new StubEl("button");
+  cpBtn.dataset.exportMode = "copy";
+  cpBtn.parentNode = docHost;
+  docHost.trigger("click", { target: cpBtn });
+  await tick();
+  assert.ok((globalThis.__copied ?? "").includes("首段内容"), "复制全文到剪贴板");
+  delete globalThis.navigator;
+  delete globalThis.__docToast;
+
+  // doc 意图:列表卡行内点开 doc tab;卡上"新建文档" → 唯一名起稿
+  probe.state.messages.push({ id: "m-docs", role: "agent", text: "共 1 篇", ts: 14,
+    cards: [{ type: "doc_list", v: 1,
+      data: { docs: [{ name: "design.new_ui", title: "新 UI", first_line: "概述", chars: 100, has_bubbles: true }] },
+      actions: [] }] });
+  probe.state.active = "conv";
+  probe.renderMain();
+  assert.ok(logHtml().includes('data-detail-kind="doc"'), "doc_list 卡渲染(行内链接)");
+  const docRow = new StubEl("button");
+  docRow.dataset.detailKind = "doc";
+  docRow.dataset.detailRef = "design.new_ui";
+  docRow.dataset.detail = "{}";
+  docRow.parentNode = doc.body;
+  doc.trigger("click", { target: docRow });
+  await tick();
+  assert.equal(probe.state.active, "d:doc:design.new_ui", "行内点 → doc tab");
+  let createAttempts = 0;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (path, options = {}) => {
+    if (path === "/platform/api/docs" && options.method === "POST" && (options.body ?? "").includes("untitled")) {
+      createAttempts += 1;
+      if (createAttempts === 1) {
+        return { ok: false, status: 409, json: async () => ({ detail: "exists" }) };
+      }
+      return { ok: true, status: 201, json: async () => ({ name: "doc.untitled2", text: "", meta: {} }) };
+    }
+    if (path === "/platform/api/docs/doc.untitled2" && !options.method) {
+      return { ok: true, status: 200, json: async () => ({ name: "doc.untitled2", text: "", meta: { savedAt: 1 }, versions: [] }) };
+    }
+    if (path === "/platform/api/docs/doc.untitled2/bubbles") {
+      return { ok: true, status: 200, json: async () => [] };
+    }
+    return origFetch(path, options);
+  };
+  const createBtn = new StubEl("button");
+  createBtn.dataset.docCreate = "1";
+  createBtn.parentNode = doc.body;
+  doc.trigger("click", { target: createBtn });
+  await tick();
+  await tick();
+  assert.equal(createAttempts, 2, "409 后自动加唯一后缀");
+  assert.equal(probe.state.active, "d:doc:doc.untitled2", "起稿后开新文档 tab");
+  globalThis.fetch = origFetch;
 }
 
 console.log("platform.test.mjs: all assertions passed");

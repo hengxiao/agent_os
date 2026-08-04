@@ -297,4 +297,12 @@ export const COPY = {
   "platform.doc.review": "评审",
   "platform.doc.notes": "修订文档",
   "platform.doc.bubblebar": "评议",
+  "platform.doc.list": "文档",
+  "platform.doc.none": "尚无文档,自下方新建",
+  "platform.doc.create": "新建文档",
+  "platform.doc.download": "下载 .md",
+  "platform.doc.copy": "复制全文",
+  "platform.doc.copied": "已录入剪贴板",
+  "platform.doc.copy.fail": "复制未成,请手动全选",
+  "platform.doc.notes.saved": "保存即写回 NOTES",
 };

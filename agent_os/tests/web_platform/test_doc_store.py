@@ -453,3 +453,41 @@ def test_notes_writeback_to_draft(tmp_path):
     r2 = client.post(f"/platform/api/apps/{inst2}/actions/doc.save",
                      json={"surface": "tab", "args": {"text": "y\n"}})
     assert r2.status_code == 200, "草稿缺失时保存跳过写回(只读+另存模式)"
+
+
+# ---------------------------------------------------------------------------
+# D4:doc 意图(orchestrator)+ severity 单源(§6/打磨)
+# ---------------------------------------------------------------------------
+
+
+def test_doc_intent_orchestrator():
+    """doc 意图:关键词命中列表卡(新建意图带引导);编排只读(docs_provider 注入)。"""
+    from agent_os.host.web_platform.orchestrator import Orchestrator
+
+    docs = [{"name": "design.new_ui", "title": "新 UI", "first_line": "概述",
+             "chars": 123, "savedAt": 1, "has_bubbles": True, "versions": 1}]
+    orch = Orchestrator(docs_provider=lambda: docs)
+    msg = orch.handle({"messages": []}, "有哪些文档")
+    card = msg["cards"][0]
+    assert card["type"] == "doc_list", "列表卡(doc_list 协议型)"
+    assert card["data"]["docs"][0]["title"] == "新 UI"
+    assert "共 1 篇" in msg["text"]
+    msg2 = orch.handle({"messages": []}, "新建文档")
+    assert "新建文档" in msg2["text"], "新建意图带'点卡新建'引导(编排不写)"
+    assert msg2["cards"][0]["type"] == "doc_list"
+    # 与 make_skill 区分:"写个文档" → doc;"写个查天气技能" → create_skill
+    assert orch.handle({"messages": []}, "写个查天气技能")["cards"][0]["type"] == "plan"
+
+
+def test_build_doc_list_card_validates():
+    """build_doc_list_card 过协议闸(doc_list 注册型)。"""
+    from agent_os.host.web_platform.artifacts import build_doc_list_card, validate_card
+
+    validate_card(build_doc_list_card(docs=[]))
+
+
+def test_severity_single_source():
+    """severity 单源:后端校验集 = must/should/nit(与前端 doc-editor.js 字面一致)。"""
+    from agent_os.host.web_platform.app import DOC_SEVERITIES
+
+    assert list(DOC_SEVERITIES) == ["must", "should", "nit"]

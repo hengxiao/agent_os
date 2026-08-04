@@ -757,3 +757,14 @@ body[data-icon-mode="1"] .pf-tray-label { display: none; }
 .doc-cols[data-view="edit"] { grid-template-columns: 160px 1fr; }
 .doc-cols[data-view="edit"] .doc-bubblebar { display: none; }
 .doc-cols[data-view="preview"] .doc-bubblebar { display: none; }
+
+/* ── D4:导出菜单 ── */
+.doc-export { position: relative; }
+.doc-export-menu {
+  position: absolute; top: 100%; left: 0; z-index: 2;
+  display: grid; gap: var(--s1); min-width: 140px;
+  background: var(--bg-1); border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md); padding: var(--s2);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--fg-0) 12%, transparent);
+}
+.doc-export-note { font-size: var(--text-2xs); color: var(--fg-2); padding: 0 var(--s2); }

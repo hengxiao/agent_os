@@ -599,7 +599,6 @@ shell 的操作一旦是 action,**agent 就能操作用户的界面**——这�
   未知 kind 源被拒不静默、扩展键可忽略。
 
 ## 16. Context Cascade:动作触发时的逐级上下文协议(v0.3 增补)
-
 **问题**:widget 的动作常常需要不止自己的数据——一个挂在某段文本上的
 chat bubble 要回答"帮我精简这段",需要**点击的 span、所在段落、全文、
 所在 app 的状态**。这些分布在 widget 树的每一级上,触发点自己拿不全。
@@ -660,3 +659,52 @@ chat bubble(见 docs/WIDGETS.md W-bubble)是本协议的首个落地:
 > `/api/lab/drafts/{name}/comment` → `skill.dev.commenter`,tools=[]
 > 白名单收口);级联单向向上/级数裁剪/缺级缺席,均有 widgets.test.mjs
 > 与 test_lab_comment.py 断言在案。
+
+---
+
+## 17. 原则对齐审计(v0.4;2026-08-03)
+
+> 核心原则(用户给定):**所有 widget 都有 context,所有 action 都是 skill;
+> perform an action = 将合适的 context 给与对应的 skill 去执行。**
+> 本节逐条检视现状(含 v0.2 三态 exec)对该原则的符合度。
+
+### 17.1 与 v0.2 的张力先说清
+
+v0.2 评审曾证明"action=skill 调用则内核仲裁自动覆盖"在当时为假——
+promote 是 host 函数、工具分发需要帧上下文。那次评审的实证结论没错,
+但方向相反:**正确的对齐不是把抽象降级为三态 exec,而是把 endpoint 态的
+宿主函数升格为真 skill**,让"所有 action 都是 skill"成为事实,仲裁覆盖
+也才从话术变成结构。v0.2 的三态表过渡保留(§17.4 映射),exec 字段的
+实现语义逐步迁移。
+
+### 17.2 逐项审计
+
+| # | 现状 | 判定 | 处置 |
+|---|---|---|---|
+| 1 | **endpoint 态动作是 host 函数**(promote/recheck/rewind/run.stop/resume/rerun/debug.command/draft.check/draft.promote/doc.save/snapshot/export/shell.theme.set/session.create) | ❌ 不符合 | 升格为内置 skill:`platform.*` 命名空间的 code 技能(handler 落包内),在帧里执行——白名单/升权闸/数据闸才**真正**覆盖 UI 副作用。promote 的人确认保留(那是该 skill 的升权确认语义,不是冗余) |
+| 2 | **local 态动作是服务端 mutator**(shell.tab.open/close/move_tab、conversation pin) | ❌ 不符合 | 升格为 **local skill**:纯 state 变换函数(无副作用),同一 skill 接口、同一测试面;"local"从此是 skill 的副作用档而非执行通道 |
+| 3 | **widget actions 是裸 JS**(set_value/format/toggle…) | ❌ 不符合 | 同理建模为 local skill(宿主内执行,不进内核;形态 = def.actions 声明的纯函数),统一"action=skill"的表述 |
+| 4 | **cascade 是按需注册**(只有 bubble/comment 注册了 context_provider) | ❌ 不符合 | **所有 widget 默认有 context**:registry 注册时给每个 widget 一个缺省 context_provider(kind+state 摘要),声明者可覆盖;不提供 = 协议不合规 |
+| 5 | **action 管道不带 cascade**(args_from 只绑 state) | ❌ 不符合 | action 执行时**自动携带级联信封**(§16),args_from 是其子集;不需要全链的 action 用 `context: []` 显式声明(默认有,显式无) |
+| 6 | **对话 send/retry 是同步请求-响应**,不是 run/skill | ❌ 不符合 | 升格:send = 起 orchestrate run(skill 执行),回复以 run 终态回写(M4a 的 run 真通道同构) |
+| 7 | **decisions 作答走专属端点** `/api/decisions/{qid}`,不过管道 | ❌ 不符合 | 收编为 `escalation` app 的 action(endpoint→skill 后同 1)——supervisor 闭环语义不变,入口归一 |
+| 8 | **旧 `/api/cards/action`** 兼容面 | ⚠️ 过渡 | M6 退役(迁移完成后删) |
+| 9 | 升权确认(人审)/干净 context/args_from 服务端权威 | ✅ 符合 | 保留;升格后这些语义由 skill 的 tier 与帧模型原生承担 |
+| 10 | widget 零 fetch/事件上行 | ✅ 符合 | 保留;这正是"widget 有 context 但不执行 action"的控件侧表达 |
+
+### 17.3 升格清单(下一步开发序)
+
+1. `platform.*` 内置 skill 包:把 17.2-#1 的 host handler 逐个包成 code 技能
+   (skills.yaml 注册,trusted);管道 exec.endpoint 改为真实 skill 调用;
+2. local mutator → local skill(#2/#3);
+3. registry 缺省 context_provider(#4)+ 管道自动级联(#5);
+4. send/retry 归 run(#6)、decisions 收编(#7)、旧 cards/action 退役(#8);
+5. 全程红线:**promote 的人确认、升权人审、数据 authZ 一行都不许因升格而削弱**
+   ——升格让仲裁覆盖从话术变结构,不是绕开它的新通道。
+
+### 17.4 验收(原则符合度测试)
+
+- 静态扫描:任何 action 端点必须能映射到一个 skill(local/run);无孤端点;
+- 每个注册 widget 必有 context_provider(缺省或声明);
+- 管道抽样:任选 action,其执行输入含 cascade 信封(或显式 `context: []`);
+- 既有 941+ 测试全绿(行为零变化,只换执行面的身份)。

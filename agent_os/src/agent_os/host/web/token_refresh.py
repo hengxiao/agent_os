@@ -38,9 +38,20 @@ def _cred_path() -> Path:
 
 
 def _refresh_once(path: Path) -> bool:
-    """到期临近则续期;返回是否发生了续期。异常不外抛(记日志)。"""
+    """同步+续期;返回是否发生了续期。异常不外抛(记日志)。
+
+    两个职责:
+    1. **文件→环境同步**:CLI 与本 refresher 共用同一 refresh_token(轮换制),
+       谁先刷文件不一定——所以每 tick 先把"文件里的新票"同步进 env
+       (覆盖 CLI 刷新而本进程 env 还停留在旧票的场景);
+    2. **到期续期**:距过期 <_REFRESH_BEFORE_S 且本地无新票时,调 refresh 端点。
+    """
     try:
         data = json.loads(path.read_text())
+        access = data.get("access_token")
+        if access and access != os.environ.get("MOONSHOT_API_KEY"):
+            os.environ["MOONSHOT_API_KEY"] = access  # 文件较新(CLI 刷新):直接采用
+            print(f"[token_refresh] 采用凭证文件中的新 token(外部刷新)", flush=True)
         expires_at = float(data.get("expires_at") or 0)
         if expires_at - time.time() >= _REFRESH_BEFORE_S:
             return False
@@ -68,10 +79,10 @@ def _refresh_once(path: Path) -> bool:
             data["expires_at"] = time.time() + float(payload["expires_in"])
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         os.environ["MOONSHOT_API_KEY"] = access
-        _log.info("OAuth token 已续期(expires_in=%s)", payload.get("expires_in"))
+        print(f"[token_refresh] OAuth token 已续期(expires_in={payload.get('expires_in')})", flush=True)
         return True
-    except Exception as e:  # noqa: BLE001 — 续期失败不致命,下 tick 重试
-        _log.warning("OAuth token 续期失败(下 tick 重试): %r", e)
+    except Exception as e:  # noqa: BLE001 — 续期失败不致命,下 tick 重试(可能 CLI 已代刷)
+        print(f"[token_refresh] 续期失败(下 tick 重试): {e!r}", flush=True)
         return False
 
 
@@ -89,5 +100,5 @@ def start_token_refresher(stop: threading.Event | None = None) -> threading.Thre
 
     t = threading.Thread(target=_loop, name="agent-os-token-refresh", daemon=True)
     t.start()
-    _log.info("OAuth token 自动续期已启动(每 %ds 检查 %s)", _CHECK_INTERVAL_S, path)
+    print(f"[token_refresh] OAuth token 自动续期已启动(每 {_CHECK_INTERVAL_S}s 检查 {path})", flush=True)
     return t

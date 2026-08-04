@@ -70,6 +70,22 @@ def test_no_refresh_when_fresh(tmp_path, monkeypatch):
     assert called == []
 
 
+def test_env_syncs_from_file(tmp_path, monkeypatch):
+    """文件被外部(CLI)刷新且未到期 → env 跟随文件(本进程不刷也不同步落后)。"""
+    cred = tmp_path / "kimi-code.json"
+    _write_cred(cred, expires_in=600)  # 新票在文件里
+    monkeypatch.setenv("MOONSHOT_API_KEY", "stale-token")  # 进程 env 是旧票
+    monkeypatch.setattr(tr.urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该发请求")))
+    assert tr._refresh_once(cred) is False  # 不续期(文件很新)
+    assert tr.os.environ["MOONSHOT_API_KEY"] == "old-token"  # ← 文件内容 = _write_cred 写的 old-token
+    # 文件与 env 不同 → env 采用文件值(此场景文件值恰为 old-token,改名验证)
+    data = json.loads(cred.read_text())
+    data["access_token"] = "cli-fresh-token"
+    cred.write_text(json.dumps(data))
+    tr._refresh_once(cred)
+    assert tr.os.environ["MOONSHOT_API_KEY"] == "cli-fresh-token"
+
+
 def test_failure_is_tolerated(tmp_path, monkeypatch):
     """网络错误/坏响应不外抛,下 tick 再试。"""
     cred = tmp_path / "kimi-code.json"

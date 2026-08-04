@@ -449,10 +449,59 @@ const assertClean = (html, who) => {
   const calls = [];
   let badRunFail = true; // bad-run 首轮加载炸,重试后成功
   let presentCalls = 0;  // 决策轮询:首轮炸(静默)→ 次轮插入 → 之后幂等
+  // M5:shell 唯一事实源(JS 镜像,语义与后端 mutator 对齐)
+  const shellState = {
+    tabs: [{ id: "conv", instance_id: "", kind: "conversation", ref: "conv", title: "对话" }],
+    active_tab: "conv", theme: "", sessions: [], layout: { order: [], icon_mode: false }, widgets: {},
+  };
+  const shellMutate = (action, args) => {
+    const s = shellState;
+    if (action === "shell.tab.open") {
+      const ex = s.tabs.find((t) => t.kind !== "conversation" && t.kind === args.kind && t.ref === args.ref);
+      if (ex) s.active_tab = ex.id;
+      else {
+        s.tabs.push({ id: args.id, instance_id: args.instance_id ?? "", kind: args.kind, ref: args.ref, title: args.title });
+        s.active_tab = args.id;
+      }
+    } else if (action === "shell.tab.focus") s.active_tab = args.tab;
+    else if (action === "shell.tab.close") {
+      s.tabs = s.tabs.filter((t) => t.id !== args.tab);
+      if (s.active_tab === args.tab) s.active_tab = "conv";
+    } else if (action === "shell.layout.set") s.layout.icon_mode = Boolean(args.icon_mode);
+    else if (action === "shell.layout.move_tab") {
+      const moving = s.tabs.find((t) => t.id === args.tab);
+      const rest = s.tabs.filter((t) => t.id !== args.tab);
+      if (moving) {
+        if (args.before === "__start__") rest.splice(rest[0]?.id === "conv" ? 1 : 0, 0, moving);
+        else if (args.before) {
+          const i = rest.findIndex((t) => t.id === args.before);
+          rest.splice(i < 0 ? rest.length : i, 0, moving);
+        } else rest.push(moving);
+        s.tabs = rest;
+      }
+    } else if (action === "shell.theme.set") s.theme = args.theme ?? "";
+    else if (action === "shell.session.create") {
+      return { ok: true, text: "", session: { id: "s2", title: "", created_at: 3, messages: [] },
+        instance: { id: "app-shell", kind: "shell", state: s } };
+    }
+    return { ok: true, instance: { id: "app-shell", kind: "shell", state: s } };
+  };
   globalThis.fetch = async (path, options = {}) => {
     const url = String(path);
     calls.push({ url, method: options.method ?? "GET", body: options.body });
     const reply = (data) => ({ ok: true, status: 200, json: async () => data });
+    if (url === "/platform/api/shell") {
+      return reply({ id: "app-shell", kind: "shell", ref: "shell", title: "shell",
+        state: shellState, created_by: "", created_at: 1 });
+    }
+    if (url.startsWith("/platform/api/apps/app-shell/actions/")) {
+      const action = url.split("/actions/")[1];
+      return reply(shellMutate(action, JSON.parse(options.body ?? "{}").args ?? {}));
+    }
+    if (url === "/platform/api/widgets/register" || url === "/platform/api/widgets/unregister") {
+      return reply({ ok: true });
+    }
+    if (url === "/platform/api/widgets/focus") return reply({ ok: true, path: JSON.parse(options.body ?? "{}").path });
     if (url === "/platform/api/sessions" && !options.method) {
       return reply([{ id: "s1", title: "晚餐技能", messages: 2, cards: 1, created_at: 1, last_at: 2 }]);
     }
@@ -1090,6 +1139,92 @@ const assertClean = (html, who) => {
   assert.ok(!probe.polling(), "SSE 复活即停轮询(替代不双轨)");
   delete globalThis.EventSource;
   delete globalThis.__legacyMounts;
+
+  /* ── M5:shell app 化 + widget 寻址 + DnD(§13/§14/§15)───────── */
+
+  // tab 条消费 shell.state:开 tab/焦点/关闭都转发为 shell action(事件→管道→回镜)
+  assert.ok(
+    calls.some((c) => c.url.startsWith("/platform/api/apps/app-shell/actions/shell.tab.open")),
+    "开 tab = shell.tab.open(§13.1)");
+  assert.ok(
+    calls.some((c) => c.url.startsWith("/platform/api/apps/app-shell/actions/shell.tab.focus")),
+    "焦点 = shell.tab.focus");
+  assert.ok(
+    calls.some((c) => c.url.startsWith("/platform/api/apps/app-shell/actions/shell.tab.close")),
+    "关闭 = shell.tab.close");
+  assert.ok(probe.state.useShell, "shell 是唯一事实源(非前端私有 tab 数组)");
+  assert.equal(probe.state.shell.id, "app-shell");
+  // widget 注册:开详情 tab 即登记(§14 注册制)
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/widgets/register"),
+    "Surface 渲染即登记 widget");
+
+  // widget focus:POST 裁决 → 滚动 + 高亮脉冲
+  const pulseEl = new StubEl("div");
+  const origQS = doc.querySelector;
+  doc.querySelector = (sel) => (sel.includes("data-reg-path=") ? pulseEl : origQS(sel));
+  await probe.widgetFocus("/shell/tab/d:gate:lab.dinner/surface/tab");
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/widgets/focus"),
+    "focus 经端点裁决");
+  assert.ok(pulseEl.classList.contains("pf-pulse"), "高亮脉冲加上");
+  doc.querySelector = origQS;
+
+  // DnD 第一对:tab 拖到 tab 条 = 重排(shell.layout.move_tab,local)
+  const dndOK = { types: ["application/x-agent-os-widget"], getData: () => "", setData() {} };
+  const strip = doc.querySelector("#tabs");
+  let prevented = 0;
+  strip.trigger("dragover", { target: strip, dataTransfer: dndOK, preventDefault: () => { prevented += 1; } });
+  assert.ok(strip.classList.contains("pf-drop-ok"), "accept 落点高亮");
+  const dndBad = { types: ["text/plain"], getData: () => "", setData() {} };
+  strip.trigger("dragleave", { target: strip });
+  strip.trigger("dragover", { target: strip, dataTransfer: dndBad, preventDefault: () => { prevented += 1; } });
+  assert.ok(!strip.classList.contains("pf-drop-ok"), "非法落点不高亮(§15.2)");
+  const envTab = {
+    types: ["application/x-agent-os-widget"],
+    getData: () => JSON.stringify({ source: "/shell/tab/d:gate:lab.dinner", source_kind: "shell-tab", position: {} }),
+  };
+  const moveBefore = calls.filter((c) => c.url.includes("shell.layout.move_tab")).length;
+  strip.trigger("drop", { target: strip, dataTransfer: envTab, preventDefault: () => {} });
+  await tick();
+  assert.ok(
+    calls.filter((c) => c.url.includes("shell.layout.move_tab")).length > moveBefore,
+    "tab 重排 = shell.layout.move_tab(与 §15.3 同 action)");
+  assert.equal(shellState.tabs.at(-1).id, "d:gate:lab.dinner", "重排落进 shell.state(空 before = 移到末尾)");
+
+  // DnD 第二对:卡面拖到 tab 条 = 打开(与点"打开"同一 openDetail,同源断言)
+  const envCard = {
+    types: ["application/x-agent-os-widget"],
+    getData: () => JSON.stringify({
+      source: "/conv/s1/msg/0/card/0", source_kind: "gate_report", ref: "lab.dinner", position: {},
+    }),
+  };
+  strip.trigger("drop", { target: strip, dataTransfer: envCard, preventDefault: () => {} });
+  await tick();
+  assert.equal(probe.state.active, "d:gate:lab.dinner", "卡 → tab 条 = shell.tab.open 同源(去重聚焦)");
+
+  // 触屏降级:长按菜单的"移到最左/最右"(与 DnD 同一 move_tab)
+  probe.state.longPressTab = "d:gate:lab.dinner";
+  probe.renderTabs();
+  assert.ok(tabsHtml().includes("data-move-start"), "长按菜单上屏(a11y)");
+  const ms = new StubEl("button");
+  ms.dataset.moveStart = "d:gate:lab.dinner";
+  ms.parentNode = doc.body;
+  doc.trigger("click", { target: ms });
+  await tick();
+  assert.equal(shellState.tabs[1].id, "d:gate:lab.dinner", "移到最左(conv 恒首)");
+
+  // 图标列开关:shell.layout.set → 镜像进 body dataset
+  const iconBtn = new StubEl("button");
+  iconBtn.dataset.iconToggle = "";
+  iconBtn.parentNode = doc.body;
+  doc.trigger("click", { target: iconBtn });
+  await tick();
+  assert.equal(shellState.layout.icon_mode, true, "图标列写进 shell.state.layout(持久化)");
+  assert.equal(doc.body.dataset.iconMode, "1", "镜像驱动样式");
+  doc.trigger("click", { target: iconBtn });
+  await tick();
+  assert.equal(doc.body.dataset.iconMode, "0", "再点还原");
 }
 
 console.log("platform.test.mjs: all assertions passed");

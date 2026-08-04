@@ -105,6 +105,27 @@ class AppSpawnBody(BaseModel):
     created_by: str = ""
 
 
+class WidgetRegisterBody(BaseModel):
+    """widget 注册(docs/APP-MODEL.md §14;M5):Surface 渲染时登记,卸载注销。
+
+    ``summary_hint`` = 该 widget 的人话摘要(卡面禁忌词纪律:前端给的必须是
+    摘要层文字,服务端只做存储不改造)。
+    """
+
+    path: str
+    kind: str = ""
+    summary_hint: str = ""
+
+
+class WidgetPathBody(BaseModel):
+    """agent 动词(docs/APP-MODEL.md §14.3):read/focus 的 path 载荷。
+
+    act 本期不过管道(M5 边界:用户点击语义已通;agent 的 act 权限收口留 M6)。
+    """
+
+    path: str
+
+
 #: 升权档 → 人话(W2 decisions 聚合字段;摘要层禁 tier 术语,前端按 tier 自取 copy,
 #: 本字段是给非前端消费方/调试面的固定中文)
 _TIER_HUMAN = {"none": "只读", "reversible": "可改能撤销", "irreversible": "不可逆需审批"}
@@ -159,6 +180,22 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     #: app instance 存储(M2 文件持久化:卡创建即登记,kind+ref 去重,
     #: 重启后卡 dict 上的 instance id 仍可解析——M1 旧卡 404 的缺口在此关闭)
     instances = AppInstanceStore(Path(artifacts_root) / "platform_apps")
+    #: shell 根 app(docs/APP-MODEL.md §13;M5):bootstrap 实例化的唯一特例
+    #: (不由 action 孵化);kind+ref="shell" 去重 → 布局随 instance 持久化,
+    #: 重启恢复(tab 顺序/激活 tab/图标列)
+    _SHELL_STATE_DEFAULT: dict[str, Any] = {
+        "tabs": [{"id": "conv", "instance_id": "", "kind": "conversation", "ref": "conv", "title": "对话"}],
+        "active_tab": "conv",
+        "theme": "",
+        "sessions": [],
+        "layout": {"order": [], "icon_mode": False},
+        "widgets": {},
+    }
+    shell_inst, _ = instances.register(
+        kind="shell", ref="shell", title="shell",
+        state=json.loads(json.dumps(_SHELL_STATE_DEFAULT)),  # 深拷贝(默认值不被 mutate)
+        created_by="",
+    )
 
     # ------------------------------------------------------------------
     # app instance 登记(docs/APP-MODEL.md §2;M1:创建卡时登记,卡上带 instance id)
@@ -828,6 +865,84 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             ],
         }
 
+    # ── M5:shell 的 local mutators(docs/APP-MODEL.md §13.1)──────────────
+    # local = 仅改 app.state(不出海);写穿透经 instances.update_state(布局持久化)
+    def _mut_tab_open(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        state = inst["state"]
+        tabs = state.setdefault("tabs", [])
+        existing = next(
+            (t for t in tabs
+             if t.get("kind") != "conversation" and t.get("kind") == args.get("kind") and t.get("ref") == args.get("ref")),
+            None,
+        )
+        if existing is None:
+            tabs.append({
+                "id": args.get("id", ""), "instance_id": args.get("instance_id", ""),
+                "kind": args.get("kind", ""), "ref": args.get("ref", ""), "title": args.get("title", ""),
+            })
+            state["active_tab"] = args.get("id", "")
+        else:
+            state["active_tab"] = existing.get("id", "")  # kind+ref 去重聚焦(§6)
+        instances.update_state(inst["id"], state)
+        return {"ok": True}
+
+    def _mut_tab_focus(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        inst["state"]["active_tab"] = args.get("tab", "conv")
+        instances.update_state(inst["id"], inst["state"])
+        return {"ok": True}
+
+    def _mut_tab_close(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        state = inst["state"]
+        tab_id = args.get("tab", "")
+        state["tabs"] = [t for t in state.get("tabs", []) if t.get("id") != tab_id]
+        if state.get("active_tab") == tab_id:
+            state["active_tab"] = "conv"  # 关闭回落 conversation(销毁是显式动作,close≠destroy)
+        instances.update_state(inst["id"], state)
+        return {"ok": True}
+
+    def _mut_layout_set(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        inst["state"].setdefault("layout", {})["icon_mode"] = bool(args.get("icon_mode", False))
+        instances.update_state(inst["id"], inst["state"])
+        return {"ok": True}
+
+    def _mut_layout_move_tab(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        state = inst["state"]
+        tabs = [t for t in state.get("tabs", []) if t.get("id") != args.get("tab")]
+        moving = next((t for t in state.get("tabs", []) if t.get("id") == args.get("tab")), None)
+        if moving is not None:
+            before = args.get("before") or ""
+            if before == "__start__":
+                tabs.insert(1 if tabs and tabs[0].get("id") == "conv" else 0, moving)  # conv 恒首
+            elif before:
+                idx = next((i for i, t in enumerate(tabs) if t.get("id") == before), len(tabs))
+                tabs.insert(idx, moving)
+            else:
+                tabs.append(moving)  # before 缺省 = 移到末尾
+            state["tabs"] = tabs
+            instances.update_state(inst["id"], state)
+        return {"ok": True}
+
+    _LOCAL_MUTATORS = {
+        "shell.tab.open": _mut_tab_open,
+        "shell.tab.focus": _mut_tab_focus,
+        "shell.tab.close": _mut_tab_close,
+        "shell.layout.set": _mut_layout_set,
+        "shell.layout.move_tab": _mut_layout_move_tab,
+    }
+
+    def _act_shell_theme_set(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.shell.theme.set(M5 §13.1):切主题(持久化偏好 → shell.state.theme)。"""
+        return {"ok": True, "text": "", "state": {"theme": str(payload.get("theme") or "")}}
+
+    def _act_shell_session_create(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.shell.session.create(M5 §13.1):新会话(app 孵化,与 POST /api/sessions 同源)。"""
+        session = sessions.create()
+        instances.register(
+            kind="conversation", ref=session["id"], title=session["id"],
+            state={"messages": [], "outbox": []}, created_by="",
+        )
+        return {"ok": True, "text": "", "session": session}
+
     SKILL_BINDINGS = {
         # exec 归态(v0.2 §4;归错态 = 授权漏洞,评审面):
         #   endpoint = 确定性写,转发既有端点(下方除标注外全部);
@@ -848,6 +963,9 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         "platform.debug.command": _act_debug_command,
         "platform.draft.check": _act_draft_check,
         "platform.run.launch": _act_run_launch,  # M4a 发起面(run 态)
+        # M5(docs/APP-MODEL.md §13.1):shell 的 endpoint 动作
+        "platform.shell.theme.set": _act_shell_theme_set,
+        "platform.shell.session.create": _act_shell_session_create,
     }
 
     registry = AppRegistry(known_skills=set(SKILL_BINDINGS))
@@ -888,6 +1006,60 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             raise HTTPException(status_code=404, detail=f"找不到 app instance: {instance_id}")
         return inst
 
+    # ------------------------------------------------------------------
+    # shell 与 widget 寻址(M5,docs/APP-MODEL.md §13/§14)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/shell")
+    def get_shell() -> dict[str, Any]:
+        """shell 根 app:tab 条/布局的唯一事实源(前端镜像消费,§13)。"""
+        return instances.get(shell_inst["id"])
+
+    @app.post("/api/widgets/register")
+    def widget_register(body: WidgetRegisterBody) -> dict[str, Any]:
+        """widget 注册(§14.2 注册制):Surface 渲染登记,随 shell.state 持久化。"""
+        state = shell_inst["state"]
+        state.setdefault("widgets", {})[body.path] = {
+            "kind": body.kind, "summary_hint": body.summary_hint,
+        }
+        instances.update_state(shell_inst["id"], state)
+        return {"ok": True}
+
+    @app.post("/api/widgets/unregister")
+    def widget_unregister(body: WidgetPathBody) -> dict[str, Any]:
+        """widget 注销(卸载即注销;注销后 read/focus 404)。"""
+        state = shell_inst["state"]
+        state.setdefault("widgets", {}).pop(body.path, None)
+        instances.update_state(shell_inst["id"], state)
+        return {"ok": True}
+
+    def _widget_read(path: str) -> dict[str, Any]:
+        """路径解析(§14;查 registry 不查 DOM):人话摘要,不存在 → 404。
+        ``{path:path}`` 转换器剥前导斜杠——按 "/x" 与 "x" 两形归一查。"""
+        widgets = shell_inst["state"].get("widgets", {})
+        w = widgets.get(path) or widgets.get("/" + path.lstrip("/"))
+        if w is None:
+            raise HTTPException(status_code=404, detail=f"找不到 widget: {path}")
+        return {"path": path, "kind": w.get("kind", ""), "summary": w.get("summary_hint", "")}
+
+    @app.get("/api/widgets/{path:path}")
+    def widget_get(path: str) -> dict[str, Any]:
+        """路径解析端点(M5 §2):read 的 GET 形。"""
+        return _widget_read(path)
+
+    @app.post("/api/widgets/read")
+    def widget_read(body: WidgetPathBody) -> dict[str, Any]:
+        """agent 动词 read(§14.3):人话摘要(禁忌词纪律由登记方摘要层保证)。"""
+        return _widget_read(body.path)
+
+    @app.post("/api/widgets/focus")
+    def widget_focus(body: WidgetPathBody) -> dict[str, Any]:
+        """agent 动词 focus(§14.3):解析同源(404 一致);滚动+高亮在前端执行
+        (本端点只裁决存在性——focus 不改世界,local 语义)。
+        act 本期不过管道:用户点击语义已通;agent 的 act 权限收口留 M6。"""
+        _widget_read(body.path)
+        return {"ok": True, "path": body.path}
+
     @app.post("/api/apps/{instance_id}/actions/{action_id}")
     def app_action(instance_id: str, action_id: str, body: AppActionBody) -> dict[str, Any]:
         """action 管道(§4):manifest 校验 → args 绑定(state+事件)→ handler → state 回写。
@@ -911,11 +1083,22 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             )
         mode = action["exec"]["mode"]
         if mode == "local":
-            # v0.2 §4:local 是纯 UI 动作(不出海、不进管道)——调到管道即拒绝
-            raise HTTPException(
-                status_code=400,
-                detail=f"action {action_id!r} 是 local 态(纯 UI 动作不出海),不应调到管道",
-            )
+            # v0.2 §4 + M5 §13:local = 仅改 app.state(不出海)——state 服务端权威
+            # 后,shell 类 local 动作的"仅改 state"恰恰要在服务端执行;
+            # 无 mutator 的 local(conversation 的 pin/close 等前端本地动作)
+            # 调到管道仍拒绝(M3.5 语义不变)
+            mutator = _LOCAL_MUTATORS.get(action_id)
+            if mutator is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"action {action_id!r} 是 local 态(纯 UI 动作不出海),不应调到管道",
+                )
+            try:
+                input_args = validate_args_input(action, body.args)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            result = mutator(inst, input_args)
+            return {**result, "instance": inst}
         try:
             input_args = validate_args_input(action, body.args)  # 客户端载荷的唯一合法面
         except ValueError as e:

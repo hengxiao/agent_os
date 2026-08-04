@@ -308,8 +308,7 @@
 }
 
 /* M2 最近关闭(关闭≠销毁的重开入口) */
-.pf-recent {
-  border-top: var(--stroke) solid var(--line);
+.pf-recent {  border-top: var(--stroke) solid var(--line);
   padding: var(--s2);
   display: grid;
   gap: var(--s1);
@@ -417,3 +416,46 @@
 
 /* 详情加载/失败占位 */
 .pf-wait { color: var(--fg-2); font-size: var(--text-xs); padding: var(--s4); }
+
+/* ── M5:DnD 高亮 / focus 脉冲 / 长按菜单 / 图标列开关 ─────────── */
+
+/* §15.2:accept 校验通过的落点才高亮(非法落点无此类) */
+.pf-drop-ok {
+  outline: var(--stroke-strong) solid var(--live);
+  outline-offset: -2px;
+}
+
+/* §14.3 focus 动词:高亮脉冲(reduced-motion 停用) */
+@keyframes pf-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--live) 55%, transparent); }
+  100% { box-shadow: 0 0 0 8px transparent; }
+}
+.pf-pulse {
+  animation: pf-pulse 0.9s ease-out 1;
+  border-radius: var(--r-md);
+}
+@media (prefers-reduced-motion: reduce) { .pf-pulse { animation: none; outline: var(--stroke-strong) solid var(--live); } }
+
+/* §15.4 触屏降级:长按菜单(移到最左/最右) */
+.pf-tab-lp { display: inline-flex; gap: var(--s1); }
+.pf-tab-lp button {
+  border: var(--stroke) solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  border-radius: var(--r-sm);
+  font-size: var(--text-2xs);
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0 var(--s1);
+}
+.pf-tab-lp button:hover { border-color: var(--live); }
+
+/* §13.1 图标列开关(body[data-icon-mode="1"] = shell.state.layout.icon_mode;
+   与窄屏媒体查询同形,手动优先) */
+body[data-icon-mode="1"] .pf-cols { grid-template-columns: 44px minmax(0, 1fr); }
+body[data-icon-mode="1"] .pf-tab { justify-content: center; padding: var(--s2) 0; }
+body[data-icon-mode="1"] .pf-tab .pf-tab-label,
+body[data-icon-mode="1"] .pf-tab .pf-tab-x,
+body[data-icon-mode="1"] .pf-tab .pf-tab-lp { display: none; }
+body[data-icon-mode="1"] .pf-tab .pf-tab-ico { display: inline; }
+body[data-icon-mode="1"] .pf-recent-title { display: none; }

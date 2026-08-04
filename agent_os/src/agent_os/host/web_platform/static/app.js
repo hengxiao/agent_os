@@ -51,7 +51,58 @@ const state = {
   closedTabs: [], // M2:最近关闭(重开入口;销毁是显式动作,本期不做)
   active: "conv",
   detail: null, // {kind, ref, loading, error, html}
+  shell: null, // M5:shell 根 app 的 instance(唯一事实源;本地 tabs/active 是它的镜像)
+  useShell: false, // /api/shell 不可达时回落本地 tab 模型(M1-M4 行为,降级面)
+  longPressTab: null, // 触屏降级:长按出"移到最左/最右"(§15.4 a11y)
 };
+
+/* ── shell 镜像(docs/APP-MODEL.md §13;M5)───────────────────────
+   shell.state 是唯一事实源:前端 tabs/active 只是它的渲染镜像;
+   一切 tab/布局/主题操作转发为 shell action(管道),响应回镜。 */
+
+function _mirrorShell(shellState) {
+  state.tabs = (shellState.tabs ?? []).map((t) => ({
+    id: t.id,
+    kind: t.kind,
+    title: t.title,
+    ref: t.ref,
+    instance: t.instance_id || undefined,
+  }));
+  state.active = shellState.active_tab ?? "conv";
+  document.body.dataset.iconMode = shellState.layout?.icon_mode ? "1" : "0";
+}
+
+async function loadShell() {
+  try {
+    const doc = await (await fetch("/platform/api/shell")).json();
+    state.shell = doc;
+    state.useShell = true;
+    _mirrorShell(doc.state ?? {});
+  } catch {
+    state.useShell = false; // 回落本地 tab 模型(降级面,不阻断启动)
+  }
+}
+
+/* shell action 转发(事件 → 管道 → 回镜;失败静默回落本地语义) */
+async function shellAction(actionId, args = {}) {
+  if (!state.useShell) return null;
+  try {
+    const res = await fetch(
+      `/platform/api/apps/${encodeURIComponent(state.shell.id)}/actions/${encodeURIComponent(actionId)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ surface: "tab", args }),
+      }
+    );
+    if (!res.ok) return null;
+    const result = await res.json();
+    if (result.instance?.state) _mirrorShell(result.instance.state);
+    return result;
+  } catch {
+    return null;
+  }
+}
 
 /* ── 主题(与正式系统同一契约:initTheme 解析 URL/localStorage)────── */
 
@@ -63,6 +114,7 @@ function mountThemes() {
     btn.addEventListener("click", async () => {
       const { applyTheme } = await import("/static/js/themes.js");
       applyTheme(btn.dataset.t);
+      shellAction("shell.theme.set", { theme: btn.dataset.t }); // M5:主题偏好持久化(§13.1 endpoint)
       host.querySelectorAll("button").forEach((b) => {
         b.dataset.on = b.dataset.t === btn.dataset.t ? "1" : "0";
       });
@@ -82,11 +134,21 @@ function renderTabs() {
           ? `<button class="pf-tab-x" data-tab-x="${esc(t.id)}" aria-label="${esc(copy("platform.tab.close"))}">✕</button>`
           : "";
       const label = t.kind === "conversation" ? copy("platform.tab.chat") : t.title;
+      // 触屏降级(§15.4):长按出的"移到最左/最右"菜单(与 DnD 同一 move_tab action)
+      const lp =
+        state.longPressTab === t.id
+          ? `<span class="pf-tab-lp">` +
+            `<button data-move-start="${esc(t.id)}">${esc(copy("platform.move.start"))}</button>` +
+            `<button data-move-end="${esc(t.id)}">${esc(copy("platform.move.end"))}</button></span>`
+          : "";
       return (
         `<div class="pf-tab" data-tab="${esc(t.id)}" role="tab" tabindex="0" aria-selected="${active}"` +
-        ` title="${esc(label)}">` + // 窄屏图标列时悬停给全文(M2)
+        ` title="${esc(label)}"` + // 窄屏图标列时悬停给全文(M2)
+        ` data-reg-path="/shell/tab/${esc(t.id)}"` + // §14 widget 寻址(与注册一致)
+        (t.kind !== "conversation" ? ` draggable="true"` : "") + // §15 DnD v1:tab 可拖
+        `>` +
         `<span class="pf-tab-ico" aria-hidden="true">${esc((label || "?").trim().charAt(0))}</span>` +
-        `<span class="pf-tab-label">${esc(label)}</span>${close}</div>`
+        `<span class="pf-tab-label">${esc(label)}</span>${lp}${close}</div>`
       );
     })
     .join("");
@@ -112,6 +174,83 @@ function renderTabs() {
       .join("") || `<option value="">${esc(copy("platform.no.sessions"))}</option>`;
 }
 
+/* ── DnD v1(docs/APP-MODEL.md §15):envelope 产出/消费 + 触屏降级 ── */
+
+const _DND_MIME = "application/x-agent-os-widget";
+/* 卡型 → 详情 kind(卡面拖进 tab 条 = 打开对应详情;与 _APP_KIND 逆映射) */
+const _CARD_TO_DETAIL = {
+  gate_report: "gate", skill_pack: "pack", publish: "plan",
+  diff: "diff", escalation: "esc", plan: "decompose", table: "run",
+};
+
+function bindDnd() {
+  const strip = $("#tabs");
+  document.addEventListener("dragstart", (e) => {
+    const card = e.target.closest?.(".pf-card[data-reg-path]");
+    const tab = e.target.closest?.("[data-tab]");
+    if (card) {
+      // envelope(§15.1):source/source_kind 必填,ref 为扩展键(目标不识可忽略)
+      e.dataTransfer?.setData(_DND_MIME, JSON.stringify({
+        source: card.dataset.regPath, source_kind: card.dataset.card,
+        ref: card.dataset.detailRef ?? "", position: {},
+      }));
+    } else if (tab && tab.dataset.tab !== "conv") {
+      e.dataTransfer?.setData(_DND_MIME, JSON.stringify({
+        source: `/shell/tab/${tab.dataset.tab}`, source_kind: "shell-tab", position: {},
+      }));
+    }
+  });
+  strip.addEventListener("dragover", (e) => {
+    // accept 校验(§15.2):只认我们的 envelope 类型——非法落点不高亮不接收
+    if ([...(e.dataTransfer?.types ?? [])].includes(_DND_MIME)) {
+      e.preventDefault();
+      strip.classList.add("pf-drop-ok");
+    }
+  });
+  strip.addEventListener("dragleave", () => strip.classList.remove("pf-drop-ok"));
+  strip.addEventListener("drop", (e) => {
+    strip.classList.remove("pf-drop-ok");
+    let env = null;
+    try {
+      env = JSON.parse(e.dataTransfer?.getData(_DND_MIME) ?? "null");
+    } catch {
+      env = null;
+    }
+    if (!env || typeof env.source !== "string" || typeof env.source_kind !== "string") {
+      return; // envelope 三键是强制最小集(§15.4),不合不静默吞(无高亮亦无动作)
+    }
+    e.preventDefault();
+    const before = e.target.closest?.("[data-tab]")?.dataset.tab ?? "";
+    if (env.source_kind === "shell-tab") {
+      // tab → tab 条 = 重排(§15.3 第一对;shell.layout.move_tab,local)
+      const sourceId = env.source.split("/").pop();
+      if (sourceId && sourceId !== before) {
+        shellAction("shell.layout.move_tab", { tab: sourceId, before }).then(() => renderTabs());
+      }
+      return;
+    }
+    // 卡面 → tab 条 = 打开(§15.3 第二对;与点"打开"同一 openDetail 路径,同源断言)
+    const kind = _CARD_TO_DETAIL[env.source_kind];
+    if (kind && env.ref) openDetail(kind, env.ref, {});
+  });
+}
+
+/* 触屏降级(§15.4 a11y):tab 长按 600ms 出"移到最左/最右"(与 DnD 同一 action) */
+function bindLongPress() {
+  let timer = null;
+  document.addEventListener("pointerdown", (e) => {
+    const tab = e.target.closest?.("[data-tab]");
+    if (!tab || tab.dataset.tab === "conv") return;
+    timer = setTimeout(() => {
+      state.longPressTab = tab.dataset.tab;
+      renderTabs();
+    }, 600);
+  });
+  const cancel = () => clearTimeout(timer);
+  document.addEventListener("pointerup", cancel);
+  document.addEventListener("pointercancel", cancel);
+}
+
 /* ── 渲染:主区(conversation = 对话流;detail = 详情)──────────── */
 
 function renderMain() {
@@ -133,7 +272,7 @@ function renderMain() {
   else renderDetail();
 }
 
-function msgHtml(m) {
+function msgHtml(m, index) {
   const role = m.role === "user" ? "user" : "agent";
   const text = m.text ? `<div class="pf-bubble-text">${esc(m.text)}</div>` : "";
   // N7(O7):LLM 路由凭证降级 → 人话系统提示(copy 六主题;不静默,不裸错)
@@ -141,8 +280,29 @@ function msgHtml(m) {
     m.meta?.route === "rule" && m.meta?.reason === "llm_unavailable"
       ? `<div class="pf-bubble-note">${esc(copy("platform.route.degrade"))}</div>`
       : "";
-  const cards = (m.cards ?? []).map(renderCardSurface).join(""); // 对话流 = Card Surface(摘要层)
+  // §14 widget 寻址:卡面运行时路径(/conv/<sid>/msg/<n>/card/<k>,序号属纯序列)
+  const cards = (m.cards ?? [])
+    .map((c, k) => renderCardSurface(c, 1, _regOf(c, index, k), _refOf(c)))
+    .join("");
   return `<div class="pf-msg" data-role="${role}"><div class="pf-bubble">${degrade}${text}${cards}</div></div>`;
+}
+
+/* 卡的 widget 路径(§14)与业务锚(DnD envelope 的 ref 扩展键,§15.4) */
+function _regOf(card, msgIndex, cardIndex) {
+  return `/conv/${state.current}/msg/${msgIndex}/card/${cardIndex}`;
+}
+
+function _refOf(card) {
+  const d = card?.data ?? {};
+  switch (card?.type) {
+    case "plan": return (d.create ?? [])[0]?.name ?? "";
+    case "skill_pack": case "diff": return d.name ?? "";
+    case "gate_report": return d.draft ?? "";
+    case "publish": return d.plan_id ?? "";
+    case "escalation": return d.question_id ?? "";
+    case "table": return d.ref?.id ?? "";
+    default: return "";
+  }
 }
 
 function renderLog() {
@@ -224,7 +384,10 @@ async function selectSession(id) {
 }
 
 async function newSession() {
-  const session = await (await fetch("/platform/api/sessions", { method: "POST" })).json();
+  // M5:新会话 = shell.session.create(endpoint 态,与 POST /api/sessions 同源);
+  // shell 不可达时回落直调(降级面)
+  const result = await shellAction("shell.session.create");
+  const session = result?.session ?? await (await fetch("/platform/api/sessions", { method: "POST" })).json();
   await loadSessions(session.id);
 }
 
@@ -372,7 +535,9 @@ function renderLauncher() {
     `<div class="pf-recent-title">${esc(copy("platform.apps.label"))}</div>` +
     _LEGACY_PAGES
       .map(([k, c]) => `<button class="pf-recent-item" data-open-legacy="${k}">${esc(copy(c))}</button>`)
-      .join("");
+      .join("") +
+    // M5 §13.1:图标列开关 = shell.layout.set(local;持久化进 shell.state.layout)
+    `<button class="pf-recent-item" data-icon-toggle>${esc(copy("platform.layout.iconmode"))}</button>`;
 }
 
 /* legacy 挂载:返回 close 函数(切走/关闭时调用,防 store 订阅泄漏) */
@@ -446,7 +611,8 @@ async function _spawnForTab(tab, data) {
 }
 
 function activateTab(id) {
-  state.active = id;
+  state.active = id; // 乐观先渲( shell 回镜会校正——同值 )
+  shellAction("shell.tab.focus", { tab: id }); // M5:焦点 = shell action(§13.1)
   renderTabs();
   renderMain();
 }
@@ -458,6 +624,7 @@ async function openDetail(kind, ref, data) {
   if (!opened) {
     // 同 ref 已开:聚焦并直接重渲(数据可能已更新——详情是活面)
     state.active = active;
+    await shellAction("shell.tab.focus", { tab: active });
     state.detail = await _loadDetail(kind, ref, data);
     renderTabs();
     renderMain();
@@ -468,8 +635,50 @@ async function openDetail(kind, ref, data) {
   renderTabs();
   renderMain();
   await _spawnForTab(tab, data); // spawn 先行:tab.instance 确定后再渲染(M4a fallback 依赖)
+  // M5:开 tab = shell.tab.open(本地 openTab 与 shell mutator 同语义,回镜收敛)
+  await shellAction("shell.tab.open", {
+    id: tab.id, instance_id: tab.instance ?? "", kind, ref, title: tab.title,
+  });
   state.detail = await _loadDetail(kind, ref, data);
+  renderTabs();
   renderMain();
+  // widget 注册(§14 注册制:Surface 渲染即登记;摘要 = tab 标题,人话)
+  _widgetCall("/platform/api/widgets/register", {
+    path: `/shell/tab/${tab.id}/surface/tab`, kind, summary_hint: tab.title,
+  });
+}
+
+/* widget 端点调用(M5 §14;fire-and-forget,失败静默——注册面不阻断渲染) */
+async function _widgetCall(url, body) {
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    /* 静默 */
+  }
+}
+
+/* agent 动词 focus 的前端执行面(§14.3):POST 裁决 → 滚动 + 高亮脉冲 */
+async function widgetFocus(path) {
+  try {
+    const res = await fetch("/platform/api/widgets/focus", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) return;
+  } catch {
+    return;
+  }
+  const el = document.querySelector(`[data-reg-path="${path}"]`);
+  if (el) {
+    el.scrollIntoView?.();
+    el.classList.add("pf-pulse");
+    setTimeout(() => el.classList.remove("pf-pulse"), 900);
+  }
 }
 
 async function _loadDetail(kind, ref, data) {
@@ -536,6 +745,8 @@ function closeDetail(id) {
   state.tabs = tabs;
   state.active = active;
   if (closed) state.closedTabs = pushClosed(state.closedTabs, closed); // M2:关闭≠销毁
+  shellAction("shell.tab.close", { tab: id }); // M5:关闭 = shell action(回镜收敛)
+  _widgetCall("/platform/api/widgets/unregister", { path: `/shell/tab/${id}/surface/tab` });
   if (state.active === "conv") state.detail = null;
   renderTabs();
   renderMain();
@@ -549,6 +760,9 @@ function reopenTab(id) {
   const { tabs, active } = openTab(state.tabs, tab);
   state.tabs = tabs;
   state.active = active;
+  shellAction("shell.tab.open", {
+    id: tab.id, instance_id: tab.instance ?? "", kind: tab.kind, ref: tab.ref, title: tab.title,
+  });
   renderTabs();
   renderMain();
 }
@@ -769,6 +983,21 @@ function bind() {
     if (reopen) return reopenTab(reopen.dataset.reopen);
     const legacy = e.target.closest("[data-open-legacy]");
     if (legacy) return openDetail(legacy.dataset.openLegacy, legacy.dataset.openLegacy, {});
+    const moveStart = e.target.closest("[data-move-start]");
+    if (moveStart) {
+      state.longPressTab = null;
+      return shellAction("shell.layout.move_tab", { tab: moveStart.dataset.moveStart, before: "__start__" })
+        .then(() => renderTabs());
+    }
+    const moveEnd = e.target.closest("[data-move-end]");
+    if (moveEnd) {
+      state.longPressTab = null;
+      return shellAction("shell.layout.move_tab", { tab: moveEnd.dataset.moveEnd })
+        .then(() => renderTabs());
+    }
+    if (e.target.closest("[data-icon-toggle]")) {
+      return shellAction("shell.layout.set", { icon_mode: document.body.dataset.iconMode !== "1" });
+    }
     const tab = e.target.closest("[data-tab]");
     if (tab) return activateTab(tab.dataset.tab);
     const link = e.target.closest("[data-detail-kind]");
@@ -812,18 +1041,25 @@ function renderStaticCopy() {
 
 mountThemes();
 bind();
+bindDnd(); // M5 §15:DnD v1(envelope 产出/消费)
+bindLongPress(); // M5 §15.4:触屏降级(长按 = 非手势触发同一 action)
 renderStaticCopy();
 renderLauncher();
 renderTabs();
 renderMain();
-loadSessions().catch((e) => toast(e.message ?? String(e), "error"));
+// M5:shell 先行(tab 条消费 shell.state;不可达回落本地 tab 模型,降级面)
+loadShell().finally(() => {
+  renderTabs();
+  renderMain();
+  loadSessions().catch((e) => toast(e.message ?? String(e), "error"));
+});
 connectStream(); // M4b:SSE 主通道(断线/缺席自动回落轮询)
 
 // 测试探针(node 冒烟用;浏览器无副作用)
 if (typeof globalThis !== "undefined") {
   globalThis.__platform = {
     state, renderTabs, renderMain, loadSessions, openDetail, closeDetail, reopenTab,
-    pollDecisions, presentRuns, connectStream,
+    pollDecisions, presentRuns, connectStream, shellAction, widgetFocus, loadShell,
     stream: () => _es,
     polling: () => Boolean(_pollTimer),
   };

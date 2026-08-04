@@ -309,6 +309,56 @@ def default_manifests() -> list[dict[str, Any]]:
 
     return [
         {
+            # M5(docs/APP-MODEL.md §13):根 app——唯一由 bootstrap 实例化、
+            # 不由 action 孵化的特例(递归有底);与所有 manifest 过同一协议校验
+            "kind": "shell",
+            "v": 1,
+            "title": "shell",
+            "surfaces": {"card": "shell.card", "tab": "shell.tab"},
+            "state_schema": obj(
+                tabs={"type": "array"},
+                active_tab={"type": "string"},
+                theme={"type": "string"},
+                sessions={"type": "array"},
+                layout={"type": "object"},
+                widgets={"type": "object"},
+            ),
+            "actions": [
+                # §13.1:tab 管理是 local(仅改 shell.state,不出海);
+                # theme/session 是 endpoint(持久化偏好/孵化会话,绑定薄 handler)
+                {"id": "shell.tab.open", "label": "platform.shell.tab.open",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"id": {"type": "string"}, "instance_id": {"type": "string"},
+                                 "kind": {"type": "string"}, "ref": {"type": "string"},
+                                 "title": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.tab.focus", "label": "platform.shell.tab.focus",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"tab": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.tab.close", "label": "platform.shell.tab.close",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"tab": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.theme.set", "label": "platform.shell.theme.set",
+                 "exec": {"mode": "endpoint", "ref": "platform.shell.theme.set"}, "args_from": [],
+                 "args_input": {"theme": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.session.create", "label": "platform.shell.session.create",
+                 "exec": {"mode": "endpoint", "ref": "platform.shell.session.create"}, "args_from": [],
+                 "args_input": {},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.layout.set", "label": "platform.shell.layout.set",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"icon_mode": {"type": "boolean"}},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.layout.move_tab", "label": "platform.shell.layout.move_tab",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"tab": {"type": "string"}, "before": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+            ],
+        },
+        {
             "kind": "conversation",
             "v": 1,
             "title": "{title}",

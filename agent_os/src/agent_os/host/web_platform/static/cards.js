@@ -394,7 +394,7 @@ function draftSummary(d) {
 /* 摘要卡渲染入口:一句结论(加粗)+ 补充行 + 详情链接/动作区(右下)。
    ``depth``(M2,docs/APP-MODEL.md §6):嵌套层级——对话流卡 = 1,tab 内嵌卡 = 2;
    第 3 层起卡只读,不加"打开"链接(防俄罗斯套娃)。 */
-export function summaryHtml(card, depth = 1) {
+export function summaryHtml(card, depth = 1, regPath = "", ref = "") {
   const type = card?.type ?? "";
   const d = card?.data ?? {};
   const render = { plan: planSummary, skill_pack: packSummary, gate_report: gateSummary,
@@ -421,7 +421,9 @@ export function summaryHtml(card, depth = 1) {
               : "";
   const actions = (card?.actions ?? []).map((a) => _act(a, card?.instance)).join("");
   return (
-    `<div class="pf-card" data-card="${esc(type)}">` +
+    `<div class="pf-card" data-card="${esc(type)}"` +
+    (regPath ? ` data-reg-path="${esc(regPath)}" data-detail-ref="${esc(ref)}" draggable="true"` : "") +
+    `>` +
     body +
     (link || actions ? `<div class="pf-card-actions">${link}${actions}</div>` : "") +
     `</div>`
@@ -430,7 +432,8 @@ export function summaryHtml(card, depth = 1) {
 
 /* Card Surface 分发(docs/APP-MODEL.md §3/§8;M1 概念归位):
    渲染按 "app kind + surface" 寻址——卡型即 app kind,摘要渲染即 card surface。
-   ``depth``(M2 §6):嵌套层级透传(第 3 层只读,见 summaryHtml)。 */
-export function renderCardSurface(card, depth = 1) {
-  return summaryHtml(card, depth);
+   ``depth``(M2 §6):嵌套层级透传(第 3 层只读,见 summaryHtml)。
+   ``regPath``/``ref``(M5 §14/§15):widget 寻址与 DnD envelope 的载体。 */
+export function renderCardSurface(card, depth = 1, regPath = "", ref = "") {
+  return summaryHtml(card, depth, regPath, ref);
 }

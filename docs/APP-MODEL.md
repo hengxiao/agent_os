@@ -237,6 +237,34 @@ v0.1 说"action = skill 调用 → 内核仲裁自动覆盖 UI 全部副作用,U
 | M3 ✅ | run/debug/lab-draft 三个 app kind 接入(对话 → 包 → run → debug 闭环) |
 | M3.5 ✅ | exec 三态同构迁移(manifest `skill`→`exec{mode,ref}` 强制 + args_input 通道 + 授权测试三件套;行为零变化) |
 | M4 ✅ | legacy 五页以 tab surface 接入 + SSE transport + 主动汇报(app 状态推送进对话) |
+| M5 ✅ | shell app 化(§13/§14/§15;v0.3) |
+
+> **M5 实现注**(2026-08-03,分支 debugger;v0.3 §13/§14/§15):
+> - **shell 根 app**(apps.py +1 kind;与普通 manifest 同一协议校验,无特例):
+>   bootstrap 实例化(ref="shell",conv 恒首),state={tabs, active_tab, theme,
+>   sessions, layout{icon_mode}, widgets} 随 instance 写穿透持久化(重启恢复
+>   布局);7 个 action 全进管道——tab.open/focus/close + layout.set/move_tab
+>   = local(**local 语义精化**:state 服务端权威后,"仅改 state"恰恰要在
+>   服务端执行,`_LOCAL_MUTATORS` 注册面;无 mutator 的 local 仍 400,
+>   M3.5 语义不破),theme.set/session.create = endpoint(薄 handler);
+> - **前端 tab 条消费 shell.state**:`/api/shell` 加载 + 镜像(state.tabs/
+>   active 只是渲染缓存),一切 tab/布局/主题事件转发 shell action 回镜收敛;
+>   `/api/shell` 不可达回落本地 tab 模型(M1-M4 行为,降级面);
+> - **widget 寻址**(§14):tab/卡面带 data-reg-path 运行时路径;注册端点
+>   (开 tab 即登记/关 tab 注销,随 shell.state.widgets 持久化);
+>   `GET /api/widgets/<path>`(path:path 剥斜杠归一)+ read/focus 动词端点
+>   (人话摘要,404 同源);focus 的前端执行 = 滚动 + pf-pulse 高亮脉冲
+>   (reduced-motion 停用);**act 本期不过管道**——用户点击语义已通,
+>   agent 的 act 权限收口留 M6;
+> - **DnD v1**(§15):tab/卡面 draggable + envelope(source/source_kind 必填,
+>   ref 扩展键);tab 条 dragover accept 校验(非本 mime 不高亮);两对标准
+>   实现——tab→tab 条 = shell.layout.move_tab、卡面→tab 条 = 同一 openDetail
+>   路径(同源断言);触屏降级 = 长按 600ms 出"移到最左/最右"(同一 action);
+>   图标列手动开关 = shell.layout.set 镜像 body[data-icon-mode];
+> - **send/retry 未归 run 通道**(M4b 留口,本期维持):消息泵是同步
+>   请求-响应语义(骨架 → agent 消息),与"长任务 = spawn run app"的异步
+>   产物不同构——归一需要把对话响应改成 run 跟踪面(等 run_id → 轮询/SSE
+>   → 回填),改动面超出 M5 最小改动线,留待专项(同 agent act 一起进 M6 评估)。
 
 > **M4b 实现注**(2026-08-03,分支 debugger;M4 的表面部分,与 M4a 合为 M4):
 > - **legacy 五页**(apps.py +5 kind:skills/runs/tools/lab/debug-old,state

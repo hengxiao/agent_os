@@ -280,6 +280,7 @@ export const COPY = {
   "w.date.next": "下一月",
   "w.log.filter": "过滤…",
   "w.log.copy": "复制全部",
+  "w.md.copy": "复制代码",
   "w.log.bottom": "回到底部",
   "w.log.empty": "暂无日志",
   "w.chart.empty": "还没有数据",

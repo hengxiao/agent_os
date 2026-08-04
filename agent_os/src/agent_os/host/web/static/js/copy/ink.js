@@ -272,6 +272,7 @@ export const COPY = {
   "w.date.next": "次月",
   "w.log.filter": "滤…",
   "w.log.copy": "尽录",
+  "w.md.copy": "录码",
   "w.log.bottom": "回底",
   "w.log.empty": "尚无记录",
   "w.chart.empty": "尚无数据",

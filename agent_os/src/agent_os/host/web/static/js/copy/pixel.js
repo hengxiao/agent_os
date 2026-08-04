@@ -278,6 +278,7 @@ export const COPY = {
   "w.date.next": "NEXT",
   "w.log.filter": "FILTER…",
   "w.log.copy": "COPY ALL",
+  "w.md.copy": "COPY CODE",
   "w.log.bottom": "TO BOTTOM",
   "w.log.empty": "NO LOGS",
   "w.chart.empty": "NO DATA",

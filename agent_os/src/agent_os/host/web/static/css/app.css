@@ -2867,3 +2867,38 @@ th.is-sorted .us-sort { color: var(--live); }
   .rca-veto { break-inside: avoid; }
   .msg { break-inside: avoid; }
 }
+
+/* ── Widget 库(docs/WIDGETS.md;全契约 token,组件零主题分支)── */
+
+/* 微标(W-text 行数/字数) */
+.wd-host { display: block; }
+.wd-micro {
+  display: inline-block;
+  font-size: var(--text-2xs);
+  color: var(--fg-2);
+  margin-top: var(--s1);
+}
+
+/* W-json 行级错误条 */
+.wd-errbar {
+  font-size: var(--text-2xs);
+  color: var(--danger);
+  margin-top: var(--s1);
+}
+
+/* W-json format 钮 */
+.wd-format {
+  border: var(--stroke) solid var(--line);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  border-radius: var(--r-sm);
+  font-size: var(--text-2xs);
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0 var(--s2);
+  margin-top: var(--s1);
+}
+.wd-format:hover { border-color: var(--live); color: var(--fg-0); }
+.wd-format:focus-visible { outline: var(--stroke-strong) solid var(--live); }
+.wd-format:active { background: var(--bg-3); }
+.wd-format:disabled { opacity: 0.5; cursor: default; }

@@ -202,10 +202,34 @@ app(业务对象:skill-pack/run/...)
 
 | 期 | 内容 |
 |---|---|
-| W1 | Widget 协议与注册表 + W-text + W-json(编辑器是基础中的基础) |
+| W1 ✅ | Widget 协议与注册表 + W-text + W-json(编辑器是基础中的基础) |
 | W2 | W-table + W-kv + **W-bubble(含 APP-MODEL §16 context cascade 落地)**:表格家族 + 锚点聊天气泡,首个级联消费者 |
 | W3 | W-form + W-list + W-tree + W-date(数据输入与导航;run.launch 表单化落地;browse 时间窗) |
 | W4 | W-diff + W-md + W-log + W-chart(呈现家族;agent 消息/调试面/usage 可视化的统一) |
+
+> **W1 实现注**(2026-08-03,分支 debugger):
+> - **协议面**(`host/web/static/js/widgets/`;与 components/ 平级):
+>   `registry.js`(WidgetDef 注册表,校验:结构齐/actions 全 local——
+>   endpoint/run 拒注册/events 清单/aria.role 必填/surfaces ⊆{card,tab});
+>   `widget.js`(实例工厂:{kind,state,emit,on,destroy};未声明事件不发;
+>   注册/注销经 onRegister/onUnregister 回调——注册动作是宿主职责);
+>   `index.js`(协议面导出);**目录零 fetch(** 静态扫描进测试(剥注释防自述);
+> - **W-text**(`w-text.js`):挂宿主既有 textarea(不接管值所有权);
+>   aria-label 从 data-field 推导(缺省且无 field 拒装);行数/字数微标;
+>   input→dirty→commit(发事件)→revert(回 baseline,**选区保留**:
+>   写回前后存取 selectionStart/End);Esc=blur;
+> - **W-json**(`w-json.js`):即时 JSON 校验 + **行级错误定位**
+>   (position→行号、SpiderMonkey 行号直读、新版 V8 无 position 时提取
+>   "Unexpected token 'x'" 搜行、end 类兜底全文行数);format 一键美化
+>   (幂等;不合法不美化;美化后 dispatch input 同步宿主表单模型);
+>   `schemaErrorAt` 轻量 schema 校验(required/type,字段级→行级;
+>   硬校验永远在服务端的闸门);失焦校验;errorSlot 复用 lab 的
+>   data-json-hint 槽(宿主旧提示先写,行级信息收尾);
+> - **装配点**(lab.js):description/prompt → W-text(mono 变体),
+>   inputs/outputs → W-json;`_renderEditor` 后 `_mountEditorWidgets`,
+>   textarea 本体与 data-field 委托模型不动(formToManifest/draftToForm
+>   零改,lab.test.mjs 未破);样式入 app.css(.wd-*,全契约 token);
+> - **copy**:w.text.count/w.json.format/w.json.errline ×6 主题。
 
 每期交付:协议实现 + 该期控件 + 测试库 + 至少一个真实装配点
 (W1 装进 lab 编辑器;W2 装进 tests 编辑与 **Flow C 迭代模式的边注气泡化**;W3 装进 run.launch 与 browse 时间窗;W4 装进对话流与 usage 面板)。

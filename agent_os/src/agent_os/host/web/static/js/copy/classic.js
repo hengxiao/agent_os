@@ -244,4 +244,7 @@ export const COPY = {
   "platform.layout.iconmode": "图标列",
   "platform.move.start": "移到最左",
   "platform.move.end": "移到最右",
+  "w.text.count": "{lines} 行 · {chars} 字",
+  "w.json.format": "美化",
+  "w.json.errline": "第 {line} 行",
 };

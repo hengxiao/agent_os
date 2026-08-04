@@ -243,4 +243,7 @@ export const COPY = {
   "platform.layout.iconmode": "ICON RAIL",
   "platform.move.start": "MOVE FIRST",
   "platform.move.end": "MOVE LAST",
+  "w.text.count": "{lines}L · {chars}C",
+  "w.json.format": "FORMAT",
+  "w.json.errline": "LINE {line}",
 };

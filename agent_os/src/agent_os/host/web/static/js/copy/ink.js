@@ -237,4 +237,7 @@ export const COPY = {
   "platform.layout.iconmode": "图标列",
   "platform.move.start": "至最左",
   "platform.move.end": "至最右",
+  "w.text.count": "{lines} 行 · {chars} 字",
+  "w.json.format": "整",
+  "w.json.errline": "行 {line}",
 };

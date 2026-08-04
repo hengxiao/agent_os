@@ -1,0 +1,15 @@
+/* Widget 协议面(docs/WIDGETS.md §1):注册表 + 实例工厂 + W1 两控件。
+   铁律(§1.3):本目录禁止 fetch((静态扫描进 widgets 测试);
+   事件上行,数据下行,widget 不知道 app 存在。 */
+
+export { registerWidgetDef, getWidgetDef, listWidgetKinds } from "./registry.js";
+export { createWidget } from "./widget.js";
+export { TEXT_EDITOR_DEF, mountTextEditor } from "./w-text.js";
+export {
+  JSON_EDITOR_DEF_KIND,
+  locateJsonError,
+  jsonErrorAt,
+  schemaErrorAt,
+  formatJson,
+  mountJsonEditor,
+} from "./w-json.js";

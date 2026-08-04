@@ -847,6 +847,25 @@ async function _spawnForTab(tab, data) {
 function activateTab(id) {
   state.active = id; // 乐观先渲( shell 回镜会校正——同值 )
   shellAction("shell.tab.focus", { tab: id }); // M5:焦点 = shell action(§13.1)
+  // P0-1(UX 批 2026-08-04):激活的 tab 无已加载详情(刷新恢复后点 tab /
+  // 切回早前的 tab)时按 kind/ref 重拉——加载期间给骨架屏,不留旧 tab 残余
+  const tab = state.tabs.find((t) => t.id === id);
+  const stale =
+    tab &&
+    tab.kind !== "conversation" &&
+    (!state.detail || state.detail.kind !== tab.kind || state.detail.ref !== tab.ref);
+  if (stale) {
+    state.detail = { kind: tab.kind, ref: tab.ref, loading: true };
+    renderTabs();
+    renderMain();
+    return (async () => {
+      const detail = await _loadDetail(tab.kind, tab.ref, null);
+      if (state.active !== id) return; // 竞态守卫:加载期间已切走,不覆盖新 tab
+      state.detail = detail;
+      renderTabs();
+      renderMain();
+    })();
+  }
   renderTabs();
   renderMain();
 }

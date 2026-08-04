@@ -493,6 +493,14 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         before = doc["text"]
+        bubbles = doc_store.read_bubbles(name)
+        # UX 批(2026-08-04)死路话术改引导:空批注时的"按批注改"类请求不起 run,
+        # 直接给引导式回复(人话,不编造;changed=false,双侧消息照常落 chat.json)
+        if not bubbles and "批注" in body.text:
+            reply = "还没有批注。在有意见的段落上右键,先留一条批注,我就能按批注改。"
+            doc_store.save_chat(name, {"role": "user", "text": body.text})
+            doc_store.save_chat(name, {"role": "assistant", "text": reply})
+            return {"reply": reply, "changed": False}
         cascade = [
             {
                 "scope": "app",
@@ -501,7 +509,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
                     "name": name,
                     "full_text": before,
                     # 批注全量进信封:"按批注改一遍"由主对话直接覆盖
-                    "bubbles": doc_store.read_bubbles(name),
+                    "bubbles": bubbles,
                 },
             }
         ]

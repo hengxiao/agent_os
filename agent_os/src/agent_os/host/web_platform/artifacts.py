@@ -186,8 +186,19 @@ def build_table_card(
 def build_doc_list_card(*, docs: list[dict[str, Any]]) -> dict[str, Any]:
     """doc_list 卡(D4,docs/DOC-EDITOR.md §6 对话卡片):文档索引(标题/首行/
     字数/状态)入对话;行内链接开 doc tab,卡上"新建"由前端经 /api/docs 完成
-    (编排只读,新建不入服务端编排)。"""
-    return _card("doc_list", {"docs": docs})
+    (编排只读,新建不入服务端编排)。
+
+    UX 批(2026-08-04):**按 name 去重**——调用面合并多个数据源时同名文档
+    只留一条(先见为准;store 索引本身唯一,去重兜的是上游合并面)。"""
+    seen: set[str] = set()
+    deduped = []
+    for d in docs:
+        name = str((d or {}).get("name") or "")
+        if name in seen:
+            continue
+        seen.add(name)
+        deduped.append(d)
+    return _card("doc_list", {"docs": deduped})
 
 
 def build_escalation_card(    *,

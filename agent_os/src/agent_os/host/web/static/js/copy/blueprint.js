@@ -310,4 +310,11 @@ export const COPY = {
   "platform.doc.chat.send": "发出",
   "platform.doc.chat.fail": "文书助手暂不可用",
   "platform.doc.guide": "试于左侧书所求。吾将为你立一文档。",
+  "platform.doc.chip.apply": "依批注改一遍",
+  "platform.doc.chip.draft": "为我立一初稿",
+  "platform.doc.chip.review": "评此文档",
+  "platform.doc.intro": "于有疑之段落**右键**可留批注。",
+  "platform.doc.intro.close": "知之",
+  "platform.doc.fold": "收起",
+  "platform.doc.bubblebar.count": "{n} 条",
 };

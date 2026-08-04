@@ -316,4 +316,11 @@ export const COPY = {
   "platform.doc.chat.send": "send",
   "platform.doc.chat.fail": "editor assistant unavailable",
   "platform.doc.guide": "type your request on the left. i will create a doc for you.",
+  "platform.doc.chip.apply": "apply all notes",
+  "platform.doc.chip.draft": "write me a draft",
+  "platform.doc.chip.review": "review this doc",
+  "platform.doc.intro": "**right-click** any paragraph to leave a note.",
+  "platform.doc.intro.close": "got it",
+  "platform.doc.fold": "fold",
+  "platform.doc.bubblebar.count": "{n}",
 };

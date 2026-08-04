@@ -324,6 +324,12 @@ export function docTabHtml(doc) {
     // 左:doc 作用域主对话(说需求 → agent 直接改文档)
     `<div class="doc-chat">` +
     `<div class="doc-chat-log" data-doc-chat-log="1" role="log"></div>` +
+    // UX 批(2026-08-04):建议 chips(可点回填并发送)
+    `<div class="doc-chips">` +
+    `<button class="doc-chip" data-doc-chip="apply">${esc(copy("platform.doc.chip.apply"))}</button>` +
+    `<button class="doc-chip" data-doc-chip="draft">${esc(copy("platform.doc.chip.draft"))}</button>` +
+    `<button class="doc-chip" data-doc-chip="review">${esc(copy("platform.doc.chip.review"))}</button>` +
+    `</div>` +
     `<div class="doc-chat-composer">` +
     `<input class="input" data-doc-chat-input="1"` +
     ` placeholder="${esc(copy("platform.doc.chat.ph"))}" aria-label="${esc(copy("platform.doc.chat.ph"))}" />` +
@@ -331,6 +337,11 @@ export function docTabHtml(doc) {
     `</div></div>` +
     // 右:文档展示 + 极细工具条(版本/快照/rewind/导出/评审,小图标钮)
     `<div class="doc-view">` +
+    // UX 批:一次性引导浮层(localStorage 记忆只显一次,可关;挂载侧控制显隐)
+    `<div class="doc-intro" data-doc-intro="1" hidden>` +
+    `<span class="doc-intro-text">${copy("platform.doc.intro").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")}</span>` +
+    `<button class="btn doc-tool" data-doc-intro-close="1">${esc(copy("platform.doc.intro.close"))}</button>` +
+    `</div>` +
     `<div class="doc-toolbar">` +
     `<b class="doc-title">${esc(doc?.meta?.title ?? doc?.name ?? "")}</b>` +
     `<span class="pf-dim mono">${esc(doc?.name ?? "")}</span>` +

@@ -682,3 +682,34 @@ def test_chat_fence_rejects_outside_ref(tmp_path):
     assert r.json()["changed"] is False, "越界被拒 → 未变"
     assert client.get("/platform/api/docs/other.doc").json()["text"] == "别人的\n", "别人文档不动"
     assert "首段内容" in client.get("/platform/api/docs/design.new_ui").json()["text"], "当前文档也不动"
+
+
+# ---------------------------------------------------------------------------
+# UX 批(2026-08-04):死路话术改引导 + doc_list 卡去重
+# ---------------------------------------------------------------------------
+
+
+def test_chat_empty_bubbles_guidance(tmp_path):
+    """空批注的"按批注改"类请求不起 run——直接给引导式回复(changed=false,
+    双侧消息照常落 chat.json;人话,不编造)。"""
+    doc_editor_brain.seen.clear()
+    client = _chat_client(tmp_path)
+    client.post("/platform/api/docs", json={"name": "design.new_ui", "text": "# 概述\n首段\n"})
+    r = client.post("/platform/api/docs/design.new_ui/chat", json={"text": "按批注改一遍"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["changed"] is False
+    assert "还没有批注" in body["reply"] and "右键" in body["reply"], "引导式回复"
+    assert not doc_editor_brain.seen, "空批注守卫:不起 LLM run"
+    chat = client.get("/platform/api/docs/design.new_ui").json()["chat"]
+    assert [m["role"] for m in chat] == ["user", "assistant"], "双侧消息照常落盘"
+
+
+def test_doc_list_card_dedupes():
+    """doc_list 卡按 name 去重(UX 批:上游合并面可能出重复条目,demo.test ×2)。"""
+    from agent_os.host.web_platform.artifacts import build_doc_list_card
+
+    card = build_doc_list_card(
+        docs=[{"name": "demo.test", "title": "A"}, {"name": "demo.test", "title": "A2"}, {"name": "a.b"}]
+    )
+    assert [d["name"] for d in card["data"]["docs"]] == ["demo.test", "a.b"], "同名去重(先见为准)"

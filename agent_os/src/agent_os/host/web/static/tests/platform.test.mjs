@@ -615,14 +615,18 @@ const assertClean = (html, who) => {
       docChatCalls += 1;
       return reply(docChatCalls === 1
         ? { reply: "已按批注改好第二段", changed: true }
-        : { reply: "没动文档", changed: false });
+        : { reply: "没动文档。第 2 行没问题,第 99 行不存在", changed: false });
     }
     if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/comment.apply") {
       return reply({ ok: true, text: "已应用。", state: { dirty: false },
         instance: { id: "app-spawn-design.new_ui", kind: "doc", state: {} } });
     }
     if (url === "/platform/api/docs/design.new_ui") {
-      return reply({ name: "design.new_ui", text: "# 概述\n首段内容\n## 设计\n次段内容\n",
+      return reply({ name: "design.new_ui",
+        // UX 批:首轮 chat(changed=true)后重拉返回改过的全文(变化块高亮数据源)
+        text: docChatCalls >= 1
+          ? "# 概述\n改过的第二段\n## 设计\n次段内容\n"
+          : "# 概述\n首段内容\n## 设计\n次段内容\n",
         meta: { title: "新 UI", savedAt: 1 }, versions: ["v001"],
         chat: [{ role: "user", text: "旧需求", ts: 1 }, { role: "assistant", text: "旧回复", ts: 2 }] });
     }
@@ -1453,7 +1457,10 @@ const assertClean = (html, who) => {
   paraBlock.parentNode = preview2;
   preview2.trigger("click", { target: anchorBtn });
   await tick();
-  const bubbleHost = paraBlock.children.at(-1);
+  // UX 批:气泡浮出化——段落下挂 wrap(.doc-bubble-pop)承载 bubble 本体
+  const bubbleWrapOf = (block) =>
+    [...block.children].find((c) => c.classList?.contains("doc-bubble-pop"));
+  const bubbleHost = bubbleWrapOf(paraBlock).querySelector(".doc-bubble-body");
   assert.ok(bubbleHost.innerHTML.includes("w-bubble"), "气泡卡挂载");
   assert.ok(bubbleHost.innerHTML.includes("旧批注"), "种子消息(持久化,开关不丢)");
   assert.ok(bubbleHost.innerHTML.includes("doc.md#L2-L2"), "锚点引用行");
@@ -1487,8 +1494,8 @@ const assertClean = (html, who) => {
   paraBlock2.parentNode = preview2;
   preview2.trigger("click", { target: anchorBtn2 });
   await tick();
-  assert.ok(paraBlock2.children.at(-1).innerHTML.includes("w-bubble"), "第二条气泡并存");
-  assert.ok(!paraBlock2.children.at(-1).innerHTML.includes("旧批注"), "各锚点独立");
+  assert.ok(bubbleWrapOf(paraBlock2).querySelector(".doc-bubble-body").innerHTML.includes("w-bubble"), "第二条气泡并存");
+  assert.ok(!bubbleWrapOf(paraBlock2).querySelector(".doc-bubble-body").innerHTML.includes("旧批注"), "各锚点独立");
 
   // apply:人按才落(经管道,replace_text 来自回复存证)
   const applyBtn2 = new StubEl("button");
@@ -1517,7 +1524,7 @@ const assertClean = (html, who) => {
   assert.ok(reviewPost, "review 出海(专属端点,exec: run+cascade)");
   // 注:apply 后 reload 重挂载,气泡挂在最新实例上(委托幂等后旧实例不再响应)
   const mustEntry = probe.state._docEditor.bubbles.get("doc.md#L2-L2");
-  assert.ok(mustEntry.el.innerHTML.includes("这段绕"), "must 批注挂进 L2 气泡");
+  assert.ok(mustEntry.body.innerHTML.includes("这段绕"), "must 批注挂进 L2 气泡");
   assert.equal(mustEntry.severity, "must", "severity 记录(must)");
   assert.ok(mustEntry.el.classList.contains("doc-sev-must"), "must=danger 着色(token)");
   const nitEntry = probe.state._docEditor.bubbles.get("doc.md#L4-L4");
@@ -1573,7 +1580,7 @@ const assertClean = (html, who) => {
   pb.parentNode = preview3;
   preview3.trigger("click", { target: ab });
   await tick();
-  const bh = pb.children.at(-1);
+  const bh = bubbleWrapOf(pb).querySelector(".doc-bubble-body");
   const bar3 = docHost.querySelector("[data-doc-bubblebar]");
   assert.ok(!bar3.innerHTML.includes("doc-bar-n"), "初开无未读(seen=assistant 数)");
   const in3 = new StubEl("input");
@@ -1647,6 +1654,22 @@ const assertClean = (html, who) => {
   pv5.trigger("contextmenu", { target: cmBlock }); // 再右键同一块 = 聚焦,不重复开
   assert.equal(probe.state._docEditor.bubbles.size, cmSize, "防重复开(同锚点 early-return)");
 
+  // UX 批:浮出气泡——✕ 收起为段旁标记(带未读),再点展开;正文不再被挤压
+  const popEntry = probe.state._docEditor.bubbles.get("doc.md#L5-L5");
+  const foldBtn = popEntry.el.children[0]; // .doc-bubble-fold(wrap 首子)
+  assert.ok(foldBtn.classList.contains("doc-bubble-fold"), "浮出气泡带 ✕ 收起钮");
+  docHost.trigger("click", { target: foldBtn });
+  assert.ok(popEntry.el.hidden, "✕ 收起浮出气泡");
+  assert.ok(!popEntry.marker.hidden, "收起为段旁小标记");
+  docHost.trigger("click", { target: popEntry.marker });
+  assert.ok(!popEntry.el.hidden, "标记再点展开");
+  assert.ok(popEntry.marker.hidden, "展开后标记隐");
+  // UX 批:批注列表实体化(位置 + 锚段摘录 + 对话条数 + 未读)
+  const barUx = docHost.querySelector("[data-doc-bubblebar]");
+  assert.ok(barUx.innerHTML.includes("doc-bar-excerpt"), "锚段摘录列");
+  assert.ok(barUx.innerHTML.includes("首段内容"), "摘录 = 锚段前 20 字");
+  assert.ok(barUx.innerHTML.includes("条"), "对话条数列");
+
   // §17.7-3:管道自动携带级联信封(开泡已注册 /doc/<name> app 级 provider)
   const snapBtn2 = new StubEl("button");
   snapBtn2.dataset.tabAct = "doc.snapshot";
@@ -1687,6 +1710,74 @@ const assertClean = (html, who) => {
     getsBefore2, "changed=false → 不重拉");
   assert.ok(docHost.querySelector("[data-doc-chat-log]").innerHTML.includes("没动文档"),
     "回复渲染进主对话流");
+
+  /* ── UX 批(2026-08-04):改稿高亮 / 行号链接 / chips / 引导浮层 ── */
+
+  // 改稿可视化:changed=true 重拉后,diff 暂存旧全文 → 变化块带高亮类
+  assert.ok(probe.state._docEditor.changedAnchors.has("doc.md#L2-L2"), "变化块标记(diff 旧全文)");
+  assert.ok(
+    docHost.querySelector("[data-doc-preview]").innerHTML.includes("doc-changed"),
+    "变化块 1.5s 高亮(CSS 动画类,reduced-motion 停用)");
+
+  // 行号链接:可解析且在行数内 → 链接;越界不链接(不编造);点击滚动+高亮
+  const chatHtmlUx = docHost.querySelector("[data-doc-chat-log]").innerHTML;
+  assert.ok(chatHtmlUx.includes('data-goto-line="2"'), "可解析行号 → 链接");
+  assert.ok(!chatHtmlUx.includes('data-goto-line="99"'), "越界行号不链接(不编造)");
+  const lineBlock = new StubEl("div");
+  lineBlock.dataset.anchor = "doc.md#L2-L2";
+  docHost.querySelector("[data-doc-preview]").appendChild(lineBlock); // appendChild 才进 children(parentNode= 只挂链)
+  const lineLink = new StubEl("button");
+  lineLink.dataset.gotoLine = "2";
+  lineLink.parentNode = docHost;
+  docHost.trigger("click", { target: lineLink });
+  assert.ok(lineBlock.classList.contains("doc-flash"), "点击 → 滚动到块并高亮脉冲");
+
+  // 建议 chips:点击回填(copy 文本)并发送
+  const chipBtn = new StubEl("button");
+  chipBtn.dataset.docChip = "apply";
+  chipBtn.parentNode = docHost;
+  docHost.trigger("click", { target: chipBtn });
+  await tick();
+  await tick();
+  const chipPost = calls.filter((c) => c.url.endsWith("/chat")).at(-1);
+  assert.equal(JSON.parse(chipPost.body).text, "根据批注改一遍", "chip 回填 = copy 文本并发送");
+
+  // 引导浮层:首次显示;关闭记 localStorage;重开 tab 不再显示(一次性)
+  globalThis.localStorage = {
+    _m: new Map(),
+    getItem(k) { return this._m.get(k) ?? null; },
+    setItem(k, v) { this._m.set(k, String(v)); },
+  };
+  const introEl = docHost.querySelector("[data-doc-intro]");
+  assert.ok(!introEl.hidden, "首次进入文档 app 显示引导浮层");
+  assert.ok(docHost.innerHTML.includes("右键"), "引导文案(右键留批注)");
+  const introClose = new StubEl("button");
+  introClose.dataset.docIntroClose = "1";
+  introClose.parentNode = docHost;
+  docHost.trigger("click", { target: introClose });
+  assert.ok(introEl.hidden, "浮层可关");
+  assert.equal(globalThis.localStorage.getItem("doc.introSeen"), "1", "关闭记忆(localStorage)");
+  probe.state.active = "conv";
+  doc.trigger("click", { target: docLink }); // 重开 doc tab(重挂载)
+  await tick();
+  await tick();
+  assert.ok(docHost.querySelector("[data-doc-intro]").hidden, "重开不再显示(一次性)");
+
+  // P0-1 回归:激活无详情的 tab(刷新恢复形态)→ 骨架 → 重拉渲染(不留白窗/不留残)
+  probe.state.active = "conv";
+  probe.state.detail = null;
+  probe.renderMain();
+  const tabBtn = new StubEl("button");
+  tabBtn.dataset.tab = "d:doc:design.new_ui";
+  tabBtn.parentNode = doc.body;
+  const getsBeforeP0 = calls.filter((c) => c.url === "/platform/api/docs/design.new_ui").length;
+  doc.trigger("click", { target: tabBtn });
+  await tick();
+  await tick();
+  assert.ok(
+    calls.filter((c) => c.url === "/platform/api/docs/design.new_ui").length > getsBeforeP0,
+    "激活恢复 tab → 详情重拉(P0-1)");
+  assert.equal(probe.state.detail?.ref, "design.new_ui", "详情渲到当前 tab(不留残)");
 
   // doc 意图:列表卡行内点开 doc tab;卡上"新建文档" → 唯一名起稿
   probe.state.messages.push({ id: "m-docs", role: "agent", text: "共 1 篇", ts: 14,

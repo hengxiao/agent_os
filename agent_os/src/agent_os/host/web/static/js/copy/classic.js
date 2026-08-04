@@ -318,4 +318,11 @@ export const COPY = {
   "platform.doc.chat.send": "发送",
   "platform.doc.chat.fail": "编辑助手暂不可用",
   "platform.doc.guide": "试着在左边输入你的需求。我会为你创建一个文档。",
+  "platform.doc.chip.apply": "根据批注改一遍",
+  "platform.doc.chip.draft": "给我写一版初稿",
+  "platform.doc.chip.review": "评审这篇文档",
+  "platform.doc.intro": "在有意见的段落上**右键**可以留批注。",
+  "platform.doc.intro.close": "知道了",
+  "platform.doc.fold": "收起",
+  "platform.doc.bubblebar.count": "{n} 条",
 };

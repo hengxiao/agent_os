@@ -761,3 +761,74 @@ body[data-icon-mode="1"] .pf-tray-label { display: none; }
   box-shadow: 0 2px 8px color-mix(in srgb, var(--fg-0) 12%, transparent);
 }
 .doc-export-note { font-size: var(--text-2xs); color: var(--fg-2); padding: 0 var(--s2); }
+
+/* ── UX 批(2026-08-04):可发现性 / 浮出气泡 / 批注列表 / 改稿高亮 ── */
+/* 💬 锚点钮:默认低可见,段落 hover / 键盘 focus-within 显形(a11y) */
+.doc-anchor-btn { opacity: 0.25; }
+.doc-para:focus-within .doc-anchor-btn { opacity: 1; }
+/* 建议 chips(左栏输入框上方;可点回填并发送) */
+.doc-chips { display: flex; gap: var(--s1); flex-wrap: wrap; padding-top: var(--s2); }
+.doc-chip {
+  border: var(--stroke) solid var(--line); background: transparent; color: var(--fg-1);
+  font-size: var(--text-2xs); font-family: inherit; cursor: pointer;
+  padding: var(--s1) var(--s2); border-radius: var(--r-md);
+}
+.doc-chip:hover { background: var(--bg-2); color: var(--fg-0); }
+.doc-chip:focus-visible { outline: var(--stroke-strong) solid var(--live); }
+/* 一次性引导浮层(右栏顶角;可关,localStorage 记忆) */
+.doc-view { position: relative; }
+.doc-intro {
+  position: absolute; top: var(--s2); right: var(--s2); z-index: 5;
+  display: flex; align-items: center; gap: var(--s2);
+  background: var(--bg-1); border: var(--stroke) solid var(--line-strong);
+  border-radius: var(--r-md); padding: var(--s2) var(--s3);
+  font-size: var(--text-xs); color: var(--fg-1);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--fg-0) 12%, transparent);
+}
+/* 气泡浮出化:绝对定位浮在段落右缘,小箭头指向锚点行;正文不再被挤压 */
+.doc-bubble-pop {
+  position: absolute; right: 0; top: 1.5em; z-index: 4;
+  width: min(360px, 92%);
+  background: var(--bg-1); border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--fg-0) 16%, transparent);
+}
+.doc-bubble-pop::before { /* 小箭头(指向锚点行) */
+  content: ""; position: absolute; top: -6px; right: var(--s4);
+  border-left: 6px solid transparent; border-right: 6px solid transparent;
+  border-bottom: 6px solid var(--line);
+}
+.doc-bubble-fold {
+  position: absolute; top: 2px; right: 2px; z-index: 5;
+  border: 0; background: transparent; color: var(--fg-2);
+  font-size: var(--text-2xs); font-family: inherit; cursor: pointer;
+  padding: 0 var(--s1); border-radius: var(--r-sm);
+}
+.doc-bubble-fold:hover { color: var(--fg-0); background: var(--bg-2); }
+.doc-bubble-marker {
+  position: absolute; right: 0; top: 0;
+  border: var(--stroke) solid var(--line); background: var(--bg-1); color: var(--fg-2);
+  font-size: var(--text-2xs); font-family: inherit; cursor: pointer;
+  padding: 0 var(--s1); border-radius: var(--r-md);
+}
+.doc-bubble-marker:hover { color: var(--live); border-color: var(--live); }
+/* 批注列表实体化:摘录列弱化,过长省略 */
+.doc-bar-excerpt {
+  color: var(--fg-2); max-width: 180px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* 改稿可视化:变化块 1.5s 绿底淡出;reduced-motion 停用 */
+.doc-changed { animation: doc-flash 1.5s ease-out; }
+.doc-flash { animation: doc-flash 1.5s ease-out; }
+@keyframes doc-flash {
+  0% { background: color-mix(in srgb, var(--ok) 24%, transparent); box-shadow: inset 3px 0 0 var(--ok); }
+  100% { background: transparent; box-shadow: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .doc-changed, .doc-flash { animation: none; }
+}
+/* "第 N 行"链接(chat 回复内) */
+.doc-linelink {
+  border: 0; background: transparent; color: var(--live);
+  font: inherit; cursor: pointer; padding: 0; text-decoration: underline;
+}

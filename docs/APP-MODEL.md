@@ -708,3 +708,19 @@ promote 是 host 函数、工具分发需要帧上下文。那次评审的实证
 - 每个注册 widget 必有 context_provider(缺省或声明);
 - 管道抽样:任选 action,其执行输入含 cascade 信封(或显式 `context: []`);
 - 既有 941+ 测试全绿(行为零变化,只换执行面的身份)。
+
+### 17.5 职责分工(skill 定义逻辑,框架准备参数)
+
+用户澄清(v0.4 补记):**action 的逻辑由 skill 定义;但"从 action 到备齐
+参数发给对应 skill"是框架的职责**。两边都不越界:
+
+| 框架(action 管道)负责 | skill 负责 |
+|---|---|
+| 触发寻址(action id → skill 名) | 业务逻辑本体 |
+| 参数准备:cascade 级联(§16)+ args_from 服务端绑定 + args_input 校验 | 声明 inputs schema(参数形状) |
+| 执行环境:帧/白名单/升权闸/数据闸 | 在权限面内干活,不管仲裁 |
+| 结果回写 state + spawn 新 instance | 返回 outputs |
+
+推论:skill 永远**显式声明它要的参数**(inputs schema),框架永远**显式给出
+参数来源**(cascade/args_from/args_input 三通道,§4)——"需要什么"与
+"从哪来"在两侧都一眼可见,没有隐式注入。

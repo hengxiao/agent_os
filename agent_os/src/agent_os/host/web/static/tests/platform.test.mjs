@@ -633,7 +633,12 @@ const assertClean = (html, who) => {
     if (url === "/api/runs/run-1") {
       return reply({ run_id: "run-1", skill: "ops.janitor", status: "failed", error: "outputs 错", result: null });
     }
-    if (url === "/api/runs/run-1/signals") return reply([]);
+    if (url === "/api/runs/run-1/signals") {
+      return reply([
+        { type: "run.start", payload: { skill: "ops.janitor" } },
+        { type: "run.error", payload: { error: "outputs 错" } },
+      ]);
+    }
     if (url === "/api/runs/bad-run") {
       if (badRunFail) {
         badRunFail = false;
@@ -1271,6 +1276,28 @@ const assertClean = (html, who) => {
   rangeHost.trigger("input", { target: endInput });
   await tick();
   assert.ok(rangeHost.innerHTML.includes("起点晚于终点"), "倒置警示上屏");
+
+  /* ── W4:agent 消息 md 升级 + run tab 原始信号(W-log)─────────── */
+
+  // msgHtml:含 markdown 结构的消息走白名单渲染;普通文本保持 esc(保守)
+  probe.state.active = "conv";
+  probe.state.messages.push({ id: "m-md", role: "agent", text: "结论:**重点** 和 `code`,以及 <script>alert(1)</script>", ts: 12, cards: [] });
+  probe.state.messages.push({ id: "m-plain", role: "agent", text: "就是一句普通的话", ts: 13, cards: [] });
+  probe.renderMain();
+  assert.ok(logHtml().includes("<b>重点</b>"), "markdown 粗体白名单渲染");
+  assert.ok(logHtml().includes('<code class="mono">code</code>'), "行内代码 mono");
+  assert.ok(!logHtml().includes("<script>alert"), "XSS 不注入(先转义)");
+  assert.ok(logHtml().includes("&lt;script&gt;"), "转义文本可见");
+
+  // 原始信号区:run tab 挂 W-log(kind 着色行)
+  doc.trigger("click", { target: runLink });
+  await tick();
+  const rawLog = doc.querySelector("#detailHost").querySelector("[data-raw-log]");
+  assert.ok(rawLog, "原始信号折叠区在");
+  assert.ok(rawLog.innerHTML.includes('data-kind="run.start"'), "kind 着色行(run.start)");
+  assert.ok(rawLog.innerHTML.includes('data-kind="run.error"'), "kind 着色行(run.error)");
+  assert.ok(rawLog.innerHTML.includes("outputs 错"), "信号载荷在");
+  assert.ok(rawLog.innerHTML.includes('role="log"'), "role=log");
 }
 
 console.log("platform.test.mjs: all assertions passed");

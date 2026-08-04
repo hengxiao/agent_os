@@ -7,6 +7,7 @@
 
 import { copy } from "/static/js/themes.js";
 import { esc } from "/static/js/util.js";
+import { diffBodyHtml } from "/static/js/widgets/w-diff.js";
 
 /* 动作按钮:有 app instance(M1)即带新管道寻址(data-app-inst/action),
    旧 cards/action 的 data-card-act/payload 保留(过渡兼容,M3 退役) */
@@ -87,32 +88,12 @@ function gateReportCard(card) {
 
 /* diff 卡:字段新旧两列 + prompt 红绿行(Flow C 同构呈现)。
    注:对话流里只显示人话摘要(summaryHtml),本函数同时充当 diff 详情层。 */
+/* diff 卡:字段新旧两列 + prompt 红绿行(Flow C 同构呈现)。
+   W4 起本体渲染委托 W-diff 的 diffBodyHtml(split 模式,逐字节同语义);
+   对话流里只显示人话摘要(summaryHtml),本函数同时充当 diff 详情层。 */
 export function diffCard(card) {
   const d = card.data ?? {};
-  const members = (d.diff?.members ?? [])
-    .map((m) => {
-      const fields = (m.fields ?? [])
-        .map(
-          (f) =>
-            `<div class="pf-twocol" data-kind="${esc(f.kind)}">` +
-            `<div>${esc(JSON.stringify(f.old) ?? "—")}</div><div>${esc(JSON.stringify(f.new) ?? "—")}</div></div>`
-        )
-        .join("");
-      const lines = (m.prompt_diff ?? [])
-        .filter((l) => l.kind !== "same")
-        .map(
-          (l) =>
-            `<div class="pf-dline" data-kind="${esc(l.kind)}">${l.kind === "add" ? "+" : "-"} ${esc(l.text)}</div>`
-        )
-        .join("");
-      return (
-        `<div class="pf-dmember"><span class="mono">${esc(m.member)}</span>` +
-        `<span class="lab-pkg-status" data-status="${esc(m.status)}">${esc(m.status)}</span>` +
-        fields + lines + `</div>`
-      );
-    })
-    .join("");
-  return members || `<div class="pf-dim">${esc(copy("platform.no.changes"))}</div>`;
+  return diffBodyHtml(d.diff, { mode: "split" }) || `<div class="pf-dim">${esc(copy("platform.no.changes"))}</div>`;
 }
 
 /* publish 卡:成员 action 三态 + warnings 勾选门 */

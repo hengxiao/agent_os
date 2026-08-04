@@ -218,6 +218,11 @@ export function runDetailHtml({ detail, signals, launchSchema = null }) {
     launch +
     `<div class="pf-sec">${esc(copy("platform.detail.trace"))}</div>` +
     (trace || `<div class="pf-dim">${esc(copy("platform.detail.no.trace"))}</div>`) +
+    // W4(W-log 装配点):原始信号折叠区(跟随/复制/截断;trace 主视图不动)
+    (Array.isArray(signals) && signals.length
+      ? `<details class="wd-adv"><summary>${esc(copy("platform.detail.rawsign"))}</summary>` +
+        `<div data-raw-log="1"></div></details>`
+      : "") +
     `</div>`
   );
 }

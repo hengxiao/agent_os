@@ -276,4 +276,12 @@ export const COPY = {
   "w.date.inverted": "START > END",
   "w.date.prev": "PREV",
   "w.date.next": "NEXT",
+  "w.log.filter": "FILTER…",
+  "w.log.copy": "COPY ALL",
+  "w.log.bottom": "TO BOTTOM",
+  "w.log.empty": "NO LOGS",
+  "w.chart.empty": "NO DATA",
+  "w.chart.tableview": "TABLE VIEW",
+  "w.chart.chartview": "CHART VIEW",
+  "platform.detail.rawsign": "RAW SIGNALS",
 };

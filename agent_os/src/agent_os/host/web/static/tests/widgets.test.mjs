@@ -10,6 +10,9 @@
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { register } from "node:module";
+
+await register("./platform-loader.mjs", import.meta.url); // "/static/js/" → 共享模块(W4 起 cards.js 也入测)
 
 const { makeDocument, StubEl } = await import("./dom-stub.mjs");
 const { copy } = await import("../js/themes.js");
@@ -595,4 +598,166 @@ const { mountFormEditor, validateValues, mountSelectList, mountNsTreeWidget,
   assert.notEqual(month2, month1, "← 翻上一月");
   w.quick("today");
   assert.equal(w.state.inverted, false, "快捷项重置警示");
+}
+
+/* ── W4:W-diff / W-md / W-log / W-chart ───────────────────────── */
+
+const { mountDiffViewer, diffBodyHtml, mdToHtml, looksMarkdown, mountLogViewer,
+  mountChart, chartSvg, chartTableHtml, downsample, niceTicks } =
+  await import("../js/widgets/index.js");
+const { diffCard } = await import("../../../web_platform/static/cards.js");
+
+{
+  // W-diff:split 与 cards.js diffCard 一致性(提取不改语义);三态渲染;模式切换;折叠
+  const diff = { has_changes: true, members: [{
+    member: "lab.d", status: "changed",
+    fields: [{ kind: "changed", path: "description", old: "旧", new: "新" }],
+    prompt_diff: [
+      { kind: "del", text: "旧句" },
+      { kind: "same", text: "同句1" },
+      { kind: "same", text: "同句2" },
+      { kind: "add", text: "新句" },
+    ],
+    tests: { added: [], removed: [] } }] };
+  assert.equal(
+    diffBodyHtml(diff, { mode: "split" }),
+    diffCard({ data: { name: "lab.d", diff } }).replace(/<div class="pf-dim">.*$/, "") || diffBodyHtml(diff, { mode: "split" }),
+    "split 与 diffCard 同构(提取一致性)",
+  );
+  // 直接逐字节对(diffCard 现在就是委托 diffBodyHtml)
+  assert.equal(diffCard({ data: { name: "lab.d", diff } }), diffBodyHtml(diff, { mode: "split" }),
+    "diffCard = diffBodyHtml(split),逐字节");
+  assert.ok(diffBodyHtml(diff).includes('data-kind="changed"'), "字段两列(红绿语义)");
+  assert.ok(diffBodyHtml(diff).includes('data-kind="add"'), "红绿行 add");
+  assert.ok(diffBodyHtml(diff).includes('data-kind="del"'), "红绿行 del");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountDiffViewer(host, { diff });
+  assert.ok(host.innerHTML.includes('data-on="1"'), "split 默认激活");
+  // unified:same 折叠上下文(+2 行未变)
+  w.set_mode("unified");
+  assert.ok(host.innerHTML.includes("+2 行未变"), "unified 折叠上下文");
+  assert.ok(host.innerHTML.includes("wd-diff-old") && host.innerHTML.includes("wd-diff-new"), "新旧堆叠");
+  // 展开折叠
+  const foldBtn = new StubEl("button");
+  foldBtn.dataset.fold = "lab.d";
+  foldBtn.parentNode = host;
+  host.trigger("click", { target: foldBtn });
+  assert.ok(host.innerHTML.includes("同句1"), "展开后 same 行可见");
+  assert.ok(!diffBodyHtml({ members: [] }), "空 diff 空串(调用方给空态)");
+}
+
+{
+  // W-md:XSS 全转义/白名单渲染/代码块 mono/非法链接剥壳
+  const xss = mdToHtml('<script>alert(1)</script>');
+  assert.ok(!xss.includes("<script"), "<script> 转义");
+  assert.ok(xss.includes("&lt;script&gt;"), "转义为文本可见");
+  const attr = mdToHtml('<img src=x onerror=alert(1)>');
+  assert.ok(!attr.includes("<img"), "HTML 标签不存活(整体先转义)");
+  assert.ok(attr.includes("&lt;img"), "转义为文本可见(属性永远只是文本)");
+  const evil = mdToHtml("[点我](javascript:alert(1))");
+  assert.ok(!evil.includes('href="javascript:'), "javascript: 链接剥壳");
+  assert.ok(evil.includes("javascript:alert(1)"), "剥壳后原文可见(纯文本)");
+  const ok = mdToHtml("[文档](https://example.com/a) 和 [站内](/#/lab)");
+  assert.ok(ok.includes('href="https://example.com/a"'), "https 链接白名单");
+  assert.ok(ok.includes('href="/#/lab"'), "站内相对链接白名单");
+  const md = mdToHtml("# 标题\n\n- 甲\n- 乙\n\n```\ncode <b>\n```\n\n**粗** 和 `行内`\n\n| a | b |\n|---|---|\n| 1 | 2 |");
+  assert.ok(md.includes("<h4>"), "标题(h4 起,页面语义层)");
+  assert.ok(md.includes("<li>"), "列表");
+  assert.ok(md.includes('class="mono wd-md-code"'), "代码块 mono");
+  assert.ok(!md.includes("<b>code"), "代码块内不再加工(先转义)");
+  assert.ok(md.includes("<b>粗</b>"), "粗体");
+  assert.ok(md.includes("<table"), "表格");
+  // looksMarkdown:结构才启用(普通文本不误伤)
+  assert.ok(looksMarkdown("# 标题"), "标题结构检出");
+  assert.ok(looksMarkdown("普通一句含 **重点**"), "粗体结构检出");
+  assert.ok(!looksMarkdown("就是一句普通的话,没有结构"), "普通文本不启用");
+}
+
+{
+  // W-log:跟随/上滚暂停/回到底部/截断/复制/kind 着色
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountLogViewer(host, { lines: [{ kind: "run.start", text: "起" }], maxLines: 5 });
+  assert.ok(host.innerHTML.includes('data-kind="run.start"'), "kind 着色槽");
+  assert.ok(host.innerHTML.includes('role="log"'), "role=log");
+  // append + 跟随滚底(render 内 scrollTop=scrollHeight;dom-stub 每次渲染换
+  // region、scrollHeight 恒 0——断言赋值语义,数值行为在真实 DOM 生效)
+  w.append([{ kind: "info", text: "一" }, { kind: "error", text: "错" }]);
+  const box = host.querySelector("[data-wlog-box]");
+  assert.equal(box.scrollTop, box.scrollHeight, "跟随模式自动滚底(scrollTop=scrollHeight)");
+  // 上滚暂停跟随(垫 scrollHeight 模拟长日志;scrollTop=0 = 滚到顶)
+  w.state.follow = true;
+  box.scrollHeight = 800;
+  box.scrollTop = 0;
+  host.trigger("scroll", { target: box });
+  assert.equal(w.state.follow, false, "上滚即暂停跟随");
+  assert.ok(host.innerHTML.includes("回到底部"), "回到底部钮出现");
+  // 回到底部恢复(合成按钮:region dataset 为空,dom-stub 面)
+  const bottomBtn = new StubEl("button");
+  bottomBtn.dataset.wlogBottom = "1";
+  bottomBtn.parentNode = host;
+  host.trigger("click", { target: bottomBtn });
+  assert.equal(w.state.follow, true, "点回底部恢复跟随");
+  // 截断保尾部
+  w.append([6, 7, 8, 9, 10].map((n) => ({ kind: "info", text: `行${n}` })));
+  assert.equal(w.state.lines.length, 5, "截断到上限");
+  assert.equal(w.state.lines.at(-1).text, "行10", "保留尾部");
+  // 复制全部(事件降级)
+  let copied = "";
+  w.on("copy", (p) => { copied = p.text; });
+  assert.equal(w.copy_all(), copied, "copy_all 文本与事件一致");
+  assert.ok(copied.includes("行10"), "复制含尾部行");
+  // 过滤
+  w.filter("错");
+  assert.ok(host.innerHTML.includes("错") && !host.innerHTML.includes("行9"), "过滤");
+}
+
+{
+  // W-chart:三型/空态/抽稀/刻度/hover title/表格视图等价/series 显隐
+  assert.ok(chartSvg([]).includes("还没有数据"), "空态");
+  assert.equal(downsample([...Array(1000)].map((_, i) => ({ x: i, y: i }))).length, 500, ">500 抽稀到上限");
+  const ds = downsample([...Array(1000)].map((_, i) => ({ x: i, y: i })));
+  assert.equal(ds.at(-1).x, 999, "抽稀保尾点");
+  assert.ok(niceTicks(0, 100).includes(100) || niceTicks(0, 100).length >= 2, "刻度自动");
+  const series = [{ name: "cost", points: [{ x: 1, y: 2 }, { x: 2, y: 5 }, { x: 3, y: 3 }] }];
+  const line = chartSvg(series, { type: "line", label: "费用" });
+  assert.ok(line.includes("<polyline"), "line 型");
+  assert.ok(line.includes('role="img"'), "role=img");
+  assert.ok(line.includes('aria-label="费用"'), "aria-label 摘要");
+  assert.ok(line.includes("2: 5"), "hover 读值(title)");
+  assert.ok(line.includes("wd-chart-grid"), "网格");
+  const bar = chartSvg(series, { type: "bar" });
+  assert.ok(bar.includes("<rect"), "bar 型");
+  const spark = chartSvg(series, { type: "spark" });
+  assert.ok(spark.includes("wd-chart-spark") && !spark.includes("wd-chart-grid"), "spark 无轴迷你");
+  // 表格视图:等价数据(硬规则)
+  const table = chartTableHtml(series);
+  assert.ok(table.includes("<td>2</td><td>5</td>"), "等价数据表同行数据");
+  assert.ok(table.includes("cost"), "series 名在表");
+  // 控件:toggle 视图 + series 显隐(多序列)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountChart(host, {
+    series: [series[0], { name: "tokens", points: [{ x: 1, y: 10 }] }],
+    type: "line", label: "用量",
+  });
+  assert.ok(host.innerHTML.includes("wd-chart"), "图表视图默认");
+  const toggle = new StubEl("button");
+  toggle.dataset.chartToggle = "";
+  toggle.parentNode = host;
+  host.trigger("click", { target: toggle });
+  assert.ok(host.innerHTML.includes("wd-chart-table"), "切表格视图");
+  const s1 = new StubEl("button");
+  s1.dataset.chartSeries = "tokens";
+  s1.parentNode = host;
+  host.trigger("click", { target: toggle }); // 回图表
+  host.trigger("click", { target: s1 });
+  assert.deepEqual(w.state.hidden, ["tokens"], "多序列显隐");
 }

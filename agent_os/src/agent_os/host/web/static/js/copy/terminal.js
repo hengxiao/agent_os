@@ -276,4 +276,12 @@ export const COPY = {
   "w.date.inverted": "start after end",
   "w.date.prev": "prev month",
   "w.date.next": "next month",
+  "w.log.filter": "filter…",
+  "w.log.copy": "copy all",
+  "w.log.bottom": "back to bottom",
+  "w.log.empty": "no logs",
+  "w.chart.empty": "no data",
+  "w.chart.tableview": "table view",
+  "w.chart.chartview": "chart view",
+  "platform.detail.rawsign": "raw signals",
 };

@@ -8,7 +8,8 @@
 
 import { copy, initTheme, applyTheme, listThemes, currentThemeId } from "/static/js/themes.js";
 import { esc, toast } from "/static/js/util.js";
-import { mountDatePicker, mountFormEditor } from "/static/js/widgets/index.js";
+import { mountDatePicker, mountFormEditor, mountLogViewer } from "/static/js/widgets/index.js";
+import { looksMarkdown, mdToHtml } from "/static/js/widgets/w-md.js";
 import { renderCardSurface } from "./cards.js";
 import { renderTabSurface } from "./details.js";
 
@@ -451,7 +452,11 @@ function renderMain() {
 
 function msgHtml(m, index) {
   const role = m.role === "user" ? "user" : "agent";
-  const text = m.text ? `<div class="pf-bubble-text">${esc(m.text)}</div>` : "";
+  // W4(W-md 装配点):含 markdown 结构的消息走白名单安全渲染;
+  // 普通纯文本保持 esc 原文(保守启用,不误伤)
+  const text = m.text
+    ? `<div class="pf-bubble-text">${looksMarkdown(m.text) ? mdToHtml(m.text) : esc(m.text)}</div>`
+    : "";
   // N7(O7):LLM 路由凭证降级 → 人话系统提示(copy 六主题;不静默,不裸错)
   const degrade =
     m.meta?.route === "rule" && m.meta?.reason === "llm_unavailable"
@@ -924,13 +929,23 @@ async function _loadDetail(kind, ref, data) {
         const [detail, signals] = await Promise.all([dRes.json(), sRes.json()]);
         // W3:launch schema 已知时发起面升级 W-form(未知/ad-hoc 保持 textarea)
         const launchSchema = detail?.skill ? await _skillInputs(detail.skill) : null;
-        const mount = launchSchema
-          ? (host) => {
-              state._launchForm = mountFormEditor(host.querySelector("[data-launch-form]"), {
-                schema: launchSchema,
-              });
-            }
-          : null;
+        const mount = (host) => {
+          if (launchSchema) {
+            state._launchForm = mountFormEditor(host.querySelector("[data-launch-form]"), {
+              schema: launchSchema,
+            });
+          }
+          // W4:原始信号区挂 W-log(trace 主视图不动;kind 着色/跟随/复制)
+          const rawLog = host.querySelector("[data-raw-log]");
+          if (rawLog) {
+            mountLogViewer(rawLog, {
+              lines: (signals ?? []).map((s) => ({
+                kind: s.type ?? s.name ?? "signal",
+                text: JSON.stringify(s.payload ?? s),
+              })),
+            });
+          }
+        };
         return { kind, ref, html: renderTabSurface(kind, { detail, signals, launchSchema }), mount };
       }
       // M4a:ad-hoc run(iterate 等不走产物面)回落 instance state——

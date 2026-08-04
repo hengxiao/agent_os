@@ -205,7 +205,26 @@ app(业务对象:skill-pack/run/...)
 | W1 ✅ | Widget 协议与注册表 + W-text + W-json(编辑器是基础中的基础) |
 | W2 ✅ | W-table + W-kv + **W-bubble(含 APP-MODEL §16 context cascade 落地)**:表格家族 + 锚点聊天气泡,首个级联消费者 |
 | W3 ✅ | W-form + W-list + W-tree + W-date(数据输入与导航;run.launch 表单化落地;browse 时间窗) |
-| W4 | W-diff + W-md + W-log + W-chart(呈现家族;agent 消息/调试面/usage 可视化的统一) |
+| W4 ✅ | W-diff + W-md + W-log + W-chart(呈现家族;agent 消息/调试面/usage 可视化的统一) |
+
+> **W4 实现注**(2026-08-03,分支 debugger;控件库收尾):
+> - **W-diff**(`w-diff.js`):`diffBodyHtml(diff, {mode})`——split 与 cards.js
+>   原呈现**逐字节一致**(diffCard 已改委托,platform.test 未破);unified =
+>   单列新旧堆叠 + same 行折叠上下文([+n] 展开钮);set_mode 切换;
+> - **W-md**(`w-md.js`):`mdToHtml` 先整体转义再白名单加工(标题/列表/
+>   代码块 mono/粗斜体/链接[仅 https? 与站内]/表格);`javascript:` 链接剥壳
+>   成纯文本;`looksMarkdown` 保守判定;**装配 = agent 消息文本**(msgHtml:
+>   含结构才走 md,普通文本保持 esc 原文);
+> - **W-log**(`w-log.js`):跟随模式(新行自动滚底;上滚暂停 + "回到底部"
+>   钮;回底自动恢复)、截断保尾部(上限 500)、kind 着色(信号色 token)、
+>   过滤、copy_all(剪贴板缺席降级为事件);**装配 = run tab "原始信号"
+>   折叠区**(trace 主视图不动,并列增强);
+> - **W-chart**(`w-chart.js`):line/bar/spark 纯 SVG 直绘(零依赖);
+>   网格 + 1/2/5×10^n 刻度自动;>500 等距抽稀保首尾;hover title 读值;
+>   颜色只消费契约 token(var(--live)/var(--perm-write),不内嵌调色板);
+>   **等价数据表硬规则**:chartTableHtml 同 series 表格 + 切换钮;
+>   **装配 = usage 面板并列**(帧 cost 折线在原生 usage 表上方——面板本身
+>   就是等价数据表,语义不变;注:旧面板本无私有 SVG 图表可提取,故走并列)。
 
 > **W3 实现注**(2026-08-03,分支 debugger):
 > - **W-form**(`w-form.js`):六类型生成(string/number/integer[min/max]/

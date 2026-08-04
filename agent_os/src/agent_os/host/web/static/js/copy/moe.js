@@ -269,4 +269,12 @@ export const COPY = {
   "w.date.inverted": "起点比终点晚啦",
   "w.date.prev": "上一月",
   "w.date.next": "下一月",
+  "w.log.filter": "找找…",
+  "w.log.copy": "复制全部",
+  "w.log.bottom": "回到底部喵",
+  "w.log.empty": "还没有日志哦",
+  "w.chart.empty": "还没有数据喵",
+  "w.chart.tableview": "看表格",
+  "w.chart.chartview": "看图",
+  "platform.detail.rawsign": "原始信号",
 };

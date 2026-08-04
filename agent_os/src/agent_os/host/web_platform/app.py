@@ -58,13 +58,16 @@ from agent_os.skills.gate import GateError, validate_draft
 from agent_os.skills.iterate import edit_members, run_iterate
 from agent_os.skills.lab_assistant import (
     DOC_COMMENTER_NAME,
+    DOC_EDITOR_NAME,
     DOC_REVIEWER_NAME,
     ITERATOR_NAME,
     doc_commenter_skill,
+    doc_editor_skill,
     doc_reviewer_skill,
     iterator_skill,
 )
 from agent_os.skills.package import promote_package
+from agent_os.tools.lab_tools import register_doc_tools
 
 _log = logging.getLogger("agent_os.platform")
 
@@ -155,6 +158,13 @@ class DocCommentBody(BaseModel):
     anchor: str = ""
     text: str = ""
     cascade: list[dict[str, Any]] = []
+
+
+class DocChatBody(BaseModel):
+    """``POST /api/docs/{name}/chat``(D5,docs/DOC-EDITOR.md §5):
+    doc 作用域主对话的一轮——只有用户消息;全文/批注由服务端自己装信封。"""
+
+    text: str = ""
 
 
 #: 升权档 → 人话(W2 decisions 聚合字段;摘要层禁 tier 术语,前端按 tier 自取 copy,
@@ -339,6 +349,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         try:
             doc = doc_store.read(name)
             doc["versions"] = [v["version"] for v in doc_store.list_versions(name)]
+            doc["chat"] = doc_store.read_chat(name)  # D5:左栏主对话种子(开关不丢)
             return doc
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -473,6 +484,58 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             {"role": "assistant", "text": reply, **({"edits": edits} if edits else {})},
         )
         return {"reply": reply, "edits": edits}
+
+    @app.post("/api/docs/{name}/chat")
+    def doc_chat(name: str, body: DocChatBody) -> dict[str, Any]:
+        """doc 作用域主对话(D5,docs/DOC-EDITOR.md §5):
+        信封(text + cascade[文档名/全文/全部 bubbles 批注])→ doc_editor run
+        (白名单 = 当前文档的 doc.read/doc.edit,工具侧引用围栏双保险)→
+        {reply, changed};**changed = run 前后全文对比**(不信技能自报);
+        双侧消息落 chat.json(开关不丢)。"""
+        try:
+            doc = doc_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        before = doc["text"]
+        cascade = [
+            {
+                "scope": "app",
+                "path": f"/doc/{name}",
+                "data": {
+                    "name": name,
+                    "full_text": before,
+                    # 批注全量进信封:"按批注改一遍"由主对话直接覆盖
+                    "bubbles": doc_store.read_bubbles(name),
+                },
+            }
+        ]
+        try:
+            kernel = manager.assemble_lab_kernel(
+                OverlaySkillRegistry(
+                    manager.shared_skills_registry(),
+                    lab_store,
+                    extra={DOC_EDITOR_NAME: doc_editor_skill()},
+                )
+            )
+            register_doc_tools(kernel.tools, store=doc_store, doc_name=name)
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"编辑助手不可用: {e}") from e
+        try:
+            result = asyncio.run(
+                kernel.run(DOC_EDITOR_NAME, {"text": body.text, "cascade": cascade})
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"编辑助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+        reply = str((result or {}).get("reply") or "")
+        changed = doc_store.read(name)["text"] != before  # 全文对比判 changed
+        # 持久化(D5:开关不丢)——用户消息 + 助手回复进主对话流
+        doc_store.save_chat(name, {"role": "user", "text": body.text})
+        doc_store.save_chat(name, {"role": "assistant", "text": reply})
+        return {"reply": reply, "changed": changed}
 
     # ------------------------------------------------------------------
     # 升权决策(W2,docs/ESCALATION.md §3):supervisor pending 的**纯转发**——

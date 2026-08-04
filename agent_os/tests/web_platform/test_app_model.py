@@ -43,6 +43,8 @@ KNOWN = {
     "platform.shell.theme.set", "platform.shell.session.create",
     # D1:doc 的 endpoint 动作(docs/DOC-EDITOR.md §3)
     "platform.doc.save", "platform.doc.snapshot", "platform.doc.rewind", "platform.doc.export",
+    # D2:comment.apply(docs/DOC-EDITOR.md §3)
+    "platform.doc.apply",
 }
 
 

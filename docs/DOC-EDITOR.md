@@ -134,6 +134,31 @@ docs/<name>/
 | D2 ✅ | 段落锚点 + W-bubble 接入(comment.send/apply)+ doc_commenter 技能 |
 | D3 ✅ | 全文评审(锚点批注集自动挂段)+ lab NOTES.md 接点 |
 | D4 ✅ | 导出(.md 下载/复制降级)+ 对话卡片(doc_list 卡/新建入口)+ 打磨(未读增量/severity 单源/NOTES 读回) |
+| D5 ✅ | 两栏重构(左 chatbot 35% / 右文档展示 65%)+ doc 作用域主对话(chat 端点 + doc_editor 技能 + doc.read/doc.edit 工具)+ 右键开泡 |
+
+> **D5 实现注**(2026-08-03,分支 debugger;用户原话语义:编辑器重构成两栏,
+> 功能全保留收编角落):
+> **布局**——左 = doc 作用域主对话(chatbot,空态系统提示"告诉我你要什么文档");
+> 右 = 文档展示(mdBlocks 按块渲染,空态引导文案"试着在左边输入你的需求。
+> 我会为你创建一个文档。")。**废弃清单**:大纲栏(导航靠滚动+气泡跳转)、
+> 手写编辑 textarea(改文档走对话)、分屏 view toggle、气泡栏作为栏
+> (改为右栏底部横条);版本下拉/快照/rewind 两击/导出菜单/评审收进右侧顶部
+> 极细工具条(小图标钮 + title,管道逻辑不变)。
+> **主对话**——`POST /api/docs/{name}/chat`(body `{text}` → `{reply, changed}`):
+> 信封 = 用户消息 + cascade[文档名/全文/**全部 bubbles 批注**]("按批注改一遍"
+> 由主对话直接覆盖,不做"标记已处理"UI);`skill.dev.doc_editor` 白名单 =
+> 当前文档的 `doc.read`/`doc.edit` 两件(tools/lab_tools.register_doc_tools,
+> **引用围栏**:name ≠ 当前 ref 直接拒,越界读/改都到不了盘);
+> **changed = run 前后全文对比**(不信技能自报);双侧消息落
+> `docs/<name>/chat.json`(DocStore.save_chat/read_chat;与 bubbles 分流——
+> chat 是主对话,bubbles 是段落批注,两个文件都留),GET /api/docs/{name}
+> 直给 `chat` 种子。changed=true 时前端 `reload()` 重拉全文重渲右侧。
+> **右键开泡**——preview 上 contextmenu 任意块 → local 气泡(W-bubble,
+> 问问题/表达需求,不是主对话;防重复走 openBubble 同锚点 early-return)。
+> **顺手修的潜伏 bug**——host(#detailHost)跨 renderDetail 存活,innerHTML
+> 重渲不摘旧监听,D1-D4 每次重挂载都叠加一个 host 级 click 委托(N 次挂载 =
+> 导出菜单被切 N 次,偶数次 = 没切);D5 起委托幂等(只挂一次,永远转给
+> 最新实例)。
 
 > **D4 实现注**(2026-08-03,分支 debugger):
 > 导出菜单(顶栏 ▾:下载 .md = `exportDoc()` 生成 Blob 锚[data: URL 兜底]

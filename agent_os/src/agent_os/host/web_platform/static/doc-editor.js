@@ -1,16 +1,17 @@
-/* doc 编辑器挂载(D1,docs/DOC-EDITOR.md §2;只组合既有控件,不新造基础件):
-   左 W-text(mono,选区保留)/ 右 W-md 实时预览、大纲树(点击滚动定位)、
-   dirty 追踪 + 状态栏(字数/dirty ●/视图 toggle/版本 rewind 两击确认);
-   D2(§2.1):预览按**段落块**渲染(块 = 空行分块,标题/列表项/表格行独占),
-   每块带 💬 锚点钮(anchor = doc.md#L<start>-L<end>),点开 W-bubble——
+/* doc 编辑器挂载(D5,docs/DOC-EDITOR.md §2;两栏重构:左对话 35% / 右展示 65%):
+   左 = doc 作用域主对话(chatbot;说"写一篇 X/加一节/按批注改一遍" → chat 端点,
+   agent 经 doc.read/doc.edit 直接改文档,changed=true 时右侧重拉重渲);
+   右 = 文档展示(mdBlocks 段落块渲染 + 每块 💬 + 右键 contextmenu 开 local 气泡);
+   版本下拉/快照/rewind 两击/导出/评审收进右侧顶部极细工具条;大纲/分屏/手写
+   编辑面废弃(导航靠滚动+气泡跳转,改文档走对话)。
+   段落气泡(D2 §2.1)与气泡栏(D3)/未读增量(D4)管道全部保留:
    提交父级组 §16 cascade 信封出海,回复/应用全经管道与专属端点。
-   写动作(save/snapshot/rewind/export)不在此——全部走 tabAction 管道(§3)。 */
+   写动作(snapshot/rewind/export/apply)不在此——全部走 tabAction 管道(§3)。 */
 
 import { copy } from "/static/js/themes.js";
-import { mdToHtml, mountBubble, mountTextEditor } from "/static/js/widgets/index.js";
-import { parseOutline } from "./details.js";
+import { mdToHtml, mountBubble } from "/static/js/widgets/index.js";
 
-// 长文档阈值(§2/§7 边界):>200KB 预览截断提示,不炸(编辑器本体不受影响)
+// 长文档阈值(§2/§7 边界):>200KB 预览截断提示,不炸(展示面只读,无编辑器)
 const PREVIEW_LIMIT = 200 * 1024;
 
 /* severity 单源(D4 打磨;与后端 app.py 的 DOC_SEVERITIES 字面一致——
@@ -33,7 +34,7 @@ export function exportDoc({ text, filename, doc = null }) {
   return a;
 }
 
-/* 段落块切分(D2 §2.1;与大纲解析同源,1-based 行号区间):
+/* 段落块切分(D2 §2.1;1-based 行号区间):
    空行分块;标题/列表项/表格行独占一块;连续普通行并成一块 */
 export function mdBlocks(text) {
   const lines = String(text ?? "").split("\n");
@@ -71,30 +72,18 @@ export function parseAnchor(anchor) {
   return m ? { start: Number(m[1]), end: Number(m[2]) } : null;
 }
 
-export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = null, reload = null, onViewChange = null } = {}) {
-  const textarea = host.querySelector("[data-doc-text]");
+export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = null, reload = null } = {}) {
   const preview = host.querySelector("[data-doc-preview]");
-  const outline = host.querySelector("[data-doc-outline]");
+  const chatLog = host.querySelector("[data-doc-chat-log]");
+  const chatInput = host.querySelector("[data-doc-chat-input]");
   const chars = host.querySelector("[data-doc-chars]");
   const dirtyEl = host.querySelector("[data-doc-dirty]");
-  const cols = host.querySelector(".doc-cols");
-  if (!textarea) return null;
+  if (!preview) return null;
 
-  textarea.value = doc?.text ?? "";
-  // aria 兜底 + host 适配(虚拟 DOM 的 region 按选择器字符串缓存——"textarea" 与
-  // "[data-doc-text]" 是两个对象;W-text 的 host 只消费这四个面,包一层即真实)
-  if (!textarea.getAttribute?.("aria-label")) {
-    textarea.setAttribute?.("aria-label", copy("platform.doc.text"));
-  }
-  const textHost = {
-    querySelector: (sel) => (sel === "textarea" ? textarea : null),
-    addEventListener: (t, fn) => textarea.addEventListener?.(t, fn),
-    appendChild: (c) => host.appendChild?.(c),
-    ownerDocument: host.ownerDocument,
-    dataset: { variant: "mono" },
-  };
-  const editor = mountTextEditor(textHost, {});
-  let dirty = false;
+  let currentText = doc?.text ?? ""; // 展示面事实源(改文档走对话;changed 后 reload 重拉)
+  let dirty = false; // 展示面只读:保留 dirty 状态面(cascade/apply 归态兼容),无手写入口
+  // D5 主对话:种子 = chat.json(服务端事实源,开关不丢)
+  const messages = (doc?.chat ?? []).map((m) => ({ role: m.role, text: m.text }));
   // D4 未读增量:seen 游标(module Map + localStorage 备份;打开气泡即记"已读")
   const _seen = new Map();
   const _seenKey = (anchor) => `doc.seen.${doc.name}.${anchor}`;
@@ -116,11 +105,12 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
   function blockTextOf(anchor) {
     const range = parseAnchor(anchor);
     if (!range) return "";
-    const lines = textarea.value.split("\n");
+    const lines = currentText.split("\n");
     return lines.slice(range.start - 1, range.end).join("\n");
   }
 
-  /* 开气泡(多条并存,各锚点独立;种子 = 持久化消息流,开关不丢) */
+  /* 开气泡(多条并存,各锚点独立;种子 = 持久化消息流,开关不丢;
+     同锚点重开 = 聚焦,不重复建——右键开泡的防重复也走这个 early-return) */
   function openBubble(anchor, blockEl) {
     const existing = bubbles.get(anchor);
     if (existing) {
@@ -140,7 +130,7 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
         {
           prefix: `/doc/${doc.name}`,
           scope: "widget",
-          fn: () => ({ anchor, paragraph: blockTextOf(anchor), full_text: textarea.value }),
+          fn: () => ({ anchor, paragraph: blockTextOf(anchor), full_text: currentText }),
         },
         {
           prefix: "/doc",
@@ -197,8 +187,51 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     return entry;
   }
 
+  /* D5 主对话:发送一轮(chat 端点;agent 直接改文档,changed=true → 右侧重拉) */
+  async function sendChat() {
+    const text = String(chatInput?.value ?? "").trim();
+    if (!text) return;
+    messages.push({ role: "user", text });
+    if (chatInput) chatInput.value = "";
+    renderChat();
+    try {
+      const res = await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+      const body = await res.json();
+      messages.push({ role: "assistant", text: body.reply ?? "" });
+      renderChat();
+      if (body.changed) reload?.(); // 文档被改 → 重拉全文重渲右侧(chat.json 已落,对话不丢)
+    } catch (err) {
+      messages.push({ role: "assistant", text: `(${copy("platform.doc.chat.fail")}: ${err.message ?? err})` });
+      renderChat();
+    }
+  }
+
+  /* 左栏:主对话渲染(空态 = 系统提示"告诉我你要什么文档",只展示不占流) */
+  function renderChat() {
+    if (!chatLog) return;
+    const msgs = messages.length
+      ? messages
+      : [{ role: "system", text: copy("platform.doc.chat.hint") }];
+    chatLog.innerHTML = msgs
+      .map(
+        (m) =>
+          `<div class="doc-chat-msg" data-role="${esc(m.role ?? "user")}">${esc(m.text ?? "")}</div>`
+      )
+      .join("");
+  }
+
   function renderPreview() {
-    const text = textarea.value;
+    const text = currentText;
+    // D5 空态(新建文档):引导文案——"试着在左边输入你的需求。我会为你创建一个文档。"
+    if (!text.trim()) {
+      preview.innerHTML = `<div class="doc-guide" data-doc-guide="1">${esc(copy("platform.doc.guide"))}</div>`;
+      return;
+    }
     const limited = text.length > PREVIEW_LIMIT;
     const blocks = mdBlocks(limited ? text.slice(0, PREVIEW_LIMIT) : text);
     preview.innerHTML =
@@ -224,26 +257,13 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     }
   }
 
-  function renderOutline() {
-    const items = parseOutline(textarea.value);
-    outline.innerHTML = items.length
-      ? items
-          .map(
-            (h) =>
-              `<button class="doc-outline-item" data-offset="${h.offset}" style="--ns-depth:${h.level - 1}">` +
-              `${esc(h.text)}</button>`
-          )
-          .join("")
-      : `<div class="pf-dim">—</div>`;
-  }
-
   function renderStatus() {
-    chars.textContent = copy("platform.doc.chars").replace("{n}", String(textarea.value.length));
+    chars.textContent = copy("platform.doc.chars").replace("{n}", String(currentText.length));
     dirtyEl.textContent = dirty ? "●" : "";
     dirtyEl.dataset.on = dirty ? "1" : "0";
   }
 
-  /* D3 气泡栏:聚合视图(锚点/severity/未读增量,点击跳转开泡) */
+  /* D3 气泡栏:聚合视图(锚点/severity/未读增量,点击跳转开泡;D5 起是右栏底部横条) */
   function renderBubbleBar() {
     const bar = host.querySelector("[data-doc-bubblebar]");
     if (!bar) return;
@@ -297,30 +317,18 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
 
   function refresh() {
     renderPreview();
-    renderOutline();
+    renderChat();
     renderStatus();
     renderBubbleBar();
   }
 
-  textarea.addEventListener("input", () => {
-    dirty = true;
-    refresh();
-  });
-  textarea.addEventListener("keydown", (e) => {
-    // Ctrl/Cmd+S = 保存(与状态栏 [保存] 同一管道按钮)
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-      e.preventDefault();
-      host.querySelector('[data-tab-act="doc.save"]')?.click?.();
-    }
-  });
-  outline.addEventListener("click", (e) => {
-    const item = e.target.closest("[data-offset]");
-    if (!item) return;
-    // 滚动定位:选区跳到标题偏移(W-text 选区语义;滚动由浏览器 reveal)
-    const offset = Number(item.dataset.offset);
-    textarea.focus();
-    textarea.selectionStart = offset;
-    textarea.selectionEnd = offset;
+  // D5:右键(contextmenu)任意块 → 开 local 气泡(问问题/表达需求,不是主对话)
+  preview.addEventListener("contextmenu", (e) => {
+    e.preventDefault?.();
+    const block = e.target.closest?.("[data-anchor]") ??
+      (e.target.dataset?.anchor ? e.target : null);
+    const anchor = block?.dataset?.anchor;
+    if (anchor) openBubble(anchor, block);
   });
   // D2:段落锚点钮 → 开/聚焦对应气泡
   preview.addEventListener("click", (e) => {
@@ -330,7 +338,19 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     const anchor = block?.dataset?.anchor;
     if (anchor) openBubble(anchor, block);
   });
-  host.addEventListener("click", async (e) => {
+  // D5:主对话输入(Enter 发送;[发送] 钮在 host 委托里)
+  chatInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault?.();
+      sendChat();
+    }
+  });
+  /* host 委托(重挂载幂等):#detailHost 跨 renderDetail 存活,innerHTML 重渲
+     不摘旧监听——委托只挂一次,永远转给最新实例(否则 N 次挂载 = N 个委托,
+     导出菜单被切 N 次:偶数次 = 没切的幽灵 bug,D1-D4 旧码已潜伏) */
+  async function onHostClick(e) {
+    // D5:[发送] → 主对话一轮
+    if (e.target.closest("[data-doc-chat-send]")) return sendChat();
     // D4:导出菜单(开/合;下载走 exportDoc,复制走 clipboard 降级)
     if (e.target.closest("[data-doc-export]")) {
       const menu = host.querySelector("[data-export-menu]");
@@ -380,14 +400,6 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
       }
       return;
     }
-    const mode = e.target.closest("[data-view-mode]")?.dataset.viewMode;
-    if (mode) {
-      cols.dataset.view = mode; // 分屏 toggle(edit/preview/split;CSS 驱动)
-      host.querySelectorAll("[data-view-mode]").forEach((b) => {
-        b.dataset.on = b.dataset.viewMode === mode ? "1" : "0";
-      });
-      return;
-    }
     // rewind 两击确认(lab-iterate 同款:第一击武装,第二击才走管道)
     const rw = e.target.closest("[data-doc-rewind]");
     if (rw && rw.dataset.armed !== "1") {
@@ -396,7 +408,12 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
       e.stopPropagation?.();
       e.preventDefault?.();
     }
-  });
+  }
+  host.__docEditorClick = onHostClick; // 最新实例(重挂载覆盖)
+  if (!host.__docEditorBound) {
+    host.__docEditorBound = true;
+    host.addEventListener("click", (e) => host.__docEditorClick?.(e));
+  }
 
   refresh();
   return {
@@ -409,12 +426,13 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     },
     refresh,
     runReview,
+    sendChat, // D5:主对话一轮(测试面;UI 走 [发送]/Enter)
+    chat: messages, // D5:主对话消息流(测试面)
     bubbles,
     seenGet: _seenGet, // D4:seen 游标(测试面)
     seenSet: _seenSet,
-    editor,
     setText(text) {
-      textarea.value = text ?? "";
+      currentText = text ?? "";
       dirty = false;
       refresh();
     },

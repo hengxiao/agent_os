@@ -491,3 +491,194 @@ def test_severity_single_source():
     from agent_os.host.web_platform.app import DOC_SEVERITIES
 
     assert list(DOC_SEVERITIES) == ["must", "should", "nit"]
+
+
+# ---------------------------------------------------------------------------
+# D5:doc 作用域主对话——chat.json 持久化 / doc_editor 白名单 / doc.read/doc.edit
+# 工具围栏 / POST /api/docs/{name}/chat 全链(§5)
+# ---------------------------------------------------------------------------
+
+
+def test_chat_persist(store):
+    """chat.json:主对话 append/读取(无文件/坏文件 → []);与 bubbles 分流两文件都留。"""
+    store.create("design.new_ui", text="x")
+    assert store.read_chat("design.new_ui") == [], "无文件 → 空"
+    store.save_chat("design.new_ui", {"role": "user", "text": "要个设计文档"})
+    store.save_chat("design.new_ui", {"role": "assistant", "text": "建好了"})
+    msgs = store.read_chat("design.new_ui")
+    assert [m["role"] for m in msgs] == ["user", "assistant"], "消息流 append"
+    assert all("ts" in m for m in msgs), "ts 自动补"
+    import pathlib
+
+    bad = pathlib.Path(store._root) / "design.new_ui" / "chat.json"
+    bad.write_text("{bad", encoding="utf-8")
+    assert store.read_chat("design.new_ui") == [], "坏文件 → 空(不炸)"
+    assert store.read_chat("no.such") == [], "文档目录不在也 → 空"
+
+
+def test_doc_editor_whitelist():
+    """doc_editor 白名单 = 当前文档的 doc.read/doc.edit 两件(skills 空;无别的系统面)。"""
+    from agent_os.skills.lab_assistant import DOC_EDITOR_NAME, doc_editor_skill
+
+    skill = doc_editor_skill()
+    assert skill.manifest.name == DOC_EDITOR_NAME
+    assert skill.manifest.permissions.tools == ["doc.read", "doc.edit"], "恰好两件"
+    assert skill.manifest.permissions.skills == []
+
+
+def test_doc_tools_anchor_edit_and_fence(tmp_path):
+    """doc.read/doc.edit:按段替换/整文替换(.bak 同惯例);引用围栏(越界名拒)
+    + 锚点格式/越界拒;组内恰好两件。"""
+    import asyncio
+
+    from agent_os.api.v1 import SkillFrame, ToolCall, ToolDispatchContext
+    from agent_os.tools.lab_tools import DOC_EDITOR_TOOLS, register_doc_tools
+    from agent_os.tools.local_registry import LocalPythonToolRegistry
+
+    store = DocStore(tmp_path / "docs")
+    store.create("design.new_ui", text="# 概述\n首段\n## 设计\n次段\n")
+    reg = LocalPythonToolRegistry()
+    register_doc_tools(reg, store=store, doc_name="design.new_ui")
+    ctx = ToolDispatchContext(
+        frame=SkillFrame(frame_id="f", run_id="r"), allowed_tools=list(DOC_EDITOR_TOOLS)
+    )
+
+    def call(name, args):
+        return asyncio.run(reg.dispatch(ToolCall(id="c", name=name, args=args), ctx))
+
+    assert call("doc.read", {"name": "design.new_ui"}).value["text"].startswith("# 概述")
+    r = call("doc.edit", {"name": "design.new_ui", "anchor": "doc.md#L2-L2", "replace_text": "改过的首段"})
+    assert r.ok and "改过的首段" in store.read("design.new_ui")["text"], "按锚点区间替换"
+    bak = (tmp_path / "docs" / "design.new_ui" / "doc.md.bak").read_text(encoding="utf-8")
+    assert "首段" in bak, ".bak = 上一版(reversible)"
+    r2 = call("doc.edit", {"name": "design.new_ui", "anchor": "", "replace_text": "# 全新\n"})
+    assert r2.ok and store.read("design.new_ui")["text"] == "# 全新\n", "anchor 空 = 整文替换"
+    r3 = call("doc.edit", {"name": "other.doc", "replace_text": "x"})
+    assert not r3.ok and "只能编辑当前文档" in r3.error.message, "引用围栏:越界名拒"
+    assert not call("doc.read", {"name": "other.doc"}).ok, "读也收同一围栏"
+    assert not call("doc.edit", {"name": "design.new_ui", "anchor": "bad", "replace_text": "x"}).ok, "锚点格式拒"
+    assert not call(
+        "doc.edit", {"name": "design.new_ui", "anchor": "doc.md#L9-L9", "replace_text": "x"}
+    ).ok, "锚点越界拒"
+    specs = {s.name: s for s in reg.specs() if s.name.startswith("doc.")}
+    assert set(specs) == {"doc.read", "doc.edit"}, "组内恰好两件"
+
+
+def doc_editor_brain(req):
+    """doc_editor(scripted):按 plan 行动——edit = 调 doc.edit 改第二段;
+    edit_other = 试图改别的文档(围栏拒);noop = 只回复不动文档。"""
+    import json as _json
+
+    from agent_os.api.v1 import ChatResponse, Message, Role, ToolCall
+
+    doc_editor_brain.seen.append(req)
+    calls = [tc for m in req.messages if m.role is Role.ASSISTANT for tc in m.tool_calls]
+    if not calls:
+        plan = getattr(doc_editor_brain, "plan", "edit")
+        if plan == "noop":
+            return ChatResponse(
+                message=Message(role=Role.ASSISTANT, content=_json.dumps({"reply": "没动文档"})),
+                finish_reason="stop",
+            )
+        args = (
+            {"name": "design.new_ui", "anchor": "doc.md#L2-L2", "replace_text": "改过的第二段"}
+            if plan == "edit"
+            else {"name": "other.doc", "anchor": "", "replace_text": "x"}  # edit_other:越界
+        )
+        return ChatResponse(
+            message=Message(role=Role.ASSISTANT, tool_calls=[ToolCall(id="t1", name="doc.edit", args=args)]),
+            finish_reason="tool_calls",
+        )
+    return ChatResponse(
+        message=Message(role=Role.ASSISTANT, content=_json.dumps({"reply": "已按批注改好"})),
+        finish_reason="stop",
+    )
+
+
+doc_editor_brain.seen = []
+
+
+def _chat_client(tmp_path):
+    import textwrap
+
+    from fastapi.testclient import TestClient
+
+    from agent_os.host.web.app import create_app
+
+    (tmp_path / "skills.yaml").write_text("skills: []\n", encoding="utf-8")
+    cfg = tmp_path / "agent-os.toml"
+    cfg.write_text(
+        textwrap.dedent(
+            """
+            [run]
+            model = "mock/x"
+            compression = "off"
+            [providers.mock]
+            brain = "tests.web_platform.test_doc_store:doc_editor_brain"
+            [tools]
+            builtins = true
+            python_exec = "off"
+            [skills]
+            path = "{skills}"
+            [lab]
+            drafts_root = "{drafts}"
+            """
+        ).format(skills=tmp_path / "skills.yaml", drafts=tmp_path / "drafts"),
+        encoding="utf-8",
+    )
+    return TestClient(create_app(cfg, artifacts_root=tmp_path / "runs"))
+
+
+def test_chat_full_chain(tmp_path):
+    """chat:信封(全文 + 全部 bubbles 批注)→ agent 经 doc.edit 直接改文档;
+    {reply, changed}(changed = run 前后全文对比,不信技能自报);双侧消息落
+    chat.json(开关不丢);未变轮 changed=False 且文档不动。"""
+    doc_editor_brain.seen.clear()
+    doc_editor_brain.plan = "edit"
+    client = _chat_client(tmp_path)
+    client.post("/platform/api/docs", json={"name": "design.new_ui", "title": "新 UI",
+                                             "text": "# 概述\n首段内容\n## 设计\n次段内容\n"})
+    # 先挂一条段落批注("按批注改一遍"的覆盖源;bubbles 应随信封进技能)
+    from agent_os.skills.doc_store import DocStore
+
+    DocStore(tmp_path / "runs" / "docs").save_bubble(
+        "design.new_ui", "doc.md#L2-L2", {"role": "user", "text": "这段太绕"}
+    )
+    r = client.post("/platform/api/docs/design.new_ui/chat", json={"text": "按批注改一遍"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["reply"] == "已按批注改好"
+    assert body["changed"] is True, "doc.edit 落盘 → changed"
+    doc = client.get("/platform/api/docs/design.new_ui").json()
+    assert "改过的第二段" in doc["text"], "agent 直接改文档"
+    seen_text = "\n".join(m.content for m in doc_editor_brain.seen[0].messages)
+    # 注:runner 序列化输入 ensure_ascii=True,中文是 \uXXXX——断言用 ASCII 安全面
+    assert '"bubbles"' in seen_text and "doc.md#L2-L2" in seen_text, "全部批注随信封进技能"
+    assert '"full_text"' in seen_text, "全文进信封"
+    # 持久化:双侧消息在 chat.json(读面随 GET 直给)
+    chat = doc["chat"]
+    assert [m["role"] for m in chat] == ["user", "assistant"], "开关不丢(服务端事实源)"
+    assert chat[0]["text"] == "按批注改一遍"
+    # 未变轮:brain 不调工具 → changed=False,文档不动
+    doc_editor_brain.plan = "noop"
+    r2 = client.post("/platform/api/docs/design.new_ui/chat", json={"text": "只问个问题"})
+    assert r2.status_code == 200
+    assert r2.json()["changed"] is False, "没调 doc.edit → 未变"
+    assert "改过的第二段" in client.get("/platform/api/docs/design.new_ui").json()["text"]
+    assert len(client.get("/platform/api/docs/design.new_ui").json()["chat"]) == 4, "两轮全在"
+    assert client.post("/platform/api/docs/no.such/chat", json={"text": "x"}).status_code == 404
+
+
+def test_chat_fence_rejects_outside_ref(tmp_path):
+    """chat 白名单收口:agent 想改别的文档 → 工具引用围栏拒(别人文档不动,
+    run 照常回 reply,changed=False)。"""
+    doc_editor_brain.seen.clear()
+    doc_editor_brain.plan = "edit_other"
+    client = _chat_client(tmp_path)
+    client.post("/platform/api/docs", json={"name": "design.new_ui", "text": "# 概述\n首段内容\n"})
+    client.post("/platform/api/docs", json={"name": "other.doc", "text": "别人的\n"})
+    r = client.post("/platform/api/docs/design.new_ui/chat", json={"text": "把 other.doc 改了"})
+    assert r.status_code == 200, r.text
+    assert r.json()["changed"] is False, "越界被拒 → 未变"
+    assert client.get("/platform/api/docs/other.doc").json()["text"] == "别人的\n", "别人文档不动"
+    assert "首段内容" in client.get("/platform/api/docs/design.new_ui").json()["text"], "当前文档也不动"

@@ -313,4 +313,9 @@ export const COPY = {
   "platform.doc.copied": "已复制到剪贴板",
   "platform.doc.copy.fail": "复制失败,请手动全选复制",
   "platform.doc.notes.saved": "保存即写回 NOTES",
+  "platform.doc.chat.ph": "输入需求,回车发送",
+  "platform.doc.chat.hint": "告诉我你要什么文档",
+  "platform.doc.chat.send": "发送",
+  "platform.doc.chat.fail": "编辑助手暂不可用",
+  "platform.doc.guide": "试着在左边输入你的需求。我会为你创建一个文档。",
 };

@@ -311,4 +311,9 @@ export const COPY = {
   "platform.doc.copied": "COPIED",
   "platform.doc.copy.fail": "COPY FAILED",
   "platform.doc.notes.saved": "SAVE WRITES NOTES",
+  "platform.doc.chat.ph": "TYPE REQUEST, ENTER TO SEND",
+  "platform.doc.chat.hint": "TELL ME WHAT DOC YOU WANT",
+  "platform.doc.chat.send": "SEND",
+  "platform.doc.chat.fail": "EDITOR UNAVAILABLE",
+  "platform.doc.guide": "TYPE YOUR REQUEST ON THE LEFT. I WILL CREATE A DOC FOR YOU.",
 };

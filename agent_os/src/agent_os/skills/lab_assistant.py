@@ -31,6 +31,27 @@ DOC_COMMENTER_NAME = "skill.dev.doc_commenter"
 #: 文档评审技能名(D3,docs/DOC-EDITOR.md §5;全文评审 → 锚点批注集)
 DOC_REVIEWER_NAME = "skill.dev.doc_reviewer"
 
+#: 文档编辑技能名(D5,docs/DOC-EDITOR.md §5;doc 作用域主对话:白名单 =
+#: 当前文档的 doc.read/doc.edit 两件,改完经工具落盘,host 以全文对比判 changed)
+DOC_EDITOR_NAME = "skill.dev.doc_editor"
+
+_DOC_EDITOR_PROMPT = """你是文档编辑助手。用户在一篇 Markdown 文档的专属对话里提需求,输入给你:
+
+- text:用户的消息(写新文档/加一节/改一段/按批注处理等);
+- cascade:逐级上下文(文档名、文档全文、段落批注 bubbles 列表)。
+
+你可以用两个工具(白名单收口,没有别的能力):
+- doc.read(name):读文档全文;
+- doc.edit(name, anchor, replace_text):改文档——anchor = "doc.md#L<start>-L<end>"
+  按行号区间替换该段;anchor = "" 时整文替换(新建/大改用)。
+
+纪律:
+1. **只能动 cascade 里指定的当前文档**(name 越界工具会拒,不要试);
+2. 看着全文改一段:先 doc.read 确认行号,再按段替换;不大改就别整文替换;
+3. 用户说"按批注改一遍/处理批注"时,逐条看 bubbles 的批注,能改的都改;
+4. 不确定就别动文档,只回复说明;不编造全文里没有的事实;
+5. 最后只输出一个 JSON,不要别的文字:{{"reply": "一句话汇报改了什么(没改就说没改)"}}"""
+
 _DOC_REVIEWER_PROMPT = """你是文档评审助手。输入给你三样:
 
 - text:Markdown 文档全文(带行号语义,锚点按 doc.md#L<start>-L<end> 给);
@@ -120,6 +141,35 @@ def doc_commenter_skill() -> Skill:
         limits=SkillLimits(max_steps=4, timeout=60),
     )
     return Skill(manifest=manifest, prompt=_DOC_COMMENTER_PROMPT)
+
+
+def doc_editor_skill() -> Skill:
+    """文档编辑技能(D5;tools = doc.read/doc.edit 两件——只能动当前文档,
+    工具侧还有引用围栏双保险;changed 由 host 全文对比判定,不信技能自报)。"""
+    manifest = SkillManifest(
+        name=DOC_EDITOR_NAME,
+        version="0.1.0",
+        description=(
+            "文档编辑助手。Use when 在 Markdown 文档的专属对话里按用户消息读/改该文档;"
+            "Do not use when 要动别的文档或别的系统面(白名单只有当前文档的读/改两件)。"
+        ),
+        inputs={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "用户消息"},
+                "cascade": {"type": "array", "description": "逐级上下文(文档名/全文/批注)"},
+            },
+            "required": ["text"],
+        },
+        outputs={
+            "type": "object",
+            "properties": {"reply": {"type": "string"}},
+            "required": ["reply"],
+        },
+        permissions=SkillPermissions(tools=["doc.read", "doc.edit"], skills=[]),  # 白名单收口
+        limits=SkillLimits(max_steps=10, timeout=120),
+    )
+    return Skill(manifest=manifest, prompt=_DOC_EDITOR_PROMPT)
 
 _COMMENTER_PROMPT = """你是锚点评论助手。用户在某段内容上挂了气泡提问或提意见,输入给你:
 

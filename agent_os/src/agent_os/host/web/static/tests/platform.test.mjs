@@ -454,6 +454,7 @@ const assertClean = (html, who) => {
   const calls = [];
   let badRunFail = true; // bad-run 首轮加载炸,重试后成功
   let presentCalls = 0;  // 决策轮询:首轮炸(静默)→ 次轮插入 → 之后幂等
+  let docChatCalls = 0;  // D5:doc 主对话轮次(首轮 changed=true,后续 false)
   // M5:shell 唯一事实源(JS 镜像,语义与后端 mutator 对齐)
   const shellState = {
     tabs: [{ id: "conv", instance_id: "", kind: "conversation", ref: "conv", title: "对话" }],
@@ -609,13 +610,21 @@ const assertClean = (html, who) => {
       return reply({ reply: "建议:删第二句,留骨架",
         edits: [{ anchor: "doc.md#L2-L2", suggestion: "删第二句", replace_text: "改过的第二段" }] });
     }
+    // D5:doc 作用域主对话(首轮 changed=true → 右侧重拉;后续 false → 不重拉)
+    if (url === "/platform/api/docs/design.new_ui/chat" && options.method === "POST") {
+      docChatCalls += 1;
+      return reply(docChatCalls === 1
+        ? { reply: "已按批注改好第二段", changed: true }
+        : { reply: "没动文档", changed: false });
+    }
     if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/comment.apply") {
       return reply({ ok: true, text: "已应用。", state: { dirty: false },
         instance: { id: "app-spawn-design.new_ui", kind: "doc", state: {} } });
     }
     if (url === "/platform/api/docs/design.new_ui") {
       return reply({ name: "design.new_ui", text: "# 概述\n首段内容\n## 设计\n次段内容\n",
-        meta: { title: "新 UI", savedAt: 1 }, versions: ["v001"] });
+        meta: { title: "新 UI", savedAt: 1 }, versions: ["v001"],
+        chat: [{ role: "user", text: "旧需求", ts: 1 }, { role: "assistant", text: "旧回复", ts: 2 }] });
     }
     if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/doc.save") {
       return reply({ ok: true, text: "已保存。", state: { dirty: false, savedAt: 2 },
@@ -1345,7 +1354,7 @@ const assertClean = (html, who) => {
   assert.ok(rawLog.innerHTML.includes("outputs 错"), "信号载荷在");
   assert.ok(rawLog.innerHTML.includes('role="log"'), "role=log");
 
-  /* ── D1:doc 编辑器(分屏/大纲/dirty/保存/快照/rewind)─────────── */
+  /* ── D5:doc 编辑器两栏(左主对话 35% / 右展示 65%;D1 三/四栏废弃)──── */
 
   // 开 doc tab(读面直给 → 编辑器挂载)
   const docLink = new StubEl("button");
@@ -1360,45 +1369,22 @@ const assertClean = (html, who) => {
     calls.some((c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes('"doc"')),
     "doc app spawn 登记");
   const docHost = doc.querySelector("#detailHost");
-  const outlineRegion = docHost.querySelector("[data-doc-outline]");
-  assert.ok(outlineRegion.innerHTML.includes("doc-outline-item"), "大纲树渲染(标题解析)");
-  const textarea = docHost.querySelector("[data-doc-text]");
-  assert.ok(textarea.value.includes("首段内容"), "编辑器装入全文");
+  assert.ok(docHost.querySelector(".doc-cols2"), "两栏骨架(左主对话/右展示)");
+  assert.ok(!docHost.querySelector("[data-doc-outline]"), "大纲栏废弃(导航靠滚动+气泡跳转)");
+  assert.ok(!docHost.querySelector("[data-doc-text]"), "手写编辑面废弃(改文档走对话)");
   const preview = docHost.querySelector("[data-doc-preview]");
-  assert.ok(preview.innerHTML.includes("<h4>"), "W-md 实时预览(标题白名单渲染)");
+  assert.ok(preview.innerHTML.includes("<h4>"), "mdBlocks 展示(标题白名单渲染)");
   assert.ok(docHost.querySelector("[data-doc-chars]").textContent.includes("字"), "状态栏字数");
-
-  // 输入 → dirty ● + 预览/大纲联动
-  textarea.value = "# 概述\n首段内容\n## 设计\n次段内容\n## 新增一节\n新行\n";
-  textarea.trigger("input", { target: textarea });
-  await tick();
-  assert.equal(docHost.querySelector("[data-doc-dirty]").textContent, "●", "dirty ● 追踪");
-  assert.ok(outlineRegion.innerHTML.includes("新增一节"), "大纲随输入重解析");
-  assert.ok(preview.innerHTML.includes("新行"), "预览随输入重渲");
-
-  // 大纲点击 → 选区跳到标题偏移(滚动定位语义)
-  const outlineItem = new StubEl("button");
-  outlineItem.dataset.offset = String("# 概述\n首段内容\n".length);
-  outlineItem.parentNode = docHost.querySelector("[data-doc-outline]");
-  docHost.querySelector("[data-doc-outline]").trigger("click", { target: outlineItem });
-  assert.equal(textarea.selectionStart, "# 概述\n首段内容\n".length, "点击大纲 → 选区定位");
-
-  // 分屏 toggle → 列容器 data-view 切换
-  const modeBtn = new StubEl("button");
-  modeBtn.dataset.viewMode = "preview";
-  modeBtn.parentNode = docHost;
-  docHost.trigger("click", { target: modeBtn });
-  assert.equal(docHost.querySelector(".doc-cols").dataset.view, "preview", "分屏 toggle");
-
-  // 保存(管道;args_input text = 编辑器当前值)
-  const saveBtn = new StubEl("button");
-  saveBtn.dataset.tabAct = "doc.save";
-  saveBtn.parentNode = doc.body;
-  doc.trigger("click", { target: saveBtn });
-  await tick();
-  const savePost = calls.find((c) => c.url.includes("doc.save"));
-  assert.ok(savePost, "保存走 action 管道(endpoint 归态)");
-  assert.ok(JSON.parse(savePost.body).args.text.includes("新增一节"), "保存载荷 = 编辑器当前全文");
+  const chatLog = docHost.querySelector("[data-doc-chat-log]");
+  assert.ok(chatLog.innerHTML.includes("旧需求") && chatLog.innerHTML.includes("旧回复"),
+    "主对话种子(chat.json 事实源,开关不丢)");
+  // 工具条收编角落:版本下拉/快照/rewind/导出/评审全在极细工具条
+  // (dom-stub:region innerHTML 只反映运行时写入,静态子树走宿主整体断言)
+  assert.ok(docHost.innerHTML.includes("doc-toolbar"), "极细工具条在");
+  assert.ok(docHost.innerHTML.includes("data-tab-act=\"doc.snapshot\""), "快照收进工具条");
+  assert.ok(docHost.innerHTML.includes("data-doc-rewind"), "rewind 收进工具条");
+  assert.ok(docHost.innerHTML.includes("data-doc-export"), "导出收进工具条");
+  assert.ok(docHost.innerHTML.includes("data-doc-review"), "评审收进工具条");
 
   // 快照(管道)
   const snapBtn = new StubEl("button");
@@ -1514,8 +1500,9 @@ const assertClean = (html, who) => {
   await tick();
   const reviewPost = calls.find((c) => c.url === "/platform/api/docs/design.new_ui/review");
   assert.ok(reviewPost, "review 出海(专属端点,exec: run+cascade)");
-  assert.ok(bubbleHost.innerHTML.includes("这段绕"), "must 批注挂进 L2 气泡");
+  // 注:apply 后 reload 重挂载,气泡挂在最新实例上(委托幂等后旧实例不再响应)
   const mustEntry = probe.state._docEditor.bubbles.get("doc.md#L2-L2");
+  assert.ok(mustEntry.el.innerHTML.includes("这段绕"), "must 批注挂进 L2 气泡");
   assert.equal(mustEntry.severity, "must", "severity 记录(must)");
   assert.ok(mustEntry.el.classList.contains("doc-sev-must"), "must=danger 着色(token)");
   const nitEntry = probe.state._docEditor.bubbles.get("doc.md#L4-L4");
@@ -1631,6 +1618,49 @@ const assertClean = (html, who) => {
   delete globalThis.navigator;
   delete globalThis.__docToast;
 
+  /* ── D5:主对话发送 / 右键开泡 / 空态两态 ─────────────────── */
+
+  // 右键(contextmenu)任意块 → 开 local 气泡(问问题/表达需求;防重复开)
+  const pv5 = docHost.querySelector("[data-doc-preview]");
+  const cmBlock = new StubEl("div");
+  cmBlock.dataset.anchor = "doc.md#L5-L5";
+  cmBlock.parentNode = pv5;
+  pv5.trigger("contextmenu", { target: cmBlock });
+  await tick();
+  assert.ok(probe.state._docEditor.bubbles.has("doc.md#L5-L5"), "右键开泡(contextmenu)");
+  const cmSize = probe.state._docEditor.bubbles.size;
+  pv5.trigger("contextmenu", { target: cmBlock }); // 再右键同一块 = 聚焦,不重复开
+  assert.equal(probe.state._docEditor.bubbles.size, cmSize, "防重复开(同锚点 early-return)");
+
+  // 主对话:发送 → chat 端点(请求体 {text})→ changed=true → 右侧重拉重渲
+  const getsBefore = calls.filter((c) => c.url === "/platform/api/docs/design.new_ui").length;
+  const chatIn = docHost.querySelector("[data-doc-chat-input]");
+  chatIn.value = "按批注改一遍";
+  const sendBtn = new StubEl("button");
+  sendBtn.dataset.docChatSend = "1";
+  sendBtn.parentNode = docHost;
+  docHost.trigger("click", { target: sendBtn });
+  await tick();
+  await tick();
+  const chatPost = calls.find((c) => c.url === "/platform/api/docs/design.new_ui/chat");
+  assert.ok(chatPost, "chat 出海(专属端点)");
+  assert.equal(JSON.parse(chatPost.body).text, "按批注改一遍", "请求体 = 用户消息");
+  assert.ok(
+    calls.filter((c) => c.url === "/platform/api/docs/design.new_ui").length > getsBefore,
+    "changed=true → 右侧重拉重渲");
+
+  // 未变轮:changed=false → 不重拉;回复仍渲染进主对话流
+  const getsBefore2 = calls.filter((c) => c.url === "/platform/api/docs/design.new_ui").length;
+  const chatIn2 = docHost.querySelector("[data-doc-chat-input]");
+  chatIn2.value = "只问个问题";
+  chatIn2.trigger("keydown", { target: chatIn2, key: "Enter" });
+  await tick();
+  await tick();
+  assert.equal(calls.filter((c) => c.url === "/platform/api/docs/design.new_ui").length,
+    getsBefore2, "changed=false → 不重拉");
+  assert.ok(docHost.querySelector("[data-doc-chat-log]").innerHTML.includes("没动文档"),
+    "回复渲染进主对话流");
+
   // doc 意图:列表卡行内点开 doc tab;卡上"新建文档" → 唯一名起稿
   probe.state.messages.push({ id: "m-docs", role: "agent", text: "共 1 篇", ts: 14,
     cards: [{ type: "doc_list", v: 1,
@@ -1673,6 +1703,12 @@ const assertClean = (html, who) => {
   await tick();
   assert.equal(createAttempts, 2, "409 后自动加唯一后缀");
   assert.equal(probe.state.active, "d:doc:doc.untitled2", "起稿后开新文档 tab");
+  // D5 空态(新建文档):左 = 系统提示"告诉我你要什么文档";右 = 引导文案
+  const freshHost = doc.querySelector("#detailHost");
+  assert.ok(freshHost.querySelector("[data-doc-chat-log]").innerHTML.includes("告诉我你要什么文档"),
+    "空态系统提示(左 chatbot)");
+  assert.ok(freshHost.querySelector("[data-doc-preview]").innerHTML.includes("试着在左边输入你的需求"),
+    "空态引导文案(右 text widget)");
   globalThis.fetch = origFetch;
 }
 

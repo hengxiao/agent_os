@@ -304,4 +304,9 @@ export const COPY = {
   "platform.doc.copied": "复制好啦",
   "platform.doc.copy.fail": "没复制上,请手动全选喵",
   "platform.doc.notes.saved": "保存就写回 NOTES 哦",
+  "platform.doc.chat.ph": "输入需求,回车发送喵",
+  "platform.doc.chat.hint": "告诉我你要什么文档喵",
+  "platform.doc.chat.send": "发送喵",
+  "platform.doc.chat.fail": "编辑助手暂不可用喵",
+  "platform.doc.guide": "试着在左边输入你的需求喵。我会为你创建一个文档哦。",
 };

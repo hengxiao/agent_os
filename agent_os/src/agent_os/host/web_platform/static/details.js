@@ -310,21 +310,36 @@ export function renderTabSurface(kind, data) {
   return render ? render(data) : `<div class="pf-detail"><pre class="mono">${esc(JSON.stringify(data ?? {}, null, 2))}</pre></div>`;
 }
 
-/* doc Tab Surface 骨架(D1,docs/DOC-EDITOR.md §2):静态 html 部分;
-   交互挂载见 doc-editor.js(W-text 编辑/W-md 预览/大纲/dirty/版本下拉) */
+/* doc Tab Surface 骨架(D5,docs/DOC-EDITOR.md §2;两栏重构:左对话 35% / 右展示 65%):
+   静态 html 部分;交互挂载见 doc-editor.js(主对话/mdBlocks 展示/右键气泡/工具条)。
+   旧三/四栏(大纲/手写编辑/分屏/气泡栏)废弃——版本下拉/快照/rewind/导出/评审
+   收进右侧顶部极细工具条,大纲删除(导航靠滚动+气泡跳转)。 */
 export function docTabHtml(doc) {
   const versions = (doc?.versions ?? [])
     .map((v) => `<option value="${esc(v)}">${esc(v)}</option>`)
     .join("");
   return (
     `<div class="pf-detail doc-editor">` +
-    `<div class="doc-top">` +
-    `<b class="doc-title">${esc(doc?.meta?.title ?? doc?.name ?? "")}</b> ` +
+    `<div class="doc-cols2">` +
+    // 左:doc 作用域主对话(说需求 → agent 直接改文档)
+    `<div class="doc-chat">` +
+    `<div class="doc-chat-log" data-doc-chat-log="1" role="log"></div>` +
+    `<div class="doc-chat-composer">` +
+    `<input class="input" data-doc-chat-input="1"` +
+    ` placeholder="${esc(copy("platform.doc.chat.ph"))}" aria-label="${esc(copy("platform.doc.chat.ph"))}" />` +
+    `<button class="btn" data-doc-chat-send="1">${esc(copy("platform.doc.chat.send"))}</button>` +
+    `</div></div>` +
+    // 右:文档展示 + 极细工具条(版本/快照/rewind/导出/评审,小图标钮)
+    `<div class="doc-view">` +
+    `<div class="doc-toolbar">` +
+    `<b class="doc-title">${esc(doc?.meta?.title ?? doc?.name ?? "")}</b>` +
     `<span class="pf-dim mono">${esc(doc?.name ?? "")}</span>` +
-    `<select class="input" data-rewind-version="1" aria-label="${esc(copy("platform.doc.rewind"))}">${versions}</select>` +
-    `<button class="btn" data-tab-act="doc.rewind" data-doc-rewind="1">${esc(copy("platform.doc.rewind"))}</button>` +
+    `<select class="input doc-tool" data-rewind-version="1" aria-label="${esc(copy("platform.doc.rewind"))}">${versions}</select>` +
+    `<button class="btn doc-tool" data-tab-act="doc.rewind" data-doc-rewind="1"` +
+    ` title="${esc(copy("platform.doc.rewind"))}">↩</button>` +
+    `<button class="btn doc-tool" data-tab-act="doc.snapshot" title="${esc(copy("platform.doc.snapshot"))}">⧉</button>` +
     `<span class="doc-export">` +
-    `<button class="btn" data-doc-export="1">${esc(copy("platform.doc.export"))} ▾</button>` +
+    `<button class="btn doc-tool" data-doc-export="1" title="${esc(copy("platform.doc.export"))}">⇩</button>` +
     `<span class="doc-export-menu" data-export-menu="1" hidden>` +
     `<button class="btn" data-export-mode="download">${esc(copy("platform.doc.download"))}</button>` +
     `<button class="btn" data-export-mode="copy">${esc(copy("platform.doc.copy"))}</button>` +
@@ -333,23 +348,14 @@ export function docTabHtml(doc) {
       : "") +
     `</span></span>` +
     `<span class="pf-spacer"></span>` +
-    `<button class="btn" data-doc-review="1">${esc(copy("platform.doc.review"))}</button>` +
+    `<button class="btn doc-tool" data-doc-review="1" title="${esc(copy("platform.doc.review"))}">🔍</button>` +
     `</div>` +
-    `<div class="doc-cols" data-view="split">` +
-    `<aside class="doc-outline" data-doc-outline="1" aria-label="${esc(copy("platform.doc.outline"))}"></aside>` +
-    `<div class="doc-edit"><textarea class="mono" data-doc-text="1" rows="18"` +
-    ` aria-label="${esc(copy("platform.doc.text"))}"></textarea></div>` +
     `<div class="doc-preview" data-doc-preview="1"></div>` +
-    `<aside class="doc-bubblebar" data-doc-bubblebar="1" aria-label="${esc(copy("platform.doc.bubblebar"))}"></aside>` +
+    `<div class="doc-bubblebar" data-doc-bubblebar="1" aria-label="${esc(copy("platform.doc.bubblebar"))}"></div>` +
+    `</div>` +
     `</div>` +
     `<div class="doc-status">` +
-    `<span data-doc-chars="1"></span> · <span data-doc-dirty="1"></span> · ` +
-    `<button class="btn" data-view-mode="edit">${esc(copy("platform.doc.edit"))}</button>` +
-    `<button class="btn" data-view-mode="preview">${esc(copy("platform.doc.preview"))}</button>` +
-    `<button class="btn" data-view-mode="split">${esc(copy("platform.doc.split"))}</button>` +
-    `<span class="pf-spacer"></span>` +
-    `<button class="btn" data-tab-act="doc.save">${esc(copy("platform.doc.save"))}</button>` +
-    `<button class="btn" data-tab-act="doc.snapshot">${esc(copy("platform.doc.snapshot"))}</button>` +
+    `<span data-doc-chars="1"></span> · <span data-doc-dirty="1"></span>` +
     `</div></div>`
   );
 }

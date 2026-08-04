@@ -995,17 +995,6 @@ async function _loadDetail(kind, ref, data) {
             state.detail = await _loadDetail("doc", ref, null);
             renderMain();
           },
-          onViewChange: (view) => {
-            const tab = state.tabs.find((t) => t.id === state.active);
-            if (tab?.instance) {
-              // meta.set = local(§3):视图偏好持久化进 instance.state(尽力面)
-              fetch(`/platform/api/apps/${encodeURIComponent(tab.instance)}/actions/meta.set`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ surface: "tab", args: { view } }),
-              }).catch(() => {});
-            }
-          },
         });
       };
       return { kind, ref, html: renderTabSurface(kind, doc), mount };

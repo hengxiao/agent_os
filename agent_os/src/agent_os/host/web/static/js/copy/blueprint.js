@@ -305,4 +305,9 @@ export const COPY = {
   "platform.doc.copied": "已录入剪贴板",
   "platform.doc.copy.fail": "复制未成,请手动全选",
   "platform.doc.notes.saved": "保存即写回 NOTES",
+  "platform.doc.chat.ph": "书所求,回车即发",
+  "platform.doc.chat.hint": "告我所欲之文档",
+  "platform.doc.chat.send": "发出",
+  "platform.doc.chat.fail": "文书助手暂不可用",
+  "platform.doc.guide": "试于左侧书所求。吾将为你立一文档。",
 };

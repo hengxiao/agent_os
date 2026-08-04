@@ -7,7 +7,8 @@
     ├── meta.json         # {title, created_at, savedAt}
     ├── versions/vNNN/    # 快照(doc.md + meta.json{source, parent, at})
     ├── bubbles/<hash>.json  # 每锚点一个消息流(D2 用)
-    └── review/<ts>.json     # 历次评审的批注集(D3 用)
+    ├── review/<ts>.json     # 历次评审的批注集(D3 用)
+    └── chat.json            # doc 作用域主对话消息流(D5 用)
 
 红线:名字 = 点分校验(与 NAMING 同面,路径穿越防护);写之前上一版
 自动 ``.bak``;版本不可变(rewind 恢复的是工作副本,历史不动)。
@@ -208,6 +209,37 @@ class DocStore:
             except (OSError, json.JSONDecodeError):
                 continue
         return out
+
+    # ------------------------------------------------------------------
+    # chat(D5):doc 作用域主对话的消息流(chat.json;与 bubbles 区分——
+    # chat 是主对话,bubbles 是段落批注,两个文件都留)
+    # ------------------------------------------------------------------
+
+    def save_chat(self, name: str, message: dict[str, Any]) -> dict[str, Any]:
+        """往主对话追加一条(chat.json = {"messages": [...]},append)。"""
+        d = self._dir(name)
+        if not d.is_dir():
+            raise FileNotFoundError(f"文档不存在: {name}")
+        path = d / "chat.json"
+        try:
+            flow = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"messages": []}
+        except (OSError, json.JSONDecodeError):
+            flow = {"messages": []}  # 坏文件不挡写(重开空流,旧内容不追回)
+        flow["messages"].append({**message, "ts": message.get("ts", time.time())})
+        path.write_text(json.dumps(flow, ensure_ascii=False, indent=2), encoding="utf-8")
+        return flow
+
+    def read_chat(self, name: str) -> list[dict[str, Any]]:
+        """主对话消息列表(左栏种子;无文件/坏文件 → [])。"""
+        path = self._dir(name) / "chat.json"
+        if not path.is_file():
+            return []
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            msgs = doc.get("messages") if isinstance(doc, dict) else None
+            return [m for m in msgs if isinstance(m, dict)] if isinstance(msgs, list) else []
+        except (OSError, json.JSONDecodeError):
+            return []
 
     def save_review(self, name: str, notes: list[dict[str, Any]]) -> str:
         """落一次评审批注集(review/<ts>.json;返回文件名)。"""

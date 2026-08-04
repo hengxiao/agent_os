@@ -1,6 +1,6 @@
-"""platform.* 内置动作技能包 —— handler 面(docs/APP-MODEL.md v0.5 §17.7 第 1 步;L1)。
+"""platform.* 内置动作技能包 —— handler 面(docs/APP-MODEL.md v0.5 §17.7;L1+L2)。
 
-L1 = **机械搬运**:本体就是 web_platform/app.py 原 ``_act_*`` / ``_mut_*`` 薄函数,
+L1 = **机械搬运**:本体来自 web_platform/app.py 原 ``_act_*`` / ``_mut_*`` 薄函数,
 行为逐字保留,只做了三处适配:
 
 1. 依赖不再闭包取值,改从 ``ctx._kernel.platform_deps`` 取(宿主装配 platform
@@ -8,18 +8,21 @@ L1 = **机械搬运**:本体就是 web_platform/app.py 原 ``_act_*`` / ``_mut_*
 2. handler 里的 ``HTTPException`` 直抛改为 ``PlatformActionError(status, detail)``——
    异常过不了 Logic Kernel 执行边界(会塌成 RUNTIME_ERROR 丢状态码),
    统一由 ``_guarded`` 折成 ``_action_error`` 信封,管道侧原位翻译成
-   HTTPException(状态码/文案与 L1 前一致,行为零变化);
+   HTTPException(状态码/文案与升格前一致,行为零变化);
 3. ``asyncio.run(manager.*)`` 改为直接 ``await``(handler 已在帧的 loop 里,
    不能再开私有 loop;manager 的 run 跑在独立 worker 线程,await 安全)。
 
-L2 候选(§17.4:副作用面拆 tool,本期不做)在对应 handler 注释里标注。
+L2(§17.4,升格序第 2 步):**有真实世界副作用的 skill 退为编排**——副作用面
+拆成 tools.py 里声明了 permission/side_effect/data_domains 的 tool,handler
+经 ``_tool()``(= ctx.call_tool)调用:帧白名单 ∩ RunConfig 上限 ∩ 工具自报档
++ pre/post:tool.call 信号 + 数据层 authZ 由此进路径。**L2 handler 内禁止直接
+import/调用业务写函数**(§17.8 静态扫描断言;读面与纯卡片构造不在禁令内)。
 """
 
 from __future__ import annotations
 
 import functools
 import logging
-import re
 from pathlib import Path
 from typing import Any
 
@@ -42,21 +45,9 @@ from agent_os.skills.draft_store import (
 from agent_os.skills.gate import GateError, validate_draft
 from agent_os.skills.iterate import arun_iterate, edit_members
 from agent_os.skills.lab_assistant import ITERATOR_NAME, iterator_skill
-from agent_os.skills.package import promote_package
-
-#: 锚点格式(docs/DOC-EDITOR.md §2.1):doc.md#L<start>-L<end>(1-based 行号区间)
-_ANCHOR_RE = re.compile(r"^doc\.md#L(\d+)-L(\d+)$")
+from agent_os.skills.platform.tools import PlatformActionError
 
 _log = logging.getLogger("agent_os.platform")
-
-
-class PlatformActionError(Exception):
-    """action 执行期的可归类错误(status + detail;过 Logic Kernel 边界时折信封)。"""
-
-    def __init__(self, status: int, detail: str) -> None:
-        super().__init__(detail)
-        self.status = status
-        self.detail = detail
 
 
 def _err_env(status: int, detail: str) -> dict[str, Any]:
@@ -64,7 +55,7 @@ def _err_env(status: int, detail: str) -> dict[str, Any]:
 
 
 def _guarded(fn: Any) -> Any:
-    """入口包装:可归类异常 → ``_action_error`` 信封(归类表与 L1 前 _run_handler
+    """入口包装:可归类异常 → ``_action_error`` 信封(归类表与升格前 _run_handler
     逐字一致);未列名异常原样上抛(→ RUNTIME_ERROR → 500,与旧面同归类)。"""
 
     @functools.wraps(fn)
@@ -99,8 +90,23 @@ def _deps(ctx: Any) -> dict[str, Any]:
     return deps
 
 
+async def _tool(ctx: Any, name: str, args: dict[str, Any]) -> Any:
+    """经 ctx 调 tool(L2:副作用唯一通道——帧白名单 ∩ RunConfig 上限 ∩ 工具自报档
+    + 数据层 authZ);结构化错误原位翻译回 PlatformActionError(HTTP 归类逐字不变)。"""
+    r = await ctx.call_tool(name, args)
+    if r.get("ok"):
+        return r.get("value")
+    err = r.get("error") or {}
+    status = {"invalid_args": 400, "not_found": 404, "vetoed": 409}.get(str(err.get("kind") or ""))
+    if status is None:
+        # 未归类(permission_denied/internal/timeout)= 装配或内部错误 → 500 面
+        # (与升格前"未捕获异常 → 500"同归类)
+        raise RuntimeError(f"tool {name} 失败({err.get('kind')}): {err.get('message')}")
+    raise PlatformActionError(status, str(err.get("message") or ""))
+
+
 # ---------------------------------------------------------------------------
-# 卡片动作系(旧 cards/action 与 action 管道共用;§17.7 L1 前为 _act_*)
+# 卡片动作系(旧 cards/action 与 action 管道共用)
 # ---------------------------------------------------------------------------
 
 
@@ -110,6 +116,8 @@ async def scaffold_approve(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
     N3(O3,B2):首稿即带 1 个合 schema 的冒烟用例(tests/smoke.json,
     按 inputs schema 骨架生成)——首稿 G4 不再必然 warn。
+    (写面 = DraftStore.create/save:草稿区写入,不在 §17.4 的 L2 名单——
+    名单只收"有真实世界副作用"的特权操作;草稿写是 lab.draft.* 工具面的地盘)
     """
     d = _deps(ctx)
     lab_store, manager = d["lab_store"], d["manager"]
@@ -156,26 +164,16 @@ async def scaffold_approve(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 @_guarded
 async def plan_confirm(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    """plan.confirm:走既有 packages/promote(P2 原子提交;不开新通道)。
-
-    L2 候选(§17.4):promote 写盘 + reload 是有真实世界副作用的特权操作,
-    应拆成声明了 permission/side_effect 的 tool,本 skill 退为编排。
-    """
-    d = _deps(ctx)
-    lab_store, manager = d["lab_store"], d["manager"]
-    plan_id = str(args.get("plan_id") or "")
-    warnings_ack = bool(args.get("warnings_ack"))
-    result = promote_package(
-        store=lab_store,
-        plan_id=plan_id,
-        warnings_ack=warnings_ack,
-        production=manager.shared_skills_registry(),
-        tools=manager.shared_tools_registry(),
-        principal=manager.principal().subject,
-        skillsets_root=manager.skillsets_root(),
+    """plan.confirm(§17.4 L2 名单):发布 = platform.skill.promote tool
+    (promote 写盘 + reload;WRITE/reversible)——本 skill 只取参/调 tool/造卡。"""
+    result = await _tool(
+        ctx,
+        "platform.skill.promote",
+        {
+            "plan_id": str(args.get("plan_id") or ""),
+            "warnings_ack": bool(args.get("warnings_ack")),
+        },
     )
-    if result.get("set"):
-        manager.refresh_skillsets()
     return {
         "ok": True,
         "text": f"已发布 {result['root']}({result['form']},hash {result['package_hash'][:8]})。",
@@ -191,39 +189,10 @@ async def plan_confirm(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 @_guarded
 async def candidate_accept(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    """candidate.accept(与 Lab 端点同语义):快照 → 覆盖 working → 清候选。
-
-    L2 候选(§17.4):快照/覆盖写盘应拆 tool。
-    """
-    d = _deps(ctx)
-    lab_store, manager = d["lab_store"], d["manager"]
-    name = str(args.get("name") or "")
-    members = edit_members(
-        lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(), name
-    )
-    cand = lab_store.candidate_members(name)
-    if not cand:
-        raise FileNotFoundError(f"无候选: {name}")
-    latest = lab_store.list_versions(name)
-    _, comments = lab_store.latest_comments(name)
-    vid = lab_store.snapshot(
-        name, members, source="iterate",
-        parent=latest[0]["version"] if latest else None,
-        comments_digest=f"{len(comments)} 条边注",
-        prefer_candidate=True,  # N2:快照 = 被接受的候选内容(B4)
-    )
-    for member in cand:
-        data = lab_store.read_candidate_member(name, member)
-        current = lab_store.read(member)
-        lab_store.save(
-            member,
-            manifest=data["manifest"] or {},
-            prompt=data["prompt"],
-            handler=current["handler"],
-            tests=data["tests"] or None,
-        )
-    lab_store.clear_candidate(name)
-    return {"ok": True, "text": f"已接受为 {vid}(候选已覆盖 working)。"}
+    """candidate.accept(§17.4 L2 名单):覆盖 working = platform.draft.accept tool
+    (快照 → 覆盖 → 清候选;WRITE/reversible)——本 skill 只取参/调 tool。"""
+    r = await _tool(ctx, "platform.draft.accept", {"name": str(args.get("name") or "")})
+    return {"ok": True, "text": f"已接受为 {r['version']}(候选已覆盖 working)。"}
 
 
 @_guarded
@@ -325,60 +294,41 @@ async def decision_answer(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 
 # ── M3(docs/APP-MODEL.md §8):run/debug/lab-draft 三 kind 的技能——
-# 每件都是既有 manager 能力的薄转发,零新权限通道 ─────────────────
+# L2 后 run.* 的副作用收进 platform.run.control tool,本层只编排 ─────────────────
 
 
 @_guarded
 async def run_stop(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    """platform.run.stop:中止在途 run(不在途 → 409,与旧 web stop 同归类)。
-
-    L2 候选(§17.4):干预在跑帧是特权操作,应拆 tool 过三层权限交集。
-    """
-    d = _deps(ctx)
-    run_id = str(args.get("run_id") or "")
-    ok = await d["manager"].stop_run(run_id)
-    if not ok:
-        raise PlatformActionError(409, f"run 不在在途状态,无法停止: {run_id}")
+    """platform.run.stop(§17.4 L2 名单):中止在途 run = platform.run.control
+    tool(WRITE/reversible;不在途 → 409,与旧 web stop 同归类)。"""
+    await _tool(
+        ctx, "platform.run.control", {"run_id": str(args.get("run_id") or ""), "command": "stop"}
+    )
     return {"ok": True, "text": "已发送停止请求(run 在下一个安全点中止)。", "state": {"status": "stopping"}}
 
 
 @_guarded
 async def run_resume(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    """platform.run.resume:从 checkpoint 恢复(404/400/409 同旧 web resume)。
-
-    L2 候选(§17.4):同 run.stop。
-    """
-    d = _deps(ctx)
-    run_id = str(args.get("run_id") or "")
-    try:
-        record = await d["manager"].resume_run(run_id)
-    except FileNotFoundError as e:
-        raise PlatformActionError(404, str(e)) from e
-    except ValueError as e:
-        raise PlatformActionError(400, str(e)) from e
-    except Exception as e:  # ResumeConflictError 等状态冲突归 409
-        if "Conflict" in type(e).__name__:
-            raise PlatformActionError(409, str(e)) from e
-        raise
+    """platform.run.resume(§17.4 L2 名单):checkpoint 恢复 = platform.run.control
+    tool(404/400/409 同旧 web resume)。"""
+    r = await _tool(
+        ctx, "platform.run.control", {"run_id": str(args.get("run_id") or ""), "command": "resume"}
+    )
     return {
         "ok": True,
-        "text": f"恢复运行完成: {record.get('status')}",
-        "state": {"status": record.get("status", "")},
+        "text": f"恢复运行完成: {r['status']}",
+        "state": {"status": r["status"]},
     }
 
 
 @_guarded
 async def run_rerun(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    """platform.run.rerun:按产物 meta 的 skill+input 重跑(新 run;结果卡挂新锚)。
-
-    L2 候选(§17.4):起新 run 是特权操作,应拆 tool。
-    """
-    d = _deps(ctx)
-    run_id = str(args.get("run_id") or "")
-    meta = d["read_json"](Path(d["artifacts_root"]) / "runs" / run_id / "meta.json")
-    if meta is None:
-        raise PlatformActionError(404, f"找不到 run 产物: {run_id}")
-    new_id = await d["manager"].start_run(meta.get("skill") or "", meta.get("input") or {})
+    """platform.run.rerun(§17.4 L2 名单):按产物 meta 重跑 = platform.run.control
+    tool(新 run;结果卡挂新锚)。"""
+    r = await _tool(
+        ctx, "platform.run.control", {"run_id": str(args.get("run_id") or ""), "command": "rerun"}
+    )
+    new_id = r["new_id"]
     return {
         "ok": True,
         "text": f"已按原参数重跑,新 run: {new_id[:8]}。",
@@ -386,7 +336,7 @@ async def run_rerun(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             build_table_card(
                 title="重跑",
                 columns=["run", "skill", "摘要"],
-                rows=[[new_id[:8], meta.get("skill") or "", "已启动"]],
+                rows=[[new_id[:8], r["skill"], "已启动"]],
                 ref={"kind": "run", "id": new_id},
             )
         ],
@@ -412,6 +362,25 @@ async def debug_command(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         raise
     human = "已放行。" if command == "continue" else "已发送停止。"
     return {"ok": True, "text": human, "state": {"last_command": command}}
+
+
+@_guarded
+async def debug_intervene(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """platform.debug.intervene(§17.3 #9;L2 新收编):modify/inject——全系统
+    特权最高的 UI 动作,副作用只经 platform.debug.intervene tool(帧白名单 ∩
+    权限交集;旧 web /api/debug/sessions/{sid}/modify|inject 端点已收编到本技能)。"""
+    r = await _tool(
+        ctx,
+        "platform.debug.intervene",
+        {
+            "session_id": str(args.get("session_id") or ""),
+            "command": str(args.get("command") or ""),
+            "patch": args.get("patch"),
+            "frame_id": str(args.get("frame_id") or ""),
+            "text": str(args.get("text") or ""),
+        },
+    )
+    return {"ok": True, **({"frame_id": r["frame_id"]} if r.get("frame_id") else {})}
 
 
 @_guarded
@@ -441,6 +410,27 @@ async def draft_check(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 
 @_guarded
+async def draft_delete(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """platform.draft.delete(§17.3 #11;L2 新收编):rmtree 连版本史——
+    全包唯一 irreversible 面,副作用只经 platform.draft.delete tool
+    (旧 web DELETE /api/lab/drafts/{name} 端点已收编到本技能)。"""
+    name = str(args.get("name") or "")
+    await _tool(ctx, "platform.draft.delete", {"name": name})
+    return {"ok": True, "name": name}
+
+
+@_guarded
+async def skills_reload(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """platform.skills.reload(§17.3 #11;L2 新收编):热重载生产 registry,
+    副作用只经 platform.skills.reload tool(旧 web POST /api/skills/reload
+    端点已收编到本技能)。"""
+    r = await _tool(
+        ctx, "platform.skills.reload", {"skill_set": str(args.get("skill_set") or "")}
+    )
+    return {"reloaded": r["reloaded"]}
+
+
+@_guarded
 async def run_launch(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """platform.run.launch(M4a 发起面归一):app 内"再跑一次"。
 
@@ -448,8 +438,8 @@ async def run_launch(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     服务端按 schema 校验,不合 → 400);skill 缺省时从产物 meta 回推
     (run tab spawn 的 state.skill 可能为空)。lab-draft 的"试跑"同通道
     (overlay 解析序:草稿优先)。
-
-    L2 候选(§17.4):起新 run 是特权操作,应拆 tool。
+    (不在 §17.4 的 L2 名单——名单收的是 run.stop/resume/rerun;
+    launch 是发起面,与 POST /api/runs 同通道)
     """
     d = _deps(ctx)
     lab_store, manager = d["lab_store"], d["manager"]
@@ -517,40 +507,23 @@ async def shell_session_create(args: dict[str, Any], ctx: Any) -> dict[str, Any]
     return {"ok": True, "text": "", "session": session}
 
 
-# ── D1(docs/DOC-EDITOR.md §2/§3):doc 的 endpoint 技能(DocStore 薄转发) ──
+# ── D1(docs/DOC-EDITOR.md §2/§3):doc 的 endpoint 技能(L2:写面收进
+# platform.doc.write tool,本层只编排) ──
 
 
 @_guarded
 async def doc_save(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    """platform.doc.save:保存全文(.bak 同 DraftStore 惯例);state 回写 dirty/savedAt。
-
-    D3 NOTES 接点:``notes.<draft>`` 名空间的文档保存时,把全文**写回草稿
-    manifest 的 notes 键**(未知键容忍已验证,随草稿版本走;写不到 = 草稿
-    不存在则跳过,只读+另存模式——绝不写生产)。
-
-    L2 候选(§17.4):doc 写盘 + NOTES 写回应拆 tool。
-    """
-    d = _deps(ctx)
-    doc_store, lab_store = d["doc_store"], d["lab_store"]
-    name = str(args.get("name") or "")
-    text = str(args.get("text") or "")
-    doc = doc_store.save(name, text)
-    if name.startswith("notes.") and lab_store is not None:
-        draft = name[len("notes."):]
-        try:
-            dd = lab_store.read(draft)
-            lab_store.save(
-                draft,
-                manifest={**(dd["manifest"] or {}), "notes": text},
-                prompt=dd["prompt"],
-                handler=dd["handler"],
-            )
-        except (FileNotFoundError, ValueError) as e:
-            _log.info("NOTES 写回跳过(草稿 %s 不可读): %s", draft, e)
+    """platform.doc.save(§17.4 L2 名单):保存全文 = platform.doc.write tool
+    (整文;.bak + notes.* 写回草稿 manifest.notes;WRITE/reversible)。"""
+    r = await _tool(
+        ctx,
+        "platform.doc.write",
+        {"name": str(args.get("name") or ""), "text": str(args.get("text") or "")},
+    )
     return {
         "ok": True,
         "text": "已保存。",
-        "state": {"dirty": False, "savedAt": doc["meta"].get("savedAt", 0)},
+        "state": {"dirty": False, "savedAt": r["savedAt"]},
     }
 
 
@@ -594,37 +567,22 @@ async def doc_export(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 @_guarded
 async def doc_apply(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    """platform.doc.apply(D2):**人按才落**——按锚点行号区间替换对应段。
-
-    越界/文档已变(行数对不上,或给了 expected 且原文不符)→ 400
-    "文档已变化,请重新评审";替换后保存走 DocStore.save(.bak 同惯例),
-    并记一条 system 消息进锚点消息流(apply 留痕)。
-
-    L2 候选(§17.4):doc 写盘应拆 tool。
-    """
-    d = _deps(ctx)
-    doc_store = d["doc_store"]
-    name = str(args.get("name") or "")
-    anchor = str(args.get("anchor") or "")
-    replace_text = str(args.get("replace_text") or "")
-    expected = args.get("expected")
-    m = _ANCHOR_RE.match(anchor)
-    if not m:
-        raise PlatformActionError(400, f"锚点格式非法: {anchor!r}(须 doc.md#L<start>-L<end>)")
-    start, end = int(m.group(1)), int(m.group(2))
-    doc = doc_store.read(name)
-    lines = doc["text"].split("\n")
-    if start < 1 or end < start or end > len(lines):
-        raise PlatformActionError(400, "文档已变化,请重新评审")
-    if expected is not None and "\n".join(lines[start - 1 : end]) != str(expected):
-        raise PlatformActionError(400, "文档已变化,请重新评审")
-    new_lines = lines[: start - 1] + replace_text.split("\n") + lines[end:]
-    doc_store.save(name, "\n".join(new_lines))
-    doc_store.save_bubble(name, anchor, {"role": "system", "text": "已应用"})
+    """platform.doc.apply(§17.4 L2 名单;D2 人按才落):按锚点替换 =
+    platform.doc.write tool(按段;越界/已变 → 400;WRITE/reversible)。"""
+    r = await _tool(
+        ctx,
+        "platform.doc.write",
+        {
+            "name": str(args.get("name") or ""),
+            "anchor": str(args.get("anchor") or ""),
+            "replace_text": str(args.get("replace_text") or ""),
+            "expected": args.get("expected"),
+        },
+    )
     return {
         "ok": True,
         "text": "已应用。",
-        "state": {"dirty": False, "text": doc_store.read(name)["text"]},
+        "state": {"dirty": False, "text": r["text"]},
     }
 
 

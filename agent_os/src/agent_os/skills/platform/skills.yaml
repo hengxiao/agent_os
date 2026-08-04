@@ -31,7 +31,7 @@ skills:
         plan_id: {type: string}
         warnings_ack: {type: boolean}
     outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
-    permissions: {tools: [], skills: []}
+    permissions: {tools: [platform.skill.promote], skills: []}
     limits: {max_steps: 1, timeout: 120}
     handler: agent_os.skills.platform.handlers:plan_confirm
   - name: platform.plan.recheck
@@ -55,7 +55,7 @@ skills:
       properties:
         name: {type: string, description: 包根名}
     outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
-    permissions: {tools: [], skills: []}
+    permissions: {tools: [platform.draft.accept], skills: []}
     limits: {max_steps: 1, timeout: 120}
     handler: agent_os.skills.platform.handlers:candidate_accept
   - name: platform.candidate.discard
@@ -120,7 +120,7 @@ skills:
       properties:
         run_id: {type: string}
     outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
-    permissions: {tools: [], skills: []}
+    permissions: {tools: [platform.run.control], skills: []}
     limits: {max_steps: 1, timeout: 60}
     handler: agent_os.skills.platform.handlers:run_stop
   - name: platform.run.resume
@@ -132,7 +132,7 @@ skills:
       properties:
         run_id: {type: string}
     outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
-    permissions: {tools: [], skills: []}
+    permissions: {tools: [platform.run.control], skills: []}
     limits: {max_steps: 1, timeout: 120}
     handler: agent_os.skills.platform.handlers:run_resume
   - name: platform.run.rerun
@@ -144,7 +144,7 @@ skills:
       properties:
         run_id: {type: string}
     outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}, run_id: {type: string}}}
-    permissions: {tools: [], skills: []}
+    permissions: {tools: [platform.run.control], skills: []}
     limits: {max_steps: 1, timeout: 120}
     handler: agent_os.skills.platform.handlers:run_rerun
   - name: platform.run.launch
@@ -219,7 +219,7 @@ skills:
         name: {type: string}
         text: {type: string}
     outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
-    permissions: {tools: [], skills: []}
+    permissions: {tools: [platform.doc.write], skills: []}
     limits: {max_steps: 1, timeout: 60}
     handler: agent_os.skills.platform.handlers:doc_save
   - name: platform.doc.snapshot
@@ -271,7 +271,7 @@ skills:
         replace_text: {type: string}
         expected: {type: string, description: 原段文本校验(可空)}
     outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
-    permissions: {tools: [], skills: []}
+    permissions: {tools: [platform.doc.write], skills: []}
     limits: {max_steps: 1, timeout: 60}
     handler: agent_os.skills.platform.handlers:doc_apply
   # ── local 动作(§17.5 裁决 b:真 code 技能;_instance_id/_state 由框架注入,§17.10)──
@@ -420,3 +420,44 @@ skills:
     permissions: {tools: [], skills: []}
     limits: {max_steps: 1, timeout: 60}
     handler: agent_os.skills.platform.handlers:act_close
+  # ── L2 新收编(§17.3 #9/#11:旧 web 最高特权写面 → 技能 + tool)──
+  - name: platform.debug.intervene
+    version: 0.1.0
+    kind: code
+    description: 调试干预(modify 改参/inject 注入;全系统特权最高的 UI 动作,§17.3 第 9 项）。Use when 暂停的调试会话需要人工干预;Do not use when 只是放行/停止(那是 platform.debug.command)。
+    inputs:
+      type: object
+      properties:
+        session_id: {type: string}
+        command: {type: string, description: modify|inject}
+        patch: {type: object, description: modify 的参数补丁}
+        frame_id: {type: string, description: inject 目标帧(缺省 = 暂停帧)}
+        text: {type: string, description: inject 的消息文本}
+    outputs: {type: object, properties: {ok: {type: boolean}, frame_id: {type: string}}}
+    permissions: {tools: [platform.debug.intervene], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:debug_intervene
+  - name: platform.draft.delete
+    version: 0.1.0
+    kind: code
+    description: 删草稿(rmtree 连版本史,不可恢复;§17.3 第 11 项）。Use when 人已在 UI 确认删除;Do not use when 只是放弃候选(那是 platform.candidate.discard)。
+    inputs:
+      type: object
+      properties:
+        name: {type: string, description: 草稿名}
+    outputs: {type: object, properties: {ok: {type: boolean}, name: {type: string}}}
+    permissions: {tools: [platform.draft.delete], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:draft_delete
+  - name: platform.skills.reload
+    version: 0.1.0
+    kind: code
+    description: 热重载生产 registry(mtime 检查,只影响其后新建的 run;§17.3 第 11 项）。Use when skills 文件变更后要生效;Do not use when 改单个草稿。
+    inputs:
+      type: object
+      properties:
+        skill_set: {type: string, description: 限定重载的 set(缺省全部)}
+    outputs: {type: object, properties: {reloaded: {type: boolean}}}
+    permissions: {tools: [platform.skills.reload], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:skills_reload

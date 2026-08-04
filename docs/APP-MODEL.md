@@ -831,14 +831,22 @@ JS 闭包,那"所有 action 都是 skill"就成了不可证伪的同义反复,�
    注册,全部 trusted 档);管道的 `exec.mode` 从"选执行通道"降级为
    **元信息**(local/run 只表示要不要起产物级 Run),调用一律经
    `kernel.run()`(进程内,不落产物——run_iterate 先例);
-2. **L2 拆 tool**:§17.4 名单逐个把副作用面拆成 tool,skill 退为编排;
+2. **L2 拆 tool** ✅(2026-08-05,分支 debugger):§17.4 名单的副作用面拆成
+   7 个声明了 permission/side_effect/data_domains 的 tool
+   (`skills/platform/tools.py`,注册进 platform 内核的 Tool Registry),
+   skill 退为编排(handler 经 `ctx.call_tool` 调用——帧白名单 ∩ RunConfig
+   上限 ∩ 工具自报档 + 数据层 authZ 进路径);**最高特权的三个旧 web 写面
+   一并收编**(调试 modify/inject → `platform.debug.intervene`、草稿 delete
+   → `platform.draft.delete`[全包唯一 irreversible]、skills.reload →
+   `platform.skills.reload`),旧端点改为跑对应技能,行为逐字不变;
 3. **cascade 上线**:registry 加缺省 `context_provider`(kind + state 摘要),
    消费者改用注册制(现有 `_iterateProviders` 手搓形态退役);管道自动携带
    信封,`context: []` 显式弃权;
 4. **收编三条旁路**:send/retry 归 run(#6)、decisions 归管道(#7)、
    旧 `cards/action` 退役(过渡面);
-5. **旧 web 的 27 个写端点**(#8):先做归类决策(排期 or 永久例外),
-   `inject`/`modify`/`skills.reload`/草稿 `delete` 四个优先(#9/#11);
+5. **旧 web 的 27 个写端点**(#8):先做归类决策(排期 or 永久例外);
+   ~~`inject`/`modify`/`skills.reload`/草稿 `delete` 四个优先(#9/#11)~~
+   ——四个优先项已在第 2 步收编(L2 工具面);
 6. **全程红线**:promote 的人确认、升权人审、数据 authZ **一行都不许因升格
    而削弱**——升格让仲裁从话术变结构,不是绕开它的新通道。
 
@@ -876,6 +884,39 @@ JS 闭包,那"所有 action 都是 skill"就成了不可证伪的同义反复,�
 >   handler)+ force_sandbox 豁免矩阵 + kernel.run 进程内冒烟,落在
 >   `tests/web_platform/test_platform_skills.py`;行为零变化由既有
 >   web_platform 全套(92)与全量 pytest 背书。
+>
+> **第 2 步实现注**(2026-08-05,分支 debugger,L2 拆 tool ✅):
+> - **skill → tool 映射**(7 件,`skills/platform/tools.py`;全部 WRITE):
+>   plan.confirm→`platform.skill.promote`(reversible,skills.* 域)、
+>   candidate.accept→`platform.draft.accept`(reversible,drafts.*)、
+>   doc.save/doc.apply→`platform.doc.write`(reversible,docs.*+drafts.*;
+>   整文/按段双模)、run.stop/resume/rerun→`platform.run.control`
+>   (reversible,runs.*;stop/resume 改进程态、rerun 新建不动旧产物,
+>   均不构成数据销毁;resume 阻塞到 run 终态,timeout 对齐 max_wall_time)、
+>   debug.modify/inject→`platform.debug.intervene`(reversible,runs.*;
+>   §17.3 #9 最高特权面)、草稿 delete→`platform.draft.delete`
+>   (**irreversible**——rmtree 连版本史;删除确认在 UI,技能/工具层
+>   无 approve-run 式放行面)、skills.reload→`platform.skills.reload`
+>   (reversible,skills.*)。
+> - **错误通道**:异常过不了 Logic Kernel/Tool 分发两个边界——tool 侧
+>   `_domain_guard` 把可归类域异常折成结构化 ToolResult(invalid_args→400
+>   /not_found→404/vetoed→409),handler 侧 `_tool()` 原位翻译回
+>   PlatformActionError,`_guarded` 折信封,管道/端点翻译回 HTTPException;
+>   状态码与文案逐字不变。ProviderError(503)不在 tool 面(七件都不碰 LLM),
+>   留在 handler 的 `_guarded`。
+> - **白名单生效**:7 个既有技能 manifest 的 `permissions.tools` 声明各自
+>   tool(帧白名单交集才放行);新收编的 3 个技能同理。
+> - **旧 web 收编**(`web/app.py`):POST /api/skills/reload、DELETE
+>   /api/lab/drafts/{name}、POST /api/debug/sessions/{sid}/modify|inject
+>   四个端点改为跑对应 platform.* 技能(本 app 自装配一颗 platform 内核,
+>   deps 只含 manager/lab_store);响应/错误归类逐字保留。
+> - **data_domains 声明是 D2 预告面**:D1 数据闸只强制 fs.* 域
+>   (local_registry._check_data_access 跳过非 fs 声明),drafts.*/docs.*/
+>   runs.*/skills.* 声明即账面,判定留 D2。
+> - **未做**:scaffold.approve/draft.check 的草稿区读写不在 §17.4 名单
+>   (草稿写是 lab.draft.* 工具面地盘),保持直调;conversation send/retry
+>   归 run 留第 4 步;§17.8 的 L2 静态扫描(handler AST 禁直调业务写函数)
+>   落在 test_platform_skills.py::test_l2_handlers_no_direct_side_effect_calls。
 
 ### 17.8 验收(原则符合度测试)
 

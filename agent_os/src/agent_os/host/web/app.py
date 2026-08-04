@@ -82,6 +82,7 @@ from agent_os.skills.lab_assistant import (
 )
 from agent_os.skills.manifest import validate_manifest
 from agent_os.skills.package import build_plan, promote_package
+from agent_os.skills.platform import build_platform_kernel
 from agent_os.tools.lab_tools import register_lab_tools
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -826,11 +827,15 @@ def create_app(
         """热重载 skills 文件(§4.3;mtime 检查,只影响后续新建的 run,§6.1)。
 
         D6:body 可带 ``skill_set`` 限定重载哪个 set;缺省全部。
+        L2(§17.7):经 platform.skills.reload 技能 + tool(帧白名单面收编,§17.3 #11)。
         """
-        try:
-            return {"reloaded": manager.reload_skills(body.skill_set if body else None)}
-        except (RunValidationError, SkillLoadError) as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+        result = asyncio.run(
+            platform_kernel.run(
+                "platform.skills.reload", {"skill_set": (body.skill_set if body else "") or ""}
+            )
+        )
+        _raise_action_error(result)  # 400 归类在技能侧(RunValidationError/SkillLoadError)
+        return {"reloaded": result["reloaded"]}
 
     @app.get("/api/tools")
     def list_tools() -> list[dict[str, Any]]:
@@ -842,6 +847,17 @@ def create_app(
     # ------------------------------------------------------------------
 
     lab_store = _lab_store(config_path, root)
+
+    # §17.7 升格序第 2 步(L2):旧 web 的最高特权写面(skills.reload / 草稿 delete /
+    # 调试 modify/inject)收编为 platform.* 技能 + tool——调用经帧白名单 ∩ 权限交集
+    # 与数据 authZ,不再是裸 host 函数(本内核与 web_platform 管道内核各自独立装配)
+    platform_kernel = build_platform_kernel({"manager": manager, "lab_store": lab_store})
+
+    def _raise_action_error(result: Any) -> None:
+        """技能信封 → HTTPException(与 web_platform 管道 _run_handler 同语义)。"""
+        if isinstance(result, dict) and isinstance(result.get("_action_error"), dict):
+            err = result["_action_error"]
+            raise HTTPException(status_code=int(err["status"]), detail=str(err["detail"]))
 
     def _lab_overlay() -> OverlaySkillRegistry:
         """生产 registry + 草稿层(草稿优先;L1 仅服务推导档,test-run 装配属 L3)。"""
@@ -927,13 +943,10 @@ def create_app(
 
     @app.delete("/api/lab/drafts/{name}")
     def lab_delete_draft(name: str) -> dict[str, Any]:
-        """删草稿(§1.5;L2 语义,UI 已确认)。"""
-        try:
-            lab_store.delete(name)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except FileNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+        """删草稿(§1.5;L2 语义,UI 已确认;§17.7 L2:经 platform.draft.delete
+        技能 + tool 收编——rmtree 连版本史,全包唯一 irreversible 面)。"""
+        result = asyncio.run(platform_kernel.run("platform.draft.delete", {"name": name}))
+        _raise_action_error(result)  # 400(非法名)/404(不存在)归类在技能侧
         return {"ok": True, "name": name}
 
     @app.get("/api/lab/drafts/{name}/tier")
@@ -1575,25 +1588,33 @@ def create_app(
 
     @app.post("/api/debug/sessions/{sid}/modify")
     async def post_debug_modify(sid: str, body: DebugModifyBody) -> dict[str, Any]:
-        """干预:改本次工具调用参数(仅暂停在 pre:tool.call;改完即放行)。"""
-        try:
-            await manager.debug_modify(sid, body.patch)
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=e.args[0]) from None
-        except AgentOSError as e:
-            raise HTTPException(status_code=409, detail=str(e)) from None
+        """干预:改本次工具调用参数(仅暂停在 pre:tool.call;改完即放行)。
+
+        L2(§17.7):经 platform.debug.intervene 技能 + tool 收编(§17.3 #9:
+        全系统特权最高的 UI 动作,必须经帧白名单与权限交集)。"""
+        result = await platform_kernel.run(
+            "platform.debug.intervene",
+            {"session_id": sid, "command": "modify", "patch": body.patch},
+        )
+        _raise_action_error(result)  # 404(会话不在)/409(非 paused)归类在技能侧
         return {"ok": True}
 
     @app.post("/api/debug/sessions/{sid}/inject")
     async def post_debug_inject(sid: str, body: DebugInjectBody) -> dict[str, Any]:
-        """干预:向指定帧注入 USER/INJECTED 消息(``frame_id`` 缺省=暂停帧;注入后放行)。"""
-        try:
-            frame_id = await manager.debug_inject(sid, body.frame_id, body.text)
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=e.args[0]) from None
-        except AgentOSError as e:
-            raise HTTPException(status_code=409, detail=str(e)) from None
-        return {"ok": True, "frame_id": frame_id}
+        """干预:向指定帧注入 USER/INJECTED 消息(``frame_id`` 缺省=暂停帧;注入后放行)。
+
+        L2(§17.7):同 modify,经 platform.debug.intervene 技能 + tool 收编。"""
+        result = await platform_kernel.run(
+            "platform.debug.intervene",
+            {
+                "session_id": sid,
+                "command": "inject",
+                "frame_id": body.frame_id or "",
+                "text": body.text,
+            },
+        )
+        _raise_action_error(result)
+        return {"ok": True, "frame_id": result["frame_id"]}
 
     @app.get("/api/debug/sessions/{sid}/frames/{fid}")
     def get_debug_frame(sid: str, fid: str) -> dict[str, Any]:

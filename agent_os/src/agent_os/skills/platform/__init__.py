@@ -56,10 +56,20 @@ def build_platform_kernel(deps: dict[str, Any]) -> Kernel:
     信号总线;``deps``(manager/lab_store/doc_store/sessions/instances/
     artifacts_root/read_json)挂在内核对象上,handler 经 ``ctx._kernel.
     platform_deps`` 取用(宿主注入面,§17.10:框架准备参数)。
+
+    L2(§17.4):tools = 副作用工具组(tools.py;permission/side_effect/
+    data_domains 显式声明)——skill 经 ``ctx.call_tool`` 调用时三层权限交集
+    (帧白名单 ∩ RunConfig 上限 ∩ 工具自报档)+ 数据层 authZ 才真正进路径。
     """
+    from agent_os.skills.platform.tools import register_platform_tools
+    from agent_os.tools.local_registry import LocalPythonToolRegistry
+
+    tools = LocalPythonToolRegistry()
+    register_platform_tools(tools, deps=deps)
     kernel = Kernel(
         config=RunConfig(),
         skills=load_platform_skills(),
+        tools=tools,
         logic=LogicKernelRouter([InProcessLogicKernel()]),
         signals=InProcessSignalBus(),
     )

@@ -190,6 +190,8 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         "sessions": [],
         "layout": {"order": [], "icon_mode": False},
         "widgets": {},
+        # M5 增补(桌面化 root widget):桌面态 = active_tab 为 "";pinned 预留(本期无 UI 面)
+        "desktop": {"pinned": [], "wallpaper": True},
     }
     shell_inst, _ = instances.register(
         kind="shell", ref="shell", title="shell",
@@ -922,12 +924,30 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             instances.update_state(inst["id"], state)
         return {"ok": True}
 
+    def _mut_tab_minimize(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        """最小化(M5 增补,桌面化):active_tab 置 "" —— 无激活 tab = 桌面主屏;
+        tab 全保留(关闭≠销毁的另一面:最小化≠关闭)。"""
+        inst["state"]["active_tab"] = ""
+        instances.update_state(inst["id"], inst["state"])
+        return {"ok": True}
+
+    def _mut_desktop_set(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        """桌面开关(M5 增补):wallpaper 持久化进 shell.state.desktop(写穿透)。"""
+        desktop = inst["state"].setdefault("desktop", {"pinned": [], "wallpaper": True})
+        if "wallpaper" in args:
+            desktop["wallpaper"] = bool(args["wallpaper"])
+        instances.update_state(inst["id"], inst["state"])
+        return {"ok": True}
+
     _LOCAL_MUTATORS = {
         "shell.tab.open": _mut_tab_open,
         "shell.tab.focus": _mut_tab_focus,
         "shell.tab.close": _mut_tab_close,
         "shell.layout.set": _mut_layout_set,
         "shell.layout.move_tab": _mut_layout_move_tab,
+        # M5 增补(桌面化 root widget)
+        "shell.tab.minimize": _mut_tab_minimize,
+        "shell.desktop.set": _mut_desktop_set,
     }
 
     def _act_shell_theme_set(payload: dict[str, Any]) -> dict[str, Any]:

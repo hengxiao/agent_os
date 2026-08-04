@@ -322,6 +322,8 @@ def default_manifests() -> list[dict[str, Any]]:
                 sessions={"type": "array"},
                 layout={"type": "object"},
                 widgets={"type": "object"},
+                # M5 增补(桌面化 root widget):desktop={pinned, wallpaper}
+                desktop={"type": "object"},
             ),
             "actions": [
                 # §13.1:tab 管理是 local(仅改 shell.state,不出海);
@@ -355,6 +357,16 @@ def default_manifests() -> list[dict[str, Any]]:
                 {"id": "shell.layout.move_tab", "label": "platform.shell.layout.move_tab",
                  "exec": {"mode": "local"}, "args_from": [],
                  "args_input": {"tab": {"type": "string"}, "before": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+                # M5 增补(桌面化 root widget):最小化 = 无激活 tab(回桌面,tab 保留);
+                # desktop.set = 桌面开关持久化(壁纸;pinned 键预留,本期无 UI 面)
+                {"id": "shell.tab.minimize", "label": "platform.shell.tab.minimize",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.desktop.set", "label": "platform.shell.desktop.set",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"wallpaper": {"type": "boolean"}},
                  "surface": ["card", "tab"]},
             ],
         },

@@ -6,7 +6,7 @@
    意图输入;detail tab = 详情视图(输入区隐藏)。
    不引用旧 web 的 app.js;只复用宿主无关模块(themes/util/trace 纯函数)。 */
 
-import { copy, initTheme } from "/static/js/themes.js";
+import { copy, initTheme, applyTheme, listThemes, currentThemeId } from "/static/js/themes.js";
 import { esc, toast } from "/static/js/util.js";
 import { renderCardSurface } from "./cards.js";
 import { renderTabSurface } from "./details.js";
@@ -54,6 +54,9 @@ const state = {
   shell: null, // M5:shell 根 app 的 instance(唯一事实源;本地 tabs/active 是它的镜像)
   useShell: false, // /api/shell 不可达时回落本地 tab 模型(M1-M4 行为,降级面)
   longPressTab: null, // 触屏降级:长按出"移到最左/最右"(§15.4 a11y)
+  // M5 增补(桌面化 root widget):桌面态 = active 为 ""(无激活 tab;tab 全保留)
+  desktop: { pinned: [], wallpaper: true }, // shell.state.desktop 的镜像
+  startOpen: false, // 开始菜单开合(纯 UI 态,不进 shell.state)
 };
 
 /* ── shell 镜像(docs/APP-MODEL.md §13;M5)───────────────────────
@@ -70,6 +73,12 @@ function _mirrorShell(shellState) {
   }));
   state.active = shellState.active_tab ?? "conv";
   document.body.dataset.iconMode = shellState.layout?.icon_mode ? "1" : "0";
+  // M5 增补(桌面化):desktop 镜像(旧持久化无此键 → 缺省壁纸开)
+  state.desktop = {
+    pinned: shellState.desktop?.pinned ?? [],
+    wallpaper: shellState.desktop?.wallpaper !== false,
+  };
+  document.body.dataset.wallpaper = state.desktop.wallpaper ? "1" : "0";
 }
 
 async function loadShell() {
@@ -172,7 +181,174 @@ function renderTabs() {
           `<option value="${esc(s.id)}"${s.id === state.current ? " selected" : ""}>${esc(s.title)}</option>`
       )
       .join("") || `<option value="">${esc(copy("platform.no.sessions"))}</option>`;
+  renderTray(); // 任务栏一体:tab 重渲时托盘同步(live/主题/收件箱计数)
+  renderStartMenu(); // 开始菜单数据源与桌面图标同源(closedTabs 会变)
 }
+
+/* ── M5 增补:桌面化 root widget(Windows 桌面式;红线:不做自由排布/浮动
+   窗口——窗口仍是单激活最大化 tab,桌面是"无 tab 激活时的主屏")──────────
+   三面同源:桌面图标/开始菜单/tab 条只读 shell.state(镜像),点击一律转发
+   既有 shell action,无独立代码路径。 */
+
+/* 桌面图标数据源(数据驱动;开始菜单同一份):对话恒首 + legacy 五应用 +
+   最近关闭前 3(M2 closedTabs,关闭≠销毁的重开入口) */
+function desktopIcons() {
+  const icons = [{ id: "conv", label: copy("platform.tab.chat") }];
+  for (const [k, c] of _LEGACY_PAGES) icons.push({ id: k, label: copy(c) });
+  for (const t of state.closedTabs.slice(0, 3)) {
+    icons.push({ id: t.id, label: t.title, recent: true });
+  }
+  return icons;
+}
+
+/* 大图标(首字符 glyph,与 tab 条图标列同手法——零新资产) */
+function _deskIconHtml(icon) {
+  return (
+    `<button class="pf-desk-ico" data-desk-open="${esc(icon.id)}">` +
+    `<span class="pf-desk-glyph" aria-hidden="true">${esc((icon.label || "?").trim().charAt(0))}</span>` +
+    `<span class="pf-desk-name">${esc(icon.label)}</span></button>`
+  );
+}
+
+/* 桌面主区(无激活 tab 时):图标网格 + 最近关闭组 + 壁纸开关;
+   壁纸 = 主题 body 背景图案透出(桌面区透明底,已有资产零新增) */
+function renderDesktop() {
+  const host = $("#desktop");
+  if (!host) return;
+  const icons = desktopIcons();
+  const apps = icons.filter((i) => !i.recent);
+  const recent = icons.filter((i) => i.recent);
+  host.innerHTML =
+    `<div class="pf-desk-grid">${apps.map(_deskIconHtml).join("")}</div>` +
+    (recent.length
+      ? `<div class="pf-desk-recent"><div class="pf-recent-title">${esc(copy("platform.tabs.recent"))}</div>` +
+        `<div class="pf-desk-grid">${recent.map(_deskIconHtml).join("")}</div></div>`
+      : "") +
+    `<button class="pf-desk-wall" data-desk-wallpaper aria-pressed="${state.desktop.wallpaper}">` +
+    `${esc(copy("platform.desktop.wallpaper"))}</button>`;
+}
+
+/* 桌面图标点击 = tab 条/launcher/最近关闭的同一入口(同源断言):
+   对话 → activateTab(同 tab 条点击,shell.tab.focus);
+   最近关闭 → reopenTab(同"最近关闭"列表,shell.tab.open);
+   legacy 应用 → openDetail(同 launcher,shell.tab.open) */
+function openDesktopIcon(id) {
+  state.startOpen = false; // 开始菜单项同源此口,点完即收
+  if (id === "conv") return activateTab("conv");
+  if (state.closedTabs.some((t) => t.id === id)) return reopenTab(id);
+  return openDetail(id, id, {});
+}
+
+/* 开始菜单:点开应用菜单(与桌面图标同数据源,项同 data-desk-open 同源点击) */
+function renderStartMenu() {
+  const btn = $("#startBtn");
+  const menu = $("#startMenu");
+  if (!btn || !menu) return;
+  menu.hidden = !state.startOpen;
+  btn.setAttribute("aria-expanded", state.startOpen ? "true" : "false");
+  if (!state.startOpen) return;
+  menu.innerHTML = desktopIcons()
+    .map(
+      (i) =>
+        `<button class="pf-start-item" role="menuitem" data-desk-open="${esc(i.id)}">` +
+        `<span class="pf-desk-glyph" aria-hidden="true">${esc((i.label || "?").trim().charAt(0))}</span>` +
+        `${esc(i.label)}</button>`
+    )
+    .join("");
+}
+
+/* 系统托盘:live 指示(连接心跳)/ 主题切换 / 收件箱(decisions 计数);
+   托盘项一律 role=button + aria-label;live 色点 + 状态原文双编码 */
+function renderTray() {
+  const host = $("#tray");
+  if (!host) return;
+  const live = _es ? "sse" : _pollTimer ? "poll" : "off"; // 连接态(技术原文豁免,直读)
+  const pending = state.messages.reduce(
+    (n, m) => n + (m.cards ?? []).filter((c) => c.type === "escalation" && !c.data?.resolved).length,
+    0
+  );
+  host.innerHTML =
+    `<button class="pf-tray-item" data-tray-live role="button" ` +
+    `aria-label="${esc(copy("platform.tray.live"))}: ${live}">` +
+    `<span class="pf-tray-dot" data-live="${live}" aria-hidden="true"></span>` +
+    `<span class="pf-tray-label">${live}</span></button>` +
+    `<button class="pf-tray-item" data-tray-theme role="button" ` +
+    `aria-label="${esc(copy("platform.tray.theme"))}">` +
+    `<span class="pf-tray-label">${esc(currentThemeId())}</span></button>` +
+    `<button class="pf-tray-item" data-tray-inbox role="button" ` +
+    `aria-label="${esc(copy("platform.tray.inbox"))}: ${pending}">` +
+    `<span aria-hidden="true">✉</span> <span class="pf-tray-label">${pending}</span></button>`;
+}
+
+/* 托盘 live 项点击 = 重连(降级态尝试升回 SSE;与启动同一 connectStream) */
+function reconnectStream() {
+  try {
+    _es?.close();
+  } catch {
+    /* 忽略 */
+  }
+  _es = null;
+  connectStream();
+  renderTray();
+}
+
+/* 托盘主题项点击 = 循环下一主题(注册表顺序,无主题 id 硬编码;
+   与顶栏切换同一通道:applyTheme + shell.theme.set) */
+function cycleTheme() {
+  const ids = listThemes().map((t) => t.id);
+  const next = ids[(ids.indexOf(currentThemeId()) + 1) % ids.length] ?? ids[0];
+  applyTheme(next);
+  shellAction("shell.theme.set", { theme: next });
+  document.querySelector("#themes")?.querySelectorAll("button").forEach((b) => {
+    b.dataset.on = b.dataset.t === next ? "1" : "0";
+  });
+  renderTray();
+}
+
+/* 窗口标题栏(激活 app 最大化时):图标 + 标题 + 最小化(回桌面,tab 保留)
+   + 关闭(✕,走 M5 关闭≠销毁进最近关闭;conversation 不可关闭,与 tab 条一致) */
+function renderTitlebar() {
+  const host = $("#titlebar");
+  if (!host) return;
+  const tab = state.tabs.find((t) => t.id === state.active);
+  host.hidden = !tab;
+  if (!tab) {
+    host.innerHTML = "";
+    return;
+  }
+  const label = tab.kind === "conversation" ? copy("platform.tab.chat") : tab.title;
+  const close =
+    tab.kind !== "conversation"
+      ? `<button class="pf-win-x" data-win-close aria-label="${esc(copy("platform.tab.close"))}">✕</button>`
+      : "";
+  host.innerHTML =
+    `<span class="pf-win-ico" aria-hidden="true">${esc((label || "?").trim().charAt(0))}</span>` +
+    `<span class="pf-win-title">${esc(label)}</span>` +
+    `<span class="pf-spacer"></span>` +
+    `<button class="pf-win-min" data-win-min aria-label="${esc(copy("platform.win.min"))}">—</button>${close}`;
+}
+
+/* 最小化 = 回桌面(无激活 tab;tab 保留在任务栏)。shell 不可达时本地生效(降级面) */
+function minimizeTab() {
+  state.active = ""; // 乐观先渲(shell 回镜校正——同值)
+  shellAction("shell.tab.minimize"); // M5 增补:最小化 = shell action(local)
+  renderTabs();
+  renderMain();
+}
+
+/* 壁纸开关 = shell.desktop.set(local;持久化进 shell.state.desktop) */
+async function toggleWallpaper() {
+  const next = !state.desktop.wallpaper;
+  const result = await shellAction("shell.desktop.set", { wallpaper: next });
+  if (!result) {
+    // 降级面:无 shell 本地生效
+    state.desktop.wallpaper = next;
+    document.body.dataset.wallpaper = next ? "1" : "0";
+  }
+  renderDesktop();
+}
+
+
 
 /* ── DnD v1(docs/APP-MODEL.md §15):envelope 产出/消费 + 触屏降级 ── */
 
@@ -254,9 +430,11 @@ function bindLongPress() {
 /* ── 渲染:主区(conversation = 对话流;detail = 详情)──────────── */
 
 function renderMain() {
+  const isDesktop = !state.active; // M5 增补:无激活 tab = 桌面主屏(窗口仍是单激活最大化)
   const isConv = state.active === "conv";
-  // legacy 视图切换/离开时先收编(close 退订 store,防复活写;M4b)
-  if (_legacyClose && (isConv || state.detail?.mount !== _legacyMountedFor)) {
+  document.body.dataset.desktop = isDesktop ? "1" : "0"; // 壁纸透出的样式钩子
+  // legacy 视图切换/离开/最小化时先收编(close 退订 store,防复活写;M4b)
+  if (_legacyClose && (isConv || isDesktop || state.detail?.mount !== _legacyMountedFor)) {
     try {
       _legacyClose();
     } catch {
@@ -265,11 +443,15 @@ function renderMain() {
     _legacyClose = null;
     _legacyMountedFor = null;
   }
+  const desktop = $("#desktop");
+  if (desktop) desktop.hidden = !isDesktop;
   $("#log").hidden = !isConv;
   $("#inputBar").hidden = !isConv;
-  $("#detailHost").hidden = isConv;
-  if (isConv) renderLog();
+  $("#detailHost").hidden = isConv || isDesktop;
+  if (isDesktop) renderDesktop();
+  else if (isConv) renderLog();
   else renderDetail();
+  renderTitlebar();
 }
 
 function msgHtml(m, index) {
@@ -861,33 +1043,41 @@ function _startPolling() {
     presentRuns();
   }, 5000);
   _pollTimer.unref?.();
+  renderTray(); // M5 增补:live 指示降级态同步
 }
 
 function _stopPolling() {
   if (_pollTimer) {
     clearInterval(_pollTimer);
     _pollTimer = null;
+    renderTray(); // M5 增补:SSE 复活,live 指示回升
   }
 }
 
 function connectStream() {
   if (typeof EventSource === "undefined") {
     _startPolling();
+    renderTray(); // M5 增补:EventSource 缺席(node/老浏览器)= poll 态
     return;
   }
   try {
     _es = new EventSource("/platform/api/stream");
   } catch {
     _startPolling();
+    renderTray();
     return;
   }
   _es.addEventListener("decision.new", () => pollDecisions());
   _es.addEventListener("run.finished", () => presentRuns());
-  _es.onopen = () => _stopPolling(); // SSE 活了即停轮询(替代,不双轨)
+  _es.onopen = () => {
+    _stopPolling(); // SSE 活了即停轮询(替代,不双轨)
+    renderTray();
+  };
   _es.onerror = () => {
     _es?.close();
     _es = null;
     _startPolling(); // 断线回落轮询
+    renderTray();
   };
 }
 
@@ -974,6 +1164,23 @@ function bind() {
     if (e.target.value) selectSession(e.target.value);
   });
   document.addEventListener("click", (e) => {
+    // ── M5 增补(桌面化):开始按钮/桌面图标/壁纸/标题栏/托盘 ──
+    if (e.target.closest("#startBtn")) {
+      state.startOpen = !state.startOpen;
+      return renderStartMenu();
+    }
+    const deskOpen = e.target.closest("[data-desk-open]");
+    if (deskOpen) return openDesktopIcon(deskOpen.dataset.deskOpen); // 桌面/开始菜单同源
+    if (e.target.closest("[data-desk-wallpaper]")) return toggleWallpaper();
+    if (state.startOpen && !e.target.closest("#startMenu")) {
+      state.startOpen = false; // 点菜单外收起
+      renderStartMenu();
+    }
+    if (e.target.closest("[data-win-min]")) return minimizeTab(); // — 回桌面(tab 保留)
+    if (e.target.closest("[data-win-close]")) return closeDetail(state.active); // ✕ 关闭≠销毁
+    if (e.target.closest("[data-tray-live]")) return reconnectStream();
+    if (e.target.closest("[data-tray-theme]")) return cycleTheme();
+    if (e.target.closest("[data-tray-inbox]")) return activateTab("conv"); // 决策在对话里处理
     const tabX = e.target.closest("[data-tab-x]");
     if (tabX) {
       e.stopPropagation(); // ✕ 不触发 tab 激活
@@ -1037,6 +1244,7 @@ function renderStaticCopy() {
   if (sub) sub.textContent = copy("platform.sub");
   $("#intent").placeholder = copy("platform.input.ph");
   $("#send").textContent = copy("platform.send");
+  $("#startBtn")?.setAttribute("aria-label", copy("platform.start")); // M5 增补:开始按钮
 }
 
 mountThemes();
@@ -1060,6 +1268,9 @@ if (typeof globalThis !== "undefined") {
   globalThis.__platform = {
     state, renderTabs, renderMain, loadSessions, openDetail, closeDetail, reopenTab,
     pollDecisions, presentRuns, connectStream, shellAction, widgetFocus, loadShell,
+    // M5 增补(桌面化):桌面/开始菜单/标题栏/托盘的操作面
+    desktopIcons, openDesktopIcon, minimizeTab, toggleWallpaper, cycleTheme,
+    renderDesktop, renderTitlebar, renderTray,
     stream: () => _es,
     polling: () => Boolean(_pollTimer),
   };

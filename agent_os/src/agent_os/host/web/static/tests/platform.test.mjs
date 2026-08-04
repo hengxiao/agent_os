@@ -440,6 +440,11 @@ const assertClean = (html, who) => {
   mk("div", "launcher");
   mk("select", "sessionSel");
   mk("button", "newSession");
+  mk("div", "tray"); // M5 增补:系统托盘
+  mk("button", "startBtn"); // M5 增补:开始按钮
+  mk("div", "startMenu"); // M5 增补:开始菜单
+  mk("div", "titlebar"); // M5 增补:窗口标题栏
+  mk("div", "desktop"); // M5 增补:桌面主区
   mk("div", "log");
   mk("div", "detailHost");
   mk("div", "inputBar");

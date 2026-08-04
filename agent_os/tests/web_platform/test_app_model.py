@@ -39,6 +39,8 @@ KNOWN = {
     "platform.debug.command", "platform.draft.check",
     # M4a:发起面(run 态)
     "platform.run.launch",
+    # M5:shell 的 endpoint 动作(§13.1)
+    "platform.shell.theme.set", "platform.shell.session.create",
 }
 
 
@@ -63,11 +65,13 @@ def _manifest(**over):
 
 
 def test_default_manifests_all_valid():
-    """首批 kind 全部合法(M1 八个 + M3 三个 + M4b legacy 五个)。"""
+    """首批 kind 全部合法(M1 八个 + M3 三个 + M4b 五个 + M5 shell;
+    shell 与普通 manifest 过同一协议校验——无特例代码路径,§13.4)。"""
     reg = AppRegistry(known_skills=KNOWN)
     for m in default_manifests():
         reg.register(m)
     assert set(reg.kinds()) == {
+        "shell",
         "conversation", "plan", "skill_pack", "gate_report", "diff", "publish", "table", "escalation",
         "run", "debug", "lab-draft",
         "skills", "runs", "tools", "lab", "debug-old",
@@ -689,3 +693,118 @@ def test_m4b_sse_stream(client):
     assert ("decision.new", {"question_ids": ["esc-1"]}) in events
     assert ("run.finished", {"run_id": "r1", "skill": "demo.fib", "status": "failed"}) in events
     assert _stream_diff(["esc-0"], [{"run_id": "r0", "skill": "a", "status": "done"}], seen) == []
+
+
+# ---------------------------------------------------------------------------
+# M5:shell app 化 + widget 寻址(docs/APP-MODEL.md §13/§14/§15)
+# ---------------------------------------------------------------------------
+
+
+def _shell(client):
+    return client.get("/api/shell").json()
+
+
+def _shell_act(client, shell_id, action, args=None):
+    return client.post(f"/api/apps/{shell_id}/actions/{action}",
+                       json={"surface": "tab", "args": args or {}})
+
+
+def test_m5_shell_bootstrap_and_tab_actions(client):
+    """bootstrap 实例化(conv 恒首);tab.open 去重聚焦/focus/close 回落;
+    全部经管道(local mutator 仅改 state,不出海)。"""
+    shell = _shell(client)
+    assert shell["kind"] == "shell"
+    assert shell["state"]["tabs"][0]["id"] == "conv", "bootstrap:conv 恒首"
+    assert shell["state"]["active_tab"] == "conv"
+    sid = shell["id"]
+
+    r = _shell_act(client, sid, "shell.tab.open",
+                   {"id": "d:run:r1", "instance_id": "app-r1", "kind": "run", "ref": "r1", "title": "运行详情"})
+    assert r.status_code == 200, r.text
+    state = _shell(client)["state"]
+    assert state["active_tab"] == "d:run:r1"
+    assert len(state["tabs"]) == 2
+    # kind+ref 去重(不同 id 同 ref → 聚焦不重复开)
+    _shell_act(client, sid, "shell.tab.open",
+               {"id": "d:run:r1-b", "kind": "run", "ref": "r1", "title": "运行详情"})
+    state = _shell(client)["state"]
+    assert len(state["tabs"]) == 2, "同 kind+ref 去重"
+    assert state["active_tab"] == "d:run:r1", "聚焦已有 tab"
+    # focus/close
+    _shell_act(client, sid, "shell.tab.focus", {"tab": "conv"})
+    assert _shell(client)["state"]["active_tab"] == "conv"
+    _shell_act(client, sid, "shell.tab.focus", {"tab": "d:run:r1"})
+    _shell_act(client, sid, "shell.tab.close", {"tab": "d:run:r1"})
+    state = _shell(client)["state"]
+    assert [t["id"] for t in state["tabs"]] == ["conv"]
+    assert state["active_tab"] == "conv", "关闭回落 conversation(关闭≠销毁语义)"
+
+
+def test_m5_shell_layout_persistence(tmp_path):
+    """布局持久化:move_tab 重排 + icon_mode 开关 → 新 app(同 root)重启恢复。"""
+    manager = _FakeManager()
+    c1 = TestClient(create_platform_app(manager=manager, lab_store=None, artifacts_root=tmp_path))
+    sid = _shell(c1)["id"]
+    for tid, ref in (("d:run:r1", "r1"), ("d:gate:g1", "g1")):
+        _shell_act(c1, sid, "shell.tab.open",
+                   {"id": tid, "kind": tid.split(":")[1], "ref": ref, "title": tid})
+    _shell_act(c1, sid, "shell.layout.move_tab", {"tab": "d:gate:g1", "before": "d:run:r1"})
+    _shell_act(c1, sid, "shell.layout.set", {"icon_mode": True})
+    _shell_act(c1, sid, "shell.theme.set", {"theme": "ink"})
+
+    c2 = TestClient(create_platform_app(manager=manager, lab_store=None, artifacts_root=tmp_path))
+    state = _shell(c2)["state"]
+    assert [t["id"] for t in state["tabs"]] == ["conv", "d:gate:g1", "d:run:r1"], "重排持久化"
+    assert state["layout"]["icon_mode"] is True, "图标列开关持久化"
+    assert state["theme"] == "ink", "主题偏好持久化(endpoint 态)"
+
+
+def test_m5_shell_session_create(client):
+    """shell.session.create(endpoint):新会话 + conversation instance 登记。"""
+    sid = _shell(client)["id"]
+    r = _shell_act(client, sid, "shell.session.create")
+    assert r.status_code == 200, r.text
+    session = r.json()["session"]
+    assert client.get(f"/api/sessions/{session['id']}").status_code == 200
+
+
+def test_m5_widget_registry(client):
+    """widget 注册/解析(read 人话摘要)/focus 同源/注销后 404。"""
+    path = "/shell/tab/app-r1/surface/tab/section/findings"
+    assert client.post("/api/widgets/register",
+                       json={"path": path, "kind": "gate_report", "summary_hint": "4 项通过,1 个建议"}
+                       ).status_code == 200
+    got = client.get(f"/api/widgets{path}").json()
+    assert got["summary"] == "4 项通过,1 个建议", "read = 人话摘要(摘要层文字)"
+    assert client.post("/api/widgets/read", json={"path": path}).json()["path"] == path
+    assert client.post("/api/widgets/focus", json={"path": path}).json()["ok"] is True
+    assert client.get("/api/widgets/shell/tab/nope").status_code == 404, "未注册 404"
+    assert client.post("/api/widgets/focus", json={"path": "/nope"}).status_code == 404, "focus 与 read 同源 404"
+    client.post("/api/widgets/unregister", json={"path": path})
+    assert client.get(f"/api/widgets{path}").status_code == 404, "注销后 404"
+
+
+def test_m5_desktop_minimize_and_wallpaper(tmp_path):
+    """桌面化 root widget(M5 增补):desktop 默认键在;bootstrap 后最小化 =
+    无激活 tab(active_tab "",tab 保留);壁纸开关持久化(重启恢复)。"""
+    manager = _FakeManager()
+    c1 = TestClient(create_platform_app(manager=manager, lab_store=None, artifacts_root=tmp_path))
+    shell = _shell(c1)
+    assert shell["state"]["desktop"] == {"pinned": [], "wallpaper": True}, "desktop 默认键"
+    sid = shell["id"]
+    _shell_act(c1, sid, "shell.tab.open",
+               {"id": "d:run:r1", "kind": "run", "ref": "r1", "title": "运行详情"})
+    r = _shell_act(c1, sid, "shell.tab.minimize")
+    assert r.status_code == 200, r.text
+    state = _shell(c1)["state"]
+    assert state["active_tab"] == "", "最小化 = 无激活 tab(桌面主屏)"
+    assert [t["id"] for t in state["tabs"]] == ["conv", "d:run:r1"], "最小化≠关闭(tab 保留)"
+    # 壁纸开关:local 态,参数过 args_input schema(非 bool 拒)
+    assert _shell_act(c1, sid, "shell.desktop.set", {"wallpaper": "x"}).status_code == 400
+    _shell_act(c1, sid, "shell.desktop.set", {"wallpaper": False})
+    assert _shell(c1)["state"]["desktop"]["wallpaper"] is False
+
+    c2 = TestClient(create_platform_app(manager=manager, lab_store=None, artifacts_root=tmp_path))
+    state = _shell(c2)["state"]
+    assert state["desktop"]["wallpaper"] is False, "壁纸开关持久化(重启恢复)"
+    assert state["active_tab"] == "", "桌面态持久化"

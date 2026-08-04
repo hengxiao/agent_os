@@ -239,6 +239,38 @@ v0.1 说"action = skill 调用 → 内核仲裁自动覆盖 UI 全部副作用,U
 | M4 ✅ | legacy 五页以 tab surface 接入 + SSE transport + 主动汇报(app 状态推送进对话) |
 | M5 ✅ | shell app 化(§13/§14/§15;v0.3) |
 
+> **M5 增补实现注**(2026-08-04,分支 debugger;桌面化 root widget——Windows
+> 桌面式界面;红线:**不做自由排布/浮动窗口**,窗口仍是单激活最大化 tab,
+> 桌面是"无 tab 激活时的主屏"):
+> - **桌面主区**(无激活 tab 时):`active_tab=""` 即桌面态(本地镜像
+>   `state.active=""`);主区渲染图标网格(大图标 + 名称,首字符 glyph 与
+>   tab 条图标列同手法,零新资产),数据源 = 对话(恒首)+ legacy 五应用 +
+>   最近关闭前 3(M2 closedTabs),开始菜单同一份 `desktopIcons()`;
+>   **壁纸** = 各主题 body 背景图案透出(moe 樱花/blueprint 方格/pixel 星空/
+>   ink 宣纸/terminal 扫描线/classic 点阵,已有资产零新增)——桌面态
+>   `body[data-desktop="1"]` 壳层透明,chrome(顶栏/任务栏)各自持底;
+>   图标点击 = tab 条同一 action(**同源**):对话 → activateTab
+>   (shell.tab.focus),legacy → openDetail(shell.tab.open,同 launcher),
+>   最近关闭 → reopenTab(shell.tab.open,同"最近关闭"列表);
+> - **任务栏**(左竖排 tab 条升格):顶部开始按钮(九宫格纯 CSS 点阵,点开
+>   应用菜单,项与桌面图标同 data-desk-open 同源点击);中部运行中 tab
+>   (激活高亮/✕/DnD 重排,不动);底部系统托盘——live 指示(SSE/轮询/断线
+>   三态,色点 + 状态原文双编码,点击重连)、主题切换(注册表顺序循环,
+>   与顶栏同一 applyTheme + shell.theme.set 通道)、收件箱(当前会话未决
+>   escalation 计数,点击回对话);托盘项一律 role=button + aria-label;
+> - **窗口标题栏**(激活 app 最大化):图标 + 标题 + [最小化 —] +
+>   [✕ 关闭];最小化 = 新 local action `shell.tab.minimize`(active_tab 置
+>   "",tab 全保留——最小化≠关闭),✕ 仍走 M5 closeDetail(关闭≠销毁进
+>   最近关闭;关闭回落 conversation 语义不动);样式全 token 进 platform.css;
+> - **shell.state 扩展**:`desktop: {pinned: [], wallpaper: true}`(state_schema
+>   同步;pinned 键预留,本期无 UI 面);新 local action `shell.desktop.set`
+>   (args_input {wallpaper: boolean})——壁纸开关写穿透持久化(重启恢复),
+>   旧持久化无 desktop 键时前端/后端各自缺省容错(壁纸开);
+> - **测试**:前端 `desktop.test.mjs`(桌面渲染/同源断言/开始菜单/最小化/
+>   托盘/壁纸/icon_mode 不回归);后端 `test_m5_desktop_minimize_and_wallpaper`
+>   (最小化 tab 保留/壁纸持久化重启恢复/args_input 非 bool 拒);M1-M5 既有
+>   测试原样全绿(前端 26 文件 + 本新文件;后端 web_platform 68 个)。
+
 > **M5 实现注**(2026-08-03,分支 debugger;v0.3 §13/§14/§15):
 > - **shell 根 app**(apps.py +1 kind;与普通 manifest 同一协议校验,无特例):
 >   bootstrap 实例化(ref="shell",conv 恒首),state={tabs, active_tab, theme,

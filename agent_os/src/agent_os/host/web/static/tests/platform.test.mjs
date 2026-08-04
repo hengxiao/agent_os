@@ -591,6 +591,20 @@ const assertClean = (html, who) => {
     if (url === "/platform/api/docs/design.new_ui/bubbles") {
       return reply([{ anchor: "doc.md#L2-L2", messages: [{ role: "user", text: "旧批注", ts: 1 }] }]);
     }
+    if (url === "/platform/api/docs/design.new_ui/review" && options.method === "POST") {
+      return reply({ notes: [
+        { anchor: "doc.md#L2-L2", severity: "must", text: "这段绕" },
+        { anchor: "doc.md#L4-L4", severity: "nit", text: "可精简" },
+      ], review_file: "1.json" });
+    }
+    if (url === "/platform/api/docs/notes.lab.dinner" && !options.method) {
+      return reply({ name: "notes.lab.dinner", text: "# lab.dinner 笔记\n",
+        meta: { title: "lab.dinner 笔记", savedAt: 1 }, versions: [] });
+    }
+    if (url === "/platform/api/docs/notes.lab.dinner/bubbles") return reply([]);
+    if (url === "/platform/api/docs" && options.method === "POST") {
+      return reply({ name: JSON.parse(options.body ?? "{}").name, text: "", meta: {} });
+    }
     if (url === "/platform/api/docs/design.new_ui/comment") {
       return reply({ reply: "建议:删第二句,留骨架",
         edits: [{ anchor: "doc.md#L2-L2", suggestion: "删第二句", replace_text: "改过的第二段" }] });
@@ -1485,6 +1499,50 @@ const assertClean = (html, who) => {
     "应用参数 = 锚点 + 回复的替换文本");
   const docReads = calls.filter((c) => c.url === "/platform/api/docs/design.new_ui").length;
   assert.ok(docReads >= 2, "应用后重载拿新全文");
+
+  /* ── D3:全文评审(气泡雨)+ 气泡栏 + NOTES 接点 ─────────────── */
+
+  // [评审] → 批注集自动挂段(severity 着色)
+  const reviewBtn = new StubEl("button");
+  reviewBtn.dataset.docReview = "1";
+  reviewBtn.parentNode = docHost;
+  docHost.trigger("click", { target: reviewBtn });
+  await tick();
+  await tick();
+  const reviewPost = calls.find((c) => c.url === "/platform/api/docs/design.new_ui/review");
+  assert.ok(reviewPost, "review 出海(专属端点,exec: run+cascade)");
+  assert.ok(bubbleHost.innerHTML.includes("这段绕"), "must 批注挂进 L2 气泡");
+  const mustEntry = probe.state._docEditor.bubbles.get("doc.md#L2-L2");
+  assert.equal(mustEntry.severity, "must", "severity 记录(must)");
+  assert.ok(mustEntry.el.classList.contains("doc-sev-must"), "must=danger 着色(token)");
+  const nitEntry = probe.state._docEditor.bubbles.get("doc.md#L4-L4");
+  assert.ok(nitEntry?.el.classList.contains("doc-sev-nit"), "nit 挂段(nit=neutral)");
+  assert.ok(!probe.state._docEditor.bubbles.has("doc.md#L99-L99"), "越界锚点不建泡(前端挂空)");
+
+  // 气泡栏:聚合视图(锚点/severity/计数)+ 点击跳转开泡
+  const bar = docHost.querySelector("[data-doc-bubblebar]");
+  assert.ok(bar.innerHTML.includes("doc-bar-item"), "气泡栏聚合条目");
+  assert.ok(bar.innerHTML.includes('data-sev="must"'), "severity 在栏内");
+  const barItem = new StubEl("button");
+  barItem.dataset.barAnchor = "doc.md#L4-L4";
+  barItem.parentNode = bar;
+  bar.trigger("click", { target: barItem });
+  assert.ok(nitEntry.el.classList, "点击跳转开泡(聚焦语义不炸)");
+
+  // NOTES 接点:draft tab "编辑文档" → 建/开 notes.<draft> 的 doc tab
+  const notesBtn = new StubEl("button");
+  notesBtn.dataset.openNotes = "1";
+  notesBtn.parentNode = doc.body;
+  // 激活 draft tab(d:draft:lab.dinner 已在 tabs 里)
+  probe.state.active = "d:draft:lab.dinner";
+  doc.trigger("click", { target: notesBtn });
+  await tick();
+  await tick();
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/docs" && c.method === "POST" &&
+      (c.body ?? "").includes("notes.lab.dinner")),
+    "首开建 notes.lab.dinner(空种子,只读+另存)");
+  assert.equal(probe.state.active, "d:doc:notes.lab.dinner", "打开 notes doc tab");
 }
 
 console.log("platform.test.mjs: all assertions passed");

@@ -91,7 +91,7 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
   /* 开气泡(多条并存,各锚点独立;种子 = 持久化消息流,开关不丢) */
   function openBubble(anchor, blockEl) {
     const existing = bubbles.get(anchor);
-    if (existing) return existing.bubble;
+    if (existing) return existing;
     const bubbleHost = document.createElement("div");
     bubbleHost.dataset.anchor = anchor; // 重渲后按引用挂回(见 renderPreview)
     blockEl.appendChild(bubbleHost);
@@ -112,8 +112,7 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
         },
       ],
     });
-    bubble.on("submit", async ({ anchor: a, text, cascade }) => {
-      // comment.send(§3 run+cascade):出海在父级(本组件)——专属端点
+    bubble.on("submit", async ({ anchor: a, text, cascade }) => {      // comment.send(§3 run+cascade):出海在父级(本组件)——专属端点
       const anchorStr = typeof a === "string" ? a : (a?.path ?? "");
       try {
         const res = await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/comment`, {
@@ -151,9 +150,10 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
         bubble.receiveReply(`(${err.message ?? err})`);
       }
     });
-    bubbles.set(anchor, { bubble, el: bubbleHost, anchor });
+    const entry = { bubble, el: bubbleHost, anchor };
+    bubbles.set(anchor, entry);
     bubble.focus();
-    return bubble;
+    return entry;
   }
 
   function renderPreview() {
@@ -202,10 +202,61 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     dirtyEl.dataset.on = dirty ? "1" : "0";
   }
 
+  /* D3 气泡栏:聚合视图(锚点/severity/未读计数,点击跳转开泡) */
+  function renderBubbleBar() {
+    const bar = host.querySelector("[data-doc-bubblebar]");
+    if (!bar) return;
+    const entries = [...bubbles.values()];
+    bar.innerHTML = entries.length
+      ? `<div class="doc-bar-title">${esc(copy("platform.doc.bubblebar"))}</div>` +
+        entries
+          .map((entry) => {
+            const unread = entry.bubble.state.messages.filter((m) => m.role === "assistant").length;
+            const sev = entry.severity ?? "";
+            return (
+              `<button class="doc-bar-item" data-bar-anchor="${esc(entry.anchor)}">` +
+              (sev ? `<span class="doc-sev" data-sev="${esc(sev)}">●</span>` : "") +
+              `<span class="mono">${esc(entry.anchor.replace("doc.md#", ""))}</span>` +
+              (unread ? `<span class="doc-bar-n">${unread}</span>` : "") +
+              `</button>`
+            );
+          })
+          .join("")
+      : "";
+  }
+
+  /* D3 评审流:[评审] → review 端点 → 批注集自动挂段(severity 着色) */
+  async function runReview() {
+    const btn = host.querySelector("[data-doc-review]");
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/review`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+      const body = await res.json();
+      // 气泡雨:逐条挂段(锚点块在就开泡并注入批注;块不在记挂空)
+      let hung = 0;
+      for (const note of body.notes ?? []) {
+        const block = [...preview.children].find((c) => c.dataset?.anchor === note.anchor);
+        const entry = openBubble(note.anchor, block ?? preview);
+        entry.severity = note.severity;
+        entry.el.classList.add(`doc-sev-${note.severity}`);
+        entry.bubble.receiveReply(note.text);
+        hung += 1;
+      }
+      renderBubbleBar();
+      return hung;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   function refresh() {
     renderPreview();
     renderOutline();
     renderStatus();
+    renderBubbleBar();
   }
 
   textarea.addEventListener("input", () => {
@@ -237,6 +288,19 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     if (anchor) openBubble(anchor, block);
   });
   host.addEventListener("click", (e) => {
+    // D3:[评审] → review 流(批注集自动挂段)
+    if (e.target.closest("[data-doc-review]")) return runReview();
+    // D3:气泡栏点击 → 跳转开泡
+    const barItem = e.target.closest("[data-bar-anchor]");
+    if (barItem) {
+      const entry = bubbles.get(barItem.dataset.barAnchor);
+      if (entry) {
+        const block = [...preview.children].find((c) => c.dataset?.anchor === entry.anchor);
+        if (block) block.scrollIntoView?.();
+        entry.bubble.focus();
+      }
+      return;
+    }
     const mode = e.target.closest("[data-view-mode]")?.dataset.viewMode;
     if (mode) {
       cols.dataset.view = mode; // 分屏 toggle(edit/preview/split;CSS 驱动)
@@ -265,6 +329,8 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
       renderStatus();
     },
     refresh,
+    runReview,
+    bubbles,
     editor,
     setText(text) {
       textarea.value = text ?? "";

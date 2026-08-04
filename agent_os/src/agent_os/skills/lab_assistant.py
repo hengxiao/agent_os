@@ -28,6 +28,53 @@ COMMENTER_NAME = "skill.dev.commenter"
 #: 文档评论技能名(D2,docs/DOC-EDITOR.md §5;commenter 先例:白名单空,只读级联)
 DOC_COMMENTER_NAME = "skill.dev.doc_commenter"
 
+#: 文档评审技能名(D3,docs/DOC-EDITOR.md §5;全文评审 → 锚点批注集)
+DOC_REVIEWER_NAME = "skill.dev.doc_reviewer"
+
+_DOC_REVIEWER_PROMPT = """你是文档评审助手。输入给你三样:
+
+- text:Markdown 文档全文(带行号语义,锚点按 doc.md#L<start>-L<end> 给);
+- outline:大纲(标题列表);
+- diff:最近版本到当前的全文差异(有则,没有为空)。
+
+任务:通读后输出**锚点批注集**——只输出一个 JSON,不要别的文字:
+{{"notes": [{{"anchor": "doc.md#L<start>-L<end>", "severity": "must|should|nit", "text": "批注一句话"}}]}}
+
+纪律:
+1. **只读**:你没有任何工具——只能读输入,不能改文档;
+2. anchor 给**段级**行号区间(别给单行碎片,也别给全文);
+3. severity:must = 不改就有错/有缺失,should = 建议改,nit = 吹毛求疵;
+4. 数量控制(≤8 条,重要的先来);不编造输入里没有的事实。"""
+
+
+def doc_reviewer_skill() -> Skill:
+    """文档评审技能(D3;tools=[] —— 只读,输出锚点批注集,不能改文档)。"""
+    manifest = SkillManifest(
+        name=DOC_REVIEWER_NAME,
+        version="0.1.0",
+        description=(
+            "文档评审助手。Use when 通读 Markdown 文档产出段落级批注集;"
+            "Do not use when 要直接改文档(它没有写面,也不能写)。"
+        ),
+        inputs={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "文档全文"},
+                "outline": {"type": "array", "description": "大纲(标题列表)"},
+                "diff": {"type": "string", "description": "最近版本 diff(可空)"},
+            },
+            "required": ["text"],
+        },
+        outputs={
+            "type": "object",
+            "properties": {"notes": {"type": "array"}},
+            "required": ["notes"],
+        },
+        permissions=SkillPermissions(tools=[], skills=[]),  # 白名单收口:只读级联内容
+        limits=SkillLimits(max_steps=4, timeout=90),
+    )
+    return Skill(manifest=manifest, prompt=_DOC_REVIEWER_PROMPT)
+
 _DOC_COMMENTER_PROMPT = """你是文档评论助手。用户在 Markdown 文档的某个段落上挂了气泡,输入给你:
 
 - anchor:段落锚点(doc.md#L<start>-L<end>,行号区间);

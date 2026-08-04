@@ -300,4 +300,7 @@ export const COPY = {
   "platform.doc.rewind.confirm": "click again to confirm rewind",
   "platform.doc.hasbubbles": "has discussions",
   "platform.doc.apply": "apply",
+  "platform.doc.review": "review",
+  "platform.doc.notes": "edit doc",
+  "platform.doc.bubblebar": "discussions",
 };

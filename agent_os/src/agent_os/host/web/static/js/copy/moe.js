@@ -293,4 +293,7 @@ export const COPY = {
   "platform.doc.rewind.confirm": "再点一次确认回退",
   "platform.doc.hasbubbles": "有讨论喵",
   "platform.doc.apply": "用上",
+  "platform.doc.review": "评审一下",
+  "platform.doc.notes": "编辑文档",
+  "platform.doc.bubblebar": "讨论喵",
 };

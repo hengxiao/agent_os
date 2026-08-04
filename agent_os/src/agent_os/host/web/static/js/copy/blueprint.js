@@ -294,4 +294,7 @@ export const COPY = {
   "platform.doc.rewind.confirm": "再点一次确认复旧",
   "platform.doc.hasbubbles": "有评议",
   "platform.doc.apply": "施用",
+  "platform.doc.review": "评审",
+  "platform.doc.notes": "修订文档",
+  "platform.doc.bubblebar": "评议",
 };

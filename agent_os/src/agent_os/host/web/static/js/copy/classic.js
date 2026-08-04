@@ -302,4 +302,7 @@ export const COPY = {
   "platform.doc.rewind.confirm": "再点一次确认恢复",
   "platform.doc.hasbubbles": "有讨论",
   "platform.doc.apply": "应用",
+  "platform.doc.review": "评审",
+  "platform.doc.notes": "编辑文档",
+  "platform.doc.bubblebar": "讨论",
 };

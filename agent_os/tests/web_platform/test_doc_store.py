@@ -320,3 +320,136 @@ def test_comment_apply_human_gated(full_client):
     bubbles = full_client.get("/platform/api/docs/design.new_ui/bubbles").json()
     flow = next(b for b in bubbles if b["anchor"] == "doc.md#L2-L2")
     assert flow["messages"][-1]["role"] == "system", "apply 留痕(system 消息)"
+
+
+# ---------------------------------------------------------------------------
+# D3:doc_reviewer 白名单 / 全文评审 / NOTES.md 写回(§5/§6)
+# ---------------------------------------------------------------------------
+
+
+def test_doc_reviewer_whitelist_empty():
+    """doc_reviewer tools/skills 全空(白名单收口:只读,不能改文档)。"""
+    from agent_os.skills.lab_assistant import DOC_REVIEWER_NAME, doc_reviewer_skill
+
+    skill = doc_reviewer_skill()
+    assert skill.manifest.name == DOC_REVIEWER_NAME
+    assert skill.manifest.permissions.tools == []
+    assert skill.manifest.permissions.skills == []
+
+
+def doc_review_brain(req):
+    """doc_reviewer(scripted):回锚点批注集;录制输入供断言。"""
+    import json as _json
+
+    from agent_os.api.v1 import ChatResponse, Message, Role
+
+    doc_review_brain.seen.append(req)
+    return ChatResponse(
+        message=Message(
+            role=Role.ASSISTANT,
+            content=_json.dumps({
+                "notes": [
+                    {"anchor": "doc.md#L2-L2", "severity": "must", "text": "这段绕"},
+                    {"anchor": "doc.md#L4-L4", "severity": "nit", "text": "可精简"},
+                    {"anchor": "doc.md#L99-L99", "severity": "must", "text": "越界批注(块不在也应落盘)"},
+                ]
+            }),
+        ),
+        finish_reason="stop",
+    )
+
+
+doc_review_brain.seen = []
+
+
+def _review_client(tmp_path):
+    import textwrap
+
+    from fastapi.testclient import TestClient
+
+    from agent_os.host.web.app import create_app
+
+    (tmp_path / "skills.yaml").write_text("skills: []\n", encoding="utf-8")
+    cfg = tmp_path / "agent-os.toml"
+    cfg.write_text(
+        textwrap.dedent(
+            """
+            [run]
+            model = "mock/x"
+            compression = "off"
+            [providers.mock]
+            brain = "tests.web_platform.test_doc_store:doc_review_brain"
+            [tools]
+            builtins = true
+            python_exec = "off"
+            [skills]
+            path = "{skills}"
+            [lab]
+            drafts_root = "{drafts}"
+            """
+        ).format(skills=tmp_path / "skills.yaml", drafts=tmp_path / "drafts"),
+        encoding="utf-8",
+    )
+    return TestClient(create_app(cfg, artifacts_root=tmp_path / "runs"))
+
+
+def test_review_full_chain(tmp_path):
+    """review:信封(全文+大纲+最近 diff)→ 批注集 → 落 review/<ts>.json +
+    自动挂段(bubbles 带 severity);diff(v-1→working)进技能输入。"""
+    doc_review_brain.seen.clear()
+    client = _review_client(tmp_path)
+    client.post("/platform/api/docs", json={"name": "design.new_ui", "title": "新 UI",
+                                             "text": "# 概述\n首段内容\n## 设计\n次段内容\n"})
+    inst = client.post("/platform/api/apps/spawn", json={
+        "kind": "doc", "ref": "design.new_ui",
+        "state": {"name": "design.new_ui", "text": "", "dirty": False, "savedAt": 0,
+                  "view": "split", "versions": [], "bubbles": []},
+    }).json()["instance"]["id"]
+    client.post(f"/platform/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})
+    client.post(f"/platform/api/apps/{inst}/actions/doc.save",
+                json={"surface": "tab", "args": {"text": "# 概述\n首段改长了一些绕话\n## 设计\n次段内容\n"}})
+
+    r = client.post("/platform/api/docs/design.new_ui/review")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["notes"]) == 3, "批注集返回(含越界锚点——服务端只验格式)"
+    assert body["review_file"].endswith(".json"), "review 落盘"
+    seen_text = "\n".join(m.content for m in doc_review_brain.seen[-1].messages)
+    assert '"outline"' in seen_text, "大纲进信封"
+    assert '"diff"' in seen_text, "最近 diff(v-1→working)进信封"
+    # 落盘可读 + 自动挂段(severity 随消息)
+    bubbles = client.get("/platform/api/docs/design.new_ui/bubbles").json()
+    by_anchor = {b["anchor"]: b for b in bubbles}
+    assert by_anchor["doc.md#L2-L2"]["messages"][-1]["severity"] == "must", "severity 着色随流"
+    assert by_anchor["doc.md#L4-L4"]["messages"][-1]["severity"] == "nit"
+    assert by_anchor["doc.md#L99-L99"], "越界锚点也挂(服务端不验存在性——前端挂空处理)"
+    flow_texts = [m["text"] for b in bubbles for m in b["messages"] if b.get("anchor") == "doc.md#L2-L2"]
+    assert "这段绕" in flow_texts
+
+
+def test_notes_writeback_to_draft(tmp_path):
+    """NOTES 接点:notes.<draft> 保存 → 草稿 manifest.notes 写回(不碰生产)。"""
+    client = _review_client(tmp_path)
+    client.post("/api/lab/drafts", json={"name": "lab.draft1"})
+    client.post("/platform/api/docs", json={"name": "notes.lab.draft1", "title": "lab.draft1 笔记",
+                                             "text": "# 初稿笔记\n"})
+    inst = client.post("/platform/api/apps/spawn", json={
+        "kind": "doc", "ref": "notes.lab.draft1",
+        "state": {"name": "notes.lab.draft1", "text": "", "dirty": False, "savedAt": 0,
+                  "view": "split", "versions": [], "bubbles": []},
+    }).json()["instance"]["id"]
+    r = client.post(f"/platform/api/apps/{inst}/actions/doc.save",
+                    json={"surface": "tab", "args": {"text": "# 设计要点\n第二条\n"}})
+    assert r.status_code == 200, r.text
+    draft = client.get("/api/lab/drafts/lab.draft1").json()
+    assert draft["manifest"].get("notes") == "# 设计要点\n第二条\n", "写回草稿 manifest.notes"
+    # 草稿不存在时保存仍成功(跳过写回,不炸)
+    client.post("/platform/api/docs", json={"name": "notes.lab.ghost", "text": "x\n"})
+    inst2 = client.post("/platform/api/apps/spawn", json={
+        "kind": "doc", "ref": "notes.lab.ghost",
+        "state": {"name": "notes.lab.ghost", "text": "", "dirty": False, "savedAt": 0,
+                  "view": "split", "versions": [], "bubbles": []},
+    }).json()["instance"]["id"]
+    r2 = client.post(f"/platform/api/apps/{inst2}/actions/doc.save",
+                     json={"surface": "tab", "args": {"text": "y\n"}})
+    assert r2.status_code == 200, "草稿缺失时保存跳过写回(只读+另存模式)"

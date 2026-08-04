@@ -727,3 +727,33 @@ body[data-icon-mode="1"] .pf-tray-label { display: none; }
 .doc-para:hover .doc-anchor-btn { opacity: 1; }
 .doc-anchor-btn:hover { color: var(--live); opacity: 1; }
 .doc-anchor-btn:focus-visible { outline: var(--stroke-strong) solid var(--live); opacity: 1; }
+
+/* ── D3:severity 着色与气泡栏(docs/DOC-EDITOR.md §5;全契约 token)── */
+.doc-sev { font-size: var(--text-2xs); }
+.doc-sev[data-sev="must"] { color: var(--danger); }
+.doc-sev[data-sev="should"] { color: var(--perm-write); }
+.doc-sev[data-sev="nit"] { color: var(--fg-2); }
+.doc-sev-must { border-left: var(--stroke-strong) solid var(--danger); }
+.doc-sev-should { border-left: var(--stroke-strong) solid var(--perm-write); }
+.doc-sev-nit { border-left: var(--stroke-strong) solid var(--line); }
+.doc-bubblebar {
+  border-left: var(--stroke) solid var(--line);
+  overflow-y: auto; font-size: var(--text-2xs); max-width: 220px;
+}
+.doc-bar-title { color: var(--fg-2); padding: var(--s1) var(--s2); }
+.doc-bar-item {
+  display: flex; align-items: center; gap: var(--s1); width: 100%;
+  border: 0; background: transparent; color: var(--fg-1);
+  font-size: var(--text-2xs); font-family: inherit; text-align: left;
+  cursor: pointer; padding: var(--s1) var(--s2); border-radius: var(--r-sm);
+}
+.doc-bar-item:hover { background: var(--bg-2); }
+.doc-bar-item:focus-visible { outline: var(--stroke-strong) solid var(--live); }
+.doc-bar-n {
+  margin-left: auto; background: var(--bg-2); color: var(--fg-2);
+  border-radius: var(--r-sm); padding: 0 var(--s1);
+}
+.doc-cols[data-view="split"] { grid-template-columns: 160px 1fr 1fr 200px; }
+.doc-cols[data-view="edit"] { grid-template-columns: 160px 1fr; }
+.doc-cols[data-view="edit"] .doc-bubblebar { display: none; }
+.doc-cols[data-view="preview"] .doc-bubblebar { display: none; }

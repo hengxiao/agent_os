@@ -1363,6 +1363,23 @@ function bind() {
     if (decision) return answerDecision(decision);
     const dbg = e.target.closest("[data-debug-run]");
     if (dbg) return openDebug(dbg.dataset.debugRun);
+    // D3 lab NOTES.md 接点:draft tab "编辑文档" → 建/开 notes.<draft> 的 doc tab
+    const notes = e.target.closest("[data-open-notes]");
+    if (notes) {
+      return (async () => {
+        const tab = state.tabs.find((t) => t.id === state.active);
+        const draft = tab?.ref ?? "";
+        if (!draft) return;
+        const name = `notes.${draft}`;
+        // 首开建文档(空种子;已存在 409 即直接开——只读+另存模式,不碰生产)
+        await fetch("/platform/api/docs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, title: `${draft} 笔记`, text: `# ${draft} 笔记\n` }),
+        }).catch(() => {});
+        await openDetail("doc", name, {});
+      })();
+    }
     const tAct = e.target.closest("[data-tab-act]");
     if (tAct) return tabAction(tAct);
     const act = e.target.closest("[data-card-act]");

@@ -132,8 +132,42 @@ docs/<name>/
 
 | D1 ✅ | doc_store + doc app kind + 编辑器(分屏/大纲/dirty/save/snapshot/rewind) |
 | D2 ✅ | 段落锚点 + W-bubble 接入(comment.send/apply)+ doc_commenter 技能 |
-| D3 | 全文评审(锚点批注集自动挂段)+ lab NOTES.md 接点 |
+| D3 ✅ | 全文评审(锚点批注集自动挂段)+ lab NOTES.md 接点 |
 | D4 | 导出(.md/NOTES 写回)+ 对话卡片 + 打磨 |
+
+> **D3 实现注**(2026-08-03,分支 debugger):
+> `doc_reviewer_skill`(tools=[];输入 text/outline/diff,输出 {notes:
+> [{anchor,severity,text}]});`POST /api/docs/{name}/review`(信封 =
+> 全文+大纲+最近 diff[difflib 行级变体行,封顶 4000 字符]→ 批注集
+> 校验[锚点格式+severity 白名单]→ 落 review/<ts>.json + 逐条挂
+> bubbles[severity 随消息]);前端 runReview 气泡雨(severity token 着色
+> must=danger/should=perm-write/nit=fg-2;越界锚点前端挂空不建泡)+
+> 气泡栏聚合视图(锚点/severity/assistant 计数,点击跳转聚焦);
+> NOTES 接点 = draft tab [编辑文档] → 建/开 `notes.<draft>` doc tab
+> (只读+另存:首开空种子,绝不写生产),保存时经 `_act_doc_save` 把
+> 全文**写回草稿 manifest.notes 键**(未知键容忍已验证,随草稿版本走;
+> 草稿缺失跳过不炸)。
+
+### 架构测试记录(D3 增补;2026-08-03)
+
+**顺畅点**:
+1. **NOTES 写回零新通道**:manifest 未知键容忍(事先实测)让 notes 成为
+   草稿的普通元数据——版本快照/包闭包/diff 语义全部自动继承,没有发明
+   第二种文档存储。这是对"数据模型先行"的一次正收益验证。
+2. **批注集 = 消息流的一种角色**:评审挂段复用 D2 的 bubbles/ 与 W-bubble
+   渲染,只加 `severity` 字段随消息走——store/端点/前端三处各加 ~5 行,
+   协议零改动。消息流的开放字段(role/severity/review)证明比预定义
+   schema 耐生长。
+
+**弯腰点**:
+1. **severity 白名单校验在服务端,前端着色靠类名约定**(doc-sev-<sev>)。
+   三档语义两端各一份(后端校验集/前端类名+copy)。弯法:常量小,手写
+   对齐。建议:留特例(severity 是 doc 域概念,不进 APP-MODEL;第四个
+   消费方出现时进 widgets 的 badge 控件)。
+2. **评审输出 {notes} 的格式校验偏"宽容丢弃"**(不合条静默丢,不炸)。
+   弯法:过滤式校验。建议:留特例——LLM 输出的纪律应该是"能救则救,
+   救不了就丢并记录",本期丢了不记录(logger 都省了,因为批注集本身
+   落盘 review/<ts>.json 留证原始面)。
 
 > **D2 实现注**(2026-08-03,分支 debugger):
 > `doc_commenter_skill`(skills/lab_assistant.py;tools=[] 白名单空,

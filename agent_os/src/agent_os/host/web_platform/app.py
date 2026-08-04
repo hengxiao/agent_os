@@ -58,8 +58,10 @@ from agent_os.skills.gate import GateError, validate_draft
 from agent_os.skills.iterate import edit_members, run_iterate
 from agent_os.skills.lab_assistant import (
     DOC_COMMENTER_NAME,
+    DOC_REVIEWER_NAME,
     ITERATOR_NAME,
     doc_commenter_skill,
+    doc_reviewer_skill,
     iterator_skill,
 )
 from agent_os.skills.package import promote_package
@@ -344,6 +346,81 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             return doc_store.read_bubbles(name)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/docs/{name}/review")
+    def doc_review(name: str) -> dict[str, Any]:
+        """全文评审(D3,docs/DOC-EDITOR.md §5;exec: run + cascade):
+        信封 = 全文 + 大纲 + 最近 diff(v-1 → working,有版本时)→ doc_reviewer
+        (tools=[] 白名单空)→ 锚点批注集;**自动挂段**(每条批注进对应锚点的
+        气泡流,带 severity)+ 落 review/<ts>.json(历史可查)。"""
+        try:
+            doc = doc_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        text = doc["text"]
+        outline = [
+            {"level": len(m.group(1)), "text": m.group(2).strip()}
+            for ln in text.splitlines()
+            if (m := re.match(r"^(#{1,6})\s+(.*)$", ln))
+        ]
+        # 最近 diff(v-1 → working;difflib 行级,变体行才进,封顶 4000 字符)
+        diff_text = ""
+        versions = doc_store.list_versions(name)
+        if versions:
+            vdoc = Path(artifacts_root) / "docs" / name / "versions" / versions[0]["version"] / "doc.md"
+            try:
+                old = vdoc.read_text(encoding="utf-8")
+                if old != text:
+                    import difflib
+
+                    diff_text = "\n".join(
+                        ln
+                        for ln in difflib.unified_diff(old.splitlines(), text.splitlines(), lineterm="", n=0)
+                        if ln.startswith(("+", "-")) and not ln.startswith(("+++", "---"))
+                    )[:4000]
+            except OSError:
+                diff_text = ""
+        try:
+            kernel = manager.assemble_lab_kernel(
+                OverlaySkillRegistry(
+                    manager.shared_skills_registry(),
+                    lab_store,
+                    extra={DOC_REVIEWER_NAME: doc_reviewer_skill()},
+                )
+            )
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"评审助手不可用: {e}") from e
+        try:
+            result = asyncio.run(
+                kernel.run(DOC_REVIEWER_NAME, {"text": text, "outline": outline, "diff": diff_text})
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"评审助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+        # 批注集校验(锚点格式 + severity 白名单 + text 非空;不合条丢弃,不炸)
+        notes = []
+        for note in (result or {}).get("notes") or []:
+            if (
+                isinstance(note, dict)
+                and _ANCHOR_RE.match(str(note.get("anchor") or ""))
+                and note.get("severity") in ("must", "should", "nit")
+                and str(note.get("text") or "").strip()
+            ):
+                notes.append(
+                    {"anchor": str(note["anchor"]), "severity": note["severity"], "text": str(note["text"]).strip()}
+                )
+        fname = doc_store.save_review(name, notes)
+        # 气泡雨:每条批注自动挂进对应锚点的气泡流(severity 随消息)
+        for note in notes:
+            doc_store.save_bubble(
+                name,
+                note["anchor"],
+                {"role": "assistant", "text": note["text"], "severity": note["severity"], "review": fname},
+            )
+        return {"notes": notes, "review_file": fname}
 
     @app.post("/api/docs/{name}/comment")
     def doc_comment(name: str, body: DocCommentBody) -> dict[str, Any]:
@@ -1098,9 +1175,27 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     # ── D1(docs/DOC-EDITOR.md §2/§3):doc 的 endpoint handlers(DocStore 薄转发) ──
 
     def _act_doc_save(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.doc.save:保存全文(.bak 同 DraftStore 惯例);state 回写 dirty/savedAt。"""
+        """platform.doc.save:保存全文(.bak 同 DraftStore 惯例);state 回写 dirty/savedAt。
+
+        D3 NOTES 接点:``notes.<draft>`` 名空间的文档保存时,把全文**写回草稿
+        manifest 的 notes 键**(未知键容忍已验证,随草稿版本走;写不到 = 草稿
+        不存在则跳过,只读+另存模式——绝不写生产)。
+        """
         name = str(payload.get("name") or "")
-        doc = doc_store.save(name, str(payload.get("text") or ""))
+        text = str(payload.get("text") or "")
+        doc = doc_store.save(name, text)
+        if name.startswith("notes.") and lab_store is not None:
+            draft = name[len("notes."):]
+            try:
+                d = lab_store.read(draft)
+                lab_store.save(
+                    draft,
+                    manifest={**(d["manifest"] or {}), "notes": text},
+                    prompt=d["prompt"],
+                    handler=d["handler"],
+                )
+            except (FileNotFoundError, ValueError) as e:
+                _log.info("NOTES 写回跳过(草稿 %s 不可读): %s", draft, e)
         return {
             "ok": True,
             "text": "已保存。",

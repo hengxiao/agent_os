@@ -280,6 +280,7 @@ export function draftTabHtml(data) {
     `<div class="pf-card-actions">` +
     `<button class="btn" data-tab-act="draft.check">${esc(copy("platform.draft.check"))}</button>` +
     `<button class="btn" data-tab-act="draft.promote">${esc(copy("platform.draft.promote"))}</button>` +
+    `<button class="btn" data-open-notes="1">${esc(copy("platform.doc.notes"))}</button>` +
     `<a class="btn" href="/#/lab/${encodeURIComponent(name)}">${esc(copy("platform.draft.open"))}</a>` +
     `</div>` +
     `<div class="pf-sec">prompt</div>` +
@@ -323,12 +324,15 @@ export function docTabHtml(doc) {
     `<select class="input" data-rewind-version="1" aria-label="${esc(copy("platform.doc.rewind"))}">${versions}</select>` +
     `<button class="btn" data-tab-act="doc.rewind" data-doc-rewind="1">${esc(copy("platform.doc.rewind"))}</button>` +
     `<button class="btn" data-tab-act="doc.export">${esc(copy("platform.doc.export"))}</button>` +
+    `<span class="pf-spacer"></span>` +
+    `<button class="btn" data-doc-review="1">${esc(copy("platform.doc.review"))}</button>` +
     `</div>` +
     `<div class="doc-cols" data-view="split">` +
     `<aside class="doc-outline" data-doc-outline="1" aria-label="${esc(copy("platform.doc.outline"))}"></aside>` +
     `<div class="doc-edit"><textarea class="mono" data-doc-text="1" rows="18"` +
     ` aria-label="${esc(copy("platform.doc.text"))}"></textarea></div>` +
     `<div class="doc-preview" data-doc-preview="1"></div>` +
+    `<aside class="doc-bubblebar" data-doc-bubblebar="1" aria-label="${esc(copy("platform.doc.bubblebar"))}"></aside>` +
     `</div>` +
     `<div class="doc-status">` +
     `<span data-doc-chars="1"></span> · <span data-doc-dirty="1"></span> · ` +

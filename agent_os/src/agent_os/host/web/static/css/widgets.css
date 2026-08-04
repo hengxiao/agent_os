@@ -152,3 +152,14 @@
 .wd-chart-table { border-collapse: collapse; font-size: var(--text-2xs); }
 .wd-chart-table th, .wd-chart-table td { border: var(--stroke) solid var(--line); padding: 0 var(--s2); }
 .wd-chart-wrap .wd-chart-bar { display: flex; gap: var(--s1); margin-bottom: var(--s1); }
+
+/* ── W5.2:W-table/W-kv/W-form/W-list 新形态补充(全契约 token)── */
+/* W-table:行首拖柄 + 列头类型徽标(§2.3) */
+.wd-drag { color: var(--fg-2); cursor: grab; user-select: none; font-size: var(--text-2xs); }
+th .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(--s1); }
+/* W-kv:重复 key 行黄底警示(§2.4;警告态非硬拦) */
+.wd-kv-warn { background: color-mix(in srgb, var(--warn) 14%, transparent); border-radius: var(--r-sm); }
+/* W-form:错误字段红边(§2.5) */
+.wd-field-err > .input, .wd-field-err > select { border-color: var(--danger); }
+/* W-list:选中行左色条(§2.6;--live) */
+.wd-list-item[aria-selected="true"] { box-shadow: inset 3px 0 0 var(--live); }

@@ -1,13 +1,16 @@
-/* W-kv — key-value editor(docs/WIDGETS.md §2;table 的两列特化:
-   attrs/metadata/配置映射)。
+/* W-kv 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.4;W5.2 新形态:自渲染)。
 
    state{entries: [{key, value}], allow_dup: bool};
    actions 全 local:add/remove/set;**重复 key 即时警示**(警告态非硬拦);
-   序列化往返(entries ↔ object)。 */
+   序列化往返(entries ↔ object)。
+   铁律:本文件不拼 HTML(渲染全在 w-kv.render.js);零 fetch;事件上行;
+   监听一律委托在 host(重渲会换掉子元素)。 */
 
-import { copy } from "../themes.js";
 import { registerWidgetDef } from "./registry.js";
 import { createWidget } from "./widget.js";
+import { dupKeys, renderKvEditor } from "./w-kv.render.js";
+
+export { dupKeys }; // 兼容面(原从本文件导出;渲染面是纯函数唯一事实源)
 
 export const KV_EDITOR_DEF = registerWidgetDef({
   kind: "kv-editor",
@@ -22,11 +25,8 @@ export const KV_EDITOR_DEF = registerWidgetDef({
   events: ["change"],
   aria: { role: "group", keys: [] },
   surfaces: ["card", "tab"],
+  render: renderKvEditor, // W5.2:render 面进 def(registry 校验形态)
 });
-
-function esc(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 /* 序列化往返(重复 key 时后者覆盖——与 JSON object 语义一致,警示已提前给) */
 export function entriesToObject(entries) {
@@ -39,18 +39,6 @@ export function objectToEntries(obj) {
   return Object.entries(obj ?? {}).map(([key, value]) => ({ key, value }));
 }
 
-/* 重复 key 清单(警示面) */
-export function dupKeys(entries) {
-  const seen = new Set();
-  const dups = new Set();
-  for (const e of entries ?? []) {
-    if (!e.key) continue;
-    if (seen.has(e.key)) dups.add(e.key);
-    seen.add(e.key);
-  }
-  return [...dups];
-}
-
 export function mountKvEditor(host, { entries = [], allow_dup = false, path = "", onRegister = null, onUnregister = null } = {}) {
   const widget = createWidget(KV_EDITOR_DEF, {
     path,
@@ -58,25 +46,10 @@ export function mountKvEditor(host, { entries = [], allow_dup = false, path = ""
     onRegister,
     onUnregister,
   });
+  const render = () => {
+    host.innerHTML = renderKvEditor(widget.state);
+  };
   const _changed = () => widget.emit("change", { entries: widget.state.entries });
-
-  function render() {
-    const dups = new Set(dupKeys(widget.state.entries));
-    host.innerHTML =
-      widget.state.entries
-        .map(
-          (e, i) =>
-            `<div class="wd-kv-row" data-kv="${i}">` +
-            `<input class="input wd-kv-k" data-kv-key="${i}" value="${esc(e.key)}" aria-label="key"` +
-            `${dups.has(e.key) ? ' data-warn="1"' : ""}>` +
-            `<input class="input wd-kv-v" data-kv-value="${i}" value="${esc(e.value)}" aria-label="value">` +
-            `<button class="wd-row-x" data-kv-x="${i}" aria-label="✕">✕</button>` +
-            (dups.has(e.key) ? `<span class="wd-dup">${esc(copy("w.kv.dup"))}</span>` : "") +
-            `</div>`
-        )
-        .join("") +
-      `<button class="wd-add" data-kv-add>${esc(copy("w.kv.add"))}</button>`;
-  }
 
   widget.add = (entry = { key: "", value: "" }) => {
     widget.state.entries = [...widget.state.entries, { ...entry }];

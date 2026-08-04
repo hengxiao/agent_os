@@ -1,19 +1,21 @@
-/* W-list — 可选列表(docs/WIDGETS.md §2;草稿列表、技能选择、会话列表)。
+/* W-list 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.6;W5.2 新形态:自渲染)。
 
-   state{items: [{id, label, hint?, icon?}], selected: id|[ids], filter};
+   state{items: [{id, label, hint?, icon?}], selected: id|[ids], filter, focus, multi};
    actions 全 local:select/filter/activate(Enter);
    细节:搜索过滤(平列表,子串命中)、单/多选(multi)、键盘导航(↑↓ 移动焦点,
-   Enter = activate)、空态。 */
+   Enter = activate)、空态;过滤框重渲走选区保留(输入焦点不丢)。
+   铁律:本文件不拼 HTML(渲染全在 w-list.render.js);零 fetch;事件上行;
+   监听一律委托在 host(重渲会换掉子元素)。 */
 
-import { copy } from "../themes.js";
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { createWidget, preserveSelection } from "./widget.js";
+import { renderSelectList, visibleItems } from "./w-list.render.js";
 
 export const LIST_EDITOR_DEF = registerWidgetDef({
   kind: "select-list",
   v: 1,
   state_schema: { type: "object" },
-  state_defaults: { items: [], selected: null, filter: "" },
+  state_defaults: { items: [], selected: null, filter: "", focus: 0, multi: false },
   actions: [
     { id: "select", exec: "local", args_input: { id: { type: "string" } } },
     { id: "filter", exec: "local", args_input: { text: { type: "string" } } },
@@ -22,11 +24,8 @@ export const LIST_EDITOR_DEF = registerWidgetDef({
   events: ["select", "activate", "change"],
   aria: { role: "listbox", keys: ["ArrowUp", "ArrowDown", "Enter"] },
   surfaces: ["card", "tab"],
+  render: renderSelectList, // W5.2:render 面进 def(registry 校验形态)
 });
-
-function esc(s) {
-  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 /* 挂进宿主:items + multi(多选)+ selected(初始);filter 事件上行,
    select/activate 事件上行(父组件映射到自己的动作,§3) */
@@ -36,47 +35,20 @@ export function mountSelectList(
 ) {
   const widget = createWidget(LIST_EDITOR_DEF, {
     path,
-    state: { items: [...items], selected: multi ? (selected ?? []) : selected, filter: "" },
+    state: { items: [...items], selected: multi ? (selected ?? []) : selected, filter: "", focus: 0, multi },
     onRegister,
     onUnregister,
   });
-  let focusIdx = 0;
 
-  const visible = () =>
-    widget.state.items.filter((it) =>
-      !widget.state.filter || (it.label ?? it.id).toLowerCase().includes(widget.state.filter.toLowerCase())
-    );
-
+  const render = () => {
+    host.innerHTML = renderSelectList(widget.state);
+  };
+  // 过滤框是文本输入:重渲走选区/焦点保留(§1.3;单 input,selector 定位)
+  const renderPreserving = () => preserveSelection(host, render, { selector: "input" });
+  const _clampFocus = () => {
+    widget.state.focus = Math.min(widget.state.focus, Math.max(0, visibleItems(widget.state).length - 1));
+  };
   const _changed = () => widget.emit("change", { selected: widget.state.selected, filter: widget.state.filter });
-
-  function render() {
-    const vis = visible();
-    focusIdx = Math.min(focusIdx, Math.max(0, vis.length - 1));
-    const isSel = (id) =>
-      Array.isArray(widget.state.selected) ? widget.state.selected.includes(id) : widget.state.selected === id;
-    host.innerHTML =
-      `<div class="wd-list">` +
-      `<input class="input wd-list-filter" data-wl-filter placeholder="${esc(copy("w.list.filter"))}"` +
-      ` aria-label="${esc(copy("w.list.filter"))}" value="${esc(widget.state.filter)}">` +
-      (vis.length
-        ? `<div role="listbox" aria-multiselectable="${multi}">` +
-          vis
-            .map((it, i) => {
-              const sel = isSel(it.id);
-              return (
-                `<div class="wd-list-item" data-wl-item="${esc(it.id)}" role="option" tabindex="0"` +
-                ` aria-selected="${sel}"${i === focusIdx ? ' data-focus="1"' : ""}>` +
-                (it.icon ? `<span aria-hidden="true">${esc(it.icon)}</span>` : "") +
-                `<span class="wd-list-label">${esc(it.label ?? it.id)}</span>` +
-                (it.hint ? `<span class="wd-list-hint">${esc(it.hint)}</span>` : "") +
-                `</div>`
-              );
-            })
-            .join("") +
-          `</div>`
-        : `<div class="wd-empty">${esc(copy("w.list.empty"))}</div>`) +
-      `</div>`;
-  }
 
   widget.select = (id) => {
     if (multi) {
@@ -91,22 +63,27 @@ export function mountSelectList(
   };
   widget.filter = (text) => {
     widget.state.filter = text ?? "";
-    render();
+    _clampFocus();
+    renderPreserving();
     _changed();
   };
   widget.activate = (id = null) => {
-    const target = id ?? visible()[focusIdx]?.id ?? null;
+    const target = id ?? visibleItems(widget.state)[widget.state.focus]?.id ?? null;
     if (target !== null) widget.emit("activate", { id: target, selected: widget.state.selected });
   };
   widget.setItems = (items) => {
     widget.state.items = [...items];
+    _clampFocus();
     render();
   };
 
   host.addEventListener("click", (e) => {
     const item = e.target.closest("[data-wl-item]");
     if (item) {
-      focusIdx = visible().findIndex((it) => it.id === item.dataset.wlItem);
+      widget.state.focus = Math.max(
+        0,
+        visibleItems(widget.state).findIndex((it) => it.id === item.dataset.wlItem)
+      );
       widget.select(item.dataset.wlItem);
     }
   });
@@ -118,13 +95,13 @@ export function mountSelectList(
     if (e.target.closest("[data-wl-filter]")) widget.filter(e.target.value);
   });
   host.addEventListener("keydown", (e) => {
-    const vis = visible();
+    const vis = visibleItems(widget.state);
     if (e.key === "ArrowDown" && vis.length) {
-      focusIdx = Math.min(focusIdx + 1, vis.length - 1);
-      render();
+      widget.state.focus = Math.min(widget.state.focus + 1, vis.length - 1);
+      renderPreserving();
     } else if (e.key === "ArrowUp" && vis.length) {
-      focusIdx = Math.max(focusIdx - 1, 0);
-      render();
+      widget.state.focus = Math.max(widget.state.focus - 1, 0);
+      renderPreserving();
     } else if (e.key === "Enter") {
       widget.activate(); // Enter = 激活焦点项(焦点行/过滤框内同语义,§2 键盘路径)
     }

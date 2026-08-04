@@ -290,7 +290,8 @@ console.log("widgets.test.mjs: all assertions passed");
 /* ── W2:cascade(§16)/ W-table / W-kv / W-bubble ───────────────── */
 
 const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor,
-  entriesToObject, objectToEntries, dupKeys, mountBubble } =
+  entriesToObject, objectToEntries, dupKeys, mountBubble,
+  renderTableEditor, renderKvEditor } =
   await import("../js/widgets/index.js");
 
 {
@@ -345,6 +346,32 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
     callsites += (src.match(/registerContextProvider\(/g) || []).length;
   }
   assert.ok(callsites > 0, "registerContextProvider 有真实调用点(>0)");
+}
+
+{
+  // W5.2:四控件 render 纯函数(同 state 同 html、不改 state、XSS 转义、§2.3-2.6 语义类)
+  const st = { rows: [{ id: "r1", cells: { name: "甲<script>", n: 1, ok: true, kind: "a" } }], selected: ["r1"],
+    schema: { columns: [
+      { key: "name", type: "text", label: "名", required: true },
+      { key: "n", type: "number", label: "数" },
+      { key: "ok", type: "boolean", label: "好" },
+      { key: "kind", type: "enum", label: "类", options: ["a", "b"] },
+    ] } };
+  const ht = renderTableEditor(st);
+  assert.equal(ht, renderTableEditor(st), "table render 纯(同 state 同 html)");
+  assert.deepEqual(st.selected, ["r1"], "render 不改 state");
+  assert.ok(ht.includes("⠿"), "行首拖柄(§2.3)");
+  assert.ok(ht.includes("wd-type"), "列头类型徽标");
+  assert.ok(ht.includes("甲&lt;script&gt;"), "单元格值转义(XSS 不注入)");
+  assert.ok(ht.includes('data-selected="1"'), "选中行标记");
+  assert.ok(renderTableEditor({ rows: [], selected: [], schema: { columns: [] } }).includes("wd-empty"), "空态");
+
+  const sk = { entries: [{ key: "a", value: "1" }, { key: "a", value: "2" }] };
+  const hk = renderKvEditor(sk);
+  assert.equal(hk, renderKvEditor(sk), "kv render 纯");
+  assert.ok(hk.includes("wd-kv-warn"), "重复 key 行警示类(§2.4)");
+  assert.equal(sk.entries.length, 2, "render 不改 entries");
+  // (W-form/W-list 的 render 纯函数断言在下方 W3 区——import 分批,避免 TDZ)
 }
 
 {
@@ -496,8 +523,28 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
 /* ── W3:W-form / W-list / W-tree / W-date ─────────────────────── */
 
 const { mountFormEditor, validateValues, mountSelectList, mountNsTreeWidget,
-  mountDatePicker, parseIso, quickRange, rangeInverted, monthGridHtml } =
+  mountDatePicker, parseIso, quickRange, rangeInverted, monthGridHtml,
+  renderFormEditor, renderSelectList, visibleItems } =
   await import("../js/widgets/index.js");
+
+{
+  // W5.2:W-form/W-list render 纯函数(同 state 同 html、不改 state、语义类)
+  const sf = { values: { city: "" }, errors: { city: "必填" },
+    schema: { required: ["city"],
+      properties: { city: { type: "string" }, addr: { type: "object", properties: { zip: { type: "string" } } } } } };
+  const hf = renderFormEditor(sf);
+  assert.equal(hf, renderFormEditor(sf), "form render 纯(同 state 同 html)");
+  assert.ok(hf.includes("wd-field-err"), "错误字段红边类(§2.5)");
+  assert.ok(hf.includes("<fieldset"), "嵌套分组(§2.5)");
+
+  const sl = { items: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }],
+    selected: "a", filter: "", focus: 1, multi: false };
+  const hl = renderSelectList(sl);
+  assert.equal(hl, renderSelectList(sl), "list render 纯");
+  assert.ok(hl.includes('aria-selected="true"'), "选中行(左色条走 CSS)");
+  assert.ok(hl.includes('data-focus="1"'), "焦点行标记");
+  assert.deepEqual(visibleItems({ items: sl.items, filter: "alp" }).map((i) => i.id), ["a"], "visibleItems 纯过滤");
+}
 
 {
   // W-form:六类型生成/required 星标/嵌套/数组项/默认值与 skeletonFromSchema 一致

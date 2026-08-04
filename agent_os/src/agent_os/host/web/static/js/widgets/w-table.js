@@ -1,15 +1,17 @@
-/* W-table — table editor(docs/WIDGETS.md §2;tests 用例表/members 表/键值参数表)。
+/* W-table 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.3;W5.2 新形态:自渲染)。
 
    state{rows: [{id, cells: {...}}], selected: [ids], schema: {columns: [...]}};
    列定义驱动({key, type: text|number|boolean|enum, label, required?, options?});
    actions 全 local:add_row/remove_row/move_row/set_cell/remove_selected;
    细节:行 DnD 排序走 §15 标准 envelope({source, source_kind:"table-row",
    position:{before}})、新增行骨架、空态、role=grid + Alt+↑/↓ 键盘移行;
-   change 事件上行(数据下行,事件上行,§3)。 */
+   change 事件上行(数据下行,事件上行,§3)。
+   铁律:本文件不拼 HTML(渲染全在 w-table.render.js);零 fetch;事件上行;
+   监听一律委托在 host(重渲会换掉子元素)。 */
 
-import { copy } from "../themes.js";
 import { registerWidgetDef } from "./registry.js";
 import { createWidget } from "./widget.js";
+import { renderTableEditor } from "./w-table.render.js";
 
 const _DND_MIME = "application/x-agent-os-widget";
 
@@ -28,6 +30,7 @@ export const TABLE_EDITOR_DEF = registerWidgetDef({
   events: ["change"],
   aria: { role: "grid", keys: ["ArrowUp", "ArrowDown"] },
   surfaces: ["card", "tab"],
+  render: renderTableEditor, // W5.2:render 面进 def(registry 校验形态)
 });
 
 let _rowSeq = 0;
@@ -44,34 +47,6 @@ function _skeleton(col) {
   return "";
 }
 
-function _cellEditor(doc, col, row) {
-  const value = row.cells[col.key];
-  if (col.type === "boolean") {
-    return (
-      `<input type="checkbox" data-cell="${row.id}:${col.key}"${value ? " checked" : ""}` +
-      ` aria-label="${esc(col.label ?? col.key)}">`
-    );
-  }
-  if (col.type === "enum") {
-    return (
-      `<select data-cell="${row.id}:${col.key}" aria-label="${esc(col.label ?? col.key)}">` +
-      (col.options ?? [])
-        .map((o) => `<option value="${esc(o)}"${o === value ? " selected" : ""}>${esc(o)}</option>`)
-        .join("") +
-      `</select>`
-    );
-  }
-  const type = col.type === "number" ? "number" : "text";
-  return (
-    `<input class="input" type="${type}" data-cell="${row.id}:${col.key}" value="${esc(String(value ?? ""))}"` +
-    ` aria-label="${esc(col.label ?? col.key)}">`
-  );
-}
-
-function esc(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
 /* 挂进宿主:columns(列定义)+ rows(初始行;下行数据)+ path(§14 前缀)。
    返回 widget;父组件 on("change", ...) 收全部 mutation。 */
 export function mountTableEditor(host, { columns, rows = [], path = "", onRegister = null, onUnregister = null } = {}) {
@@ -85,34 +60,14 @@ export function mountTableEditor(host, { columns, rows = [], path = "", onRegist
     onRegister,
     onUnregister,
   });
-  const doc = host.ownerDocument;
-  const columns_ = columns;
 
+  const render = () => {
+    host.innerHTML = renderTableEditor(widget.state);
+  };
   const _changed = () => widget.emit("change", { rows: widget.state.rows });
 
-  function render() {
-    const { rows: rs, selected } = widget.state;
-    host.innerHTML =
-      (rs.length
-        ? `<table class="wd-table" role="grid"><thead><tr>${columns_
-            .map((c) => `<th>${esc(c.label ?? c.key)}${c.required ? " *" : ""}</th>`)
-            .join("")}<th></th></tr></thead><tbody>` +
-          rs
-            .map(
-              (r) =>
-                `<tr data-row="${r.id}"${selected.includes(r.id) ? ' data-selected="1"' : ""}` +
-                ` draggable="true" tabindex="0">` +
-                columns_.map((c) => `<td>${_cellEditor(doc, c, r)}</td>`).join("") +
-                `<td><button class="wd-row-x" data-row-x="${r.id}" aria-label="${esc(copy("w.table.del"))}">✕</button></td></tr>`
-            )
-            .join("") +
-          `</tbody></table>`
-        : `<div class="wd-empty">${esc(copy("w.table.empty"))}</div>`) +
-      `<button class="wd-add" data-wd-add>${esc(copy("w.table.add"))}</button>`;
-  }
-
   widget.add_row = (cells = {}) => {
-    widget.state.rows = [...widget.state.rows, _newRow(columns_, cells)];
+    widget.state.rows = [...widget.state.rows, _newRow(columns, cells)];
     render();
     _changed();
   };

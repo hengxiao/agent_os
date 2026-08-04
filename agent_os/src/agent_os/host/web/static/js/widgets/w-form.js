@@ -1,16 +1,19 @@
-/* W-form — schema 驱动表单(docs/WIDGETS.md §2;run.launch 参数面、skill inputs 填写)。
+/* W-form 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.5;W5.2 新形态:自渲染)。
 
    state{values, errors, schema};
    actions 全 local:set_field/validate/reset;
    字段类型:string/number/integer(minimum/maximum 约束)/boolean/enum/
    嵌套 object(缩进组)/array(数组项编辑器:逐项 input + ✕ + 添加);
    required 星标;默认值与 skeletonFromSchema 一致(复用 launch-dialog 纯函数);
-   errors 按字段路径即时提示(输入即清该字段错)。 */
+   errors 按字段路径即时提示(输入即清该字段错)。
+   铁律:本文件不拼 HTML(渲染全在 w-form.render.js);零 fetch;事件上行;
+   监听一律委托在 host(重渲会换掉子元素)。 */
 
 import { copy } from "../themes.js";
 import { skeletonFromSchema } from "../components/launch-dialog.js";
 import { registerWidgetDef } from "./registry.js";
 import { createWidget } from "./widget.js";
+import { renderFormEditor } from "./w-form.render.js";
 
 export const FORM_EDITOR_DEF = registerWidgetDef({
   kind: "schema-form",
@@ -25,11 +28,8 @@ export const FORM_EDITOR_DEF = registerWidgetDef({
   events: ["change", "submit"],
   aria: { role: "form", keys: ["Enter"] },
   surfaces: ["card", "tab"],
+  render: renderFormEditor, // W5.2:render 面进 def(registry 校验形态)
 });
-
-function esc(s) {
-  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 const _typeOf = (v) =>
   v === null ? "null" : Array.isArray(v) ? "array" : Number.isInteger(v) ? "integer" : typeof v;
@@ -97,75 +97,12 @@ export function mountFormEditor(host, { schema, values = null, path = "", onRegi
     onRegister,
     onUnregister,
   });
-  const doc = host.ownerDocument;
-  const defaults = structuredClone ? structuredClone(widget.state.values) : JSON.parse(JSON.stringify(widget.state.values));
+  const defaults = JSON.parse(JSON.stringify(widget.state.values));
 
+  const render = () => {
+    host.innerHTML = renderFormEditor(widget.state);
+  };
   const _changed = () => widget.emit("change", { values: widget.state.values });
-
-  function fieldHtml(spec, fPath, label) {
-    const value = _get(widget.state.values, fPath);
-    const err = widget.state.errors[fPath];
-    const reqMark = spec._required ? `<span class="wd-req" aria-hidden="true"> *</span>` : "";
-    const errHtml = err ? `<span class="wd-errbar">${esc(err)}</span>` : "";
-    const labelHtml = `<span class="lab-label">${esc(label ?? fPath)}${reqMark}</span>`;
-    if (spec?.type === "boolean") {
-      return (
-        `<label class="lab-field">${labelHtml}` +
-        `<input type="checkbox" data-f="${esc(fPath)}"${value ? " checked" : ""}></label>` + errHtml
-      );
-    }
-    if (spec?.type === "enum" || spec?.enum) {
-      const opts = spec.enum ?? spec.options ?? [];
-      return (
-        `<label class="lab-field">${labelHtml}` +
-        `<select data-f="${esc(fPath)}">` +
-        opts.map((o) => `<option value="${esc(o)}"${o === value ? " selected" : ""}>${esc(o)}</option>`).join("") +
-        `</select></label>` + errHtml
-      );
-    }
-    if (spec?.type === "object") {
-      const inner = Object.entries(spec.properties ?? {})
-        .map(([k, sub]) => {
-          const subSpec = { ...sub, _required: (spec.required ?? []).includes(k) };
-          return fieldHtml(subSpec, joinPath(fPath, k), k);
-        })
-        .join("");
-      return `<fieldset class="wd-nest"><legend>${esc(label ?? fPath)}</legend>${inner}</fieldset>` + errHtml;
-    }
-    if (spec?.type === "array") {
-      const items = Array.isArray(value) ? value : [];
-      const rows = items
-        .map((item, i) => {
-          const itemErr = widget.state.errors[`${fPath}/${i}`];
-          return (
-            `<div class="wd-arr-row">` +
-            `<input class="input" data-f="${esc(fPath)}/${i}" value="${esc(String(item ?? ""))}">` +
-            `<button class="wd-row-x" data-f-del="${esc(fPath)}/${i}" aria-label="✕">✕</button>` +
-            (itemErr ? `<span class="wd-errbar">${esc(itemErr)}</span>` : "") +
-            `</div>`
-          );
-        })
-        .join("");
-      return (
-        `<div class="wd-arr">${labelHtml}${rows}` +
-        `<button class="wd-add" data-f-add="${esc(fPath)}">${esc(copy("w.form.additem"))}</button></div>` + errHtml
-      );
-    }
-    const type = spec?.type === "integer" || spec?.type === "number" ? "number" : "text";
-    return (
-      `<label class="lab-field">${labelHtml}` +
-      `<input class="input" type="${type}" data-f="${esc(fPath)}" value="${esc(String(value ?? ""))}"></label>` + errHtml
-    );
-  }
-
-  function render() {
-    host.innerHTML =
-      `<div class="wd-form" role="form">` +
-      Object.entries(widget.state.schema?.properties ?? {})
-        .map(([k, spec]) => fieldHtml({ ...spec, _required: (widget.state.schema?.required ?? []).includes(k) }, k, k))
-        .join("") +
-      `</div>`;
-  }
 
   widget.set_field = (fPath, value) => {
     _set(widget.state.values, fPath, value);

@@ -155,7 +155,7 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 | 期 | 内容 | 验收 |
 |---|---|---|
 | W5.1 ✅ | 基座:render/logic 分文件模式 + `css/widgets.css` 拆出 + 更新协议校验(render 面)+ W-text/W-json 先迁(lab 编辑器行为测试不破) | 两控件自渲染;选区保留测试过 |
-| W5.2 | W-table/W-kv/W-form/W-list 迁移(装配点:run.launch 表单/lab 下拉不破) | 装配点测试过 |
+| W5.2 ✅ | W-table/W-kv/W-form/W-list 迁移(装配点:run.launch 表单/lab 下拉不破) | 装配点测试过 |
 | W5.3 | W-tree/W-date/W-chart/W-log/W-diff/W-md/W-bubble 迁移 | 全部 render 纯函数 |
 | W5.4 | 清扫:宿主手写桥接代码删除;架构测试记录更新(弯腰点 ①⑤ 关闭情况) | 无装饰器残留 |
 
@@ -180,6 +180,25 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 
 每控件迁移 = 逻辑文件(已有行为剥离)+ render 文件(新)+ 宿主装配点
 从"挂既有元素"改一行 mount——既有测试全绿是硬验收。
+
+> **W5.2 实现注**(2026-08-04,分支 debugger):
+> - **四控件迁移**:`w-table/w-kv/w-form/w-list` 各拆出
+>   `*.render.js`(`render<Kind>(state)→html` 纯函数;同 state 同 html /
+>   不改 state / XSS 转义,widgets.test.mjs 有单测),逻辑文件只留状态机/
+>   行为/事件,不拼 HTML;def 均挂 `render:`(registry 校验面生效)。
+> - **样板沿用 W5.1**:监听一律委托在 host;`preserveSelection` 用于
+>   W-list 过滤框与键盘导航的重渲(单 input,selector 定位);focus 从闭包
+>   变量收进 state(`state.focus`,渲染才可纯);`dupKeys` 移入 render 文件
+>   (w-kv.js re-export 兼容);`visibleItems` 提炼为渲染面纯函数(逻辑共用)。
+> - **§2.3-2.6 视觉补齐**(全 token,进 css/widgets.css):W-table 行首拖柄
+>   ⠿ + 列头类型徽标(.wd-drag/.wd-type);W-kv 重复 key 行黄底
+>   (.wd-kv-warn,--warn color-mix);W-form 错误字段红边(.wd-field-err,
+>   --danger);W-list 选中行左色条(aria-selected + inset --live)。
+> - **装配点**:run.launch 表单(mountFormEditor)与 lab 下拉
+>   (mountSelectList)签名零改动;行为测试(launch-dialog/lab/platform)
+>   未动一字,全绿。
+> - **排障**:测试文件分批 import 有 TDZ——render 纯函数断言按 import 批次
+>   分区放置(W2 区断 table/kv,W3 区断 form/list)。
 
 ## 4. 不做
 

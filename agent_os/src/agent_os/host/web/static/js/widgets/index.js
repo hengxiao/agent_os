@@ -17,10 +17,14 @@ export {
   mountJsonEditor,
 } from "./w-json.js";
 export { TABLE_EDITOR_DEF, mountTableEditor } from "./w-table.js";
+export { renderTableEditor } from "./w-table.render.js";
 export { KV_EDITOR_DEF, mountKvEditor, entriesToObject, objectToEntries, dupKeys } from "./w-kv.js";
+export { renderKvEditor } from "./w-kv.render.js";
 export { BUBBLE_DEF, mountBubble } from "./w-bubble.js";
 export { FORM_EDITOR_DEF, mountFormEditor, validateValues } from "./w-form.js";
+export { renderFormEditor } from "./w-form.render.js";
 export { LIST_EDITOR_DEF, mountSelectList } from "./w-list.js";
+export { renderSelectList, visibleItems } from "./w-list.render.js";
 export { TREE_EDITOR_DEF, mountNsTreeWidget } from "./w-tree.js";
 export { DATE_EDITOR_DEF, mountDatePicker, parseIso, quickRange, rangeInverted, monthGridHtml } from "./w-date.js";
 export { DIFF_VIEWER_DEF, mountDiffViewer, diffBodyHtml } from "./w-diff.js";

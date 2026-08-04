@@ -56,6 +56,47 @@ update(patch):
 **选区/焦点保留**是自渲染的必答题(不是可选项):update 前后存取
 selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 
+### 1.4 双形态(card / tab;W5.6)
+
+每个 widget 两张面孔(APP-MODEL「每个 app 两张面孔」在控件层的落地;
+registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = 小·摘要·
+内嵌;tab = 大·完整·操作**——同一实例 state,两种渲染,这就是「两张面孔」
+的实证。
+
+设计纪律(定死):
+
+1. **签名统一**:`render<Kind>(state, { surface = "tab" } = {})`;缺省 = tab,
+   既有调用零改动;mount 函数同步加 `surface` 选项(缺省 tab)。
+2. **card = 只读摘要 + 开放入口**:textarea/input/button/select 一律不进 card
+   渲染;唯一交互是整卡可点(点击 / Enter / Space),逻辑面 emit `open`
+   事件(def.events 必须声明;宿主委托经 `bindCardOpen`,只挂这一个);
+   tab = 完整交互,既有行为不回退;update() 有无维持现状(state 合并 →
+   按当前 surface 全量重渲)。
+3. **card 不是 tab 的缩小版,是重新设计的摘要视图**:信息层级、截断省略号
+   (.wd-card-line / .wd-card-excerpt)、计数徽标(.wd-badge);card 根元素带
+   `data-surface="card"` 与紧凑类 `wd-card`(role=button + tabindex=0 +
+   aria-label=copy("w.card.open"),整卡即按钮)。
+4. **样式全进 widgets.css、全 token 零硬编码**;card 形态在六主题下都成立
+   (语义 token + copy 六主题,组件零主题分支红线不变)。
+
+逐控件 card 形态定义(tab 全部保持现状):
+
+| 控件 | card 摘要内容 |
+|---|---|
+| W-text | 只读前 3 行预览(mono 保留行号槽)+ 行/字微标 + dirty 左边条 |
+| W-json | 状态行(✓ 合法绿 / ✕ 第 N 行错误红;复用 check() 的 .wd-json-ok/.wd-errbar 钩子)+ 首行预览;无 format 钮 |
+| W-table | 列头摘要(列名+类型徽标,≤3 列,溢出 +N)+ 行数徽标 + 前 2 行只读;无拖柄/✕/添加行 |
+| W-kv | 键值对计数 + 前 3 条只读 + 重复 key 警示计数(有则黄,data-tone="warn") |
+| W-form | 必填完成度(已填 x/y)+ 缺失必填名(≤2 个,溢出 +N;无必填时给字段计数);无控件 |
+| W-list | 当前选中项(名称+元信息;多选 +N)+ 总数徽标;无过滤框 |
+| W-tree | 当前路径(mono)+ 叶子计数徽标;无过滤框/树体 |
+| W-date | 当前日期或区间(起 → 止)+ 快捷标签徽标(值精确命中 today/yesterday/week/lastweek 时);不开日历层 |
+| W-chart | 迷你图(去坐标轴文字,保留折线/柱形本体与最新值点)+ 最新值读数 + 图例压成序列计数 |
+| W-log | 总行数徽标 + 最近 3 行(kind 色条保留);无过滤框/回到底部 |
+| W-diff | +add/−del 计数徽标(双编码:符号+data-kind 色)+ 首个 hunk 的 2 行预览(固定紧凑 unified);无模式切换 |
+| W-md | 首个标题 + 首段摘录(2 行截断;跳过代码块/列表/表格);无代码块复制钮 |
+| W-bubble | 消息计数 + 未读徽标(state.unread >0 才显,--live 调)+ 最后一条消息摘录;无输入框;open 负载沿用 {anchor} 语义 |
+
 ## 2. 逐控件详设(示意图见 docs/widgets/<kind>.svg)
 
 > 每个控件:效果要求(所见)+ 交互要求(所为)+ 主题注意点。
@@ -159,6 +200,7 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 | W5.3 ✅ | W-tree/W-date/W-chart/W-log/W-diff/W-md/W-bubble 迁移 | 全部 render 纯函数 |
 | W5.4 ✅ | 清扫:宿主手写桥接代码删除;架构测试记录更新(弯腰点 ①⑤ 关闭情况) | 无装饰器残留 |
 | W5.5 ✅ | 控件沙盒(widget.html 调试页 + 样例表 + URL 协议) | 沙盒测试过 |
+| W5.6 ✅ | 渲染层双形态:13 控件 render(state, {surface}) + card 摘要视图 + mount surface 选项 + open 事件 + 沙盒形态切换 | 双形态测试全绿(两 surface × 全样例 + card 断言) |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
@@ -258,6 +300,35 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 >   - 另:D2 弯腰点②(innerHTML 重渲 vs 气泡宿主)的处置 = 宿主挂回
 >     (沿用,见上切割线);D2 弯腰点①(bubble anchor 对象 vs 字符串)
 >     维持"留特例"裁决不变。
+>
+> **W5.6 实现注**(2026-08-04,分支 debugger;双形态):
+> - **签名**:`render<Kind>(state, { surface = "tab" } = {})` 全 13 控件统一
+>   (renderChart 的 opts 第二参是先例;renderTreeWidget 的 opts 加 surface
+>   字段);缺省 = tab,lab.js 岛屿首渲等既有调用零改动。mount 函数同步加
+>   `surface` 选项;card 形态下宿主委托只挂 open(`widget.js` 新增
+>   `bindCardOpen(host, widget, payload?)`:点击/Enter/Space → emit "open",
+>   缺省负载 {path};W-bubble 显式给 {anchor} 沿用自身 open 语义)。
+> - **def 面**:12 控件 events 补 "open"(chat-bubble 本有);W-bubble
+>   state_defaults 补 `unread: 0`(card 未读徽标的数据面)。
+> - **card 摘要视图**(重设计,非缩小版):共享件 = `.wd-card` 基座(整卡
+>   role=button)/`.wd-card-line`(单行截断)/`.wd-card-excerpt`(2 行截断)/
+>   `.wd-badge`(计数徽标,warn/live 双 tone + diff 的 add/del 双编码)——
+>   全进 widgets.css、全契约 token;六主题 copy 新增 13 个 `w.card.*` /
+>   `w.json.ok` 键(themes-contract 全覆盖断言盯)。
+> - **复用不重复**:W-json card 的状态行复用逻辑面 check() 的
+>   .wd-json-ok/.wd-errbar 钩子(初值校验局部刷新,不重渲);W-text card 的
+>   微标/dirty 边条复用 syncDirty 钩子;W-log card 复用 .wd-log-line
+>   (kind 色条 CSS 面);W-diff card 复用 .pf-dline(.wd-diff 作用域浅底);
+>   W-date card 快捷命中检测复用 quickRange(render→logic 循环 import,
+>   提升的函数声明,渲染期调用,安全)。
+> - **沙盒**:顶栏形态切换(完整/卡片),`&surface=card` 进 URL 与分享链接
+>   (tab 缺省省略);card 形态舞台收窄至 340px(`.sb-stage[data-surface]`);
+>   样例表不动(形态与样例正交,mount 时 `{...options, surface}` 合入)。
+> - **测试**:widgets.test.mjs 末段 W5.6 区(协议面双 surface + open 声明;
+>   16 组 card case:纯函数三要素/零编辑控件/摘要关键内容/转义/缺省=tab;
+>   mount 面 update 在 card 工作、json check() 钩子两形态共用、bubble open
+>   负载语义);widget-sandbox.test.mjs 逐样例 × 逐声明 surface 挂载矩阵 +
+>   surface URL 解析/序列化 + widget.html smoke 两项。
 
 ## 4. 不做
 
@@ -271,10 +342,12 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 `web/static/widget.html`(经 `/static/widget.html` 访问,服务端零改动)——
 一个一个控件地调试的开发工具(非产品 UI:文案平实中文,不走主题 copy)。
 
-- **URL 协议**:`?kind=<注册 kind>&theme=<主题 id>&sample=<序号>`,另支持
-  `#options=<urlencoded json>` 覆盖样例 mount options;「复制分享链接」把
-  当前 kind/theme/sample(及 options 覆盖)序列化进 URL 复制到剪贴板。
-  解析/序列化是纯函数(`js/widget-sandbox.js` 的
+- **URL 协议**:`?kind=<注册 kind>&theme=<主题 id>&sample=<序号>&surface=<tab|card>`
+  (W5.6;缺省 tab),另支持 `#options=<urlencoded json>` 覆盖样例 mount options
+  (surface 与样例正交,不进 options);「复制分享链接」把当前
+  kind/theme/sample/surface(及 options 覆盖)序列化进 URL 复制到剪贴板。
+  顶栏「形态」切换完整(tab)/卡片(card);card 形态舞台收窄至 340px,
+  贴近真实内嵌场景。解析/序列化是纯函数(`js/widget-sandbox.js` 的
   `parseSandboxUrl`/`buildSandboxUrl`,有单测)。
 - **加新控件样例**:往 `js/widgets/samples.js` 加一条
   `kind: { mount: "<index.js 的 mount 函数名>", samples: [{name, options}] }`

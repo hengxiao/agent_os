@@ -191,3 +191,49 @@ th .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(-
   cursor: pointer; padding: 0 var(--s1);
 }
 .wd-md-copy:hover { color: var(--fg-0); border-color: var(--live); }
+
+/* ── W5.6:双形态 card 面(docs/WIDGET-ARCH.md §1.4;全契约 token,组件零主题分支)── */
+/* 卡基座:整卡即 open 入口(role=button;卡内无任何编辑控件) */
+.wd-card {
+  display: block; position: relative; cursor: pointer;
+  border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-1); padding: var(--s2);
+  color: var(--fg-1); font-size: var(--text-2xs);
+}
+.wd-card:hover { border-color: var(--live); }
+.wd-card:focus-visible { outline: var(--stroke-strong) solid var(--live); }
+/* 卡内微标回流通档(tab 面 .wd-text .wd-micro 是绝对定位) */
+.wd-card .wd-micro { position: static; }
+/* 摘要行:单行截断省略号(商业卡标准) */
+.wd-card-line {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 1px 0;
+}
+/* 摘录段:2 行截断(W-md card) */
+.wd-card-excerpt {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 头行:徽标/计数/读数的横排槽 */
+.wd-card-head { display: flex; align-items: center; gap: var(--s1); flex-wrap: wrap; }
+.wd-card-title { color: var(--fg-0); font-size: var(--text-xs); }
+.wd-card-dim { color: var(--fg-2); }
+.wd-card-num { color: var(--fg-0); font-family: var(--font-mono); font-size: var(--text-sm); }
+.wd-card-col { color: var(--fg-0); }
+.wd-card-col .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(--s1); }
+/* 计数/状态徽标(双编码:色调 + 文字/符号同在) */
+.wd-badge {
+  display: inline-block; border: var(--stroke) solid var(--line); border-radius: var(--r-sm);
+  padding: 0 var(--s1); color: var(--fg-2); font-size: var(--text-2xs);
+}
+.wd-badge[data-tone="warn"] {
+  color: var(--warn); border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+.wd-badge[data-tone="live"] { color: var(--live); border-color: var(--live); }
+.wd-card .wd-badge[data-kind="add"] { color: var(--ok); border-color: var(--ok); }
+.wd-card .wd-badge[data-kind="del"] { color: var(--danger); border-color: var(--danger); }
+/* W-json card:✕ 前缀(CSS 面;文本通道 = errbar 行级文案,逻辑面 check() 直写 textContent) */
+.wd-card .wd-errbar::before { content: "✕ "; }
+.wd-card .wd-json-ok { margin-left: 0; }
+.wd-chart-mini { display: block; }

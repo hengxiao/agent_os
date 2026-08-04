@@ -12,7 +12,7 @@
 import { copy } from "../themes.js";
 import { skeletonFromSchema } from "../components/launch-dialog.js";
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { bindCardOpen, createWidget } from "./widget.js";
 import { renderFormEditor } from "./w-form.render.js";
 
 export const FORM_EDITOR_DEF = registerWidgetDef({
@@ -25,7 +25,7 @@ export const FORM_EDITOR_DEF = registerWidgetDef({
     { id: "validate", exec: "local" },
     { id: "reset", exec: "local" },
   ],
-  events: ["change", "submit"],
+  events: ["change", "submit", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "form", keys: ["Enter"] },
   surfaces: ["card", "tab"],
   render: renderFormEditor, // W5.2:render 面进 def(registry 校验形态)
@@ -86,7 +86,7 @@ function _set(values, path, value) {
 
 /* 挂进宿主:schema + 初始 values(缺省 = skeletonFromSchema 骨架,
    与 launch-dialog 默认值一致);返回 widget(values() 取提交载荷) */
-export function mountFormEditor(host, { schema, values = null, path = "", onRegister = null, onUnregister = null } = {}) {
+export function mountFormEditor(host, { schema, values = null, path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(FORM_EDITOR_DEF, {
     path,
     state: {
@@ -100,7 +100,7 @@ export function mountFormEditor(host, { schema, values = null, path = "", onRegi
   const defaults = JSON.parse(JSON.stringify(widget.state.values));
 
   const render = () => {
-    host.innerHTML = renderFormEditor(widget.state);
+    host.innerHTML = renderFormEditor(widget.state, { surface });
   };
   const _changed = () => widget.emit("change", { values: widget.state.values });
 
@@ -122,6 +122,9 @@ export function mountFormEditor(host, { schema, values = null, path = "", onRegi
   };
   widget.values = () => widget.state.values;
 
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
   host.addEventListener("input", (e) => {
     const f = e.target.closest("[data-f]")?.dataset.f;
     if (!f) return;
@@ -153,6 +156,7 @@ export function mountFormEditor(host, { schema, values = null, path = "", onRegi
       return _changed();
     }
   });
+  }
 
   render();
   widget.register(host.dataset.summary ?? "");

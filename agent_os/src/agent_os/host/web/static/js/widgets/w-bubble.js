@@ -9,7 +9,7 @@
    a11y:role=log(消息区)、role=dialog(气泡卡,Esc 关闭、Enter 发送)。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { bindCardOpen, createWidget } from "./widget.js";
 import { contextCascade } from "./cascade.js";
 import { renderBubble } from "./w-bubble.render.js";
 
@@ -17,7 +17,7 @@ export const BUBBLE_DEF = registerWidgetDef({
   kind: "chat-bubble",
   v: 1,
   state_schema: { type: "object" },
-  state_defaults: { anchor: null, messages: [], open: false, busy: false, draft: "" },
+  state_defaults: { anchor: null, messages: [], open: false, busy: false, draft: "", unread: 0 },
   actions: [
     { id: "open", exec: "local" },
     { id: "close", exec: "local" },
@@ -35,7 +35,7 @@ export const BUBBLE_DEF = registerWidgetDef({
    取 anchor.path)。seedMessages = 既有边注(数据兼容)。 */
 export function mountBubble(
   host,
-  { anchor, triggerPath = null, seedMessages = [], cascadeProviders = null, cascadeLevels = null, path = "", onRegister = null, onUnregister = null } = {}
+  { anchor, triggerPath = null, seedMessages = [], cascadeProviders = null, cascadeLevels = null, path = "", onRegister = null, onUnregister = null, surface = "tab", unread = 0 } = {}
 ) {
   const widget = createWidget(BUBBLE_DEF, {
     path,
@@ -45,6 +45,7 @@ export function mountBubble(
       open: true,
       busy: false,
       draft: "",
+      unread: Number(unread) || 0, // card 面未读徽标(§1.4;tab 不读此项)
     },
     onRegister,
     onUnregister,
@@ -52,7 +53,7 @@ export function mountBubble(
   const anchorTo = [anchor?.member, anchor?.path].filter(Boolean).join(" · ");
 
   const render = () => {
-    host.innerHTML = renderBubble(widget.state);
+    host.innerHTML = renderBubble(widget.state, { surface });
   };
 
   widget.open = () => {
@@ -91,6 +92,10 @@ export function mountBubble(
     widget.emit("submit", { anchor, text, cascade });
   }
 
+  if (surface === "card") {
+    // card:宿主委托只挂 open(§1.4)——负载沿用本控件 open 事件语义({anchor})
+    bindCardOpen(host, widget, { anchor });
+  } else {
   host.addEventListener("input", (e) => {
     if (e.target.closest("[data-bubble-draft]")) widget.state.draft = e.target.value;
   });
@@ -103,6 +108,7 @@ export function mountBubble(
     const apply = e.target.closest("[data-apply]");
     if (apply) widget.apply_reply(Number(apply.dataset.apply));
   });
+  }
 
   widget.focus = () => {
     const input = host.querySelector("[data-bubble-draft]");

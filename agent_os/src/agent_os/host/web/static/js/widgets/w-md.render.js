@@ -1,5 +1,5 @@
 /* W-md 渲染面(docs/WIDGET-ARCH.md §1.1/§2.12;W5.3):
-   ``renderMarkdownViewer(state) -> html`` **纯函数**——无副作用、不写 state、
+   ``renderMarkdownViewer(state, {surface}) -> html`` **纯函数**——无副作用、不写 state、
    不发事件、不调后端;只产出语义 class,视觉全走契约 token。
 
    **安全渲染**(mdToHtml 也随渲染面迁此):先整体转义,再做白名单 markdown
@@ -120,8 +120,11 @@ export function mdToHtml(md) {
   return out.join("");
 }
 
-/* state → html(纯);state 面:{source} */
-export function renderMarkdownViewer(state) {
+/* state → html(纯);state 面:{source}
+   双形态(§1.4):surface="card" → 首个标题 + 首段摘录(2 行截断,CSS);
+   无代码块复制钮(卡内不渲染代码块) */
+export function renderMarkdownViewer(state, { surface = "tab" } = {}) {
+  if (surface === "card") return _mdCardHtml(state);
   let idx = 0; // 局部计数(纯函数内,无副作用外泄)
   const body = mdToHtml(state.source ?? "").replace(/<pre class="mono wd-md-code">/g, () => {
     const tag =
@@ -131,6 +134,42 @@ export function renderMarkdownViewer(state) {
     return tag;
   });
   return `<div class="wd-md" role="document">${body}</div>`;
+}
+
+/* card 面(§1.4):首个标题 + 首段摘录(跳过代码块/列表/表格行,连续正文行
+   合并为一段,2 行截断走 CSS .wd-card-excerpt);整体先转义,与 mdToHtml 同纪律 */
+function _mdCardHtml(state) {
+  const lines = String(state.source ?? "").split("\n");
+  let title = "";
+  const excerpt = [];
+  let inCode = false;
+  for (const line of lines) {
+    if (line.trim().startsWith("```")) {
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) continue;
+    const t = line.trim();
+    if (!t) {
+      if (excerpt.length) break; // 首段结束
+      continue;
+    }
+    const h = /^(#{1,3})\s+(.*)$/.exec(t);
+    if (h) {
+      if (!title) title = h[2];
+      continue;
+    }
+    if (/^[-*]\s+\S/.test(t) || /^\|/.test(t)) continue; // 摘录取首段正文
+    excerpt.push(t);
+  }
+  return (
+    `<div class="wd-card" data-surface="card" role="button" tabindex="0"` +
+    ` aria-label="${esc(copy("w.card.open"))}">` +
+    (title ? `<span class="wd-card-title wd-card-line">${esc(title)}</span>` : "") +
+    (excerpt.length ? `<span class="wd-card-excerpt">${esc(excerpt.join(" "))}</span>` : "") +
+    (!title && !excerpt.length ? `<span class="wd-card-line">${esc(copy("w.card.empty"))}</span>` : "") +
+    `</div>`
+  );
 }
 
 function esc(s) {

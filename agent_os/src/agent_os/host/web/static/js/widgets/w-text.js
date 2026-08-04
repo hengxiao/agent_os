@@ -11,7 +11,7 @@
    输入态零干扰);update(patch) = state 合并 → 全量重渲(选区保留)。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { createWidget, preserveSelection } from "./widget.js";
+import { bindCardOpen, createWidget, preserveSelection } from "./widget.js";
 import { renderTextEditor, textEditorMicro } from "./w-text.render.js";
 
 export const TEXT_EDITOR_DEF = registerWidgetDef({
@@ -24,7 +24,7 @@ export const TEXT_EDITOR_DEF = registerWidgetDef({
     { id: "commit", exec: "local" },
     { id: "revert", exec: "local" },
   ],
-  events: ["change", "commit", "revert"],
+  events: ["change", "commit", "revert", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "textbox-multiline", keys: ["Escape"] },
   surfaces: ["card", "tab"],
   render: renderTextEditor, // W5.1:render 面进 def(registry 校验形态)
@@ -32,12 +32,14 @@ export const TEXT_EDITOR_DEF = registerWidgetDef({
 
 /* 自渲染装配(§1.3;宿主给空挂点 + data-field/data-variant/data-rows 或显式
    options,控件自己产出全部元素)。``_extraState``/``_def`` 是 W-json 的
-   复用面(同族控件共用一套挂载逻辑)。 */
-export function mountTextEditor(host, { value = "", field = "", mono = null, rows = null, readonly = false, label = "", path = "", onRegister = null, onUnregister = null } = {}) {
-  return _mountText(host, TEXT_EDITOR_DEF, { value, field, mono, rows, readonly, label, path, onRegister, onUnregister });
+   复用面(同族控件共用一套挂载逻辑)。
+   双形态(§1.4):surface="card" 时渲染走 card 面,宿主委托只挂 open
+   (bindCardOpen);update() 不变(state 合并 → 按当前 surface 全量重渲)。 */
+export function mountTextEditor(host, { value = "", field = "", mono = null, rows = null, readonly = false, label = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
+  return _mountText(host, TEXT_EDITOR_DEF, { value, field, mono, rows, readonly, label, path, onRegister, onUnregister, surface });
 }
 
-export function _mountText(host, def, { value = "", field = "", mono = null, rows = null, readonly = false, label = "", path = "", onRegister = null, onUnregister = null, extraState = {} } = {}) {
+export function _mountText(host, def, { value = "", field = "", mono = null, rows = null, readonly = false, label = "", path = "", onRegister = null, onUnregister = null, extraState = {}, surface = "tab" } = {}) {
   const fieldName = field || host.dataset?.field || "";
   const ariaLabel = label || fieldName;
   if (!ariaLabel) throw new Error(`${def.kind}: aria-label 必填(或给 data-field 推导)`);
@@ -60,7 +62,7 @@ export function _mountText(host, def, { value = "", field = "", mono = null, row
 
   const textarea = () => host.querySelector("textarea");
   const render = () => {
-    host.innerHTML = def.render(widget.state);
+    host.innerHTML = def.render(widget.state, { surface });
     const ta = textarea();
     // 元素值 ↔ state 对齐(真实 DOM 由文本内容自带;stub/异常面兜底同步)
     if (ta && ta.value !== widget.state.value) ta.value = widget.state.value;
@@ -82,17 +84,21 @@ export function _mountText(host, def, { value = "", field = "", mono = null, row
   render();
   syncDirty(); // 初值同步(stub/虚拟面上 region 不带串内文本;真实 DOM 为同值重写)
 
-  host.addEventListener("input", (e) => {
-    const ta = textarea();
-    if (!ta || e.target !== ta) return;
-    widget.state.value = ta.value;
-    widget.state.dirty = ta.value !== baseline;
-    syncDirty();
-    widget.emit("change", { value: ta.value, dirty: widget.state.dirty });
-  });
-  host.addEventListener("keydown", (e) => {
-    if (e.target === textarea() && e.key === "Escape") e.target.blur?.(); // Esc=blur(§2 a11y)
-  });
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
+    host.addEventListener("input", (e) => {
+      const ta = textarea();
+      if (!ta || e.target !== ta) return;
+      widget.state.value = ta.value;
+      widget.state.dirty = ta.value !== baseline;
+      syncDirty();
+      widget.emit("change", { value: ta.value, dirty: widget.state.dirty });
+    });
+    host.addEventListener("keydown", (e) => {
+      if (e.target === textarea() && e.key === "Escape") e.target.blur?.(); // Esc=blur(§2 a11y)
+    });
+  }
 
   widget.commit = () => {
     baseline = widget.state.value;

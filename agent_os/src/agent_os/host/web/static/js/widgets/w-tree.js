@@ -8,7 +8,7 @@
 
 import { buildNsTree, defaultExpanded } from "../components/ns-tree.js";
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { bindCardOpen, createWidget } from "./widget.js";
 import { renderTreeWidget } from "./w-tree.render.js";
 
 export const TREE_EDITOR_DEF = registerWidgetDef({
@@ -21,7 +21,7 @@ export const TREE_EDITOR_DEF = registerWidgetDef({
     { id: "select", exec: "local", args_input: { id: { type: "string" } } },
     { id: "filter", exec: "local", args_input: { text: { type: "string" } } },
   ],
-  events: ["select", "change"],
+  events: ["select", "change", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "tree", keys: ["ArrowLeft", "ArrowRight"] },
   surfaces: ["card", "tab"],
   render: renderTreeWidget, // W5.3:render 面进 def(registry 校验形态)
@@ -31,7 +31,7 @@ export const TREE_EDITOR_DEF = registerWidgetDef({
    缺省 = 名字行带 data-wt-leaf);expanded 缺省 = defaultExpanded(ns-tree 语义) */
 export function mountNsTreeWidget(
   host,
-  { items = [], leafHtml = null, expanded = null, path = "", onRegister = null, onUnregister = null } = {}
+  { items = [], leafHtml = null, expanded = null, path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}
 ) {
   const widget = createWidget(TREE_EDITOR_DEF, {
     path,
@@ -45,7 +45,7 @@ export function mountNsTreeWidget(
     onUnregister,
   });
   const render = () => {
-    host.innerHTML = renderTreeWidget(widget.state, { leafHtml });
+    host.innerHTML = renderTreeWidget(widget.state, { leafHtml, surface });
   };
 
   widget.toggle = (nsPath) => {
@@ -67,6 +67,9 @@ export function mountNsTreeWidget(
     widget.emit("change", { filter: widget.state.filter });
   };
 
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
   host.addEventListener("click", (e) => {
     const toggle = e.target.closest("[data-ns-toggle]");
     if (toggle) return widget.toggle(toggle.dataset.nsToggle);
@@ -76,6 +79,7 @@ export function mountNsTreeWidget(
   host.addEventListener("input", (e) => {
     if (e.target.closest("[data-wt-filter]")) widget.filter(e.target.value);
   });
+  }
 
   render();
   widget.register(host.dataset.summary ?? "");

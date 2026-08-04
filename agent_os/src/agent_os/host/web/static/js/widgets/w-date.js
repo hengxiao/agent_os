@@ -10,7 +10,7 @@
    铁律:本文件不拼 HTML(渲染全在 w-date.render.js);零 fetch;监听委托在 host。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { bindCardOpen, createWidget } from "./widget.js";
 import { monthGridHtml, renderDatePicker } from "./w-date.render.js";
 
 export { monthGridHtml }; // 兼容面(迁至渲染面;原从本文件导出)
@@ -27,7 +27,7 @@ export const DATE_EDITOR_DEF = registerWidgetDef({
     { id: "pick", exec: "local", args_input: { day: { type: "string" } } },
     { id: "quick", exec: "local", args_input: { which: { type: "string" } } },
   ],
-  events: ["change"],
+  events: ["change", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "group", keys: ["ArrowLeft", "ArrowRight", "Escape"] },
   surfaces: ["card", "tab"],
   render: renderDatePicker, // W5.3:render 面进 def(registry 校验形态)
@@ -68,7 +68,7 @@ export function rangeInverted(value) {
 /* 挂进宿主:mode/date|datetime|range + 初始 value;quick 钮 + 翻月 + 点选 + 输入 */
 export function mountDatePicker(
   host,
-  { mode = "date", value = null, path = "", onRegister = null, onUnregister = null } = {}
+  { mode = "date", value = null, path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}
 ) {
   const initial = mode === "range" ? (value ?? { start: "", end: "" }) : (value ?? "");
   const base = parseIso(mode === "range" ? initial.start : initial, mode) ?? new Date();
@@ -86,7 +86,7 @@ export function mountDatePicker(
   });
 
   const render = () => {
-    host.innerHTML = renderDatePicker(widget.state);
+    host.innerHTML = renderDatePicker(widget.state, { surface });
   };
   const _changed = () => widget.emit("change", { value: widget.state.value });
 
@@ -147,6 +147,9 @@ export function mountDatePicker(
     render();
   };
 
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
   host.addEventListener("input", (e) => {
     if (e.target.closest("[data-wd-start]")) widget.set("start", e.target.value);
     if (e.target.closest("[data-wd-end]")) widget.set("end", e.target.value);
@@ -176,6 +179,7 @@ export function mountDatePicker(
       render();
     }
   });
+  }
 
   render();
   widget.register(host.dataset.summary ?? "");

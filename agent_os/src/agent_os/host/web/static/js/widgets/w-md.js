@@ -5,7 +5,7 @@
    铁律:本文件不拼 HTML(mdToHtml/render 全在 w-md.render.js);零 fetch。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { bindCardOpen, createWidget } from "./widget.js";
 import { renderMarkdownViewer } from "./w-md.render.js";
 
 // 兼容面:mdToHtml/looksMarkdown 迁至渲染面(W5.3),此处原样 re-export
@@ -17,7 +17,7 @@ export const MD_VIEWER_DEF = registerWidgetDef({
   state_schema: { type: "object" },
   state_defaults: { source: "" },
   actions: [],
-  events: ["copy"],
+  events: ["copy", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "document", keys: [] },
   surfaces: ["card", "tab"],
   render: renderMarkdownViewer, // W5.3:render 面进 def(registry 校验形态)
@@ -43,16 +43,20 @@ function _codeBlockAt(source, idx) {
   return blocks[idx] ?? "";
 }
 
-/* 挂进宿主:source(markdown 原文;state 可序列化) */
-export function mountMarkdownViewer(host, { source = "", path = "", onRegister = null, onUnregister = null } = {}) {
+/* 挂进宿主:source(markdown 原文;state 可序列化)。
+   双形态(§1.4):surface="card" 时渲染摘要卡,宿主委托只挂 open(复制钮不进卡)。 */
+export function mountMarkdownViewer(host, { source = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(MD_VIEWER_DEF, { path, state: { source }, onRegister, onUnregister });
   const render = () => {
-    host.innerHTML = renderMarkdownViewer(widget.state);
+    host.innerHTML = renderMarkdownViewer(widget.state, { surface });
   };
   widget.set_source = (source) => {
     widget.state.source = source;
     render();
   };
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
   // 代码块复制钮(§2.12;委托在 host——重渲会换掉子元素)
   host.addEventListener("click", (e) => {
     const btn = e.target.closest?.("[data-md-copy]");
@@ -61,6 +65,7 @@ export function mountMarkdownViewer(host, { source = "", path = "", onRegister =
     globalThis.navigator?.clipboard?.writeText?.(text); // 剪贴板(缺席环境降级为事件)
     widget.emit("copy", { text });
   });
+  }
   render();
   widget.register(host.dataset.summary ?? "");
   return widget;

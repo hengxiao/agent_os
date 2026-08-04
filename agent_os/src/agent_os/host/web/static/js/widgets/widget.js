@@ -13,6 +13,20 @@
 
 import { registerContextProvider } from "./cascade.js";
 
+/* 双形态(docs/WIDGET-ARCH.md §1.4;W5.6):card 形态的宿主委托**只挂 open**——
+   整卡即开放入口(点击 / Enter / Space,卡内无任何编辑控件),emit "open"
+   (def.events 必须已声明,未声明 emit 会被协议面拦下)。
+   ``payload`` 缺省 = {path: widget.path};自带语义负载的控件(如气泡)可显式给。 */
+export function bindCardOpen(host, widget, payload = null) {
+  const open = () => widget.emit("open", payload ?? { path: widget.path });
+  host.addEventListener("click", open);
+  host.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault?.(); // Space 防滚动(卡无内嵌可焦点元素,目标即卡根)
+    open();
+  });
+}
+
 /* 选区/焦点保留(docs/WIDGET-ARCH.md §1.3;W5.1 必答题):全量重渲前后存取
    聚焦元素的 selectionStart/End 与 activeElement,重渲后找回新元素并恢复。
    ``selector``:重渲后找回元素的定位面(真实 DOM 缺省用聚焦元素 tag;

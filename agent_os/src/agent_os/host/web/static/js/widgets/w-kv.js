@@ -7,7 +7,7 @@
    监听一律委托在 host(重渲会换掉子元素)。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { bindCardOpen, createWidget } from "./widget.js";
 import { dupKeys, renderKvEditor } from "./w-kv.render.js";
 
 export { dupKeys }; // 兼容面(原从本文件导出;渲染面是纯函数唯一事实源)
@@ -22,7 +22,7 @@ export const KV_EDITOR_DEF = registerWidgetDef({
     { id: "remove", exec: "local", args_input: { index: { type: "integer" } } },
     { id: "set", exec: "local", args_input: { index: { type: "integer" } } },
   ],
-  events: ["change"],
+  events: ["change", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "group", keys: [] },
   surfaces: ["card", "tab"],
   render: renderKvEditor, // W5.2:render 面进 def(registry 校验形态)
@@ -39,7 +39,7 @@ export function objectToEntries(obj) {
   return Object.entries(obj ?? {}).map(([key, value]) => ({ key, value }));
 }
 
-export function mountKvEditor(host, { entries = [], allow_dup = false, path = "", onRegister = null, onUnregister = null } = {}) {
+export function mountKvEditor(host, { entries = [], allow_dup = false, path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(KV_EDITOR_DEF, {
     path,
     state: { entries: entries.map((e) => ({ ...e })), allow_dup },
@@ -47,7 +47,7 @@ export function mountKvEditor(host, { entries = [], allow_dup = false, path = ""
     onUnregister,
   });
   const render = () => {
-    host.innerHTML = renderKvEditor(widget.state);
+    host.innerHTML = renderKvEditor(widget.state, { surface });
   };
   const _changed = () => widget.emit("change", { entries: widget.state.entries });
 
@@ -68,6 +68,9 @@ export function mountKvEditor(host, { entries = [], allow_dup = false, path = ""
   };
   widget.serialize = () => entriesToObject(widget.state.entries);
 
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
   host.addEventListener("click", (e) => {
     if (e.target.closest("[data-kv-add]")) return widget.add();
     const x = e.target.closest("[data-kv-x]");
@@ -82,6 +85,7 @@ export function mountKvEditor(host, { entries = [], allow_dup = false, path = ""
       _changed(); // value 变更不影响警示态,不重渲(焦点不丢)
     }
   });
+  }
 
   render();
   widget.register(host.dataset.summary ?? "");

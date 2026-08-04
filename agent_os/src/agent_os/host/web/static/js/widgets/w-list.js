@@ -8,7 +8,7 @@
    监听一律委托在 host(重渲会换掉子元素)。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { createWidget, preserveSelection } from "./widget.js";
+import { bindCardOpen, createWidget, preserveSelection } from "./widget.js";
 import { renderSelectList, visibleItems } from "./w-list.render.js";
 
 export const LIST_EDITOR_DEF = registerWidgetDef({
@@ -21,7 +21,7 @@ export const LIST_EDITOR_DEF = registerWidgetDef({
     { id: "filter", exec: "local", args_input: { text: { type: "string" } } },
     { id: "activate", exec: "local" },
   ],
-  events: ["select", "activate", "change"],
+  events: ["select", "activate", "change", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "listbox", keys: ["ArrowUp", "ArrowDown", "Enter"] },
   surfaces: ["card", "tab"],
   render: renderSelectList, // W5.2:render 面进 def(registry 校验形态)
@@ -31,7 +31,7 @@ export const LIST_EDITOR_DEF = registerWidgetDef({
    select/activate 事件上行(父组件映射到自己的动作,§3) */
 export function mountSelectList(
   host,
-  { items = [], multi = false, selected = null, path = "", onRegister = null, onUnregister = null } = {}
+  { items = [], multi = false, selected = null, path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}
 ) {
   const widget = createWidget(LIST_EDITOR_DEF, {
     path,
@@ -41,7 +41,7 @@ export function mountSelectList(
   });
 
   const render = () => {
-    host.innerHTML = renderSelectList(widget.state);
+    host.innerHTML = renderSelectList(widget.state, { surface });
   };
   // 过滤框是文本输入:重渲走选区/焦点保留(§1.3;单 input,selector 定位)
   const renderPreserving = () => preserveSelection(host, render, { selector: "input" });
@@ -77,6 +77,9 @@ export function mountSelectList(
     render();
   };
 
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
   host.addEventListener("click", (e) => {
     const item = e.target.closest("[data-wl-item]");
     if (item) {
@@ -106,6 +109,7 @@ export function mountSelectList(
       widget.activate(); // Enter = 激活焦点项(焦点行/过滤框内同语义,§2 键盘路径)
     }
   });
+  }
 
   render();
   widget.register(host.dataset.summary ?? "");

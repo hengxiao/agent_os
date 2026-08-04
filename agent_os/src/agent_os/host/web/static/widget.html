@@ -27,6 +27,8 @@
     background: var(--bg-1); border: var(--stroke) solid var(--line); border-radius: var(--r-md);
     min-height: 120px;
   }
+  /* 卡片形态:舞台收窄贴近真实内嵌场景(W5.6) */
+  .sb-stage[data-surface="card"] { max-width: 340px; }
   .sb-panel { max-width: 720px; margin: 0 auto var(--s6); padding: 0 var(--s4); }
   .sb-tabs { display: flex; gap: var(--s1); margin-bottom: var(--s2); }
   .sb-tabs button[data-on="1"] { color: var(--live); border-color: var(--live); }
@@ -45,6 +47,10 @@
     <label>控件 <select class="input" id="sb-kind"></select></label>
     <label>主题 <select class="input" id="sb-theme"></select></label>
     <label>样例 <select class="input" id="sb-sample"></select></label>
+    <label>形态 <select class="input" id="sb-surface">
+      <option value="tab">完整</option>
+      <option value="card">卡片</option>
+    </select></label>
     <button class="btn" id="sb-remount">重新挂载</button>
     <button class="btn" id="sb-share">复制分享链接</button>
   </div>

@@ -22,7 +22,7 @@ export const JSON_EDITOR_DEF = registerWidgetDef({
     { id: "format", exec: "local" },
     { id: "validate", exec: "local" },
   ],
-  events: ["change", "commit", "revert"],
+  events: ["change", "commit", "revert", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "textbox-multiline", keys: ["Escape"] },
   surfaces: ["card", "tab"],
   render: renderJsonEditor, // W5.1:render 面进 def(registry 校验形态)
@@ -96,9 +96,10 @@ export function formatJson(text) {
 /* 自渲染装配(§1.3;宿主给空挂点 + data-field 或显式 options)。
    错误条/绿勾 = render 面;校验结果进出走局部 hidden/文本刷新(不重渲,
    不打断输入);format 经 update 面(全量重渲 + 选区保留) */
-export function mountJsonEditor(host, { schema = null, ...opts } = {}) {
+export function mountJsonEditor(host, { schema = null, surface = "tab", ...opts } = {}) {
   const widget = _mountText(host, JSON_EDITOR_DEF, {
     ...opts,
+    surface,
     mono: opts.mono ?? true, // JSON 编辑默认 mono 变体(行号槽)
     extraState: { schema, error: null },
   });
@@ -121,19 +122,22 @@ export function mountJsonEditor(host, { schema = null, ...opts } = {}) {
     if (okMark) okMark.hidden = Boolean(widget.state.error) || !widget.state.value.trim();
   };
 
-  host.addEventListener("input", (e) => {
-    if (e.target === textarea()) check(); // 即时校验(行级定位)
-  });
-  host.addEventListener("focusout", (e) => {
-    if (e.target === textarea()) check(); // 失焦校验(§2)
-  });
-  // 委托在 host(重渲后子元素换新,直接挂子元素监听会死——W5.1 自渲染纪律)
-  host.addEventListener("click", (e) => {
-    if (e.target.closest?.("[data-wd-format]")) return _format();
-    if (e.target.closest?.("[data-wd-errbar]") && widget.state.error) {
-      _jumpToLine(widget.state.error.line); // 错误条点击跳到错误行(§2.2)
-    }
-  });
+  if (surface !== "card") {
+    // card 形态:open 委托已由 _mountText 挂好,交互监听一律不挂(§1.4)
+    host.addEventListener("input", (e) => {
+      if (e.target === textarea()) check(); // 即时校验(行级定位)
+    });
+    host.addEventListener("focusout", (e) => {
+      if (e.target === textarea()) check(); // 失焦校验(§2)
+    });
+    // 委托在 host(重渲后子元素换新,直接挂子元素监听会死——W5.1 自渲染纪律)
+    host.addEventListener("click", (e) => {
+      if (e.target.closest?.("[data-wd-format]")) return _format();
+      if (e.target.closest?.("[data-wd-errbar]") && widget.state.error) {
+        _jumpToLine(widget.state.error.line); // 错误条点击跳到错误行(§2.2)
+      }
+    });
+  }
 
   const _format = () => {
     const ta = textarea();

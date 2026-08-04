@@ -9,7 +9,7 @@
    监听委托在 host。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { bindCardOpen, createWidget } from "./widget.js";
 import { downsample, renderChart } from "./w-chart.render.js";
 
 // 兼容面:纯函数迁至渲染面(W5.3),此处原样 re-export(测试与消费方在用)
@@ -25,14 +25,14 @@ export const CHART_DEF = registerWidgetDef({
     { id: "toggle_view", exec: "local" },
     { id: "toggle_series", exec: "local", args_input: { name: { type: "string" } } },
   ],
-  events: ["change"],
+  events: ["change", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "img", keys: [] },
   surfaces: ["card", "tab"],
   render: renderChart, // W5.3:render 面进 def(registry 校验形态)
 });
 
 /* 挂进宿主:series + type + label(aria 摘要);toggle 切"图表/表格"两视图 */
-export function mountChart(host, { series = [], type = "line", label = "", path = "", onRegister = null, onUnregister = null } = {}) {
+export function mountChart(host, { series = [], type = "line", label = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(CHART_DEF, {
     path,
     state: { series: series.map((s) => ({ name: s.name ?? "", points: downsample(s.points) })), type, view: "chart", hidden: [] },
@@ -40,7 +40,7 @@ export function mountChart(host, { series = [], type = "line", label = "", path 
     onUnregister,
   });
   const render = () => {
-    host.innerHTML = renderChart(widget.state, { label });
+    host.innerHTML = renderChart(widget.state, { label, surface });
   };
 
   widget.set_series = (series) => {
@@ -60,11 +60,15 @@ export function mountChart(host, { series = [], type = "line", label = "", path 
     render();
   };
 
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
   host.addEventListener("click", (e) => {
     if (e.target.closest("[data-chart-toggle]")) return widget.toggle_view();
     const s = e.target.closest("[data-chart-series]");
     if (s) return widget.toggle_series(s.dataset.chartSeries);
   });
+  }
 
   render();
   widget.register(label);

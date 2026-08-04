@@ -7,7 +7,7 @@
    铁律:本文件不拼 HTML(渲染全在 w-diff.render.js);零 fetch;监听委托在 host。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { bindCardOpen, createWidget } from "./widget.js";
 import { renderDiffViewer } from "./w-diff.render.js";
 
 // 兼容面:diffBodyHtml 迁至渲染面(W5.3),此处原样 re-export(cards.js 等在用)
@@ -19,14 +19,14 @@ export const DIFF_VIEWER_DEF = registerWidgetDef({
   state_schema: { type: "object" },
   state_defaults: { mode: "split", expanded: [] },
   actions: [{ id: "set_mode", exec: "local", args_input: { mode: { type: "string" } } }],
-  events: ["change"],
+  events: ["change", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "group", keys: [] },
   surfaces: ["card", "tab"],
   render: renderDiffViewer, // W5.3:render 面进 def(registry 校验形态)
 });
 
 /* 挂进宿主:diff(与 cards/lab-iterate 同构的 diff 对象);set_mode 切换重渲 */
-export function mountDiffViewer(host, { diff, mode = "split", path = "", onRegister = null, onUnregister = null } = {}) {
+export function mountDiffViewer(host, { diff, mode = "split", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(DIFF_VIEWER_DEF, {
     path,
     state: { left: diff, right: null, mode, expanded: [] },
@@ -34,7 +34,7 @@ export function mountDiffViewer(host, { diff, mode = "split", path = "", onRegis
     onUnregister,
   });
   const render = () => {
-    host.innerHTML = renderDiffViewer(widget.state);
+    host.innerHTML = renderDiffViewer(widget.state, { surface });
   };
 
   widget.set_mode = (mode) => {
@@ -44,6 +44,9 @@ export function mountDiffViewer(host, { diff, mode = "split", path = "", onRegis
     widget.emit("change", { mode });
   };
 
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
   host.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-mode]");
     if (btn) return widget.set_mode(btn.dataset.mode);
@@ -55,6 +58,7 @@ export function mountDiffViewer(host, { diff, mode = "split", path = "", onRegis
       render(); // 折叠上下文展开(§2 长文本折叠)
     }
   });
+  }
 
   render();
   widget.register(host.dataset.summary ?? "");

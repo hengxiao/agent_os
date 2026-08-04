@@ -10,7 +10,7 @@
    监听一律委托在 host(重渲会换掉子元素)。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { bindCardOpen, createWidget } from "./widget.js";
 import { renderTableEditor } from "./w-table.render.js";
 
 const _DND_MIME = "application/x-agent-os-widget";
@@ -27,7 +27,7 @@ export const TABLE_EDITOR_DEF = registerWidgetDef({
     { id: "set_cell", exec: "local", args_input: { id: { type: "string" }, key: { type: "string" } } },
     { id: "remove_selected", exec: "local" },
   ],
-  events: ["change"],
+  events: ["change", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "grid", keys: ["ArrowUp", "ArrowDown"] },
   surfaces: ["card", "tab"],
   render: renderTableEditor, // W5.2:render 面进 def(registry 校验形态)
@@ -48,8 +48,9 @@ function _skeleton(col) {
 }
 
 /* 挂进宿主:columns(列定义)+ rows(初始行;下行数据)+ path(§14 前缀)。
-   返回 widget;父组件 on("change", ...) 收全部 mutation。 */
-export function mountTableEditor(host, { columns, rows = [], path = "", onRegister = null, onUnregister = null } = {}) {
+   返回 widget;父组件 on("change", ...) 收全部 mutation。
+   双形态(§1.4):surface="card" 时渲染摘要卡,宿主委托只挂 open。 */
+export function mountTableEditor(host, { columns, rows = [], path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(TABLE_EDITOR_DEF, {
     path,
     state: {
@@ -62,7 +63,7 @@ export function mountTableEditor(host, { columns, rows = [], path = "", onRegist
   });
 
   const render = () => {
-    host.innerHTML = renderTableEditor(widget.state);
+    host.innerHTML = renderTableEditor(widget.state, { surface });
   };
   const _changed = () => widget.emit("change", { rows: widget.state.rows });
 
@@ -94,6 +95,9 @@ export function mountTableEditor(host, { columns, rows = [], path = "", onRegist
   };
   widget.serialize = () => widget.state.rows.map((r) => ({ ...r.cells }));
 
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
   host.addEventListener("click", (e) => {
     if (e.target.closest("[data-wd-add]")) return widget.add_row();
     const x = e.target.closest("[data-row-x]");
@@ -157,6 +161,7 @@ export function mountTableEditor(host, { columns, rows = [], path = "", onRegist
     const before = e.target.closest("[data-row]")?.dataset.row ?? "";
     if (sourceId && sourceId !== before) widget.move_row(sourceId, before);
   });
+  }
 
   render();
   widget.register(host.dataset.summary ?? "");

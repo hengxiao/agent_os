@@ -968,3 +968,193 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
   host.trigger("click", { target: btn });
   assert.deepEqual(copied, ["let a = 1;"], "复制 = 代码块原文");
 }
+
+/* ── W5.6:双形态(card/tab;docs/WIDGET-ARCH.md §1.4)─────────────────
+   同一实例 state 两种渲染:card = 只读摘要 + 整卡 open 入口;tab = 完整交互。
+   本区钉:协议面(双 surface + open 事件声明)、card render 纯函数三要素 +
+   摘要关键内容 + 零编辑控件 + 转义、缺省 opts = tab(既有行为不回退)、
+   mount 面(update 在 card 形态工作、check() 局部刷新钩子两种形态共用)。 */
+
+{
+  // 协议面:13 控件 def 全声明 card+tab,且都声明 open 事件(card 唯一交互)
+  // (本文件前文注册过 t-probe 等探针——无 render 面,不计入产品控件面)
+  const defs = listWidgetKinds().map((k) => getWidgetDef(k)).filter((d) => typeof d.render === "function");
+  assert.equal(defs.length, 13, "13 种自渲染控件");
+  for (const def of defs) {
+    assert.deepEqual([...(def.surfaces ?? [])].sort(), ["card", "tab"], `${def.kind} 双 surface 声明`);
+    assert.ok(def.events.includes("open"), `${def.kind} 声明 open 事件(card 整卡点击)`);
+  }
+}
+
+{
+  // card render 面:纯(同 state 同 html/不改 state)、根带 data-surface + wd-card、
+  // 无 textarea/input/button/select、摘要关键内容在、XSS 转义;缺省 = tab
+  const NO_EDIT = /<(textarea|input|button|select)\b/i;
+  const today = quickRange("today"); // 快捷徽标确定性锚点(用真实"今天")
+  const cases = [
+    ["text-editor", renderTextEditor,
+      { value: "一<script>\n二\n三\n四", dirty: true, mono: true, rows: 4, field: "p", label: "p" }, {},
+      (h) => h.includes("wd-gutter") && h.includes("wd-micro") && h.includes("is-dirty") &&
+        h.includes("一&lt;script&gt;") && !h.includes("四"),
+      "mono 行号槽 + 微标 + dirty 边条;前 3 行预览(第 4 行不进卡);值转义"],
+    ["json-editor", renderJsonEditor,
+      { value: '{"a<": 1}', mono: true, rows: 6, field: "j", label: "j", error: null }, {},
+      (h) => h.includes("wd-json-ok") && h.includes('{&quot;a&lt;&quot;: 1}') && !h.includes("wd-format"),
+      "合法绿勾 + 首行预览;无 format 钮;key 转义"],
+    ["json-editor(错误)", renderJsonEditor,
+      { value: '{\n  "a": bad\n}', mono: true, field: "j", label: "j", error: { line: 2, message: "bad token" } }, {},
+      (h) => h.includes('data-wd-errbar="1">') && h.includes("第 2 行") && h.includes("bad token") &&
+        h.includes('wd-json-ok" hidden'),
+      "错误红条(行级)+ 绿勾隐"],
+    ["table-editor", renderTableEditor,
+      { rows: [{ id: "r1", cells: { name: "甲<b>", n: 1, ok: true, kind: "a" } }, { id: "r2", cells: { name: "乙", n: 2 } },
+          { id: "r3", cells: { name: "丙", n: 3 } }],
+        selected: [], schema: { columns: [
+          { key: "name", type: "text", label: "名" }, { key: "n", type: "number", label: "数" },
+          { key: "ok", type: "boolean", label: "好" }, { key: "kind", type: "enum", label: "类", options: ["a"] }] } }, {},
+      (h) => h.includes("+1") && h.includes("3 行") && h.includes("甲&lt;b&gt;") && h.includes("乙") &&
+        !h.includes("丙") && !h.includes("⠿") && h.includes("wd-type"),
+      "列摘要 4→3 溢出 +1;行数徽标;前 2 行只读(第 3 行不进卡);无拖柄;转义"],
+    ["kv-editor", renderKvEditor,
+      { entries: [{ key: "a", value: "1" }, { key: "a", value: "2" }, { key: "b<x>", value: "3" }, { key: "c", value: "4" }] }, {},
+      (h) => h.includes("4 键值") && h.includes("重复") && h.includes("b&lt;x&gt;") &&
+        !h.includes(">c<") && !h.includes("data-kv-x"),
+      "计数徽标 + 重复 key 警示;前 3 条(第 4 条不进卡);无 ✕;转义"],
+    ["schema-form", renderFormEditor,
+      { values: { city: "北京" }, errors: {}, schema: { required: ["city", "zip"],
+          properties: { city: { type: "string" }, zip: { type: "string" }, note: { type: "string" } } } }, {},
+      (h) => h.includes("必填 1/2") && h.includes("缺 zip") && !h.includes("lab-field"),
+      "必填完成度 1/2 + 缺失必填名;无字段控件"],
+    ["select-list", renderSelectList,
+      { items: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta<b>", hint: "第二项" }, { id: "g", label: "Gamma" }],
+        selected: "b", filter: "", focus: 0, multi: false }, {},
+      (h) => h.includes("3 项") && h.includes("Beta&lt;b&gt;") && h.includes("第二项") &&
+        !h.includes("wd-list-filter") && !h.includes("Alpha"),
+      "选中项(名称+元信息)+ 总数;无过滤框;未选项不进卡;转义"],
+    ["select-list(多选)", renderSelectList,
+      { items: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }, { id: "g", label: "Gamma" }],
+        selected: ["a", "b", "g"], filter: "", focus: 0, multi: true }, {},
+      (h) => h.includes("Alpha") && h.includes("+2"), "多选:首选项 + 溢出 +N"],
+    ["ns-tree", renderTreeWidget,
+      { nodes: [{ name: "weather.query" }, { name: "weather.forecast" }, { name: "ops.janitor" }],
+        expanded: [], selected: "weather.<query>", filter: "" }, {},
+      (h) => h.includes("weather.&lt;query&gt;") && h.includes("3 叶子") && !h.includes("wd-tree-filter"),
+      "当前路径 + 叶子计数;无过滤框;转义"],
+    ["date-picker(range)", renderDatePicker,
+      { value: { start: "2026-08-01", end: "2026-08-04" }, mode: "range", inverted: false,
+        open: true, cursor: { year: 2026, month: 7 } }, {},
+      (h) => h.includes("2026-08-01 → 2026-08-04") && !h.includes("wd-grid"),
+      "区间 起 → 止;不开日历层"],
+    ["date-picker(快捷命中)", renderDatePicker,
+      { value: { ...today }, mode: "range", inverted: false, open: false, cursor: { year: 2026, month: 7 } }, {},
+      (h) => h.includes(copy("w.date.today")), "值命中快捷项 → 快捷标签徽标"],
+    ["chart", renderChart,
+      { series: [{ name: "cost", points: [{ x: 1, y: 2 }, { x: 2, y: 5 }, { x: 3, y: 3 }] },
+          { name: "tok", points: [{ x: 1, y: 9 }] }], type: "line", view: "chart", hidden: [] },
+      { label: "费用<x>" },
+      (h) => h.includes("wd-chart-mini") && h.includes("2 序列") && h.includes("wd-card-num") &&
+        h.includes("<polyline") && !h.includes("wd-chart-tick") && h.includes('aria-label="费用&lt;x&gt;"'),
+      "迷你图(无坐标轴文字)+ 最新值读数 + 图例压成计数;label 转义"],
+    ["log-viewer", renderLogViewer,
+      { lines: [{ kind: "info", text: "首行" }, { kind: "warn", text: "二" }, { kind: "error", text: "三<b>" },
+          { kind: "info", text: "四" }], follow: true, filter: "" }, {},
+      (h) => h.includes("4 行") && h.includes('data-kind="error"') && h.includes("三&lt;b&gt;") &&
+        h.includes("四") && !h.includes("首行") && !h.includes("wd-log-filter") && !h.includes("wd-log-bottom"),
+      "总行数徽标 + 最近 3 行(kind 色条,首行不进卡);无过滤框/回到底部;转义"],
+    ["diff-viewer", renderDiffViewer,
+      { left: { members: [{ member: "m", status: "changed", fields: [],
+            prompt_diff: [{ kind: "del", text: "旧<b>" }, { kind: "same", text: "同" }, { kind: "add", text: "新" }] }] },
+        mode: "split", expanded: [] }, {},
+      (h) => h.includes('data-kind="add">+1<') && h.includes('data-kind="del">-1<') &&
+        h.includes("- 旧&lt;b&gt;") && h.includes("+ 新") && !h.includes("同") && !h.includes("wd-mode"),
+      "+add/-del 计数徽标 + 首个 hunk 2 行预览(same 不进卡);无模式切换;转义"],
+    ["md-viewer", renderMarkdownViewer,
+      { source: "# 标题<script>\n\n首段摘录。\n\n第二段不进卡\n\n```\ncode\n```" }, {},
+      (h) => h.includes("标题&lt;script&gt;") && h.includes("首段摘录。") && !h.includes("第二段") &&
+        !h.includes("data-md-copy"),
+      "首个标题 + 首段摘录(二段/代码块不进卡);无复制钮;转义"],
+    ["chat-bubble", renderBubble,
+      { anchor: { member: "m", path: "p" }, messages: [{ role: "user", text: "问" },
+          { role: "assistant", text: "答<b>" }], busy: false, draft: "", unread: 2 }, {},
+      (h) => h.includes("2 条") && h.includes("2 未读") && h.includes("答&lt;b&gt;") && !h.includes("问") &&
+        !h.includes("data-bubble-draft"),
+      "消息计数 + 未读徽标 + 最后一条摘录;无输入框;转义"],
+  ];
+  for (const [name, fn, state, opts, check, desc] of cases) {
+    const snapshot = JSON.stringify(state);
+    const card = fn(state, { ...opts, surface: "card" });
+    assert.equal(card, fn(state, { ...opts, surface: "card" }), `${name}:card render 纯(同 state 同 html)`);
+    assert.equal(JSON.stringify(state), snapshot, `${name}:card render 不改 state`);
+    assert.ok(card.includes('data-surface="card"'), `${name}:card 根带 data-surface="card"`);
+    assert.ok(card.includes("wd-card"), `${name}:card 根带紧凑类 wd-card`);
+    assert.ok(!NO_EDIT.test(card), `${name}:card 无编辑控件(textarea/input/button/select)`);
+    assert.ok(!card.includes("<script"), `${name}:card 无未转义注入`);
+    assert.ok(check(card), `${name}:card 摘要关键内容(${desc})`);
+    assert.equal(fn(state, opts), fn(state, { ...opts, surface: "tab" }), `${name}:缺省 opts = tab(不回退)`);
+    assert.ok(fn(state, opts).length > 0, `${name}:tab 渲染非空`);
+  }
+}
+
+{
+  // mount 面:card 形态宿主委托只挂 open;update() 在 card 形态维持(state → card 重渲)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  host.dataset.field = "prompt";
+  doc.body.appendChild(host);
+  const w = mountTextEditor(host, { value: "一\n二", surface: "card", path: "/t/card-text" });
+  assert.ok(host.innerHTML.includes('data-surface="card"'), "text card 首渲");
+  assert.equal(host.querySelector("textarea"), null, "card 不产出 textarea");
+  const opens = [];
+  w.on("open", (p) => opens.push(p));
+  host.trigger("click", { target: host });
+  assert.equal(opens.length, 1, "整卡点击 → open");
+  assert.equal(opens[0].path, "/t/card-text", "open 负载带 §14 路径");
+  host.trigger("keydown", { target: host, key: "Enter" });
+  assert.equal(opens.length, 2, "Enter 也发 open(键盘可达)");
+  w.update({ value: "一\n二\n三" }); // update() 有无维持现状:state 合并 → 按 card 面重渲
+  assert.ok(host.innerHTML.includes('data-surface="card"'), "update 后仍是 card 面");
+  assert.ok(host.innerHTML.includes("3 行"), "update 后微标随 state 刷新(串内文本)");
+  w.destroy();
+  assert.equal(host.innerHTML, "", "destroy 清空(自渲染件纪律)");
+}
+
+{
+  // json card:check() 的局部刷新钩子(.wd-errbar/.wd-json-ok)两种形态共用——
+  // mount 末的初值校验把 card 状态行同步到位(与 tab 同纪律,不重渲)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const bad = doc.createElement("div");
+  doc.body.appendChild(bad);
+  mountJsonEditor(bad, { value: '{\n  "a": 1', field: "j", label: "j", surface: "card" });
+  const bar = bad.querySelector(".wd-errbar");
+  assert.ok(bar && !bar.hidden, "非法 JSON:card 错误条显(check() 同步)");
+  assert.ok(bar.textContent.includes("第 2 行"), "行级定位进 card 状态行");
+  assert.ok(bad.querySelector(".wd-json-ok").hidden, "非法 → 绿勾隐");
+  const ok = doc.createElement("div");
+  doc.body.appendChild(ok);
+  mountJsonEditor(ok, { value: '{"a": 1}', field: "j", label: "j", surface: "card" });
+  assert.ok(!ok.querySelector(".wd-json-ok").hidden, "合法 JSON:card 绿勾显");
+  assert.ok(ok.querySelector(".wd-errbar").hidden, "合法 → 错误条隐");
+}
+
+{
+  // bubble card:open 负载沿用本控件语义({anchor});tab 行为不回退(输入框还在)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const anchor = { member: "lab.d", path: "/x/y" };
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountBubble(host, { anchor, seedMessages: [{ role: "user", text: "旧" }], surface: "card", unread: 3 });
+  assert.ok(host.innerHTML.includes("3 未读"), "未读徽标(mount 选项进 state)");
+  const opens = [];
+  w.on("open", (p) => opens.push(p));
+  host.trigger("click", { target: host });
+  assert.deepEqual(opens, [{ anchor }], "card open 负载 = {anchor}(与 tab open 事件同语义)");
+  const host2 = doc.createElement("div");
+  doc.body.appendChild(host2);
+  mountBubble(host2, { anchor, seedMessages: [] });
+  assert.ok(host2.innerHTML.includes("data-bubble-draft"), "tab 输入框不回退");
+}
+
+console.log("widgets.test.mjs: W5.6 dual-surface assertions passed");

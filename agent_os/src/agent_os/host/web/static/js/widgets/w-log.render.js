@@ -1,5 +1,5 @@
 /* W-log 渲染面(docs/WIDGET-ARCH.md §1.1/§2.10;W5.3):
-   ``renderLogViewer(state) -> html`` **纯函数**——无副作用、不写 state、
+   ``renderLogViewer(state, {surface}) -> html`` **纯函数**——无副作用、不写 state、
    不发事件、不调后端;只产出语义 class(``wd-*``),视觉全走契约 token。
    效果(§2.10):mono 滚动区;kind 左侧色条(--sig-* 信号色,data-kind 驱动,
    CSS 面);暂停跟随才显示"回到底部"浮钮;顶部过滤框;空态。 */
@@ -14,8 +14,11 @@ export function visibleLogLines(state) {
   );
 }
 
-/* state → html(纯);state 面:{lines:[{kind,text}], follow, filter} */
-export function renderLogViewer(state) {
+/* state → html(纯);state 面:{lines:[{kind,text}], follow, filter}
+   双形态(§1.4):surface="card" → 最近 3 行(kind 色条保留)+ 总行数徽标;
+   无过滤框/复制钮/回到底部 */
+export function renderLogViewer(state, { surface = "tab" } = {}) {
+  if (surface === "card") return _logCardHtml(state);
   const vis = visibleLogLines(state);
   return (
     `<div class="wd-log">` +
@@ -35,6 +38,30 @@ export function renderLogViewer(state) {
     (vis.length ? "" : `<div class="wd-empty">${esc(copy("w.log.empty"))}</div>`) +
     `</div>` +
     (state.follow ? "" : `<button class="wd-log-bottom" data-wlog-bottom="1">${esc(copy("w.log.bottom"))}</button>`) +
+    `</div>`
+  );
+}
+
+/* card 面(§1.4):总行数徽标 + 最近 3 行(复用 .wd-log-line,data-kind 色条
+   是 CSS 面,双编码不变);空态同 tab 文案 */
+function _logCardHtml(state) {
+  const lines = state.lines ?? [];
+  return (
+    `<div class="wd-card" data-surface="card" role="button" tabindex="0"` +
+    ` aria-label="${esc(copy("w.card.open"))}">` +
+    `<span class="wd-card-head">` +
+    `<span class="wd-badge">${esc(copy("w.card.lines").replace("{n}", String(lines.length)))}</span>` +
+    `</span>` +
+    (lines.length
+      ? lines
+          .slice(-3)
+          .map(
+            (l) =>
+              `<div class="wd-log-line" data-kind="${esc(l.kind)}">` +
+              `<span class="wd-log-kind mono">${esc(l.kind)}</span> ${esc(l.text)}</div>`
+          )
+          .join("")
+      : `<div class="wd-empty">${esc(copy("w.log.empty"))}</div>`) +
     `</div>`
   );
 }

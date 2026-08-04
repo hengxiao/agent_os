@@ -1,5 +1,5 @@
 /* W-bubble 渲染面(docs/WIDGET-ARCH.md §1.1/§2.13;W5.3):
-   ``renderBubble(state) -> html`` **纯函数**——无副作用、不写 state、
+   ``renderBubble(state, {surface}) -> html`` **纯函数**——无副作用、不写 state、
    不发事件、不调后端;只产出语义 class,视觉全走契约 token。
    效果(§2.13):气泡卡(锚点引用行[高亮槽]+消息流[role=log]+输入框);
    浮出定位/小箭头/收起态小圆标在宿主层(doc-editor 的 wrap/marker,
@@ -7,8 +7,11 @@
 
 import { copy } from "../themes.js";
 
-/* state → html(纯);state 面:{anchor:{member,path,span?}, messages, busy, draft} */
-export function renderBubble(state) {
+/* state → html(纯);state 面:{anchor:{member,path,span?}, messages, busy, draft, unread}
+   双形态(§1.4):surface="card" → 消息计数 + 未读徽标(>0 才显)+
+   最后一条消息摘录;无输入框/发送钮/apply 钮 */
+export function renderBubble(state, { surface = "tab" } = {}) {
+  if (surface === "card") return _bubbleCardHtml(state);
   const anchor = state.anchor ?? {};
   const anchorTo = [anchor.member, anchor.path].filter(Boolean).join(" · ");
   const msgs = state.messages ?? [];
@@ -38,6 +41,25 @@ export function renderBubble(state) {
     ` aria-label="${esc(copy("w.bubble.ph"))}" value="${esc(state.draft ?? "")}">` +
     `<button class="btn" data-bubble-send${state.busy ? " disabled" : ""}>${esc(copy("w.bubble.send"))}</button>` +
     `</div></div>`
+  );
+}
+
+/* card 面(§1.4):计数徽标 + 未读徽标(--live 调;>0 才显)+ 最后一条摘录 */
+function _bubbleCardHtml(state) {
+  const msgs = state.messages ?? [];
+  const last = msgs.at(-1);
+  const unread = Number(state.unread ?? 0);
+  return (
+    `<div class="wd-card" data-surface="card" role="button" tabindex="0"` +
+    ` aria-label="${esc(copy("w.card.open"))}">` +
+    `<span class="wd-card-head">` +
+    `<span class="wd-badge">${esc(copy("w.card.msgs").replace("{n}", String(msgs.length)))}</span>` +
+    (unread > 0
+      ? `<span class="wd-badge" data-tone="live">${esc(copy("w.card.unread").replace("{n}", String(unread)))}</span>`
+      : "") +
+    `</span>` +
+    (last ? `<span class="wd-card-line">${esc(last.text)}</span>` : "") +
+    `</div>`
   );
 }
 

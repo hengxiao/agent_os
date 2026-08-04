@@ -1,7 +1,8 @@
 /* 控件沙盒逻辑(docs/WIDGET-ARCH.md 沙盒节;开发工具,非产品 UI)。
 
-   URL 协议:``?kind=<kind>&theme=<id>&sample=<N>``,另支持
-   ``#options=<urlencoded json>`` 覆盖样例 mount options。
+   URL 协议:``?kind=<kind>&theme=<id>&sample=<N>&surface=<tab|card>``,另支持
+   ``#options=<urlencoded json>`` 覆盖样例 mount options(surface 与样例正交,
+   由顶栏形态切换器驱动,不进 options 覆盖)。
    挂载流:destroy 旧实例 → 清空舞台 → 按样例 options mount →
    订阅 def.events 全部事件写 Events 面板;State 面板事件触发 + 500ms
    轮询刷新,「应用」走 widget.update()(无 update 的控件禁用并提示)。
@@ -32,17 +33,19 @@ export function parseSandboxUrl(search, hash) {
     kind: kind && SAMPLES[kind] ? kind : null,
     theme: q.get("theme") ?? "",
     sample: Number.isInteger(sampleN) && sampleN >= 0 ? sampleN : 0,
+    surface: q.get("surface") === "card" ? "card" : "tab", // 非法值回落 tab(完整形态)
     options,
     optionsError,
   };
 }
 
-/* URL 序列化(纯函数;options 为 null 不带 hash) */
-export function buildSandboxUrl({ kind, theme, sample, options = null }) {
+/* URL 序列化(纯函数;options 为 null 不带 hash;surface=tab 是缺省不进 URL) */
+export function buildSandboxUrl({ kind, theme, sample, surface = "tab", options = null }) {
   const q = new URLSearchParams();
   if (kind) q.set("kind", kind);
   if (theme) q.set("theme", theme);
   if (sample !== null && sample !== undefined) q.set("sample", String(sample));
+  if (surface === "card") q.set("surface", "card");
   const hash = options ? `#options=${encodeURIComponent(JSON.stringify(options))}` : "";
   return `?${q.toString()}${hash}`;
 }
@@ -64,6 +67,7 @@ export function bootSandbox() {
   const current = {
     kind: url.kind ?? kinds[0],
     sample: Math.min(url.sample, (SAMPLES[url.kind ?? kinds[0]].samples.length - 1)),
+    surface: url.surface,
     optionsOverride: url.options,
     widget: null,
   };
@@ -85,6 +89,9 @@ export function bootSandbox() {
       .join("");
   };
   _fillSamples();
+  // 形态切换(完整/卡片;W5.6 双形态,与样例正交)
+  const surfaceSel = $("#sb-surface");
+  surfaceSel.value = current.surface;
 
   /* Events 面板(新的在上,上限 100 条) */
   const _events = [];
@@ -125,10 +132,11 @@ export function bootSandbox() {
   function mountCurrent() {
     current.widget?.destroy?.();
     stage.innerHTML = "";
+    stage.dataset.surface = current.surface; // card 形态舞台收窄(widget.html 样式面)
     const entry = SAMPLES[current.kind];
     const sample = entry.samples[current.sample] ?? entry.samples[0];
     const options = current.optionsOverride ?? sample.options;
-    const w = widgets[entry.mount](stage, { ...options });
+    const w = widgets[entry.mount](stage, { ...options, surface: current.surface });
     const def = widgets.getWidgetDef(current.kind);
     for (const ev of def?.events ?? []) w.on(ev, (payload) => pushEvent(ev, payload));
     current.widget = w;
@@ -151,12 +159,17 @@ export function bootSandbox() {
     mountCurrent();
   });
   themeSel.addEventListener("change", () => applyTheme(themeSel.value, { persist: false, syncUrl: false }));
+  surfaceSel.addEventListener("change", () => {
+    current.surface = surfaceSel.value === "card" ? "card" : "tab";
+    mountCurrent();
+  });
   $("#sb-remount").addEventListener("click", mountCurrent);
   $("#sb-share").addEventListener("click", async () => {
     const url = buildSandboxUrl({
       kind: current.kind,
       theme: themeSel.value,
       sample: current.sample,
+      surface: current.surface, // 分享链接带上形态(W5.6)
       options: current.optionsOverride,
     });
     const full = `${location.origin}${location.pathname}${url}`;

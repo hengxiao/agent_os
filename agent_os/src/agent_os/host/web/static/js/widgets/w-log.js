@@ -8,7 +8,7 @@
    铁律:本文件不拼 HTML(渲染全在 w-log.render.js);零 fetch;监听委托在 host。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { bindCardOpen, createWidget } from "./widget.js";
 import { renderLogViewer, visibleLogLines } from "./w-log.render.js";
 
 export { visibleLogLines }; // 渲染面纯函数(过滤共用)
@@ -24,14 +24,14 @@ export const LOG_VIEWER_DEF = registerWidgetDef({
     { id: "filter", exec: "local", args_input: { text: { type: "string" } } },
     { id: "copy_all", exec: "local" },
   ],
-  events: ["change", "copy"],
+  events: ["change", "copy", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "log", keys: [] },
   surfaces: ["card", "tab"],
   render: renderLogViewer, // W5.3:render 面进 def(registry 校验形态)
 });
 
 /* 挂进宿主:lines 初始行 + maxLines(截断上限,缺省 500 保尾部) */
-export function mountLogViewer(host, { lines = [], maxLines = 500, path = "", onRegister = null, onUnregister = null } = {}) {
+export function mountLogViewer(host, { lines = [], maxLines = 500, path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(LOG_VIEWER_DEF, {
     path,
     state: { lines: lines.map((l) => ({ kind: l.kind ?? "info", text: String(l.text ?? "") })), follow: true, filter: "" },
@@ -41,7 +41,7 @@ export function mountLogViewer(host, { lines = [], maxLines = 500, path = "", on
   let box = null;
 
   const render = () => {
-    host.innerHTML = renderLogViewer(widget.state);
+    host.innerHTML = renderLogViewer(widget.state, { surface });
     box = host.querySelector("[data-wlog-box]");
     if (widget.state.follow && box) box.scrollTop = box.scrollHeight; // 跟随:自动滚底
   };
@@ -67,6 +67,9 @@ export function mountLogViewer(host, { lines = [], maxLines = 500, path = "", on
     return text;
   };
 
+  if (surface === "card") {
+    bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
+  } else {
   host.addEventListener("input", (e) => {
     if (e.target.closest("[data-wlog-filter]")) widget.filter(e.target.value);
   });
@@ -90,6 +93,7 @@ export function mountLogViewer(host, { lines = [], maxLines = 500, path = "", on
       render();
     }
   });
+  }
 
   render();
   widget.register(host.dataset.summary ?? "");

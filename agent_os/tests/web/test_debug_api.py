@@ -423,6 +423,32 @@ def _consume_stream(client: TestClient, sid: str, holder: dict) -> threading.Thr
     return t
 
 
+def _wait_stream_attached(client: TestClient, sid: str, timeout: float = 5.0) -> None:
+    """确定性等 SSE 生成器启动(替代盲睡):轮询快照的 stream_attached。
+
+    差分/跳变类事件(bp_hit/paused/resumed)只在生成器运行期间可观测;
+    生成器启动时刻此前只能靠 time.sleep 猜——高负载下猜不中就是 flake。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        doc = client.get(f"/api/debug/sessions/{sid}").json()
+        if doc.get("stream_attached"):
+            return
+        time.sleep(0.05)
+    raise AssertionError("SSE 生成器 5s 内未启动(stream_attached 未置位)")
+
+
+def _wait_stream_seen(client: TestClient, sid: str, bp_id: str, hits: int, timeout: float = 5.0) -> None:
+    """等流的 hits 差分基线推进到指定值(摘除断点前必须让流先看到)。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        doc = client.get(f"/api/debug/sessions/{sid}").json()
+        if (doc.get("stream_seen") or {}).get(bp_id, 0) >= hits:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"流未观测到 hits={hits}(bp {bp_id})")
+
+
 def test_debug_sse_connect_first_events(tmp_path):
     """连接与首个事件:state 快照;已暂停的会话立即补发 paused。"""
     client = _client(tmp_path)
@@ -431,9 +457,8 @@ def test_debug_sse_connect_first_events(tmp_path):
 
     holder: dict = {}
     t = _consume_stream(client, sid, holder)
-    # 等消费线程的请求抵达、生成器启动(同 test_debug_sse_bp_hit_resumed_run_end:
-    # 差分/跳变类事件只在生成器运行期间可观测;paused 期间无状态变化可丢)
-    time.sleep(1.0)
+    # 确定性等生成器启动(流可观测面;paused 期间无状态变化可丢)
+    _wait_stream_attached(client, sid)
     # 主线程驱动到 run_end:stop → aborted,流随即完成
     _command(client, sid, "stop")
     assert wait_status(client, run_id)["status"] == "aborted"
@@ -459,17 +484,16 @@ def test_debug_sse_bp_hit_resumed_run_end(tmp_path):
 
     holder: dict = {}
     t = _consume_stream(client, sid, holder)
-    # 等消费线程的请求抵达、生成器启动(会话保持 paused,期间无状态变化可丢):
-    # bp_hit 是 hits 差分事件,若生成器在命中之后才启动,差分起点已是新值,
-    # 该事件就永远发不出来(全套回归高负载下线程调度延迟可达数百毫秒)
-    time.sleep(1.0)
+    # 确定性等生成器启动(流可观测面):bp_hit 是 hits 差分事件,若生成器在命中
+    # 之后才启动,差分起点已是新值,该事件就永远发不出来——此前用 time.sleep
+    # 猜启动时刻,高负载下猜不中即 flake
+    _wait_stream_attached(client, sid)
     # continue:命中下一 pre:step(子帧 F2)→ bp_hit(hits=2)+ paused
     _command(client, sid, "continue")
     point2 = _wait_pause(client, sid, prev=point)
     assert point2["signal"] == "pre:step"
-    # 给流的轮询(_DEBUG_SSE_POLL=0.1s)留出观察窗口:若断点在流看到 hits=2
-    # 之前就被摘掉,差分事件同样发不出来
-    time.sleep(1.0)
+    # 摘断点前必须让流的差分基线推进到 hits=2,否则事件发不出来(同 flake 根因)
+    _wait_stream_seen(client, sid, bp_id, 2)
     # 摘断点后 continue:resumed → run 跑完 → run_end(done)
     client.delete(f"/api/debug/sessions/{sid}/breakpoints/{bp_id}")
     _command(client, sid, "continue")

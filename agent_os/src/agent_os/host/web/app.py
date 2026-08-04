@@ -530,6 +530,10 @@ def _debug_session_doc(session: Any) -> dict[str, Any]:
         "frame_stack": _jsonable(session.frame_stack),
         # rerun 可用性(live 会话有创建参数 origin;replay/CLI 为 None)
         "rerunnable": session.origin is not None,
+        # 流可观测性(测试确定性面;additive):SSE 生成器已启动 + 其 hits 差分基线。
+        # 没有这两个字段,流消费方只能盲睡猜测生成器是否启动(既有 flake 根因)
+        "stream_attached": bool(getattr(session, "stream_attached", False)),
+        "stream_seen": dict(getattr(session, "stream_seen", None) or {}),
     }
 
 
@@ -1643,10 +1647,13 @@ def create_app(
             return f"event: {name}\ndata: {json.dumps(_jsonable(data), ensure_ascii=False)}\n\n"
 
         async def events() -> AsyncIterator[str]:
+            # 流可观测性(测试确定性面):生成器启动即标记,hits 基线对快照可见
+            session.stream_attached = True
             yield _event("state", _debug_session_doc(session))
             # prev_state 不取当前态:已暂停的会话在连接后立即补发 paused(迟到客户端)
             prev_state = ""
             hits = {bp.id: bp.hits for bp in session.breakpoints}
+            session.stream_seen = hits  # 同一 dict:差分推进对快照实时可见
             idle = 0.0
             while True:
                 emitted = False

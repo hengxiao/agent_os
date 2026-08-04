@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="classic">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>控件沙盒 — Agent OS 开发工具</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/widgets.css">
+<link rel="stylesheet" href="/static/css/themes/classic.css">
+<link rel="stylesheet" href="/static/css/themes/moe.css">
+<link rel="stylesheet" href="/static/css/themes/terminal.css">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css">
+<link rel="stylesheet" href="/static/css/themes/ink.css">
+<link rel="stylesheet" href="/static/css/themes/pixel.css">
+<style>
+  /* 沙盒页布局(开发工具;全 token,不走产品 copy) */
+  body { background: var(--bg-0); color: var(--fg-0); font-size: var(--text-xs); margin: 0; }
+  .sb-top {
+    display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+    padding: var(--s2) var(--s3); border-bottom: var(--stroke) solid var(--line);
+    background: var(--bg-1);
+  }
+  .sb-top label { color: var(--fg-2); font-size: var(--text-2xs); }
+  .sb-stage {
+    max-width: 720px; margin: var(--s6) auto; padding: var(--s4);
+    background: var(--bg-1); border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+    min-height: 120px;
+  }
+  .sb-panel { max-width: 720px; margin: 0 auto var(--s6); padding: 0 var(--s4); }
+  .sb-tabs { display: flex; gap: var(--s1); margin-bottom: var(--s2); }
+  .sb-tabs button[data-on="1"] { color: var(--live); border-color: var(--live); }
+  .sb-events {
+    background: var(--bg-0); border: var(--stroke) solid var(--line); border-radius: var(--r-sm);
+    padding: var(--s2); min-height: 120px; max-height: 240px; overflow-y: auto;
+    font-family: var(--font-mono); font-size: var(--text-2xs); white-space: pre-wrap;
+  }
+  .sb-state { width: 100%; min-height: 160px; font-family: var(--font-mono); font-size: var(--text-2xs); }
+  .sb-hint { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(--s2); }
+</style>
+</head>
+<body data-route="widget-sandbox">
+  <div class="sb-top">
+    <b>控件沙盒</b>
+    <label>控件 <select class="input" id="sb-kind"></select></label>
+    <label>主题 <select class="input" id="sb-theme"></select></label>
+    <label>样例 <select class="input" id="sb-sample"></select></label>
+    <button class="btn" id="sb-remount">重新挂载</button>
+    <button class="btn" id="sb-share">复制分享链接</button>
+  </div>
+  <div class="sb-stage" id="sb-stage"></div>
+  <div class="sb-panel">
+    <div class="sb-tabs">
+      <button class="btn" id="sb-tab-events" data-on="1">Events</button>
+      <button class="btn" id="sb-tab-state">State</button>
+    </div>
+    <div class="sb-events" id="sb-events" role="log"></div>
+    <div id="sb-state-pane" hidden>
+      <textarea class="sb-state input" id="sb-state" aria-label="widget state"></textarea>
+      <div style="margin-top: var(--s2);">
+        <button class="btn" id="sb-apply">应用</button>
+        <span class="sb-hint" id="sb-state-hint"></span>
+      </div>
+    </div>
+  </div>
+  <script type="module">
+    import { bootSandbox } from "/static/js/widget-sandbox.js";
+    // 面板 tab 切换(纯展示层;逻辑在 widget-sandbox.js)
+    const evTab = document.querySelector("#sb-tab-events");
+    const stTab = document.querySelector("#sb-tab-state");
+    const evPane = document.querySelector("#sb-events");
+    const stPane = document.querySelector("#sb-state-pane");
+    evTab.addEventListener("click", () => {
+      evTab.dataset.on = "1"; stTab.dataset.on = "0";
+      evPane.hidden = false; stPane.hidden = true;
+    });
+    stTab.addEventListener("click", () => {
+      evTab.dataset.on = "0"; stTab.dataset.on = "1";
+      evPane.hidden = true; stPane.hidden = false;
+    });
+    bootSandbox();
+  </script>
+</body>
+</html>

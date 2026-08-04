@@ -158,6 +158,7 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 | W5.2 ✅ | W-table/W-kv/W-form/W-list 迁移(装配点:run.launch 表单/lab 下拉不破) | 装配点测试过 |
 | W5.3 ✅ | W-tree/W-date/W-chart/W-log/W-diff/W-md/W-bubble 迁移 | 全部 render 纯函数 |
 | W5.4 ✅ | 清扫:宿主手写桥接代码删除;架构测试记录更新(弯腰点 ①⑤ 关闭情况) | 无装饰器残留 |
+| W5.5 ✅ | 控件沙盒(widget.html 调试页 + 样例表 + URL 协议) | 沙盒测试过 |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
@@ -264,3 +265,24 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 - 不做虚拟 DOM(简单件全量重渲 + 选区保留已够;性能问题出现再优化);
 - 不改 widget 协议面(def/state/事件/寻址不动——只把渲染拿进控件);
 - 不改六主题契约结构(token/copy/组件零分支沿用)。
+
+## 5. 沙盒(单控件调试页;W5.5)
+
+`web/static/widget.html`(经 `/static/widget.html` 访问,服务端零改动)——
+一个一个控件地调试的开发工具(非产品 UI:文案平实中文,不走主题 copy)。
+
+- **URL 协议**:`?kind=<注册 kind>&theme=<主题 id>&sample=<序号>`,另支持
+  `#options=<urlencoded json>` 覆盖样例 mount options;「复制分享链接」把
+  当前 kind/theme/sample(及 options 覆盖)序列化进 URL 复制到剪贴板。
+  解析/序列化是纯函数(`js/widget-sandbox.js` 的
+  `parseSandboxUrl`/`buildSandboxUrl`,有单测)。
+- **加新控件样例**:往 `js/widgets/samples.js` 加一条
+  `kind: { mount: "<index.js 的 mount 函数名>", samples: [{name, options}] }`
+  ——options 直接喂 mount(per-kind options 形态);样例表是沙盒专用,
+  **生产页面不许 import**。覆盖测试会盯 listWidgetKinds() 与样例表一一对应
+  (新增控件不加样例 = 测试红)。
+- **面板**:Events = 订阅 def.events 全部声明事件(时间戳 + 事件名 +
+  payload JSON,新的在上,上限 100 条);State = widget.state 实时 JSON
+  (事件触发 + 500ms 轮询),「应用」走 `widget.update(patch)`——
+  有 update() 的控件(W-text/W-json,W5.1)可整段 patch 重渲,
+  其余控件禁用该钮并提示「该控件暂无 update()」。

@@ -256,4 +256,12 @@ export const COPY = {
   "w.text.count": "{lines} 行 · {chars} 字",
   "w.json.format": "美化",
   "w.json.errline": "第 {line} 行",
+  "w.table.add": "添加行",
+  "w.table.del": "删除行",
+  "w.table.empty": "还没有行,点下方添加",
+  "w.kv.add": "添加",
+  "w.kv.dup": "key 重复(保存时后者覆盖前者)",
+  "w.bubble.send": "发送",
+  "w.bubble.ph": "问点什么,或提个意见",
+  "w.bubble.apply": "采纳为批注",
 };

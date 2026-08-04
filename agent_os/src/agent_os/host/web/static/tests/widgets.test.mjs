@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-const { makeDocument } = await import("./dom-stub.mjs");
+const { makeDocument, StubEl } = await import("./dom-stub.mjs");
 const { copy } = await import("../js/themes.js");
 const {
   registerWidgetDef, getWidgetDef, listWidgetKinds, createWidget,
@@ -227,3 +227,187 @@ function _jsonHost(doc, value = '{\n  "a": 1\n}') {
 }
 
 console.log("widgets.test.mjs: all assertions passed");
+
+/* ── W2:cascade(§16)/ W-table / W-kv / W-bubble ───────────────── */
+
+const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor,
+  entriesToObject, objectToEntries, dupKeys, mountBubble } =
+  await import("../js/widgets/index.js");
+
+{
+  // cascade:级联顺序(近→远)、每级只出自己 fragment、级数裁剪、
+  // 缺 provider 跳过不炸、信封与 §14 路径一致
+  const providers = [
+    { prefix: "/shell/tab/app-1/surface/tab/field/prompt", scope: "widget",
+      fn: () => ({ span: [1, 2], full_text: "全文" }) },
+    { prefix: "/shell/tab/app-1", scope: "app", fn: () => ({ kind: "lab-draft", ref: "d" }) },
+    { prefix: "/shell", scope: "shell", fn: () => ({ theme: "classic" }) },
+    { prefix: "/elsewhere", scope: "app", fn: () => ({ evil: true }) }, // 横向:非祖先
+  ];
+  const env = contextCascade("/shell/tab/app-1/surface/tab/field/prompt", { providers });
+  assert.equal(env.trigger, "/shell/tab/app-1/surface/tab/field/prompt", "信封 trigger = §14 路径");
+  assert.deepEqual(env.cascade.map((f) => f.scope), ["widget", "app", "shell"], "近→远");
+  assert.equal(env.cascade[0].path, "/shell/tab/app-1/surface/tab/field/prompt", "widget 级路径");
+  assert.equal(env.cascade[1].path, "/shell/tab/app-1", "app fragment 在 app 级");
+  assert.ok(!env.cascade.some((f) => f.data.evil), "横向不打听(无兄弟/旁支)");
+  assert.deepEqual(
+    contextCascade("/shell/tab/app-1/surface/tab/field/prompt", { providers, levels: ["widget"] })
+      .cascade.map((f) => f.scope),
+    ["widget"],
+    "级数裁剪(轻动作不背大信封)",
+  );
+  const broken = [{ prefix: "/shell/tab/app-1", scope: "app", fn: () => { throw new Error("x"); } }];
+  assert.doesNotThrow(() => contextCascade("/shell/tab/app-1/x", { providers: broken }), "provider 异常不炸");
+  assert.equal(contextCascade("/shell/tab/app-1/x", { providers: broken }).cascade.length, 0, "异常级缺席");
+  // 全局注册表:注册/注销
+  const unreg = registerContextProvider("/t", "app", () => ({ a: 1 }));
+  assert.equal(contextCascade("/t/x").cascade.length, 1, "全局注册生效");
+  unreg();
+  assert.equal(contextCascade("/t/x").cascade.length, 0, "注销即止");
+}
+
+{
+  // W-table:列型渲染/增删移/键盘移行/DnD envelope/空态/change 上行
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const columns = [
+    { key: "name", type: "text", label: "名", required: true },
+    { key: "n", type: "number", label: "数" },
+    { key: "ok", type: "boolean", label: "好" },
+    { key: "kind", type: "enum", label: "类", options: ["a", "b"] },
+  ];
+  const changes = [];
+  const w = mountTableEditor(host, { columns, rows: [{ name: "甲", n: 1 }], path: "/t/table" });
+  w.on("change", (p) => changes.push(p.rows.length));
+  const html = () => host.innerHTML;
+  assert.ok(html().includes("名 *"), "required 星标");
+  assert.ok(html().includes('role="grid"'), "role=grid");
+  assert.ok(html().includes('type="checkbox"'), "boolean 列编辑器");
+  assert.ok(html().includes("<select"), "enum 列编辑器");
+  // 增行(骨架按列型)
+  w.add_row();
+  assert.equal(w.state.rows.length, 2);
+  assert.equal(w.state.rows[1].cells.n, 0, "新增行骨架(number=0)");
+  assert.equal(w.state.rows[1].cells.kind, "a", "enum 骨架取首项");
+  // 删行
+  w.remove_row(w.state.rows[0].id);
+  assert.equal(w.state.rows.length, 1);
+  // 移行(move_row before)
+  w.add_row({ name: "乙" });
+  w.add_row({ name: "丙" });
+  const ids = () => w.state.rows.map((r) => r.cells.name);
+  w.move_row(w.state.rows[2].id, w.state.rows[0].id);
+  assert.deepEqual(ids(), ["丙", "", "乙"], "move_row 重排(before 插入)");
+  assert.ok(changes.length >= 3, "change 事件上行");
+  // Alt+↑ 键盘移行
+  const rowEl = new StubEl("tr");
+  rowEl.dataset.row = w.state.rows[1].id;
+  rowEl.closest = (sel) => (sel === "[data-row]" ? rowEl : null);
+  const before = ids();
+  host.trigger("keydown", { target: rowEl, key: "ArrowUp", altKey: true });
+  assert.notDeepEqual(ids(), before, "Alt+↑ 移行");
+  // DnD envelope(§15 合规)
+  let setDataArgs = null;
+  const rowEl2 = new StubEl("tr");
+  rowEl2.dataset.row = w.state.rows[0].id;
+  rowEl2.closest = (sel) => (sel === "[data-row]" ? rowEl2 : null);
+  const dt = { types: ["application/x-agent-os-widget"], setData: (m, v) => { setDataArgs = [m, v]; }, getData: () => "" };
+  host.trigger("dragstart", { target: rowEl2, dataTransfer: dt });
+  const env = JSON.parse(setDataArgs[1]);
+  assert.equal(env.source_kind, "table-row", "envelope source_kind");
+  assert.ok(env.source.startsWith("/t/table/row/"), "envelope source = §14 路径");
+  assert.ok("position" in env, "position 键在(强制最小集)");
+  // drop 重排(落到空区 = 移到末尾;accept 校验:非 table-row 源不动)
+  const sourceName = w.state.rows[0].cells.name;
+  const dtDrop = { types: ["application/x-agent-os-widget"], getData: () => JSON.stringify({ source: env.source, source_kind: "table-row", position: {} }) };
+  host.trigger("drop", { target: host, dataTransfer: dtDrop, preventDefault: () => {} });
+  assert.equal(ids().at(-1), sourceName, "落到空区 = 移到末尾(before 缺省)");
+  const order1 = ids();
+  const dtBad = { types: ["application/x-agent-os-widget"], getData: () => JSON.stringify({ source: "/x", source_kind: "evil" }) };
+  host.trigger("drop", { target: host, dataTransfer: dtBad, preventDefault: () => {} });
+  assert.deepEqual(ids(), order1, "未知 kind 源被拒(不静默)");
+  // 空态
+  const host2 = doc.createElement("div");
+  doc.body.appendChild(host2);
+  mountTableEditor(host2, { columns, rows: [] });
+  assert.ok(host2.innerHTML.includes("还没有行"), "空态文案");
+}
+
+{
+  // W-kv:重复 key 警示(非硬拦)/序列化往返
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountKvEditor(host, { entries: [{ key: "a", value: "1" }, { key: "a", value: "2" }] });
+  assert.deepEqual(dupKeys(w.state.entries), ["a"], "重复 key 检出");
+  assert.ok(host.innerHTML.includes("重复") || host.innerHTML.includes("重"), "警示上屏(警告态)");
+  w.add({ key: "b", value: "3" });
+  assert.deepEqual(w.serialize(), { a: "2", b: "3" }, "序列化(后者覆盖,与 JSON 语义一致)");
+  assert.deepEqual(entriesToObject(objectToEntries({ x: "1", y: "2" })), { x: "1", y: "2" }, "往返");
+}
+
+{
+  // W-bubble:开气泡/种子消息(既有边注兼容)/submit 带 cascade 三级/
+  // 回复渲染/apply 只发事件/多条并存/Esc
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const anchor = { member: "lab.d", kind: "span", path: "/lab/iterate/member/lab.d/span/prompt/span/0", span: { start: 0 } };
+  const providers = [
+    { prefix: "/lab/iterate/member/lab.d", scope: "widget", fn: () => ({ span: { start: 0 }, paragraph: "段", full_text: "全" }) },
+    { prefix: "/lab/iterate", scope: "app", fn: () => ({ draft: "lab.d", tier: "none" }) },
+  ];
+  const submissions = [];
+  const applies = [];
+  const mk = (a) => {
+    const host = doc.createElement("div");
+    doc.body.appendChild(host);
+    const b = mountBubble(host, {
+      anchor: a, seedMessages: [{ role: "user", text: "旧边注" }], cascadeProviders: providers,
+    });
+    b.on("submit", (p) => submissions.push(p));
+    b.on("apply", (p) => applies.push(p));
+    return { host, b };
+  };
+  const { host, b } = mk(anchor);
+  assert.ok(host.innerHTML.includes("旧边注"), "既有边注作种子消息(数据兼容)");
+  assert.ok(host.innerHTML.includes('role="dialog"'), "role=dialog");
+  assert.ok(host.innerHTML.includes('role="log"'), "role=log(消息区)");
+  assert.ok(host.innerHTML.includes("lab.d"), "锚点引用行");
+  // submit:消息+骨架+事件(信封三级:span/全文/app 状态都在)
+  const input = new StubEl("input"); // region 元素不带 dataset,合成驱动(dom-stub 面)
+  input.dataset.bubbleDraft = "";
+  input.parentNode = host;
+  input.value = "这段精简点";
+  host.trigger("input", { target: input });
+  host.trigger("keydown", { target: input, key: "Enter" });
+  assert.equal(submissions.length, 1, "Enter 提交");
+  assert.deepEqual(
+    submissions[0].cascade.cascade.map((f) => f.scope),
+    ["widget", "app"],
+    "级联三级内容都在(span/全文/app)",
+  );
+  assert.equal(submissions[0].cascade.cascade[0].data.full_text, "全");
+  assert.ok(host.innerHTML.includes("pf-skel"), "busy 骨架");
+  // 回复渲染 + apply 只发事件(气泡不越权)
+  b.receiveReply("建议:删第二句");
+  assert.ok(host.innerHTML.includes("建议:删第二句"), "回复渲染");
+  const applyBtn = new StubEl("button");
+  applyBtn.dataset.apply = "2"; // assistant 消息索引(seed + submit + reply)
+  applyBtn.parentNode = host;
+  host.trigger("click", { target: applyBtn });
+  assert.deepEqual(applies.map((p) => p.text), ["建议:删第二句"], "apply_reply 只发事件");
+  assert.ok(!("notes" in b), "气泡不持有批注写面(不越权)");
+  // 多条并存:另一锚点独立
+  const { b: b2 } = mk({ ...anchor, member: "lab.e", path: "/lab/iterate/member/lab.e/span/prompt" });
+  b2.receiveReply("另一条");
+  assert.equal(b.state.messages.length, 3, "本锚点消息流完整(seed+问+答)");
+  assert.equal(b2.state.messages.length, 2, "另一锚点自己的 seed+答");
+  assert.ok(!b.state.messages.some((m) => m.text === "另一条"), "两条气泡互不串");
+  // Esc 关闭(不提交)
+  const before = submissions.length;
+  host.trigger("keydown", { target: input, key: "Escape" });
+  assert.equal(submissions.length, before, "Esc 关闭不产生提交");
+}

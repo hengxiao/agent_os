@@ -254,4 +254,12 @@ export const COPY = {
   "w.text.count": "{lines}L · {chars}C",
   "w.json.format": "FORMAT",
   "w.json.errline": "LINE {line}",
+  "w.table.add": "ADD ROW",
+  "w.table.del": "DEL ROW",
+  "w.table.empty": "NO ROWS, ADD BELOW",
+  "w.kv.add": "ADD",
+  "w.kv.dup": "DUP KEY (LAST WINS)",
+  "w.bubble.send": "SEND",
+  "w.bubble.ph": "ASK OR SUGGEST",
+  "w.bubble.apply": "APPLY AS NOTE",
 };

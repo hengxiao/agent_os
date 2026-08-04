@@ -652,3 +652,11 @@ chat bubble(见 docs/WIDGETS.md W-bubble)是本协议的首个落地:
 气泡挂在任意 widget 上,submit 时 runtime 自动级联——span/段落/全文
 来自 text widget,成员与草稿状态来自 app,助手回复因此**看着全文改
 一段**,而不是看着一段猜全文。
+
+> **实现注**(2026-08-03,W2 落地,分支 debugger):
+> 运行时 = `widgets/cascade.js`(provider 注册制 + contextCascade 纯函数,
+> provider 在自己的 prefix 级贡献);消费者 = lab-iterate 的边注气泡
+> (`w-bubble.js` submit 事件携带 cascade,出海在父组件 POST
+> `/api/lab/drafts/{name}/comment` → `skill.dev.commenter`,tools=[]
+> 白名单收口);级联单向向上/级数裁剪/缺级缺席,均有 widgets.test.mjs
+> 与 test_lab_comment.py 断言在案。

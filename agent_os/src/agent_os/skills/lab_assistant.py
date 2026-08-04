@@ -22,6 +22,52 @@ ASSISTANT_NAME = "skill.dev.assistant"
 #: 迭代模式(Flow C 样板)的生成技能名
 ITERATOR_NAME = "skill.dev.iterator"
 
+#: 锚点评论技能名(W2,docs/WIDGETS.md W-bubble;APP-MODEL §16 首个 cascade 消费者)
+COMMENTER_NAME = "skill.dev.commenter"
+
+_COMMENTER_PROMPT = """你是锚点评论助手。用户在某段内容上挂了气泡提问或提意见,输入给你:
+
+- anchor:锚点(§14 路径语义:成员/字段/可选 span 段落号);
+- text:用户的问题或意见;
+- cascade:逐级上下文(APP-MODEL §16;近→远:widget 的 span/段落/全文、app 的成员与草稿状态)。
+
+纪律(白名单收口):
+1. **只读**:你没有任何工具——只能读输入里的级联内容,不能改任何文件;
+2. 回复 = 建议(改法/批注措辞/判断),看着全文改一段,不看着一段猜全文;
+3. 不确定就说"建议人工确认";不编造上下文里没有的事实。
+
+最终答案输出一个 JSON 对象,reply 字段是给用户的回复(只输出该 JSON)。"""
+
+
+def commenter_skill() -> Skill:
+    """锚点评论技能(W2;tools=[] —— 只读级联,回复建议,不能直接改)。"""
+    manifest = SkillManifest(
+        name=COMMENTER_NAME,
+        version="0.1.0",
+        description=(
+            "锚点评论助手。Use when 回应挂在内容上的气泡批注(只读级联上下文给建议);"
+            "Do not use when 要直接修改草稿(它没有写面,也不能写)。"
+        ),
+        inputs={
+            "type": "object",
+            "properties": {
+                "anchor": {"type": "object", "description": "锚点(成员/字段/span)"},
+                "text": {"type": "string", "description": "用户批注"},
+                "cascade": {"type": "array", "description": "逐级上下文(§16 信封的 cascade 段)"},
+            },
+            "required": ["anchor", "text"],
+        },
+        outputs={
+            "type": "object",
+            "properties": {"reply": {"type": "string"}},
+            "required": ["reply"],
+        },
+        permissions=SkillPermissions(tools=[], skills=[]),  # 白名单收口:只读级联内容
+        limits=SkillLimits(max_steps=4, timeout=60),
+    )
+    return Skill(manifest=manifest, prompt=_COMMENTER_PROMPT)
+
+
 _PROMPT = """你是 Skill Lab 的开发助手,工作单元是**能力包**(docs/SKILL-PACKAGES.md:
 用户要的是功能,功能 = 根技能 + 它的依赖闭包)。当前包根由输入的 draft 字段给出。
 

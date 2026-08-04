@@ -203,9 +203,34 @@ app(业务对象:skill-pack/run/...)
 | 期 | 内容 |
 |---|---|
 | W1 ✅ | Widget 协议与注册表 + W-text + W-json(编辑器是基础中的基础) |
-| W2 | W-table + W-kv + **W-bubble(含 APP-MODEL §16 context cascade 落地)**:表格家族 + 锚点聊天气泡,首个级联消费者 |
+| W2 ✅ | W-table + W-kv + **W-bubble(含 APP-MODEL §16 context cascade 落地)**:表格家族 + 锚点聊天气泡,首个级联消费者 |
 | W3 | W-form + W-list + W-tree + W-date(数据输入与导航;run.launch 表单化落地;browse 时间窗) |
 | W4 | W-diff + W-md + W-log + W-chart(呈现家族;agent 消息/调试面/usage 可视化的统一) |
+
+> **W2 实现注**(2026-08-03,分支 debugger):
+> - **cascade**(`widgets/cascade.js`):`registerContextProvider`/`contextCascade`
+>   ——provider 在自己的 prefix 级贡献 fragment(app fragment 在 app 路径),
+>   祖先链判定(无横向),levels 级数裁剪,provider 异常缺席不炸;纯本地
+>   (信封的出海永远由父组件完成,widgets 零 fetch 纪律不变);
+> - **W-table**(`w-table.js`):四列型编辑器(text/number/boolean/enum)+
+>   required 星标;增/删/移行(新增行骨架按列型);Alt+↑/↓ 键盘移行;
+>   行 DnD 走 §15 envelope(source_kind="table-row",accept 校验,落空区 =
+>   移到末尾);空态;change 事件上行(set_cell 不重渲保焦点);
+> - **W-kv**(`w-kv.js`):重复 key 即时警示(警告态非硬拦);
+>   entriesToObject/objectToEntries 往返(后者覆盖,与 JSON 语义一致);
+> - **W-bubble**(`w-bubble.js`):锚点引用行 + 消息流(role=log)+ 输入框 +
+>   busy 骨架(role=dialog,Esc 关 Enter 发);submit 事件携带
+>   {anchor, text, cascade}(cascade 本地组装,`triggerPath` 独立字段不污染
+>   锚);apply_reply 只发事件;`receiveReply` 由父级回填;多条并存各锚点独立;
+> - **评论技能**(skills/lab_assistant.py `commenter_skill` +
+>   `POST /api/lab/drafts/{name}/comment`):**tools=[] 白名单收口**——只读
+>   级联内容、回复建议、不能直接改;503 与 iterate 同归类;
+> - **装配点**(lab-iterate.js):💬 边注弹框换 W-bubble——既有边注作种子
+>   消息(数据兼容),submit 父级 POST comment(cascade 三级随信),
+>   apply → 边注挂左栏(锚键与单元 data-anchor 同构);
+> - **装配留口**:lab 编辑器没有 tests/*.json 用例编辑区(用例只读,来自
+>   scaffold/iterate),skills 也无现成键值编辑点——W-table/W-kv 本期 =
+>   控件 + 测试库,真实装配归 W3(用例编辑面落地时一并接入)。
 
 > **W1 实现注**(2026-08-03,分支 debugger):
 > - **协议面**(`host/web/static/js/widgets/`;与 components/ 平级):

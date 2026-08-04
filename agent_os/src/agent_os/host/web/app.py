@@ -74,8 +74,10 @@ from agent_os.skills.gate import validate_draft as validate_gate_draft
 from agent_os.skills.iterate import candidate_diff, edit_members, run_iterate
 from agent_os.skills.lab_assistant import (
     ASSISTANT_NAME,
+    COMMENTER_NAME,
     ITERATOR_NAME,
     assistant_skill,
+    commenter_skill,
     iterator_skill,
 )
 from agent_os.skills.manifest import validate_manifest
@@ -238,6 +240,15 @@ class LabAssistantBody(BaseModel):
 
     request: str
     draft: str
+
+
+class LabCommentBody(BaseModel):
+    """``POST /api/lab/drafts/{name}/comment``(W2,docs/WIDGETS.md W-bubble):
+    气泡提交的信封——锚点 + 批注 + §16 级联上下文。"""
+
+    anchor: dict[str, Any] = {}
+    text: str = ""
+    cascade: list[dict[str, Any]] = []
 
 
 class LabIterateBody(BaseModel):
@@ -1231,6 +1242,37 @@ def create_app(
             raise HTTPException(
                 status_code=503, detail=f"助手暂不可用: {type(e).__name__}: {e}"
             ) from e
+
+    @app.post("/api/lab/drafts/{name}/comment")
+    def lab_comment(name: str, body: LabCommentBody) -> dict[str, Any]:
+        """锚点评论(W2,docs/WIDGETS.md W-bubble;APP-MODEL §16 首个 cascade 消费者):
+        信封(anchor + text + cascade 逐级上下文)→ 评论技能(tools=[] 白名单收口,
+        只读级联、回复建议、**不能直接改**)→ {reply}。"""
+        try:
+            lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        kernel = manager.assemble_lab_kernel(
+            OverlaySkillRegistry(
+                manager.shared_skills_registry(),
+                lab_store,
+                extra={COMMENTER_NAME: commenter_skill()},
+            )
+        )
+        try:
+            result = asyncio.run(
+                kernel.run(
+                    COMMENTER_NAME,
+                    {"anchor": body.anchor, "text": body.text, "cascade": body.cascade},
+                )
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+        return {"reply": (result or {}).get("reply", "")}
 
     def _lab_candidate_diff(name: str) -> dict[str, Any]:
         """working vs candidate 的结构化 diff(skills/iterate.py 纯函数)。"""

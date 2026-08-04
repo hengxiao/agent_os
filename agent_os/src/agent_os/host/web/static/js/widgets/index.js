@@ -4,6 +4,7 @@
 
 export { registerWidgetDef, getWidgetDef, listWidgetKinds } from "./registry.js";
 export { createWidget } from "./widget.js";
+export { registerContextProvider, contextCascade } from "./cascade.js";
 export { TEXT_EDITOR_DEF, mountTextEditor } from "./w-text.js";
 export {
   JSON_EDITOR_DEF_KIND,
@@ -13,3 +14,6 @@ export {
   formatJson,
   mountJsonEditor,
 } from "./w-json.js";
+export { TABLE_EDITOR_DEF, mountTableEditor } from "./w-table.js";
+export { KV_EDITOR_DEF, mountKvEditor, entriesToObject, objectToEntries, dupKeys } from "./w-kv.js";
+export { BUBBLE_DEF, mountBubble } from "./w-bubble.js";

@@ -248,4 +248,12 @@ export const COPY = {
   "w.text.count": "凡 {lines} 行 · {chars} 字",
   "w.json.format": "整版",
   "w.json.errline": "第 {line} 行",
+  "w.table.add": "增一行",
+  "w.table.del": "删行",
+  "w.table.empty": "尚无行,自下方添",
+  "w.kv.add": "增",
+  "w.kv.dup": "key 相重(存时后者覆前者)",
+  "w.bubble.send": "发送",
+  "w.bubble.ph": "问一句,或提一笔",
+  "w.bubble.apply": "纳为批注",
 };

@@ -247,4 +247,12 @@ export const COPY = {
   "w.text.count": "{lines} 行 · {chars} 字",
   "w.json.format": "美美化",
   "w.json.errline": "第 {line} 行喵",
+  "w.table.add": "加一行",
+  "w.table.del": "删掉",
+  "w.table.empty": "还没有行喵,点下面加",
+  "w.kv.add": "加一个",
+  "w.kv.dup": "key 重复啦(存的时候后者盖前者)",
+  "w.bubble.send": "发送",
+  "w.bubble.ph": "问点什么喵,或提个意见",
+  "w.bubble.apply": "采纳成批注",
 };

@@ -1,0 +1,42 @@
+/* W-tree 渲染面(docs/WIDGET-ARCH.md §1.1/§2.7;W5.3):
+   ``renderTreeWidget(state, opts) -> html`` **纯函数**——无副作用、不写 state、
+   不发事件、不调后端;只产出语义 class,视觉全走契约 token。
+   效果(§2.7):缩进层级 + 折叠箭头 + 计数徽标(委托 ns-tree.js 纯函数);
+   **过滤命中自动展开祖先链**(过滤态 = 过滤树内全部命名空间视为展开);
+   当前项浅底(data-current 标记,缺省 leaf 行)。 */
+
+import { copy } from "../themes.js";
+import {
+  allNamespaces,
+  buildNsTree,
+  filterNsTree,
+  nsTreeHtml,
+} from "../components/ns-tree.js";
+
+/* state → html(纯);state 面:{nodes, expanded, selected, filter};
+   opts.leafHtml = 自定义叶子行(视图面扩展点;缺省 = 名字行带 data-wt-leaf,
+   当前项带 data-current="1" 浅底) */
+export function renderTreeWidget(state, { leafHtml = null } = {}) {
+  const tree = buildNsTree(state.nodes ?? []);
+  const filtered = state.filter ? filterNsTree(tree, state.filter) : tree;
+  // §2.7:过滤态祖先链自动展开(过滤树内的命名空间全展开)
+  const expanded = state.filter ? allNamespaces(filtered) : new Set(state.expanded ?? []);
+  const _leafHtml =
+    leafHtml ??
+    ((leaf) =>
+      `<div class="ns-row" style="--ns-depth:1" data-wt-leaf="${esc(leaf.name)}"` +
+      `${state.selected === leaf.name ? ' data-current="1"' : ""}>` +
+      `<span class="ns-name mono">${esc(leaf.name)}</span></div>`);
+  return (
+    `<div class="wd-tree">` +
+    `<input class="input wd-tree-filter" data-wt-filter placeholder="${esc(copy("w.tree.filter"))}"` +
+    ` aria-label="${esc(copy("w.tree.filter"))}" value="${esc(state.filter ?? "")}">` +
+    `<div role="tree">` +
+    nsTreeHtml(filtered, { expanded, leafHtml: _leafHtml }) +
+    `</div></div>`
+  );
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}

@@ -728,7 +728,7 @@ const { mountFormEditor, validateValues, mountSelectList, mountNsTreeWidget,
 /* ── W4:W-diff / W-md / W-log / W-chart ───────────────────────── */
 
 const { mountDiffViewer, diffBodyHtml, mdToHtml, looksMarkdown, mountLogViewer,
-  mountChart, chartSvg, chartTableHtml, downsample, niceTicks } =
+  mountChart, chartSvg, chartTableHtml, downsample, niceTicks, mountMarkdownViewer } =
   await import("../js/widgets/index.js");
 const { diffCard } = await import("../../../web_platform/static/cards.js");
 
@@ -885,4 +885,86 @@ const { diffCard } = await import("../../../web_platform/static/cards.js");
   host.trigger("click", { target: toggle }); // 回图表
   host.trigger("click", { target: s1 });
   assert.deepEqual(w.state.hidden, ["tokens"], "多序列显隐");
+}
+
+/* ── W5.3:七控件 render 纯函数 + 新行为(Esc 收层/过滤自动展开/当前项/复制钮)── */
+
+const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
+  renderMarkdownViewer, renderChart, renderBubble } =
+  await import("../js/widgets/index.js");
+
+{
+  // render 纯函数三要素:同 state 同 html、不改 state、转义
+  const sTree = { nodes: [{ name: "a.b.c" }], expanded: [], selected: null, filter: "" };
+  assert.equal(renderTreeWidget(sTree), renderTreeWidget(sTree), "tree render 纯");
+  assert.deepEqual(sTree.expanded, [], "tree render 不改 state");
+  const sDate = { value: { start: "2026-08-01", end: "2026-08-05" }, mode: "range", inverted: false,
+    open: true, cursor: { year: 2026, month: 7 } };
+  assert.equal(renderDatePicker(sDate), renderDatePicker(sDate), "date render 纯");
+  assert.ok(renderDatePicker(sDate).includes("wd-grid"), "弹层开 → 月历在");
+  assert.ok(!renderDatePicker({ ...sDate, open: false }).includes("wd-grid"), "弹层关 → 月历不在(§2.8)");
+  const sLog = { lines: [{ kind: "error", text: "x<b>" }], follow: false, filter: "" };
+  const hl = renderLogViewer(sLog);
+  assert.equal(hl, renderLogViewer(sLog), "log render 纯");
+  assert.ok(hl.includes("x&lt;b&gt;"), "log 行转义");
+  assert.ok(hl.includes("wd-log-bottom"), "暂停跟随 → 回到底部钮");
+  const sDiff = { left: { members: [{ member: "m", status: "changed", fields: [], prompt_diff: [{ kind: "add", text: "+1" }] }] },
+    mode: "unified", expanded: [] };
+  assert.equal(renderDiffViewer(sDiff), renderDiffViewer(sDiff), "diff render 纯");
+  const sChart = { series: [{ name: "s", points: [{ x: 1, y: 2 }] }], type: "line", view: "chart", hidden: [] };
+  assert.equal(renderChart(sChart, { label: "L" }), renderChart(sChart, { label: "L" }), "chart render 纯");
+  const sBub = { anchor: { member: "m", path: "p" }, messages: [{ role: "assistant", text: "答" }], busy: false, draft: "" };
+  assert.equal(renderBubble(sBub), renderBubble(sBub), "bubble render 纯");
+  assert.ok(renderBubble(sBub).includes("w-bubble-anchor"), "气泡卡锚点引用行");
+}
+
+{
+  // W-tree:过滤命中自动展开祖先链(深层默认折叠)+ 当前项浅底标记
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  // top.a 有 8 个叶子且 top 有分叉(不触发单层链合并)→ top.a 深层默认折叠
+  const items = [...Array(8)].map((_, i) => ({ name: `top.a.x${i + 1}` })).concat([{ name: "top.b.y1" }]);
+  const w = mountNsTreeWidget(host, { items });
+  assert.ok(!host.innerHTML.includes("top.a.x1"), "深层叶子默认折叠(≥阈值藏起)");
+  w.filter("x1");
+  assert.ok(host.innerHTML.includes("top.a.x1"), "过滤命中 → 祖先链自动展开(§2.7)");
+  w.filter("");
+  w.select("top.b.y1");
+  assert.ok(host.innerHTML.includes('data-current="1"'), "当前项浅底标记");
+}
+
+{
+  // W-date:Esc 收层 / 输入区点击重开
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  mountDatePicker(host, { mode: "range" });
+  assert.ok(host.innerHTML.includes("wd-grid"), "初始层开");
+  host.trigger("keydown", { target: host, key: "Escape" });
+  assert.ok(!host.innerHTML.includes("wd-grid"), "Esc 收层(§2.8)");
+  const inputEl = new StubEl("input");
+  inputEl.closest = (sel) => (sel === ".wd-date-in" ? inputEl : null);
+  inputEl.parentNode = host;
+  host.trigger("click", { target: inputEl });
+  assert.ok(host.innerHTML.includes("wd-grid"), "点输入区重开层");
+}
+
+{
+  // W-md:代码块复制钮(render 产出 + 点击复制事件带块文本)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountMarkdownViewer(host, { source: "# t\n\n```\nlet a = 1;\n```\n" });
+  assert.ok(host.innerHTML.includes('data-md-copy="0"'), "代码块带复制钮(§2.12)");
+  const copied = [];
+  w.on("copy", (p) => copied.push(p.text));
+  const btn = new StubEl("button");
+  btn.dataset.mdCopy = "0";
+  btn.parentNode = host;
+  host.trigger("click", { target: btn });
+  assert.deepEqual(copied, ["let a = 1;"], "复制 = 代码块原文");
 }

@@ -156,7 +156,7 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 |---|---|---|
 | W5.1 ✅ | 基座:render/logic 分文件模式 + `css/widgets.css` 拆出 + 更新协议校验(render 面)+ W-text/W-json 先迁(lab 编辑器行为测试不破) | 两控件自渲染;选区保留测试过 |
 | W5.2 ✅ | W-table/W-kv/W-form/W-list 迁移(装配点:run.launch 表单/lab 下拉不破) | 装配点测试过 |
-| W5.3 | W-tree/W-date/W-chart/W-log/W-diff/W-md/W-bubble 迁移 | 全部 render 纯函数 |
+| W5.3 ✅ | W-tree/W-date/W-chart/W-log/W-diff/W-md/W-bubble 迁移 | 全部 render 纯函数 |
 | W5.4 | 清扫:宿主手写桥接代码删除;架构测试记录更新(弯腰点 ①⑤ 关闭情况) | 无装饰器残留 |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
@@ -199,6 +199,28 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 >   未动一字,全绿。
 > - **排障**:测试文件分批 import 有 TDZ——render 纯函数断言按 import 批次
 >   分区放置(W2 区断 table/kv,W3 区断 form/list)。
+>
+> **W5.3 实现注**(2026-08-04,分支 debugger):
+> - **七控件迁移**:`w-tree/w-date/w-chart/w-log/w-diff/w-md/w-bubble` 各拆出
+>   `*.render.js`(纯函数;同 state 同 html/不改 state/转义,单测在
+>   widgets.test.mjs 末段),逻辑文件不拼 HTML;def 均挂 `render:`。
+>   共享纯函数(mdToHtml/looksMarkdown/diffBodyHtml/chartSvg/chartTableHtml/
+>   downsample/niceTicks/monthGridHtml/visibleLogLines)迁入渲染面,逻辑文件
+>   原样 re-export——消费方(cards.js/doc-editor.js/app.js/各测试)零改动。
+> - **§2.7-2.13 硬规则落地**:W-tree 过滤命中自动展开祖先链(render 面:
+>   过滤态取 `allNamespaces(过滤树)`)+ 当前项 `data-current` 浅底(缺省
+>   leaf 行;CSS `.wd-tree .ns-row[data-current]`);W-date 日历弹层化
+>   (`state.open`,Esc 收层/点输入区重开;cursor 翻月游标收进 state);
+>   W-log kind 左侧色条(--sig-* 信号色);W-diff 双编码浅底(`.wd-diff`
+>   作用域内 add=--ok/del=--danger;platform.css 卡面不动);W-md 代码块
+>   复制钮(`data-md-copy` 序号 → 逻辑面按序取块文本,clipboard + copy
+>   事件;copy 新键 `w.md.copy` 六主题);W-bubble 抽出 renderBubble(浮出/
+>   箭头/收起标记在 doc-editor 装配层,**装配行为未动**——切换留 W5.4)。
+> - **state 纪律**:cursor(date)/expanded(diff: Set→数组)/focus(list,
+>   W5.2)等游标全收进 state(可序列化),渲染才能纯;label(chart)这类
+>   挂载期常量经 opts 传入,不进 state。
+> - **排障**:ns-tree 的"单层链折叠 + 一级默认展开"会让深名单链 namespace
+>   变一级——自动展开测试须用"分叉 + ≥阈值"结构才能造出默认折叠态。
 
 ## 4. 不做
 

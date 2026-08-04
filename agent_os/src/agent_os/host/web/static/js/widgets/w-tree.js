@@ -1,15 +1,15 @@
-/* W-tree — 命名空间树(docs/WIDGETS.md §2;ns-tree 控件化)。
+/* W-tree 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.7;W5.3 新形态:自渲染)。
 
-   **不重写 components/ns-tree.js**(既有稳定组件,§7"不重写"):本控件是
-   协议薄封装——树的构建/过滤/默认展开/渲染全部委托 ns-tree.js 的纯函数
-   (buildNsTree/filterNsTree/defaultExpanded/nsTreeHtml),控件层只负责:
-   state{nodes, expanded, selected, filter}、toggle/select/filter actions、
-   事件上行(与 W 协议对齐)。 */
+   **不重写 components/ns-tree.js**(既有稳定组件,§7"不重写"):树构建/过滤/
+   默认展开委托 ns-tree.js 纯函数;渲染在 w-tree.render.js(过滤命中自动
+   展开祖先链、当前项 data-current 浅底)。本层只负责:state{nodes, expanded,
+   selected, filter}、toggle/select/filter actions、事件上行(与 W 协议对齐)。
+   铁律:本文件不拼 HTML;零 fetch;监听委托在 host。 */
 
-import { copy } from "../themes.js";
-import { buildNsTree, defaultExpanded, filterNsTree, nsTreeHtml } from "../components/ns-tree.js";
+import { buildNsTree, defaultExpanded } from "../components/ns-tree.js";
 import { registerWidgetDef } from "./registry.js";
 import { createWidget } from "./widget.js";
+import { renderTreeWidget } from "./w-tree.render.js";
 
 export const TREE_EDITOR_DEF = registerWidgetDef({
   kind: "ns-tree",
@@ -24,11 +24,8 @@ export const TREE_EDITOR_DEF = registerWidgetDef({
   events: ["select", "change"],
   aria: { role: "tree", keys: ["ArrowLeft", "ArrowRight"] },
   surfaces: ["card", "tab"],
+  render: renderTreeWidget, // W5.3:render 面进 def(registry 校验形态)
 });
-
-function esc(s) {
-  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 /* 挂进宿主:items(ns-tree 的扁平条目:[{name, ...leaf}]) + leafHtml(叶子行,
    缺省 = 名字行带 data-wt-leaf);expanded 缺省 = defaultExpanded(ns-tree 语义) */
@@ -47,26 +44,9 @@ export function mountNsTreeWidget(
     onRegister,
     onUnregister,
   });
-  const _leafHtml =
-    leafHtml ??
-    ((leaf) =>
-      `<div class="ns-row" style="--ns-depth:1" data-wt-leaf="${esc(leaf.name)}">` +
-      `<span class="ns-name mono">${esc(leaf.name)}</span></div>`);
-
-  const _tree = () => {
-    const tree = buildNsTree(widget.state.nodes);
-    return widget.state.filter ? filterNsTree(tree, widget.state.filter) : tree;
+  const render = () => {
+    host.innerHTML = renderTreeWidget(widget.state, { leafHtml });
   };
-
-  function render() {
-    host.innerHTML =
-      `<div class="wd-tree">` +
-      `<input class="input wd-tree-filter" data-wt-filter placeholder="${esc(copy("w.tree.filter"))}"` +
-      ` aria-label="${esc(copy("w.tree.filter"))}" value="${esc(widget.state.filter)}">` +
-      `<div role="tree">` +
-      nsTreeHtml(_tree(), { expanded: new Set(widget.state.expanded), leafHtml: _leafHtml }) +
-      `</div></div>`;
-  }
 
   widget.toggle = (nsPath) => {
     const cur = new Set(widget.state.expanded);

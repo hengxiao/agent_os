@@ -163,3 +163,31 @@ th .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(-
 .wd-field-err > .input, .wd-field-err > select { border-color: var(--danger); }
 /* W-list:选中行左色条(§2.6;--live) */
 .wd-list-item[aria-selected="true"] { box-shadow: inset 3px 0 0 var(--live); }
+
+/* ── W5.3:W-tree/W-date/W-chart/W-log/W-diff/W-md/W-bubble 新形态补充(全契约 token)── */
+/* W-tree:当前项浅底(§2.7;classic 用 --bg-2,主题可在主题 css 覆盖) */
+.wd-tree .ns-row[data-current="1"] { background: var(--bg-2); border-radius: var(--r-sm); }
+/* W-date:日历弹层(§2.8) */
+.wd-date { position: relative; }
+.wd-date-layer {
+  position: absolute; top: 100%; left: 0; z-index: 3;
+  background: var(--bg-1); border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+  padding: var(--s2); box-shadow: 0 2px 8px color-mix(in srgb, var(--fg-0) 12%, transparent);
+}
+/* W-log:kind 左侧色条(§2.10;--sig-* 信号色) */
+.wd-log-line { border-left: var(--stroke-strong) solid transparent; padding-left: var(--s1); }
+.wd-log-line[data-kind="error"], .wd-log-line[data-kind="run.error"] { border-left-color: var(--sig-budget); }
+.wd-log-line[data-kind="warn"] { border-left-color: var(--sig-sidecar); }
+.wd-log-line[data-kind="run.start"], .wd-log-line[data-kind="run.end"] { border-left-color: var(--sig-tool); }
+/* W-diff:+/- 双编码浅底(§2.11;add=--ok / del=--danger,符号必在由 render 保证) */
+.wd-diff .pf-dline[data-kind="add"] { background: color-mix(in srgb, var(--ok) 14%, transparent); border-radius: var(--r-sm); }
+.wd-diff .pf-dline[data-kind="del"] { background: color-mix(in srgb, var(--danger) 14%, transparent); border-radius: var(--r-sm); }
+/* W-md:代码块复制钮(§2.12) */
+.wd-md-code { position: relative; }
+.wd-md-copy {
+  position: absolute; top: var(--s1); right: var(--s1);
+  border: var(--stroke) solid var(--line); background: var(--bg-2); color: var(--fg-2);
+  border-radius: var(--r-sm); font-size: var(--text-2xs); font-family: inherit;
+  cursor: pointer; padding: 0 var(--s1);
+}
+.wd-md-copy:hover { color: var(--fg-0); border-color: var(--live); }

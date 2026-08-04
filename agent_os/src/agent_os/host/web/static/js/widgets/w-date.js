@@ -1,20 +1,25 @@
-/* W-date — 日期时间控件(docs/WIDGETS.md §2;browse 时间窗/报告区间)。
+/* W-date 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.8;W5.3 新形态:自渲染)。
 
-   state{value: iso | {start, end}, mode: "date"|"datetime"|"range", min?, max?};
+   state{value: iso | {start, end}, mode: "date"|"datetime"|"range",
+   inverted, open, cursor:{year, month}};
    actions 全 local:set(键盘输入,即时校验 ISO)/prev/next(翻月)/pick(日历点选)/
    quick(今天/昨天/本周/上周 快捷项);
-   细节:输入与日历双通道、range 倒置即时警示、翻页键盘可达(←→)、
-   本地时区显示(不引入时区选择,§7 不做)。 */
+   细节:输入与日历双通道、range 点选倒置自动纠序(输入通道给警示)、
+   翻页键盘可达(←→)、**Esc 收层**(open=false;输入聚焦/点选即 reopen)、
+   本地时区显示(不引入时区选择,§7 不做)。
+   铁律:本文件不拼 HTML(渲染全在 w-date.render.js);零 fetch;监听委托在 host。 */
 
-import { copy } from "../themes.js";
 import { registerWidgetDef } from "./registry.js";
 import { createWidget } from "./widget.js";
+import { monthGridHtml, renderDatePicker } from "./w-date.render.js";
+
+export { monthGridHtml }; // 兼容面(迁至渲染面;原从本文件导出)
 
 export const DATE_EDITOR_DEF = registerWidgetDef({
   kind: "date-picker",
   v: 1,
   state_schema: { type: "object" },
-  state_defaults: { value: "", mode: "date", inverted: false },
+  state_defaults: { value: "", mode: "date", inverted: false, open: true, cursor: null },
   actions: [
     { id: "set", exec: "local", args_input: { value: { type: "string" } } },
     { id: "prev", exec: "local" },
@@ -23,8 +28,9 @@ export const DATE_EDITOR_DEF = registerWidgetDef({
     { id: "quick", exec: "local", args_input: { which: { type: "string" } } },
   ],
   events: ["change"],
-  aria: { role: "group", keys: ["ArrowLeft", "ArrowRight"] },
+  aria: { role: "group", keys: ["ArrowLeft", "ArrowRight", "Escape"] },
   surfaces: ["card", "tab"],
+  render: renderDatePicker, // W5.3:render 面进 def(registry 校验形态)
 });
 
 /* ISO 校验:date = YYYY-MM-DD;datetime = 允许 T hh:mm(:ss);非法 → null */
@@ -59,80 +65,30 @@ export function rangeInverted(value) {
   return value.start > value.end;
 }
 
-function esc(s) {
-  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-/* 月历网格(自绘;cell = data-day 的按钮;今天高亮;选中高亮) */
-export function monthGridHtml(year, month, { selectedStart = "", selectedEnd = "" } = {}) {
-  const first = new Date(year, month, 1);
-  const days = new Date(year, month + 1, 0).getDate();
-  const lead = (first.getDay() + 6) % 7;
-  const today = _iso(new Date());
-  const cells = [];
-  for (let i = 0; i < lead; i++) cells.push(`<span class="wd-day" data-empty="1"></span>`);
-  for (let d = 1; d <= days; d++) {
-    const iso = _iso(new Date(year, month, d));
-    const sel =
-      iso === selectedStart || iso === selectedEnd || (selectedStart && selectedEnd && iso > selectedStart && iso < selectedEnd);
-    cells.push(
-      `<button class="wd-day" data-day="${iso}"${iso === today ? ' data-today="1"' : ""}${sel ? ' data-selected="1"' : ""}>${d}</button>`
-    );
-  }
-  return `<div class="wd-grid" role="grid">${cells.join("")}</div>`;
-}
-
 /* 挂进宿主:mode/date|datetime|range + 初始 value;quick 钮 + 翻月 + 点选 + 输入 */
 export function mountDatePicker(
   host,
   { mode = "date", value = null, path = "", onRegister = null, onUnregister = null } = {}
 ) {
+  const initial = mode === "range" ? (value ?? { start: "", end: "" }) : (value ?? "");
+  const base = parseIso(mode === "range" ? initial.start : initial, mode) ?? new Date();
   const widget = createWidget(DATE_EDITOR_DEF, {
     path,
     state: {
       mode,
-      value: mode === "range" ? (value ?? { start: "", end: "" }) : (value ?? ""),
+      value: initial,
       inverted: false,
+      open: true, // 弹层默认开(§2.8;Esc 收层)
+      cursor: { year: base.getFullYear(), month: base.getMonth() }, // 翻月游标:start/value 所在月,否则本月
     },
     onRegister,
     onUnregister,
   });
-  // 翻月游标:初始取 start/value 所在月,否则本月
-  const base = parseIso(mode === "range" ? widget.state.value.start : widget.state.value, mode) ?? new Date();
-  let cursor = { year: base.getFullYear(), month: base.getMonth() };
 
+  const render = () => {
+    host.innerHTML = renderDatePicker(widget.state);
+  };
   const _changed = () => widget.emit("change", { value: widget.state.value });
-
-  function render() {
-    const v = widget.state.value;
-    const inputs =
-      mode === "range"
-        ? `<input class="input wd-date-in" data-wd-start="1" value="${esc(v.start)}" placeholder="YYYY-MM-DD" aria-label="start">` +
-          `<input class="input wd-date-in" data-wd-end="1" value="${esc(v.end)}" placeholder="YYYY-MM-DD" aria-label="end">` +
-          (widget.state.inverted ? `<span class="wd-errbar">${esc(copy("w.date.inverted"))}</span>` : "")
-        : `<input class="input wd-date-in" data-wd-value="1" value="${esc(v)}"` +
-          ` placeholder="${mode === "datetime" ? "YYYY-MM-DDThh:mm" : "YYYY-MM-DD"}" aria-label="date">`;
-    host.innerHTML =
-      `<div class="wd-date">` +
-      inputs +
-      (mode === "range"
-        ? `<span class="wd-quick">` +
-          ["today", "yesterday", "week", "lastweek"]
-            .map((q) => `<button class="wd-quick-btn" data-wd-quick="${q}">${esc(copy(`w.date.${q}`))}</button>`)
-            .join("") +
-          `</span>`
-        : "") +
-      `<div class="wd-month">` +
-      `<button class="wd-nav" data-wd-prev aria-label="${esc(copy("w.date.prev"))}">‹</button>` +
-      `<span class="wd-month-title">${cursor.year}-${String(cursor.month + 1).padStart(2, "0")}</span>` +
-      `<button class="wd-nav" data-wd-next aria-label="${esc(copy("w.date.next"))}">›</button>` +
-      `</div>` +
-      monthGridHtml(cursor.year, cursor.month, {
-        selectedStart: mode === "range" ? v.start : v,
-        selectedEnd: mode === "range" ? v.end : "",
-      }) +
-      `</div>`;
-  }
 
   widget.set = (which, text) => {
     const d = parseIso(text, mode === "datetime" ? "datetime" : "date");
@@ -161,6 +117,7 @@ export function mountDatePicker(
     } else {
       widget.state.value = day;
     }
+    widget.state.open = true; // 点选即开层(收层后点选语义保持)
     render();
     _changed();
   };
@@ -174,18 +131,18 @@ export function mountDatePicker(
     }
   };
   widget.prev = () => {
-    cursor.month -= 1;
-    if (cursor.month < 0) {
-      cursor.month = 11;
-      cursor.year -= 1;
+    widget.state.cursor.month -= 1;
+    if (widget.state.cursor.month < 0) {
+      widget.state.cursor.month = 11;
+      widget.state.cursor.year -= 1;
     }
     render();
   };
   widget.next = () => {
-    cursor.month += 1;
-    if (cursor.month > 11) {
-      cursor.month = 0;
-      cursor.year += 1;
+    widget.state.cursor.month += 1;
+    if (widget.state.cursor.month > 11) {
+      widget.state.cursor.month = 0;
+      widget.state.cursor.year += 1;
     }
     render();
   };
@@ -202,10 +159,22 @@ export function mountDatePicker(
     if (q) return widget.quick(q.dataset.wdQuick);
     const day = e.target.closest("[data-day]");
     if (day) return widget.pick(day.dataset.day);
+    // 输入区点击 = 开层(收层后的回归路径)
+    if (e.target.closest("[data-wd-start],[data-wd-end],[data-wd-value]") || e.target.closest(".wd-date-in")) {
+      if (!widget.state.open) {
+        widget.state.open = true;
+        render();
+      }
+    }
   });
   host.addEventListener("keydown", (e) => {
     if (e.key === "ArrowLeft") widget.prev(); // 翻页键盘可达(§2)
     if (e.key === "ArrowRight") widget.next();
+    if (e.key === "Escape") {
+      // Esc 收层(§2.8 弹层面)
+      widget.state.open = false;
+      render();
+    }
   });
 
   render();

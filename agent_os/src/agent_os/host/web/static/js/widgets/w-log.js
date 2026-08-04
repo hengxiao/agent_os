@@ -1,14 +1,17 @@
-/* W-log — 日志/终端查看器(docs/WIDGETS.md §2;run 输出、trace、调试控制台)。
+/* W-log 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.10;W5.3 新形态:自渲染)。
 
    state{lines: [{kind, text}], follow, filter};
    actions 全 local:append/toggle_follow/filter/copy_all;
    细节:**跟随模式**(follow 时新行自动滚底;用户上滚即暂停跟随并显示
    "回到底部"钮,点了恢复)、长窗口截断(保留尾部 N 行)、kind 着色
-   (信号色 token,data-kind 驱动)、复制全部。 */
+   (信号色 token,data-kind 驱动)、复制全部。
+   铁律:本文件不拼 HTML(渲染全在 w-log.render.js);零 fetch;监听委托在 host。 */
 
-import { copy } from "../themes.js";
 import { registerWidgetDef } from "./registry.js";
 import { createWidget } from "./widget.js";
+import { renderLogViewer, visibleLogLines } from "./w-log.render.js";
+
+export { visibleLogLines }; // 渲染面纯函数(过滤共用)
 
 export const LOG_VIEWER_DEF = registerWidgetDef({
   kind: "log-viewer",
@@ -24,11 +27,8 @@ export const LOG_VIEWER_DEF = registerWidgetDef({
   events: ["change", "copy"],
   aria: { role: "log", keys: [] },
   surfaces: ["card", "tab"],
+  render: renderLogViewer, // W5.3:render 面进 def(registry 校验形态)
 });
-
-function esc(s) {
-  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
 
 /* 挂进宿主:lines 初始行 + maxLines(截断上限,缺省 500 保尾部) */
 export function mountLogViewer(host, { lines = [], maxLines = 500, path = "", onRegister = null, onUnregister = null } = {}) {
@@ -40,35 +40,11 @@ export function mountLogViewer(host, { lines = [], maxLines = 500, path = "", on
   });
   let box = null;
 
-  const visible = () =>
-    widget.state.lines.filter(
-      (l) => !widget.state.filter || l.text.toLowerCase().includes(widget.state.filter.toLowerCase()) || l.kind.includes(widget.state.filter)
-    );
-
-  function render() {
-    const vis = visible();
-    host.innerHTML =
-      `<div class="wd-log">` +
-      `<div class="wd-log-bar">` +
-      `<input class="input wd-log-filter" data-wlog-filter="1" placeholder="${esc(copy("w.log.filter"))}"` +
-      ` aria-label="${esc(copy("w.log.filter"))}" value="${esc(widget.state.filter)}">` +
-      `<button class="wd-mini" data-wlog-copy="1">${esc(copy("w.log.copy"))}</button>` +
-      `</div>` +
-      `<div class="wd-log-box" role="log" data-wlog-box="1">` +
-      vis
-        .map(
-          (l) =>
-            `<div class="wd-log-line" data-kind="${esc(l.kind)}">` +
-            `<span class="wd-log-kind mono">${esc(l.kind)}</span> ${esc(l.text)}</div>`
-        )
-        .join("") +
-      (vis.length ? "" : `<div class="wd-empty">${esc(copy("w.log.empty"))}</div>`) +
-      `</div>` +
-      (widget.state.follow ? "" : `<button class="wd-log-bottom" data-wlog-bottom="1">${esc(copy("w.log.bottom"))}</button>`) +
-      `</div>`;
+  const render = () => {
+    host.innerHTML = renderLogViewer(widget.state);
     box = host.querySelector("[data-wlog-box]");
     if (widget.state.follow && box) box.scrollTop = box.scrollHeight; // 跟随:自动滚底
-  }
+  };
 
   widget.append = (items) => {
     const next = [...widget.state.lines, ...items.map((l) => ({ kind: l.kind ?? "info", text: String(l.text ?? "") }))];

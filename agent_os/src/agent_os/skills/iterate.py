@@ -146,7 +146,7 @@ def candidate_diff(store: Any, production: Any, tools: Any, pkg: str) -> dict[st
     return package_diff(working, candidate)
 
 
-def run_iterate(
+async def arun_iterate(
     kernel: Any,
     *,
     store: Any,
@@ -156,13 +156,12 @@ def run_iterate(
     comments: list[dict[str, Any]],
     note: str,
 ) -> dict[str, Any]:
-    """迭代生成执行体(host/web 的 iterate 端点与 web_platform 共用).
+    """迭代生成执行体(async 本体;host/web 的 iterate 端点与 web_platform 共用).
 
     调用方负责:装配好内核(overlay 注入 iterator 技能)并先落批注;
     本函数注册迭代工具面、跑生成 run、返回 diff。provider 故障原样上抛
     (路由层归 503"助手暂不可用")。
     """
-    import asyncio
     import json as _json
 
     from agent_os.skills.lab_assistant import ITERATOR_NAME
@@ -172,7 +171,7 @@ def run_iterate(
         kernel.tools, store=store, production=production, tools_registry=tools_registry, pkg=name
     )
     request_text = _json.dumps({"note": note, "comments": comments}, ensure_ascii=False)
-    result = asyncio.run(kernel.run(ITERATOR_NAME, {"request": request_text, "draft": name}))
+    result = await kernel.run(ITERATOR_NAME, {"request": request_text, "draft": name})
     # M4a(docs/APP-MODEL.md v0.2 §4):run 真通道需要 run_id——kernel 单次 run
     # 只注册一条记录,取出回传(additive;旧调用方不受影响)
     run_id = next(iter(kernel._runs), "")  # kernel 无公开取 run_id 面,单 run 取其唯一记录
@@ -184,3 +183,31 @@ def run_iterate(
         "run_id": run_id,
         "run_status": str(run.state.status.value) if run is not None else "",
     }
+
+
+def run_iterate(
+    kernel: Any,
+    *,
+    store: Any,
+    production: Any,
+    tools_registry: Any,
+    name: str,
+    comments: list[dict[str, Any]],
+    note: str,
+) -> dict[str, Any]:
+    """``arun_iterate`` 的同步包装(无 running loop 的宿主面:web/app.py 的
+    iterate 端点等)。§17.7 L1:platform.* 技能在帧内调用时必须用 async 本体
+    (帧的 loop 里不能再开私有 asyncio.run)。"""
+    import asyncio
+
+    return asyncio.run(
+        arun_iterate(
+            kernel,
+            store=store,
+            production=production,
+            tools_registry=tools_registry,
+            name=name,
+            comments=comments,
+            note=note,
+        )
+    )

@@ -1,0 +1,422 @@
+# platform.* 内置动作技能包(docs/APP-MODEL.md v0.5 §17.7 升格序第 1 步;L1 全量)
+#
+# action 管道的 36 条调用面(35 个 manifest action + 旧卡面 version.rewind)
+# 归并为 32 个唯一 code 技能(几个 action 共享 ref:decision.answer ×3、
+# debug.command ×2、plan.recheck ×2)。全部 trusted 档(进程内 Logic Kernel;
+# force_sandbox 下经 logic_policy.trusted_builtin_prefixes 显式豁免,§17.9)。
+# L1 只做机械搬运:handler 内直接 import 业务写函数的为 L2 候选(拆 tool),
+# 注释标在 handlers.py 对应函数上。
+skills:
+  # ── 卡片动作系(plan/escalation 面)──
+  - name: platform.scaffold.approve
+    version: 0.1.0
+    kind: code
+    description: 意图①批准。Use when 创建首稿并跑五关;Do not use when 提交生产(那是 platform.plan.confirm)。
+    inputs:
+      type: object
+      properties:
+        name: {type: string, description: 草稿名}
+        template: {type: string, description: 模板 key(可空)}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:scaffold_approve
+  - name: platform.plan.confirm
+    version: 0.1.0
+    kind: code
+    description: 提交计划批准。Use when 原子发布草稿包到生产;Do not use when 只是检查(用 platform.plan.recheck)。
+    inputs:
+      type: object
+      properties:
+        plan_id: {type: string}
+        warnings_ack: {type: boolean}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:plan_confirm
+  - name: platform.plan.recheck
+    version: 0.1.0
+    kind: code
+    description: 生成提交计划。Use when 要看发布前的阻塞/警告全表;Do not use when 直接发布(用 platform.plan.confirm)。
+    inputs:
+      type: object
+      properties:
+        root: {type: string, description: 包根名}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:plan_recheck
+  - name: platform.candidate.accept
+    version: 0.1.0
+    kind: code
+    description: 接受迭代候选。Use when 把候选覆盖 working(快照留痕);Do not use when 只是查看 diff。
+    inputs:
+      type: object
+      properties:
+        name: {type: string, description: 包根名}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:candidate_accept
+  - name: platform.candidate.discard
+    version: 0.1.0
+    kind: code
+    description: 放弃迭代候选。Use when 丢弃候选区(working 不动);Do not use when 要覆盖 working(用 platform.candidate.accept)。
+    inputs:
+      type: object
+      properties:
+        name: {type: string, description: 包根名}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:candidate_discard
+  - name: platform.version.rewind
+    version: 0.1.0
+    kind: code
+    description: 草稿版本恢复。Use when 把某版本恢复为 working(历史不动);Do not use when 封存新版本。
+    inputs:
+      type: object
+      properties:
+        name: {type: string}
+        version: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:version_rewind
+  - name: platform.iterate.generate
+    version: 0.1.0
+    kind: code
+    description: 迭代生成候选(Flow C)。Use when 按批注生成改进版候选;Do not use when 直接改 working(它没有这个能力)。
+    inputs:
+      type: object
+      properties:
+        name: {type: string, description: 包根名}
+        comments: {type: array, description: 批注列表}
+        note: {type: string, description: 本轮备注}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}, run_id: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 600}
+    handler: agent_os.skills.platform.handlers:iterate_generate
+  - name: platform.decision.answer
+    version: 0.1.0
+    kind: code
+    description: 升权作答。Use when 回应 supervisor 的升权问题(answer 由管道按 action id 注入);Do not use when 普通对话。
+    inputs:
+      type: object
+      properties:
+        question_id: {type: string}
+        answer: {type: string, description: approve-once|approve-run|deny}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:decision_answer
+  # ── run/debug/lab-draft 面(M3/M4a)──
+  - name: platform.run.stop
+    version: 0.1.0
+    kind: code
+    description: 中止在途 run。Use when 停掉正在跑的 run;Do not use when 恢复(用 platform.run.resume)。
+    inputs:
+      type: object
+      properties:
+        run_id: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:run_stop
+  - name: platform.run.resume
+    version: 0.1.0
+    kind: code
+    description: 从 checkpoint 恢复 run。Use when 恢复暂停/中止的 run;Do not use when 重跑(用 platform.run.rerun)。
+    inputs:
+      type: object
+      properties:
+        run_id: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:run_resume
+  - name: platform.run.rerun
+    version: 0.1.0
+    kind: code
+    description: 按产物 meta 重跑。Use when 用原 skill+input 起一个新 run;Do not use when 改参发起(用 platform.run.launch)。
+    inputs:
+      type: object
+      properties:
+        run_id: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}, run_id: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:run_rerun
+  - name: platform.run.launch
+    version: 0.1.0
+    kind: code
+    description: 发起新 run(M4a 发起面)。Use when app 内"再跑一次"(input 缺省 = inputs schema 骨架);Do not use when 干预在途 run。
+    inputs:
+      type: object
+      properties:
+        skill: {type: string}
+        run_id: {type: string, description: 从产物 meta 回推 skill 用(可空)}
+        input: {type: object, description: 运行输入(缺省 = 骨架)}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}, run_id: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:run_launch
+  - name: platform.debug.command
+    version: 0.1.0
+    kind: code
+    description: 调试命令(放行/停止)。Use when 暂停中的调试会话需要 continue/stop;Do not use when 注入/改参(那是 modify/inject,不在本期)。
+    inputs:
+      type: object
+      properties:
+        session_id: {type: string}
+        command: {type: string, description: continue|stop(由管道按 action id 注入)}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:debug_command
+  - name: platform.draft.check
+    version: 0.1.0
+    kind: code
+    description: 草稿五关检查。Use when 跑提交闸门拿全量 findings;Do not use when 发布(用 platform.plan.confirm)。
+    inputs:
+      type: object
+      properties:
+        name: {type: string, description: 草稿名}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 120}
+    handler: agent_os.skills.platform.handlers:draft_check
+  # ── shell 的 endpoint 动作(M5 §13.1)──
+  - name: platform.shell.theme.set
+    version: 0.1.0
+    kind: code
+    description: 切主题。Use when 切换 UI 主题(持久化偏好写 shell.state.theme);Do not use when 布局调整(用 platform.shell.layout.set)。
+    inputs:
+      type: object
+      properties:
+        theme: {type: string, description: 主题 id}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:shell_theme_set
+  - name: platform.shell.session.create
+    version: 0.1.0
+    kind: code
+    description: 新会话。Use when 创建新的对话会话(并登记 conversation instance);Do not use when 切换既有会话。
+    inputs: {type: object, properties: {}}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:shell_session_create
+  # ── doc 的 endpoint 动作(docs/DOC-EDITOR.md §3)──
+  - name: platform.doc.save
+    version: 0.1.0
+    kind: code
+    description: 保存文档全文。Use when 保存(上一版自动 .bak;notes.* 名空间写回草稿 manifest.notes);Do not use when 按段替换(用 platform.doc.apply)。
+    inputs:
+      type: object
+      properties:
+        name: {type: string}
+        text: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:doc_save
+  - name: platform.doc.snapshot
+    version: 0.1.0
+    kind: code
+    description: 封存文档版本。Use when 把当前全文封存为 versions/vNNN;Do not use when 恢复(用 platform.doc.rewind)。
+    inputs:
+      type: object
+      properties:
+        name: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:doc_snapshot
+  - name: platform.doc.rewind
+    version: 0.1.0
+    kind: code
+    description: 恢复文档版本。Use when 把某快照恢复为工作副本(历史不动);Do not use when 封存(用 platform.doc.snapshot)。
+    inputs:
+      type: object
+      properties:
+        name: {type: string}
+        version: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:doc_rewind
+  - name: platform.doc.export
+    version: 0.1.0
+    kind: code
+    description: 导出文档全文。Use when 取 .md 全文与文件名(下载/复制);Do not use when 写文档。
+    inputs:
+      type: object
+      properties:
+        name: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}, filename: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:doc_export
+  - name: platform.doc.apply
+    version: 0.1.0
+    kind: code
+    description: 按锚点替换文档段(人按才落)。Use when 应用气泡回复的替换建议;Do not use when 整文保存(用 platform.doc.save)。
+    inputs:
+      type: object
+      properties:
+        name: {type: string}
+        anchor: {type: string, description: doc.md#L<start>-L<end>}
+        replace_text: {type: string}
+        expected: {type: string, description: 原段文本校验(可空)}
+    outputs: {type: object, properties: {ok: {type: boolean}, text: {type: string}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:doc_apply
+  # ── local 动作(§17.5 裁决 b:真 code 技能;_instance_id/_state 由框架注入,§17.10)──
+  - name: platform.shell.tab.open
+    version: 0.1.0
+    kind: code
+    description: 开 tab。Use when shell 打开/聚焦 tab(kind+ref 去重);Do not use when 关 tab。
+    inputs:
+      type: object
+      properties:
+        _instance_id: {type: string, description: 框架注入:目标 instance}
+        _state: {type: object, description: 框架注入:instance.state 活引用}
+        id: {type: string}
+        instance_id: {type: string}
+        kind: {type: string}
+        ref: {type: string}
+        title: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:shell_tab_open
+  - name: platform.shell.tab.focus
+    version: 0.1.0
+    kind: code
+    description: 聚焦 tab。Use when 切换 shell 激活 tab;Do not use when 开关 tab。
+    inputs:
+      type: object
+      properties:
+        _instance_id: {type: string, description: 框架注入}
+        _state: {type: object, description: 框架注入}
+        tab: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:shell_tab_focus
+  - name: platform.shell.tab.close
+    version: 0.1.0
+    kind: code
+    description: 关 tab。Use when 关闭 shell tab(激活态回落 conv/桌面);Do not use when 最小化(用 platform.shell.tab.minimize)。
+    inputs:
+      type: object
+      properties:
+        _instance_id: {type: string, description: 框架注入}
+        _state: {type: object, description: 框架注入}
+        tab: {type: string}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:shell_tab_close
+  - name: platform.shell.layout.set
+    version: 0.1.0
+    kind: code
+    description: 布局开关。Use when 切换 shell 图标模式;Do not use when 主题(用 platform.shell.theme.set)。
+    inputs:
+      type: object
+      properties:
+        _instance_id: {type: string, description: 框架注入}
+        _state: {type: object, description: 框架注入}
+        icon_mode: {type: boolean}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:shell_layout_set
+  - name: platform.shell.layout.move_tab
+    version: 0.1.0
+    kind: code
+    description: 拖动排序 tab。Use when 调整 tab 顺序(conv 恒首);Do not use when 开关 tab。
+    inputs:
+      type: object
+      properties:
+        _instance_id: {type: string, description: 框架注入}
+        _state: {type: object, description: 框架注入}
+        tab: {type: string}
+        before: {type: string, description: 目标位置 tab id(__start__ = 最前;缺省 = 末尾)}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:shell_layout_move_tab
+  - name: platform.shell.tab.minimize
+    version: 0.1.0
+    kind: code
+    description: 最小化到桌面。Use when 收起全部 tab 回桌面主屏(tab 保留);Do not use when 关闭 tab。
+    inputs:
+      type: object
+      properties:
+        _instance_id: {type: string, description: 框架注入}
+        _state: {type: object, description: 框架注入}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:shell_tab_minimize
+  - name: platform.shell.desktop.set
+    version: 0.1.0
+    kind: code
+    description: 桌面开关。Use when 切换桌面壁纸等偏好(持久化进 shell.state.desktop);Do not use when 布局(用 platform.shell.layout.set)。
+    inputs:
+      type: object
+      properties:
+        _instance_id: {type: string, description: 框架注入}
+        _state: {type: object, description: 框架注入}
+        wallpaper: {type: boolean}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:shell_desktop_set
+  - name: platform.doc.meta.set
+    version: 0.1.0
+    kind: code
+    description: doc 视图偏好。Use when 合并 view/dirty 等纯 state 键(local);Do not use when 改文档内容(用 platform.doc.save)。
+    inputs:
+      type: object
+      properties:
+        _instance_id: {type: string, description: 框架注入}
+        _state: {type: object, description: 框架注入}
+        view: {type: string}
+        dirty: {type: boolean}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:doc_meta_set
+  # ── conversation 的前端本地动作(§17.5 b 账面注册;执行面在前端 JS,管道侧仍拒)──
+  - name: platform.act.spawn
+    version: 0.1.0
+    kind: code
+    description: 打开卡面 app(前端本地)。Use when 从卡片打开对应 app tab;Do not use when 服务端调用(管道拒:local 不出海)。
+    inputs: {type: object, properties: {}}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:act_spawn
+  - name: platform.act.pin
+    version: 0.1.0
+    kind: code
+    description: 钉住卡片(前端本地)。Use when 钉住/取消钉住卡;Do not use when 服务端调用(管道拒:local 不出海)。
+    inputs: {type: object, properties: {}}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:act_pin
+  - name: platform.act.close
+    version: 0.1.0
+    kind: code
+    description: 关闭卡片(前端本地)。Use when 关掉一张卡;Do not use when 服务端调用(管道拒:local 不出海)。
+    inputs: {type: object, properties: {}}
+    outputs: {type: object, properties: {ok: {type: boolean}}}
+    permissions: {tools: [], skills: []}
+    limits: {max_steps: 1, timeout: 60}
+    handler: agent_os.skills.platform.handlers:act_close

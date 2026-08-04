@@ -824,10 +824,13 @@ JS 闭包,那"所有 action 都是 skill"就成了不可证伪的同义反复,�
 
 ### 17.7 升格序
 
-1. **`platform.*` 内置 skill 包(L1 全量)**:36 个 handler 逐个包成 code
-   技能,skills.yaml 注册、trusted 档;管道的 `exec.mode` 从"选执行通道"
-   降级为**元信息**(local/run 只表示要不要起产物级 Run),调用一律经
-   `kernel.run()`;
+1. **`platform.*` 内置 skill 包(L1 全量)** ✅(2026-08-05,分支 debugger):
+   36 条调用面(35 个 manifest action + 旧卡面 version.rewind)归并为
+   **32 个唯一 code 技能**(共享 ref:decision.answer ×3 / debug.command ×2 /
+   plan.recheck ×2 只计一次),落在 `skills/platform/` 包(包内 skills.yaml
+   注册,全部 trusted 档);管道的 `exec.mode` 从"选执行通道"降级为
+   **元信息**(local/run 只表示要不要起产物级 Run),调用一律经
+   `kernel.run()`(进程内,不落产物——run_iterate 先例);
 2. **L2 拆 tool**:§17.4 名单逐个把副作用面拆成 tool,skill 退为编排;
 3. **cascade 上线**:registry 加缺省 `context_provider`(kind + state 摘要),
    消费者改用注册制(现有 `_iterateProviders` 手搓形态退役);管道自动携带
@@ -838,6 +841,41 @@ JS 闭包,那"所有 action 都是 skill"就成了不可证伪的同义反复,�
    `inject`/`modify`/`skills.reload`/草稿 `delete` 四个优先(#9/#11);
 6. **全程红线**:promote 的人确认、升权人审、数据 authZ **一行都不许因升格
    而削弱**——升格让仲裁从话术变结构,不是绕开它的新通道。
+
+> **第 1 步实现注**(2026-08-05,分支 debugger,L1 全量 ✅):
+> - **包**:`skills/platform/`(`__init__.py` + `skills.yaml` + `handlers.py`)。
+>   32 个 code 技能(21 endpoint ref + 8 服务端 local + 3 个 conversation
+>   前端本地动作的账面注册),全部 trusted 档、白名单空(tools/skills 皆
+>   [])、逐技能 inputs/outputs schema;handler = 原 `_act_*`/`_mut_*`
+>   的机械搬运,只做了三处适配:依赖从闭包改为 `ctx._kernel.platform_deps`
+>   (宿主装配时注入,每 app 一颗 platform 内核);`HTTPException` 直抛改
+>   `PlatformActionError(status, detail)`(异常过不了 Logic Kernel 执行边界,
+>   `_guarded` 折 `_action_error` 信封,管道 `_run_handler` 原位翻译回
+>   HTTPException——状态码/文案逐字一致);`asyncio.run(manager.*)` 改
+>   直接 `await`(帧内不能再开私有 loop;`iterate.py` 因此拆出
+>   `arun_iterate` async 本体,`run_iterate` 留作同步包装)。
+> - **管道**(`web_platform/app.py`):endpoint/run/local 三分支统一走
+>   `asyncio.run(platform_kernel.run(ref, payload))`;`exec.mode` 只剩两处
+>   元信息用途(run 态 spawn run instance / local 态的"不出海"拒绝);
+>   `SKILL_BINDINGS` 退役为 `platform_skill_names()`(AppRegistry 的
+>   known_skills 数据源);`_LOCAL_MUTATORS` 退役为
+>   `PLATFORM_LOCAL_SKILLS`(action id → 技能名);旧卡面
+>   `_ACTION_HANDLERS` 退役为 `_CARD_ACTION_REFS`(七条,id → ref)。
+> - **conversation 的 spawn/pin/close**:registry 有 `platform.act.*` 同名
+>   技能(§17.5(b) 账面),但它们是前端本地动作——管道侧仍 400"local
+>   不出海"(M3.5 语义,行为零变化优先)。
+> - **force_sandbox 豁免(§17.9)**:`LogicPolicy` 新增
+>   `trusted_builtin_prefixes: tuple = ("platform.",)`(显式白名单,清空即
+>   无豁免);`LogicKernelRouter.route` 命中白名单的内置技能在
+>   force_sandbox 下仍走 TRUSTED 进程内,用户技能照 SANDBOX;技能自报
+>   `logic.mode=sandbox` 优先于豁免。
+> - **L2 候选标注**(§17.4 名单,本期不拆):plan.confirm / candidate.accept
+>   / doc.save / doc.apply / run.stop / run.resume / run.rerun 的 handler
+>   注释已标"直接 import 业务写函数,L2 拆 tool"。
+> - **验收**:§17.8 静态扫描(每个 action 的 ref 解析到真实技能、无孤
+>   handler)+ force_sandbox 豁免矩阵 + kernel.run 进程内冒烟,落在
+>   `tests/web_platform/test_platform_skills.py`;行为零变化由既有
+>   web_platform 全套(92)与全量 pytest 背书。
 
 ### 17.8 验收(原则符合度测试)
 

@@ -27,7 +27,6 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent_os.api.v1 import ProviderError, derive_skill_tier
 from agent_os.host.web_platform.apps import (
     AppInstanceStore,
     AppRegistry,
@@ -37,11 +36,7 @@ from agent_os.host.web_platform.apps import (
 )
 from agent_os.host.web_platform.artifacts import (
     ACTION_WHITELIST,
-    build_diff_card,
     build_escalation_card,
-    build_gate_report_card,
-    build_publish_card,
-    build_skill_pack_card,
     build_table_card,
     validate_card,
 )
@@ -49,24 +44,20 @@ from agent_os.host.web_platform.orchestrator import Orchestrator, human_error
 from agent_os.host.web_platform.sessions import SessionStore, new_message
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.skills.doc_store import DocStore
-from agent_os.skills.draft_store import (
-    OverlaySkillRegistry,
-    skeleton_from_schema,
-    smoke_case_from_schema,
-)
-from agent_os.skills.gate import GateError, validate_draft
-from agent_os.skills.iterate import edit_members, run_iterate
+from agent_os.skills.draft_store import OverlaySkillRegistry
 from agent_os.skills.lab_assistant import (
     DOC_COMMENTER_NAME,
     DOC_EDITOR_NAME,
     DOC_REVIEWER_NAME,
-    ITERATOR_NAME,
     doc_commenter_skill,
     doc_editor_skill,
     doc_reviewer_skill,
-    iterator_skill,
 )
-from agent_os.skills.package import promote_package
+from agent_os.skills.platform import (
+    PLATFORM_LOCAL_SKILLS,
+    build_platform_kernel,
+    platform_skill_names,
+)
 from agent_os.tools.lab_tools import register_doc_tools
 
 _log = logging.getLogger("agent_os.platform")
@@ -75,6 +66,10 @@ _log = logging.getLogger("agent_os.platform")
 #: severity 单源(D4 打磨;与前端 doc-editor.js 的 DOC_SEVERITIES 字面一致——
 #: 后端校验集在此,前端类名/copy 在 doc-editor.js,两端各一份单一事实源)
 DOC_SEVERITIES = ("must", "should", "nit")
+
+#: 锚点格式(docs/DOC-EDITOR.md §2.1):doc.md#L<start>-L<end>(1-based 行号区间;
+#: review 批注集校验用;platform.doc.apply 技能侧另有同形一份——skills/platform/)
+_ANCHOR_RE = re.compile(r"^doc\.md#L(\d+)-L(\d+)$")
 
 
 class MessageBody(BaseModel):
@@ -742,16 +737,16 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     @app.post("/api/cards/action")
     def card_action(body: CardActionBody) -> dict[str, Any]:
         """旧动作入口(过渡期保留,M3 退役;裁决面 ACTION_WHITELIST 不变)。
-        handler 与新 action 管道**同一份实现**(_ACTION_HANDLERS/SKILL_BINDINGS)。"""
+        与新 action 管道**同一份实现**(§17.7 L1:同一批 platform.* code 技能)。"""
         if body.action_id not in ACTION_WHITELIST:
             raise HTTPException(
                 status_code=400,
                 detail=f"action {body.action_id!r} 不在白名单(裁决面 ACTION_WHITELIST)",
             )
-        handler = _ACTION_HANDLERS.get(body.action_id)
-        if handler is None:
+        ref = _CARD_ACTION_REFS.get(body.action_id)
+        if ref is None:
             raise HTTPException(status_code=400, detail=f"action {body.action_id!r} 本期未接线")
-        result = _run_handler(handler, body.payload)
+        result = _run_handler(ref, body.payload)
         _register_cards(result.get("cards") or [], created_by=body.session_id or "")
         # 对话持久化(§3):带 session_id 时,动作结果以 agent 消息落进会话
         if body.session_id and result.get("text"):
@@ -761,618 +756,55 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             )
         return result
 
-    def _run_handler(fn: Any, payload: dict[str, Any]) -> dict[str, Any]:
-        """调 handler 并统一异常归类(旧 cards/action 与新 action 管道同一映射面)。"""
+    def _run_handler(ref: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """经 platform 内核跑动作技能(§17.7 L1:``kernel.run()`` 进程内,不落产物——
+        run_iterate 先例;旧 cards/action 与新 action 管道同一调用面)。
+
+        技能侧把可归类错误折成 ``_action_error`` 信封(异常过不了 Logic Kernel
+        执行边界,会塌成 RUNTIME_ERROR 丢状态码);此处原位翻译成 HTTPException——
+        状态码/文案与升格前的 _run_handler 逐字一致(行为零变化,§17.8)。
+        """
         try:
-            return fn(payload)
-        except FileExistsError as e:
-            # 草稿重名(重复批准/历史残留):友好 409,不 500(读屏层是人话,详情给原文)
-            raise HTTPException(status_code=409, detail=f"同名草稿已存在:{e}") from e
-        except ProviderError as e:
-            # N7(O7):凭证/模型服务故障 → 503 人话(前端系统气泡;不 500 不裸英文类名)
-            raise HTTPException(
-                status_code=503,
-                detail="模型服务暂不可用(凭证可能已过期),请刷新凭证后重试",
-            ) from e
-        except GateError as e:
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except FileNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+            result = asyncio.run(platform_kernel.run(ref, payload))
         except SkillLoadError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        if isinstance(result, dict) and isinstance(result.get("_action_error"), dict):
+            err = result["_action_error"]
+            raise HTTPException(status_code=int(err["status"]), detail=str(err["detail"]))
+        return result
 
     # ------------------------------------------------------------------
-    # action 处理器(每件都薄:调既有 store/gate/package 能力)
+    # action 技能面(docs/APP-MODEL.md v0.5 §17.7 升格序第 1 步;L1 全量):
+    # 全部 handler 升格为 platform.* 内置 code 技能(skills/platform/ 包,
+    # 包内 skills.yaml 注册,trusted 档);本侧只留依赖注入与分发——
+    # SKILL_BINDINGS/_LOCAL_MUTATORS 的函数表形态退役(技能名 → 技能
+    # 的注册引用由 platform 内核的 registry 承担)。
     # ------------------------------------------------------------------
 
-    def _act_scaffold_approve(payload: dict[str, Any]) -> dict[str, Any]:
-        """scaffold.approve(意图①批准):创建首稿 → 五关 → skill_pack + gate_report 卡。
-
-        N3(O3,B2):首稿即带 1 个合 schema 的冒烟用例(tests/smoke.json,
-        按 inputs schema 骨架生成)——首稿 G4 不再必然 warn。
-        """
-        name = str(payload.get("name") or "")
-        template = payload.get("template") or None
-        lab_store.create(name, template=template)
-        draft = lab_store.read(name)
-        if not draft["tests"]:
-            case = smoke_case_from_schema((draft["manifest"] or {}).get("inputs"))
-            if case is not None:
-                lab_store.save(
-                    name,
-                    manifest=draft["manifest"],
-                    prompt=draft["prompt"],
-                    handler=draft["handler"],
-                    tests={"smoke.json": case},
-                )
-                draft = lab_store.read(name)
-        report = validate_draft(
-            draft,
-            production=manager.shared_skills_registry(),
-            tools=manager.shared_tools_registry(),
-            store=lab_store,
-        )
-        lab_store.save_gate_report(name, report)
-        tier = derive_skill_tier(
-            lab_store.load_skill(name).manifest, manager.shared_tools_registry(),
-            OverlaySkillRegistry(manager.shared_skills_registry(), lab_store),
-        )
-        members = edit_members(lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(), name)
-        return {
-            "ok": True,
-            "text": f"首稿完成: {name}(推导档 {tier})。五关 {report['status']};"
-            f"{'可以继续迭代,或生成提交计划。' if report['status'] != 'fail' else '有红关,先修再提交。'}",
-            "cards": [
-                build_skill_pack_card(name=name, tier=tier, members=members),
-                build_gate_report_card(
-                    draft=name, status=report["status"], gates=report["gates"],
-                    plan_payload={"root": name},
-                ),
-            ],
+    platform_kernel = build_platform_kernel(
+        {
+            "manager": manager,
+            "lab_store": lab_store,
+            "doc_store": doc_store,
+            "sessions": sessions,
+            "instances": instances,
+            "artifacts_root": artifacts_root,
+            "read_json": _read_json,
         }
+    )
 
-    def _act_plan_confirm(payload: dict[str, Any]) -> dict[str, Any]:
-        """plan.confirm:走既有 packages/promote(P2 原子提交;不开新通道)。"""
-        plan_id = str(payload.get("plan_id") or "")
-        warnings_ack = bool(payload.get("warnings_ack"))
-        result = promote_package(
-            store=lab_store,
-            plan_id=plan_id,
-            warnings_ack=warnings_ack,
-            production=manager.shared_skills_registry(),
-            tools=manager.shared_tools_registry(),
-            principal=manager.principal().subject,
-            skillsets_root=manager.skillsets_root(),
-        )
-        if result.get("set"):
-            manager.refresh_skillsets()
-        return {
-            "ok": True,
-            "text": f"已发布 {result['root']}({result['form']},hash {result['package_hash'][:8]})。",
-            "cards": [
-                build_skill_pack_card(
-                    name=result["root"],
-                    tier="",
-                    members=[m["name"] for m in result["members"]],
-                )
-            ],
-        }
-
-    def _act_candidate_accept(payload: dict[str, Any]) -> dict[str, Any]:
-        """candidate.accept(与 Lab 端点同语义):快照 → 覆盖 working → 清候选。"""
-        name = str(payload.get("name") or "")
-        members = edit_members(
-            lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(), name
-        )
-        cand = lab_store.candidate_members(name)
-        if not cand:
-            raise FileNotFoundError(f"无候选: {name}")
-        latest = lab_store.list_versions(name)
-        _, comments = lab_store.latest_comments(name)
-        vid = lab_store.snapshot(
-            name, members, source="iterate",
-            parent=latest[0]["version"] if latest else None,
-            comments_digest=f"{len(comments)} 条边注",
-            prefer_candidate=True,  # N2:快照 = 被接受的候选内容(B4)
-        )
-        for member in cand:
-            data = lab_store.read_candidate_member(name, member)
-            current = lab_store.read(member)
-            lab_store.save(
-                member,
-                manifest=data["manifest"] or {},
-                prompt=data["prompt"],
-                handler=current["handler"],
-                tests=data["tests"] or None,
-            )
-        lab_store.clear_candidate(name)
-        return {"ok": True, "text": f"已接受为 {vid}(候选已覆盖 working)。"}
-
-    def _act_candidate_discard(payload: dict[str, Any]) -> dict[str, Any]:
-        lab_store.clear_candidate(str(payload.get("name") or ""))
-        return {"ok": True, "text": "已放弃该候选(working 未动)。"}
-
-    def _act_version_rewind(payload: dict[str, Any]) -> dict[str, Any]:
-        name = str(payload.get("name") or "")
-        version = str(payload.get("version") or "")
-        lab_store.restore_version(name, version)
-        return {"ok": True, "text": f"已恢复到 {version}(版本历史未动)。"}
-
-    def _act_plan_recheck(payload: dict[str, Any]) -> dict[str, Any]:
-        """plan.recheck:生成提交计划(复用 packages/plan;返回 publish 卡)。"""
-        from agent_os.skills.package import build_plan
-
-        root = str(payload.get("root") or "")
-        plan = build_plan(
-            root,
-            store=lab_store,
-            production=manager.shared_skills_registry(),
-            tools=manager.shared_tools_registry(),
-            smoke_runner=None,
-        )
-        return {
-            "ok": True,
-            "text": f"提交计划已生成(hash {plan['package_hash'][:8]});"
-            f"阻塞 {len(plan['blockers'])} 项。",
-            "cards": [
-                build_publish_card(
-                    root=root,
-                    members=plan["members"],
-                    plan_id=plan["plan_id"],
-                    package_hash=plan["package_hash"],
-                    blockers=plan["blockers"],
-                    warnings=plan["warnings"],
-                )
-            ],
-        }
-
-    def _act_iterate_generate(payload: dict[str, Any]) -> dict[str, Any]:
-        """iterate.generate:Flow C 同一条生成路径(产出 diff 卡)。"""
-        name = str(payload.get("name") or "")
-        result = run_iterate(
-            manager.assemble_lab_kernel(
-                OverlaySkillRegistry(
-                    manager.shared_skills_registry(),
-                    lab_store,
-                    extra={ITERATOR_NAME: iterator_skill()},
-                )
-            ),
-            store=lab_store,
-            production=manager.shared_skills_registry(),
-            tools_registry=manager.shared_tools_registry(),
-            name=name,
-            comments=list(payload.get("comments") or []),
-            note=str(payload.get("note") or ""),
-        )
-        return {
-            "ok": True,
-            "text": f"已生成候选: {result['reply']}",
-            # M4a run 通道:run_id/status 透传(管道据此 spawn run app 持 run_id)
-            "run_id": result.get("run_id", ""),
-            "run_status": result.get("run_status", ""),
-            "skill": name,
-            "cards": [build_diff_card(name=name, diff=result["diff"])],
-        }
-
-    _ACTION_HANDLERS = {
-        "scaffold.approve": _act_scaffold_approve,
-        "plan.confirm": _act_plan_confirm,
-        "candidate.accept": _act_candidate_accept,
-        "candidate.discard": _act_candidate_discard,
-        "version.rewind": _act_version_rewind,
-        "plan.recheck": _act_plan_recheck,
-        "iterate.generate": _act_iterate_generate,
+    #: 旧卡面 action(过渡期保留;§17.7 第 4 步退役)→ platform.* 技能名
+    _CARD_ACTION_REFS = {
+        "scaffold.approve": "platform.scaffold.approve",
+        "plan.confirm": "platform.plan.confirm",
+        "candidate.accept": "platform.candidate.accept",
+        "candidate.discard": "platform.candidate.discard",
+        "version.rewind": "platform.version.rewind",
+        "plan.recheck": "platform.plan.recheck",
+        "iterate.generate": "platform.iterate.generate",
     }
 
-    # ------------------------------------------------------------------
-    # app 协议面(docs/APP-MODEL.md;M1):manifest 注册表 + action 管道 + spawn。
-    # SKILL_BINDINGS 把 manifest 的 skill 键映射到**同一份**薄 handler——
-    # 白名单从代码升格为 manifest 数据,零新权限通道(§7 红线不变)。
-    # ------------------------------------------------------------------
-
-    def _act_decision_answer(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.decision.answer:升权作答(answer 由管道按 action_id 注入)。"""
-        qid = str(payload.get("question_id") or "")
-        answer = str(payload.get("answer") or "")
-        try:
-            manager.supervisor_answer(qid, answer)
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        return {"ok": True, "text": "已记录你的决定。", "state": {"resolved": answer}}
-
-    # ── M3 handlers(docs/APP-MODEL.md §8):run/debug/lab-draft 三 kind 的
-    # skill 绑定——每件都是既有 manager 能力的薄转发(manager 方法是 async,
-    # 与 LLM 路由同款 asyncio.run 私有循环),零新权限通道 ─────────────────
-
-    def _act_run_stop(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.run.stop:中止在途 run(不在途 → 409,与旧 web stop 同归类)。"""
-        run_id = str(payload.get("run_id") or "")
-        ok = asyncio.run(manager.stop_run(run_id))
-        if not ok:
-            raise HTTPException(status_code=409, detail=f"run 不在在途状态,无法停止: {run_id}")
-        return {"ok": True, "text": "已发送停止请求(run 在下一个安全点中止)。", "state": {"status": "stopping"}}
-
-    def _act_run_resume(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.run.resume:从 checkpoint 恢复(404/400/409 同旧 web resume)。"""
-        run_id = str(payload.get("run_id") or "")
-        try:
-            record = asyncio.run(manager.resume_run(run_id))
-        except FileNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except Exception as e:  # ResumeConflictError 等状态冲突归 409
-            if "Conflict" in type(e).__name__:
-                raise HTTPException(status_code=409, detail=str(e)) from e
-            raise
-        return {
-            "ok": True,
-            "text": f"恢复运行完成: {record.get('status')}",
-            "state": {"status": record.get("status", "")},
-        }
-
-    def _act_run_rerun(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.run.rerun:按产物 meta 的 skill+input 重跑(新 run;结果卡挂新锚)。"""
-        run_id = str(payload.get("run_id") or "")
-        meta = _read_json(Path(artifacts_root) / "runs" / run_id / "meta.json")
-        if meta is None:
-            raise HTTPException(status_code=404, detail=f"找不到 run 产物: {run_id}")
-        new_id = asyncio.run(manager.start_run(meta.get("skill") or "", meta.get("input") or {}))
-        return {
-            "ok": True,
-            "text": f"已按原参数重跑,新 run: {new_id[:8]}。",
-            "cards": [
-                build_table_card(
-                    title="重跑",
-                    columns=["run", "skill", "摘要"],
-                    rows=[[new_id[:8], meta.get("skill") or "", "已启动"]],
-                    ref={"kind": "run", "id": new_id},
-                )
-            ],
-        }
-
-    def _act_debug_command(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.debug.command:放行/停止(command 由管道按 action_id 注入:
-        debug.continue→continue,debug.stop→stop;非 paused → 409)。"""
-        sid = str(payload.get("session_id") or "")
-        command = str(payload.get("command") or "continue")
-        try:
-            asyncio.run(manager.debug_command(sid, command))
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except Exception as e:  # AgentOSError(非 paused)归 409
-            if "Error" in type(e).__name__:
-                raise HTTPException(status_code=409, detail=str(e)) from e
-            raise
-        human = "已放行。" if command == "continue" else "已发送停止。"
-        return {"ok": True, "text": human, "state": {"last_command": command}}
-
-    def _act_draft_check(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.draft.check:草稿五关(与 Lab validate 端点同逻辑;返回 gate_report 卡)。"""
-        name = str(payload.get("name") or "")
-        draft = lab_store.read(name)
-        report = validate_draft(
-            draft,
-            production=manager.shared_skills_registry(),
-            tools=manager.shared_tools_registry(),
-            store=lab_store,
-        )
-        lab_store.save_gate_report(name, report)
-        return {
-            "ok": True,
-            "text": f"检查完成: {report['status']}",
-            "cards": [
-                build_gate_report_card(
-                    draft=name, status=report["status"], gates=report["gates"],
-                    plan_payload={"root": name},
-                )
-            ],
-        }
-
-    def _act_run_launch(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.run.launch(M4a 发起面归一):app 内"再跑一次"。
-
-        input 缺省 = 按 skill inputs schema 的 skeleton 骨架(用户可改,改后
-        服务端按 schema 校验,不合 → 400);skill 缺省时从产物 meta 回推
-        (run tab spawn 的 state.skill 可能为空)。lab-draft 的"试跑"同通道
-        (overlay 解析序:草稿优先)。
-        """
-        skill = str(payload.get("skill") or "")
-        run_id = str(payload.get("run_id") or "")
-        if not skill and run_id:
-            meta = _read_json(Path(artifacts_root) / "runs" / run_id / "meta.json")
-            skill = str((meta or {}).get("skill") or "")
-        if not skill:
-            raise HTTPException(status_code=400, detail="launch 需要 skill(state.skill 或产物 meta)")
-        # inputs schema 解析(overlay:草稿 ∪ 生产;拿不到 schema 就只校验是 object)
-        inputs_schema: dict[str, Any] = {}
-        try:
-            overlay = OverlaySkillRegistry(manager.shared_skills_registry(), lab_store)
-            inputs_schema = overlay.get_by_name(skill).manifest.inputs or {}
-        except Exception as e:  # noqa: BLE001 — 未知技能由 start_run 归 400(RunValidationError)
-            _log.info("launch schema 解析失败,按无 schema 继续: %s", e)
-        input_value = payload.get("input")
-        if input_value is None:
-            input_value = skeleton_from_schema(inputs_schema)  # 缺省 = 骨架(§M4a 发起面)
-        if inputs_schema:
-            try:
-                jsonschema.validate(input_value, inputs_schema)
-            except jsonschema.ValidationError as e:
-                raise HTTPException(status_code=400, detail=f"input 不合 {skill} 的 inputs schema: {e.message}") from e
-        try:
-            new_id = asyncio.run(manager.start_run(skill, input_value))
-        except Exception as e:  # RunValidationError 等归 400(与 POST /api/runs 同)
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        return {
-            "ok": True,
-            "text": f"已发起 {skill},新 run: {new_id[:8]}。",
-            "run_id": new_id,
-            "skill": skill,
-            "status": "running",
-            "cards": [
-                build_table_card(
-                    title="新 run",
-                    columns=["run", "skill", "摘要"],
-                    rows=[[new_id[:8], skill, "已启动"]],
-                    ref={"kind": "run", "id": new_id},
-                )
-            ],
-        }
-
-    # ── M5:shell 的 local mutators(docs/APP-MODEL.md §13.1)──────────────
-    # local = 仅改 app.state(不出海);写穿透经 instances.update_state(布局持久化)
-    def _mut_tab_open(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-        state = inst["state"]
-        tabs = state.setdefault("tabs", [])
-        # conversation 是唯一且恒首:已存在则聚焦,不追加(conv 可关后由此补回)
-        if args.get("kind") == "conversation":
-            conv = next((t for t in tabs if t.get("kind") == "conversation"), None)
-            if conv is None:
-                tabs.insert(0, {
-                    "id": args.get("id", "conv"), "instance_id": args.get("instance_id", ""),
-                    "kind": "conversation", "ref": args.get("ref", "conv"),
-                    "title": args.get("title", ""),
-                })
-                state["active_tab"] = args.get("id", "conv")
-            else:
-                state["active_tab"] = conv["id"]
-            instances.update_state(inst["id"], state)
-            return {"ok": True}
-        existing = next(
-            (t for t in tabs
-             if t.get("kind") != "conversation" and t.get("kind") == args.get("kind") and t.get("ref") == args.get("ref")),
-            None,
-        )
-        if existing is None:
-            tabs.append({
-                "id": args.get("id", ""), "instance_id": args.get("instance_id", ""),
-                "kind": args.get("kind", ""), "ref": args.get("ref", ""), "title": args.get("title", ""),
-            })
-            state["active_tab"] = args.get("id", "")
-        else:
-            state["active_tab"] = existing.get("id", "")  # kind+ref 去重聚焦(§6)
-        instances.update_state(inst["id"], state)
-        return {"ok": True}
-
-    def _mut_tab_focus(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-        inst["state"]["active_tab"] = args.get("tab", "conv")
-        instances.update_state(inst["id"], inst["state"])
-        return {"ok": True}
-
-    def _mut_tab_close(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-        state = inst["state"]
-        tab_id = args.get("tab", "")
-        tabs = [t for t in state.get("tabs", []) if t.get("id") != tab_id]
-        state["tabs"] = tabs
-        if state.get("active_tab") == tab_id:
-            # 关闭回落:普通 tab 回 conv;conv 自己可关(有桌面)——回下一个 tab,空则桌面("")
-            state["active_tab"] = next(
-                (t["id"] for t in tabs if t.get("id") == "conv"),
-                tabs[0]["id"] if tabs else "",
-            )
-        instances.update_state(inst["id"], state)
-        return {"ok": True}
-
-    def _mut_layout_set(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-        inst["state"].setdefault("layout", {})["icon_mode"] = bool(args.get("icon_mode", False))
-        instances.update_state(inst["id"], inst["state"])
-        return {"ok": True}
-
-    def _mut_layout_move_tab(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-        state = inst["state"]
-        tabs = [t for t in state.get("tabs", []) if t.get("id") != args.get("tab")]
-        moving = next((t for t in state.get("tabs", []) if t.get("id") == args.get("tab")), None)
-        if moving is not None:
-            before = args.get("before") or ""
-            if before == "__start__":
-                tabs.insert(1 if tabs and tabs[0].get("id") == "conv" else 0, moving)  # conv 恒首
-            elif before:
-                idx = next((i for i, t in enumerate(tabs) if t.get("id") == before), len(tabs))
-                tabs.insert(idx, moving)
-            else:
-                tabs.append(moving)  # before 缺省 = 移到末尾
-            state["tabs"] = tabs
-            instances.update_state(inst["id"], state)
-        return {"ok": True}
-
-    def _mut_tab_minimize(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-        """最小化(M5 增补,桌面化):active_tab 置 "" —— 无激活 tab = 桌面主屏;
-        tab 全保留(关闭≠销毁的另一面:最小化≠关闭)。"""
-        inst["state"]["active_tab"] = ""
-        instances.update_state(inst["id"], inst["state"])
-        return {"ok": True}
-
-    def _mut_desktop_set(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-        """桌面开关(M5 增补):wallpaper 持久化进 shell.state.desktop(写穿透)。"""
-        desktop = inst["state"].setdefault("desktop", {"pinned": [], "wallpaper": True})
-        if "wallpaper" in args:
-            desktop["wallpaper"] = bool(args["wallpaper"])
-        instances.update_state(inst["id"], inst["state"])
-        return {"ok": True}
-
-    def _mut_meta_set(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-        """doc.meta.set 的 local mutator(D1):白名单键合并进 instance.state
-        (view/dirty;文本与版本不在此面——save/rewind 是 endpoint)。"""
-        patch = {k: v for k, v in args.items() if k in ("view", "dirty")}
-        inst["state"].update(patch)
-        instances.update_state(inst["id"], inst["state"])
-        return {"ok": True}
-
-    _LOCAL_MUTATORS = {
-        "shell.tab.open": _mut_tab_open,
-        "shell.tab.focus": _mut_tab_focus,
-        "shell.tab.close": _mut_tab_close,
-        "shell.layout.set": _mut_layout_set,
-        "shell.layout.move_tab": _mut_layout_move_tab,
-        # M5 增补(桌面化 root widget)
-        "shell.tab.minimize": _mut_tab_minimize,
-        "shell.desktop.set": _mut_desktop_set,
-        # D1(docs/DOC-EDITOR.md §3):doc.meta.set(视图切换/dirty 等纯 state)
-        "meta.set": _mut_meta_set,
-    }
-
-    def _act_shell_theme_set(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.shell.theme.set(M5 §13.1):切主题(持久化偏好 → shell.state.theme)。"""
-        return {"ok": True, "text": "", "state": {"theme": str(payload.get("theme") or "")}}
-
-    # ── D1(docs/DOC-EDITOR.md §2/§3):doc 的 endpoint handlers(DocStore 薄转发) ──
-
-    def _act_doc_save(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.doc.save:保存全文(.bak 同 DraftStore 惯例);state 回写 dirty/savedAt。
-
-        D3 NOTES 接点:``notes.<draft>`` 名空间的文档保存时,把全文**写回草稿
-        manifest 的 notes 键**(未知键容忍已验证,随草稿版本走;写不到 = 草稿
-        不存在则跳过,只读+另存模式——绝不写生产)。
-        """
-        name = str(payload.get("name") or "")
-        text = str(payload.get("text") or "")
-        doc = doc_store.save(name, text)
-        if name.startswith("notes.") and lab_store is not None:
-            draft = name[len("notes."):]
-            try:
-                d = lab_store.read(draft)
-                lab_store.save(
-                    draft,
-                    manifest={**(d["manifest"] or {}), "notes": text},
-                    prompt=d["prompt"],
-                    handler=d["handler"],
-                )
-            except (FileNotFoundError, ValueError) as e:
-                _log.info("NOTES 写回跳过(草稿 %s 不可读): %s", draft, e)
-        return {
-            "ok": True,
-            "text": "已保存。",
-            "state": {"dirty": False, "savedAt": doc["meta"].get("savedAt", 0)},
-        }
-
-    def _act_doc_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.doc.snapshot:封存 versions/vNNN(内容 = 保存时全文,iterate 同语义)。"""
-        name = str(payload.get("name") or "")
-        latest = doc_store.list_versions(name)
-        vid = doc_store.snapshot(name, source="manual", parent=latest[0]["version"] if latest else None)
-        return {
-            "ok": True,
-            "text": f"已封存 {vid}。",
-            "state": {"versions": [v["version"] for v in doc_store.list_versions(name)]},
-        }
-
-    def _act_doc_rewind(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.doc.rewind:恢复某版本到全文(历史不动)。"""
-        name = str(payload.get("name") or "")
-        version = str(payload.get("version") or "")
-        doc = doc_store.restore(name, version)
-        return {
-            "ok": True,
-            "text": f"已恢复到 {version}(版本历史未动)。",
-            "state": {"dirty": False, "text": doc["text"]},
-        }
-
-    def _act_doc_export(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.doc.export:导出全文(.md 文本面;不进生产面,§6 接点纪律)。"""
-        name = str(payload.get("name") or "")
-        doc = doc_store.read(name)
-        return {"ok": True, "text": doc["text"], "filename": f"{name}.md"}
-
-    #: 锚点格式(docs/DOC-EDITOR.md §2.1):doc.md#L<start>-L<end>(1-based 行号区间)
-    _ANCHOR_RE = re.compile(r"^doc\.md#L(\d+)-L(\d+)$")
-
-    def _act_doc_apply(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.doc.apply(D2):**人按才落**——按锚点行号区间替换对应段。
-
-        越界/文档已变(行数对不上,或给了 expected 且原文不符)→ 400
-        "文档已变化,请重新评审";替换后保存走 DocStore.save(.bak 同惯例),
-        并记一条 system 消息进锚点消息流(apply 留痕)。
-        """
-        name = str(payload.get("name") or "")
-        anchor = str(payload.get("anchor") or "")
-        replace_text = str(payload.get("replace_text") or "")
-        expected = payload.get("expected")
-        m = _ANCHOR_RE.match(anchor)
-        if not m:
-            raise HTTPException(status_code=400, detail=f"锚点格式非法: {anchor!r}(须 doc.md#L<start>-L<end>)")
-        start, end = int(m.group(1)), int(m.group(2))
-        doc = doc_store.read(name)
-        lines = doc["text"].split("\n")
-        if start < 1 or end < start or end > len(lines):
-            raise HTTPException(status_code=400, detail="文档已变化,请重新评审")
-        if expected is not None and "\n".join(lines[start - 1 : end]) != str(expected):
-            raise HTTPException(status_code=400, detail="文档已变化,请重新评审")
-        new_lines = lines[: start - 1] + replace_text.split("\n") + lines[end:]
-        doc_store.save(name, "\n".join(new_lines))
-        doc_store.save_bubble(name, anchor, {"role": "system", "text": "已应用"})
-        return {
-            "ok": True,
-            "text": "已应用。",
-            "state": {"dirty": False, "text": doc_store.read(name)["text"]},
-        }
-
-    def _act_shell_session_create(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.shell.session.create(M5 §13.1):新会话(app 孵化,与 POST /api/sessions 同源)。"""
-        session = sessions.create()
-        instances.register(
-            kind="conversation", ref=session["id"], title=session["id"],
-            state={"messages": [], "outbox": []}, created_by="",
-        )
-        return {"ok": True, "text": "", "session": session}
-
-    SKILL_BINDINGS = {
-        # exec 归态(v0.2 §4;归错态 = 授权漏洞,评审面):
-        #   endpoint = 确定性写,转发既有端点(下方除标注外全部);
-        #   run = agentic 起 run(iterate.generate——当前与 endpoint 同 handler
-        #   面,真 run 通道 spawn run app 持 run_id 归 M4);local 不在此表(不出海)。
-        "platform.scaffold.approve": _act_scaffold_approve,
-        "platform.iterate.generate": _act_iterate_generate,  # run 态(见上注释)
-        "platform.candidate.accept": _act_candidate_accept,
-        "platform.candidate.discard": _act_candidate_discard,
-        "platform.version.rewind": _act_version_rewind,
-        "platform.plan.recheck": _act_plan_recheck,
-        "platform.plan.confirm": _act_plan_confirm,
-        "platform.decision.answer": _act_decision_answer,
-        # M3(docs/APP-MODEL.md §8):run/debug/lab-draft 三 kind 的绑定(全 endpoint)
-        "platform.run.stop": _act_run_stop,
-        "platform.run.resume": _act_run_resume,
-        "platform.run.rerun": _act_run_rerun,
-        "platform.debug.command": _act_debug_command,
-        "platform.draft.check": _act_draft_check,
-        "platform.run.launch": _act_run_launch,  # M4a 发起面(run 态)
-        # M5(docs/APP-MODEL.md §13.1):shell 的 endpoint 动作
-        "platform.shell.theme.set": _act_shell_theme_set,
-        "platform.shell.session.create": _act_shell_session_create,
-        # D1(docs/DOC-EDITOR.md §3):doc 的 endpoint 动作
-        "platform.doc.save": _act_doc_save,
-        "platform.doc.snapshot": _act_doc_snapshot,
-        "platform.doc.rewind": _act_doc_rewind,
-        "platform.doc.export": _act_doc_export,
-        "platform.doc.apply": _act_doc_apply,  # D2:comment.apply(人按才落)
-    }
-
-    registry = AppRegistry(known_skills=set(SKILL_BINDINGS))
+    registry = AppRegistry(known_skills=platform_skill_names())
     for _manifest in default_manifests():
         registry.register(_manifest)
     #: 内省面(测试/调试;registry 是进程静态面,实例存储是 M1 内存态)
@@ -1487,12 +919,12 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             )
         mode = action["exec"]["mode"]
         if mode == "local":
-            # v0.2 §4 + M5 §13:local = 仅改 app.state(不出海)——state 服务端权威
-            # 后,shell 类 local 动作的"仅改 state"恰恰要在服务端执行;
-            # 无 mutator 的 local(conversation 的 pin/close 等前端本地动作)
-            # 调到管道仍拒绝(M3.5 语义不变)
-            mutator = _LOCAL_MUTATORS.get(action_id)
-            if mutator is None:
+            # §17.7 L1:local 也是真 code 技能(tier none,无副作用面)——
+            # exec.mode 降级为元信息,调用一律经 kernel.run(进程内);
+            # 无服务端技能的 local(conversation 的 spawn/pin/close 等前端
+            # 本地动作)调到管道仍拒绝(M3.5 语义不变)
+            local_ref = PLATFORM_LOCAL_SKILLS.get(action_id)
+            if local_ref is None:
                 raise HTTPException(
                     status_code=400,
                     detail=f"action {action_id!r} 是 local 态(纯 UI 动作不出海),不应调到管道",
@@ -1501,7 +933,11 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
                 input_args = validate_args_input(action, body.args)
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e)) from e
-            result = mutator(inst, input_args)
+            # §17.10 框架备参:_instance_id/_state 由管道注入(非客户端载荷面)
+            result = _run_handler(
+                local_ref,
+                {"_instance_id": instance_id, "_state": inst["state"], **input_args},
+            )
             return {**result, "instance": inst}
         try:
             input_args = validate_args_input(action, body.args)  # 客户端载荷的唯一合法面
@@ -1518,10 +954,11 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         if ref == "platform.debug.command":
             # 调试命令 = action id 末段(debug.continue→continue,debug.stop→stop)
             payload["command"] = action_id.split(".")[-1]
-        # endpoint/run 当前同一薄 handler 面;**run 态**(v0.2 §4,M4a):长任务 =
-        # spawn run app 持 run_id——handler 结果带 run_id 时登记 run instance,
-        # 响应附 run_instance(用户可直接进 run tab;running 态 = 持 run_id 且未终态)
-        result = _run_handler(SKILL_BINDINGS[ref], payload)
+        # §17.7 L1:endpoint/run 同一 kernel.run 调用面,exec.mode 只是元信息——
+        # **run 态**(v0.2 §4,M4a):长任务 = spawn run app 持 run_id——技能结果
+        # 带 run_id 时登记 run instance,响应附 run_instance(用户可直接进
+        # run tab;running 态 = 持 run_id 且未终态)
+        result = _run_handler(ref, payload)
         if mode == "run" and result.get("run_id"):
             run_inst, _opened = instances.register(
                 kind="run",

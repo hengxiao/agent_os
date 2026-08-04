@@ -372,6 +372,19 @@ function draftSummary(d) {
   );
 }
 
+/* doc 摘要卡(D1,docs/DOC-EDITOR.md §2.1 Card Surface):
+   标题 + 首行摘要 + 字数 + 状态(快照数/气泡数)——人话,技术面在 tab */
+function docSummary(d) {
+  const subs = [];
+  if (d.chars) subs.push(copy("platform.doc.chars").replace("{n}", String(d.chars)));
+  if (d.versions) subs.push(`v${d.versions}`);
+  if (d.has_bubbles) subs.push(copy("platform.doc.hasbubbles"));
+  return (
+    `<div class="pf-card-lead">「${esc(d.title ?? d.name ?? "")}」${esc(d.first_line ? `: ${d.first_line}` : "")}</div>` +
+    (subs.length ? `<div class="pf-card-sub">${esc(subs.join(" · "))}</div>` : "")
+  );
+}
+
 /* 摘要卡渲染入口:一句结论(加粗)+ 补充行 + 详情链接/动作区(右下)。
    ``depth``(M2,docs/APP-MODEL.md §6):嵌套层级——对话流卡 = 1,tab 内嵌卡 = 2;
    第 3 层起卡只读,不加"打开"链接(防俄罗斯套娃)。 */
@@ -379,7 +392,8 @@ export function summaryHtml(card, depth = 1, regPath = "", ref = "") {
   const type = card?.type ?? "";
   const d = card?.data ?? {};
   const render = { plan: planSummary, skill_pack: packSummary, gate_report: gateSummary,
-    diff: diffSummary, publish: publishSummary, debug: debugSummary, lab_draft: draftSummary }[type];
+    diff: diffSummary, publish: publishSummary, debug: debugSummary, lab_draft: draftSummary,
+    doc: docSummary }[type];
   const body = type === "escalation" ? escalationSummary(d, card?.instance)
     : render ? render(d) : type === "table" ? tableSummary(card)
     : `<pre class="mono">${esc(JSON.stringify(d, null, 2))}</pre>`;

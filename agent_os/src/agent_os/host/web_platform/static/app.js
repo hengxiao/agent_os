@@ -10,6 +10,7 @@ import { copy, initTheme, applyTheme, listThemes, currentThemeId } from "/static
 import { esc, toast } from "/static/js/util.js";
 import { mountDatePicker, mountFormEditor, mountLogViewer } from "/static/js/widgets/index.js";
 import { looksMarkdown, mdToHtml } from "/static/js/widgets/w-md.js";
+import { mountDocEditor } from "./doc-editor.js";
 import { renderCardSurface } from "./cards.js";
 import { renderTabSurface } from "./details.js";
 
@@ -669,6 +670,7 @@ const _DETAIL_META = {
   decompose: { title: copy("platform.detail.decompose") },
   debug: { title: copy("platform.detail.debug") },
   draft: { title: copy("platform.detail.draft") },
+  doc: { title: copy("platform.detail.doc") },
   skills: { title: copy("platform.app.skills") },
   runs: { title: copy("platform.app.runs") },
   tools: { title: copy("platform.app.tools") },
@@ -688,6 +690,7 @@ const _APP_KIND = {
   run: "run",
   debug: "debug",
   draft: "lab-draft",
+  doc: "doc", // D1(docs/DOC-EDITOR.md §2:doc app kind 接入)
   skills: "skills",
   runs: "runs",
   tools: "tools",
@@ -809,6 +812,10 @@ function _spawnState(tab, data) {
   if (tab.kind === "draft") {
     const name = data?.name ?? tab.ref;
     return { ...(data ?? {}), name, root: name };
+  }
+  // D1:doc spawn state(args_from state.name 的绑定源;view/dirty 进 meta.set 面)
+  if (tab.kind === "doc") {
+    return { name: tab.ref, text: "", dirty: false, savedAt: 0, view: "split", versions: [], bubbles: [] };
   }
   return data ?? {};
 }
@@ -967,6 +974,28 @@ async function _loadDetail(kind, ref, data) {
         }
       }
       throw new Error(`HTTP ${dRes.status}`);
+    }
+    if (kind === "doc") {
+      // D1(docs/DOC-EDITOR.md §2):读面直给;写动作全走 tabAction 管道(§3)
+      const res = await fetch(`/platform/api/docs/${encodeURIComponent(ref)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const doc = await res.json();
+      const mount = (host) => {
+        state._docEditor = mountDocEditor(host, doc, {
+          onViewChange: (view) => {
+            const tab = state.tabs.find((t) => t.id === state.active);
+            if (tab?.instance) {
+              // meta.set = local(§3):视图偏好持久化进 instance.state(尽力面)
+              fetch(`/platform/api/apps/${encodeURIComponent(tab.instance)}/actions/meta.set`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ surface: "tab", args: { view } }),
+              }).catch(() => {});
+            }
+          },
+        });
+      };
+      return { kind, ref, html: renderTabSurface(kind, doc), mount };
     }
     if (kind === "debug") {
       // M3:简化调试台(快照 = 旧 web 调试端点同形)
@@ -1188,7 +1217,7 @@ async function tabAction(btn) {
         }
         args = { input: state._launchForm.values() };
       } else {
-        const raw = document.querySelector("#detailHost [data-launch-input]")?.value?.trim();
+        const raw = $("#detailHost")?.querySelector("[data-launch-input]")?.value?.trim();
         if (raw) {
           try {
             args = { input: JSON.parse(raw) };
@@ -1199,6 +1228,13 @@ async function tabAction(btn) {
           }
         }
       }
+    }
+    // D1:doc 写动作的参数收集(§3 args_input 声明面)
+    if (btn.dataset.tabAct === "doc.save") {
+      args = { text: $("#detailHost")?.querySelector("[data-doc-text]")?.value ?? "" };
+    }
+    if (btn.dataset.tabAct === "doc.rewind") {
+      args = { version: $("#detailHost")?.querySelector("[data-rewind-version]")?.value ?? "" };
     }
     const res = await fetch(
       `/platform/api/apps/${encodeURIComponent(tab.instance)}/actions/${encodeURIComponent(btn.dataset.tabAct)}`,

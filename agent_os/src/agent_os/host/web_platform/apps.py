@@ -611,6 +611,63 @@ def default_manifests() -> list[dict[str, Any]]:
                 },
             ],
         },
+        # ── D1(docs/DOC-EDITOR.md §2):doc app kind ─────────────────────
+        {
+            "kind": "doc",
+            "v": 1,
+            "title": "{name}",
+            "surfaces": {"card": "doc.card", "tab": "doc.tab"},
+            "state_schema": obj(
+                name={"type": "string"},
+                text={"type": "string"},
+                dirty={"type": "boolean"},
+                savedAt={"type": "number"},
+                view={"type": "string"},
+                versions={"type": "array"},
+                bubbles={"type": "array"},
+            ),
+            "actions": [
+                {
+                    "id": "doc.save",
+                    "label": "platform.doc.save",
+                    "exec": {"mode": "endpoint", "ref": "platform.doc.save"},
+                    "args_from": ["state.name"],
+                    "args_input": {"text": {"type": "string"}},
+                    "surface": ["card", "tab"],
+                },
+                {
+                    "id": "doc.snapshot",
+                    "label": "platform.doc.snapshot",
+                    "exec": {"mode": "endpoint", "ref": "platform.doc.snapshot"},
+                    "args_from": ["state.name"],
+                    "surface": ["tab"],
+                },
+                {
+                    "id": "doc.rewind",
+                    "label": "platform.doc.rewind",
+                    "exec": {"mode": "endpoint", "ref": "platform.doc.rewind"},
+                    "args_from": ["state.name"],
+                    "args_input": {"version": {"type": "string"}},
+                    "surface": ["tab"],
+                },
+                {
+                    "id": "doc.export",
+                    "label": "platform.doc.export",
+                    "exec": {"mode": "endpoint", "ref": "platform.doc.export"},
+                    "args_from": ["state.name"],
+                    "surface": ["card", "tab"],
+                },
+                {
+                    "id": "meta.set",
+                    "label": "platform.doc.meta.set",
+                    # 视图切换/标题等纯 state(docs/DOC-EDITOR.md §3;local mutator 注册面)
+                    "exec": {"mode": "local"},
+                    "args_from": [],
+                    "args_input": {"view": {"type": "string"}, "dirty": {"type": "boolean"}},
+                    "surface": ["tab"],
+                },
+            ],
+        },
         # ── M4b:legacy 五页(docs/APP-MODEL.md §8 迁移地图末行)────────────
         # 旧 UI 整页以 Tab Surface 接入(能挂 ES module 的直接挂载,runs 深链);
         # state 最小(本页无服务端动作;打开/关闭走 Compositor,local 语义)

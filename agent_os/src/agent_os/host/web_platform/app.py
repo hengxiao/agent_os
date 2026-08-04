@@ -47,6 +47,7 @@ from agent_os.host.web_platform.artifacts import (
 from agent_os.host.web_platform.orchestrator import Orchestrator, human_error
 from agent_os.host.web_platform.sessions import SessionStore, new_message
 from agent_os.kernel.errors import SkillLoadError
+from agent_os.skills.doc_store import DocStore
 from agent_os.skills.draft_store import (
     OverlaySkillRegistry,
     skeleton_from_schema,
@@ -126,6 +127,14 @@ class WidgetPathBody(BaseModel):
     path: str
 
 
+class DocCreateBody(BaseModel):
+    """``POST /api/docs``(D1):新建文档(点分名校验在 store 层)。"""
+
+    name: str
+    title: str = ""
+    text: str = ""
+
+
 #: 升权档 → 人话(W2 decisions 聚合字段;摘要层禁 tier 术语,前端按 tier 自取 copy,
 #: 本字段是给非前端消费方/调试面的固定中文)
 _TIER_HUMAN = {"none": "只读", "reversible": "可改能撤销", "irreversible": "不可逆需审批"}
@@ -180,6 +189,8 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     #: app instance 存储(M2 文件持久化:卡创建即登记,kind+ref 去重,
     #: 重启后卡 dict 上的 instance id 仍可解析——M1 旧卡 404 的缺口在此关闭)
     instances = AppInstanceStore(Path(artifacts_root) / "platform_apps")
+    #: 文档存储(D1,docs/DOC-EDITOR.md §4):docs_root 缺省 <artifacts>/docs
+    doc_store = DocStore(Path(artifacts_root) / "docs")
     #: shell 根 app(docs/APP-MODEL.md §13;M5):bootstrap 实例化的唯一特例
     #: (不由 action 孵化);kind+ref="shell" 去重 → 布局随 instance 持久化,
     #: 重启恢复(tab 顺序/激活 tab/图标列)
@@ -278,6 +289,38 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             raise HTTPException(status_code=404, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=500, detail=f"编排产物不合卡协议: {e}") from e
+
+    # ------------------------------------------------------------------
+    # 文档(D1,docs/DOC-EDITOR.md §4):/api/docs CRUD(读面直给;
+    # 写动作(save/snapshot/rewind/export)一律经 app action 管道,§3 归态)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/docs")
+    def list_docs() -> list[dict[str, Any]]:
+        """文档索引(Card Surface 数据源:标题/首行/字数/最近编辑/状态)。"""
+        return doc_store.list()
+
+    @app.post("/api/docs", status_code=201)
+    def create_doc(body: DocCreateBody) -> dict[str, Any]:
+        """新建文档(点分名校验 = 穿越防护;重名 409)。"""
+        try:
+            return doc_store.create(body.name, title=body.title, text=body.text)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+
+    @app.get("/api/docs/{name}")
+    def read_doc(name: str) -> dict[str, Any]:
+        """读文档全文 + meta(+ 版本列表,编辑器的版本下拉数据源)。"""
+        try:
+            doc = doc_store.read(name)
+            doc["versions"] = [v["version"] for v in doc_store.list_versions(name)]
+            return doc
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
 
     # ------------------------------------------------------------------
     # 升权决策(W2,docs/ESCALATION.md §3):supervisor pending 的**纯转发**——
@@ -958,6 +1001,14 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         instances.update_state(inst["id"], inst["state"])
         return {"ok": True}
 
+    def _mut_meta_set(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
+        """doc.meta.set 的 local mutator(D1):白名单键合并进 instance.state
+        (view/dirty;文本与版本不在此面——save/rewind 是 endpoint)。"""
+        patch = {k: v for k, v in args.items() if k in ("view", "dirty")}
+        inst["state"].update(patch)
+        instances.update_state(inst["id"], inst["state"])
+        return {"ok": True}
+
     _LOCAL_MUTATORS = {
         "shell.tab.open": _mut_tab_open,
         "shell.tab.focus": _mut_tab_focus,
@@ -967,11 +1018,53 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         # M5 增补(桌面化 root widget)
         "shell.tab.minimize": _mut_tab_minimize,
         "shell.desktop.set": _mut_desktop_set,
+        # D1(docs/DOC-EDITOR.md §3):doc.meta.set(视图切换/dirty 等纯 state)
+        "meta.set": _mut_meta_set,
     }
 
     def _act_shell_theme_set(payload: dict[str, Any]) -> dict[str, Any]:
         """platform.shell.theme.set(M5 §13.1):切主题(持久化偏好 → shell.state.theme)。"""
         return {"ok": True, "text": "", "state": {"theme": str(payload.get("theme") or "")}}
+
+    # ── D1(docs/DOC-EDITOR.md §2/§3):doc 的 endpoint handlers(DocStore 薄转发) ──
+
+    def _act_doc_save(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.doc.save:保存全文(.bak 同 DraftStore 惯例);state 回写 dirty/savedAt。"""
+        name = str(payload.get("name") or "")
+        doc = doc_store.save(name, str(payload.get("text") or ""))
+        return {
+            "ok": True,
+            "text": "已保存。",
+            "state": {"dirty": False, "savedAt": doc["meta"].get("savedAt", 0)},
+        }
+
+    def _act_doc_snapshot(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.doc.snapshot:封存 versions/vNNN(内容 = 保存时全文,iterate 同语义)。"""
+        name = str(payload.get("name") or "")
+        latest = doc_store.list_versions(name)
+        vid = doc_store.snapshot(name, source="manual", parent=latest[0]["version"] if latest else None)
+        return {
+            "ok": True,
+            "text": f"已封存 {vid}。",
+            "state": {"versions": [v["version"] for v in doc_store.list_versions(name)]},
+        }
+
+    def _act_doc_rewind(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.doc.rewind:恢复某版本到全文(历史不动)。"""
+        name = str(payload.get("name") or "")
+        version = str(payload.get("version") or "")
+        doc = doc_store.restore(name, version)
+        return {
+            "ok": True,
+            "text": f"已恢复到 {version}(版本历史未动)。",
+            "state": {"dirty": False, "text": doc["text"]},
+        }
+
+    def _act_doc_export(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.doc.export:导出全文(.md 文本面;不进生产面,§6 接点纪律)。"""
+        name = str(payload.get("name") or "")
+        doc = doc_store.read(name)
+        return {"ok": True, "text": doc["text"], "filename": f"{name}.md"}
 
     def _act_shell_session_create(payload: dict[str, Any]) -> dict[str, Any]:
         """platform.shell.session.create(M5 §13.1):新会话(app 孵化,与 POST /api/sessions 同源)。"""
@@ -1005,6 +1098,11 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         # M5(docs/APP-MODEL.md §13.1):shell 的 endpoint 动作
         "platform.shell.theme.set": _act_shell_theme_set,
         "platform.shell.session.create": _act_shell_session_create,
+        # D1(docs/DOC-EDITOR.md §3):doc 的 endpoint 动作
+        "platform.doc.save": _act_doc_save,
+        "platform.doc.snapshot": _act_doc_snapshot,
+        "platform.doc.rewind": _act_doc_rewind,
+        "platform.doc.export": _act_doc_export,
     }
 
     registry = AppRegistry(known_skills=set(SKILL_BINDINGS))

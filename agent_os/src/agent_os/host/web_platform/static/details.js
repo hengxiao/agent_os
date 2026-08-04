@@ -300,10 +300,57 @@ const _TAB_SURFACES = {
   decompose: (data) => decomposeDetailHtml(data),
   debug: (data) => debugDetailHtml(data),
   draft: (data) => draftTabHtml(data),
+  doc: (data) => docTabHtml(data),
 };
 
 export function renderTabSurface(kind, data) {
   const render = _TAB_SURFACES[kind];
   // 无 manifest 的 kind 拒绝渲染但不炸(docs/APP-MODEL.md §9 回退面)
   return render ? render(data) : `<div class="pf-detail"><pre class="mono">${esc(JSON.stringify(data ?? {}, null, 2))}</pre></div>`;
+}
+
+/* doc Tab Surface 骨架(D1,docs/DOC-EDITOR.md §2):静态 html 部分;
+   交互挂载见 doc-editor.js(W-text 编辑/W-md 预览/大纲/dirty/版本下拉) */
+export function docTabHtml(doc) {
+  const versions = (doc?.versions ?? [])
+    .map((v) => `<option value="${esc(v)}">${esc(v)}</option>`)
+    .join("");
+  return (
+    `<div class="pf-detail doc-editor">` +
+    `<div class="doc-top">` +
+    `<b class="doc-title">${esc(doc?.meta?.title ?? doc?.name ?? "")}</b> ` +
+    `<span class="pf-dim mono">${esc(doc?.name ?? "")}</span>` +
+    `<select class="input" data-rewind-version="1" aria-label="${esc(copy("platform.doc.rewind"))}">${versions}</select>` +
+    `<button class="btn" data-tab-act="doc.rewind" data-doc-rewind="1">${esc(copy("platform.doc.rewind"))}</button>` +
+    `<button class="btn" data-tab-act="doc.export">${esc(copy("platform.doc.export"))}</button>` +
+    `</div>` +
+    `<div class="doc-cols" data-view="split">` +
+    `<aside class="doc-outline" data-doc-outline="1" aria-label="${esc(copy("platform.doc.outline"))}"></aside>` +
+    `<div class="doc-edit"><textarea class="mono" data-doc-text="1" rows="18"` +
+    ` aria-label="${esc(copy("platform.doc.text"))}"></textarea></div>` +
+    `<div class="doc-preview" data-doc-preview="1"></div>` +
+    `</div>` +
+    `<div class="doc-status">` +
+    `<span data-doc-chars="1"></span> · <span data-doc-dirty="1"></span> · ` +
+    `<button class="btn" data-view-mode="edit">${esc(copy("platform.doc.edit"))}</button>` +
+    `<button class="btn" data-view-mode="preview">${esc(copy("platform.doc.preview"))}</button>` +
+    `<button class="btn" data-view-mode="split">${esc(copy("platform.doc.split"))}</button>` +
+    `<span class="pf-spacer"></span>` +
+    `<button class="btn" data-tab-act="doc.save">${esc(copy("platform.doc.save"))}</button>` +
+    `<button class="btn" data-tab-act="doc.snapshot">${esc(copy("platform.doc.snapshot"))}</button>` +
+    `</div></div>`
+  );
+}
+
+/* 大纲解析(markdown 标题 → [{level, text, offset}];offset = 标题行字符偏移,
+   点击滚动定位用;非标题行跳过) */
+export function parseOutline(text) {
+  const out = [];
+  let offset = 0;
+  for (const line of String(text ?? "").split("\n")) {
+    const m = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (m) out.push({ level: m[1].length, text: m[2].trim(), offset });
+    offset += line.length + 1;
+  }
+  return out;
 }

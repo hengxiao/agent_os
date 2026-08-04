@@ -587,6 +587,24 @@ const assertClean = (html, who) => {
         cards: [{ type: "gate_report", v: 1, data: { draft: "lab.dinner", status: "pass", gates: {} }, actions: [] }],
         instance: { id: "app-spawn-lab.dinner", kind: "lab-draft", state: {} } });
     }
+    // D1(docs/DOC-EDITOR.md):doc 读面 + 写动作管道
+    if (url === "/platform/api/docs/design.new_ui") {
+      return reply({ name: "design.new_ui", text: "# 概述\n首段内容\n## 设计\n次段内容\n",
+        meta: { title: "新 UI", savedAt: 1 }, versions: ["v001"] });
+    }
+    if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/doc.save") {
+      return reply({ ok: true, text: "已保存。", state: { dirty: false, savedAt: 2 },
+        instance: { id: "app-spawn-design.new_ui", kind: "doc", state: { dirty: false } } });
+    }
+    if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/doc.snapshot") {
+      return reply({ ok: true, text: "已封存 v002。", state: { versions: ["v001", "v002"] },
+        instance: { id: "app-spawn-design.new_ui", kind: "doc", state: {} } });
+    }
+    if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/doc.rewind") {
+      return reply({ ok: true, text: "已恢复到 v001(版本历史未动)。",
+        state: { dirty: false, text: "# 概述\n首段内容\n## 设计\n次段内容\n" },
+        instance: { id: "app-spawn-design.new_ui", kind: "doc", state: {} } });
+    }
     // M4a:run.launch(发起面)+ iterate run 通道 + ad-hoc run 的 instance fallback
     if (url === "/platform/api/apps/app-spawn-run-1/actions/run.launch") {
       return reply({ ok: true, text: "已发起 demo.fib,新 run: run-2。", run_id: "run-2",
@@ -1298,6 +1316,107 @@ const assertClean = (html, who) => {
   assert.ok(rawLog.innerHTML.includes('data-kind="run.error"'), "kind 着色行(run.error)");
   assert.ok(rawLog.innerHTML.includes("outputs 错"), "信号载荷在");
   assert.ok(rawLog.innerHTML.includes('role="log"'), "role=log");
+
+  /* ── D1:doc 编辑器(分屏/大纲/dirty/保存/快照/rewind)─────────── */
+
+  // 开 doc tab(读面直给 → 编辑器挂载)
+  const docLink = new StubEl("button");
+  docLink.dataset.detailKind = "doc";
+  docLink.dataset.detailRef = "design.new_ui";
+  docLink.dataset.detail = "{}";
+  docLink.parentNode = doc.body;
+  doc.trigger("click", { target: docLink });
+  await tick();
+  assert.equal(probe.state.active, "d:doc:design.new_ui", "doc tab 激活");
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes('"doc"')),
+    "doc app spawn 登记");
+  const docHost = doc.querySelector("#detailHost");
+  const outlineRegion = docHost.querySelector("[data-doc-outline]");
+  assert.ok(outlineRegion.innerHTML.includes("doc-outline-item"), "大纲树渲染(标题解析)");
+  const textarea = docHost.querySelector("[data-doc-text]");
+  assert.ok(textarea.value.includes("首段内容"), "编辑器装入全文");
+  const preview = docHost.querySelector("[data-doc-preview]");
+  assert.ok(preview.innerHTML.includes("<h4>"), "W-md 实时预览(标题白名单渲染)");
+  assert.ok(docHost.querySelector("[data-doc-chars]").textContent.includes("字"), "状态栏字数");
+
+  // 输入 → dirty ● + 预览/大纲联动
+  textarea.value = "# 概述\n首段内容\n## 设计\n次段内容\n## 新增一节\n新行\n";
+  textarea.trigger("input", { target: textarea });
+  await tick();
+  assert.equal(docHost.querySelector("[data-doc-dirty]").textContent, "●", "dirty ● 追踪");
+  assert.ok(outlineRegion.innerHTML.includes("新增一节"), "大纲随输入重解析");
+  assert.ok(preview.innerHTML.includes("新行"), "预览随输入重渲");
+
+  // 大纲点击 → 选区跳到标题偏移(滚动定位语义)
+  const outlineItem = new StubEl("button");
+  outlineItem.dataset.offset = String("# 概述\n首段内容\n".length);
+  outlineItem.parentNode = docHost.querySelector("[data-doc-outline]");
+  docHost.querySelector("[data-doc-outline]").trigger("click", { target: outlineItem });
+  assert.equal(textarea.selectionStart, "# 概述\n首段内容\n".length, "点击大纲 → 选区定位");
+
+  // 分屏 toggle → 列容器 data-view 切换
+  const modeBtn = new StubEl("button");
+  modeBtn.dataset.viewMode = "preview";
+  modeBtn.parentNode = docHost;
+  docHost.trigger("click", { target: modeBtn });
+  assert.equal(docHost.querySelector(".doc-cols").dataset.view, "preview", "分屏 toggle");
+
+  // 保存(管道;args_input text = 编辑器当前值)
+  const saveBtn = new StubEl("button");
+  saveBtn.dataset.tabAct = "doc.save";
+  saveBtn.parentNode = doc.body;
+  doc.trigger("click", { target: saveBtn });
+  await tick();
+  const savePost = calls.find((c) => c.url.includes("doc.save"));
+  assert.ok(savePost, "保存走 action 管道(endpoint 归态)");
+  assert.ok(JSON.parse(savePost.body).args.text.includes("新增一节"), "保存载荷 = 编辑器当前全文");
+
+  // 快照(管道)
+  const snapBtn = new StubEl("button");
+  snapBtn.dataset.tabAct = "doc.snapshot";
+  snapBtn.parentNode = doc.body;
+  doc.trigger("click", { target: snapBtn });
+  await tick();
+  assert.ok(calls.some((c) => c.url.includes("doc.snapshot")), "快照走管道");
+
+  // rewind 两击确认:第一击武装(不发请求),第二击走管道(版本 = 下拉值)
+  const rwBtn = new StubEl("button");
+  rwBtn.dataset.tabAct = "doc.rewind";
+  rwBtn.dataset.docRewind = "1"; // dom-stub 不支持带值属性选择器,用标记位
+  rwBtn.parentNode = docHost;
+  docHost.trigger("click", { target: rwBtn }); // 第一击(host 委托:武装)
+  assert.equal(rwBtn.dataset.armed, "1", "第一击武装");
+  assert.ok(!calls.some((c) => c.url.includes("doc.rewind")), "第一击不发请求");
+  docHost.querySelector("[data-rewind-version]").value = "v001"; // 真实浏览器 select 默认首项
+  rwBtn.parentNode = doc.body;
+  doc.trigger("click", { target: rwBtn }); // 第二击(document 委托:管道)
+  await tick();
+  const rwPost = calls.find((c) => c.url.includes("doc.rewind"));
+  assert.ok(rwPost, "第二击走管道");
+  assert.equal(JSON.parse(rwPost.body).args.version, "v001", "版本 = 下拉选中值");
 }
 
 console.log("platform.test.mjs: all assertions passed");
+
+/* ── D1:doc 编辑器(docs/DOC-EDITOR.md §2/§7)──────────────────── */
+
+{
+  // 大纲解析纯函数(标题/层级/字符偏移)
+  const { parseOutline } = await import("../../../web_platform/static/details.js");
+  const outline = parseOutline("# 概述\n内容\n## 设计\n次段\n### 细节\n");
+  assert.deepEqual(outline.map((h) => h.text), ["概述", "设计", "细节"], "标题逐项");
+  assert.deepEqual(outline.map((h) => h.level), [1, 2, 3], "层级");
+  assert.equal(outline[1].offset, "# 概述\n内容\n".length, "字符偏移(滚动定位)");
+  assert.deepEqual(parseOutline("无标题\n纯文本\n"), [], "非 markdown 不炸");
+
+  // 摘要卡(Card Surface:标题 + 首行 + 字数 + 状态)
+  const docCard = summaryHtml({
+    type: "doc", v: 1,
+    data: { title: "新 UI", first_line: "概述", chars: 1234, versions: 2, has_bubbles: true },
+    actions: [],
+  });
+  const docText = assertClean(docCard, "doc");
+  assert.ok(docText.includes("新 UI") && docText.includes("概述"), "标题 + 首行摘要");
+  assert.ok(docText.includes("1234 字") || docText.includes("1234"), "字数");
+}

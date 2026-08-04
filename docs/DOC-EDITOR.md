@@ -132,10 +132,102 @@ docs/<name>/
 
 | 期 | 内容 |
 |---|---|
-| D1 | doc_store + doc app kind + 编辑器(分屏/大纲/dirty/save/snapshot/rewind) |
+| D1 ✅ | doc_store + doc app kind + 编辑器(分屏/大纲/dirty/save/snapshot/rewind) |
 | D2 | 段落锚点 + W-bubble 接入(comment.send/apply)+ doc_commenter 技能 |
 | D3 | 全文评审(锚点批注集自动挂段)+ lab NOTES.md 接点 |
 | D4 | 导出(.md/NOTES 写回)+ 对话卡片 + 打磨 |
+
+> **D1 实现注**(2026-08-03,分支 debugger):
+> `skills/doc_store.py`(DraftStore 同构:点分名校验/.bak/versions/bubbles/
+> review);doc manifest(apps.py;save/snapshot/rewind/export=endpoint,
+> meta.set=local 进 `_LOCAL_MUTATORS`);`/api/docs` CRUD(读面直给,写动作
+> 全走管道);前端 `doc-editor.js`(W-text 编辑/W-md 预览/大纲/dirty/状态栏/
+> rewind 两击);长文档 >200KB 预览截断提示(§7 边界)。
+
+## 架构测试记录(D1 实弹;2026-08-03)
+
+> 本期把 doc 当架构的实弹测试:每个协议(APP-MODEL/WIDGETS)在实现中过一遍,
+> 顺手/弯腰都记录。格式:场景 → 结果 → 建议。
+
+### 顺畅点(协议替你省了什么)
+
+1. **app 协议闸零成本接住新 kind**:doc manifest 一次通过 validate_manifest
+   (双表面/state_schema/args_from 在 state 内/args_input 声明/exec 归态)。
+   伪参数测试(`args:{name:"evil.doc"}` 冒充 args_from → 400)证明
+   "客户端不可控 state 绑定"对新 kind 自动成立——**没写一行新防御代码**。
+2. **exec 归态表与设计一一对应**:save/snapshot/rewind/export=endpoint
+   (薄 handler 转发 DocStore),meta.set=local(mutator 合并 state)。
+   归错态会立刻被注册闸拦(M3.5 的强制项),设计表(§3)就是代码。
+3. **local mutator 注册面平滑扩展**:`_LOCAL_MUTATORS` 加一行
+   `"meta.set": _mut_meta_set`,M5 建的机制(M3.5 local=400 裁决)无需改。
+4. **控件组合只向下,一次过**:编辑器 = doc tab(app)→ doc-cols(section)→
+   W-text/W-json/W-md(widget),没有任何反向引用;静态扫描(widgets 目录
+   零 fetch)对新文件天然适用——**新文件没有值得扫的,因为不需要**。
+5. **W-md 是白拿的**:实时预览 = 每 input 一次 `mdToHtml`(纯函数),
+   白名单/XSS/代码块语义 W4 已测过,doc 不用重测渲染正确性,只测接线。
+6. **rewind 两击确认有现成范式**(lab-iterate 同款 armed 模式),协议外
+   零决策;tabAction 的 args_input 收集点($("#detailHost").querySelector)
+   与 run.launch 完全同构,加 doc.save/doc.rewind 两支共 6 行。
+7. **store 与 DraftStore 同构哲学直接复用**:.bak/版本不可变/坏文件隔离/
+   路径穿越校验,测试用例几乎是 DraftStore 测试的文档版重写,一次全绿。
+
+### 弯腰点(协议不够的地方,怎么弯的)
+
+1. **W-text 的 aria-label 必填纪律 vs HTML 字符串骨架**。
+   场景:doc tab 的 html 是字符串(renderDetail innerHTML),真实 DOM 里
+   textarea 的 aria-label 是从字符串长出来的;W-text mount 时要
+   `getAttribute("aria-label")`。真实 DOM 没问题,但**虚拟 DOM/延迟挂载
+   场景**(本仓库 dom-stub 的 region 按选择器字符串缓存,`"textarea"` 与
+   `[data-doc-text]` 是两个对象)属性读不到。
+   弯法:mount 前给 textarea 显式补属性 + host 适配层(把 W-text 消费的
+   四个面包成 shim)。建议:**改协议**——W-text 接受显式
+   `ariaLabel` 选项(`mountTextEditor(host, {ariaLabel})`),优先级高于
+   DOM 读取;这样"字符串骨架 + 后挂载"模式不需要 shim(W2-W4 的
+   mount 点都有同类需求,lab 的既有 textarea 不受影响)。
+2. **大纲树不在任何现有控件语义内**。
+   场景:大纲需要"标题列表 + 点击 → 字符偏移选区跳转"。W-list 是
+   "选择语义"(selected 是业务值),大纲是"导航语义"(无选中态,只有定位)。
+   弯法:自制 15 行 outline 渲染(按钮 + data-offset + selectionStart 定位),
+   没硬塞 W-list。建议:**留特例**(不扩展协议)——W-list 若加
+   `navigate` 事件 + item.payload 就能覆盖,但 YAGNI;等第二个导航型
+   列表出现(很可能 = D3 的气泡栏)再提 W-nav 或扩 W-list。
+3. **W-text 与 W-md 的同步滚动**。
+   场景:分屏编辑预览的经典体验是双栏滚动同步。协议里两个控件互不知道
+   对方存在(组合只向下,事件上行),没有"兄弟控件联动"语义。
+   弯法:**不同步**——只做"输入即重渲预览"(数据源同一,滚动各自)。
+   建议:留特例,不造"兄弟总线"。理由:section 持有两个控件的引用,
+   联动是 section 的职责(§3"事件映射表在 section"),若要同步,应在
+   section 层订阅 W-text 的 scroll 事件再调 W-md 的 scrollTo——
+   W-text 目前没有 scroll 事件,等 D2+ 真需要时给 W-text 补
+   `events: ["scroll"]` 即可,协议不用改。
+4. **长文档阈值是 spec 自定常数**。
+   场景:>200KB 不炸(§7 边界)。协议没有"大载荷降级"语义。
+   弯法:预览截断(前 200KB + 提示行),编辑器本体不受影响
+   (textarea 原生能吃 MB 级)。建议:留特例(常数进代码注释);
+   若多个控件都遇大载荷(W-log 截断已有 self-contained 方案),
+   可归纳一个"降级模式"惯例,但不成文协议项。
+5. **doc 的入口(tab 从哪开)**。
+   场景:协议有 spawn/openDetail,但"文档列表/新建"这个入口本身
+   是个小 app(列表+新建表单)。D1 只做编辑器本体,入口暂以
+   API/测试驱动。弯法:留 D2/D4(与对话卡接入一起),不临时拼。
+   建议:入口 = doc 列表 kind 或对话 app 的"新建文档"动作
+   (shell.session.create 同构),属 D4 对话卡接入的自然延伸。
+6. **store 与 DraftStore 的不同构点(记录,不算弯)**。
+   DraftStore 有 candidate/成员包闭包(技能包语义),doc 是单文件全文,
+   不需要;versions meta 因此更简(source/parent/at 三键)。
+   结论:同构的是**哲学**(不可变版本/备份/隔离),不是**形状**——
+   这是对的,不值得抽象公共基类(两个 store 共 ~300 行,抽象反而糊)。
+
+### 裁决摘要
+
+| 项 | 结果 |
+|---|---|
+| validate_manifest 协议闸 | ✅ 通过(零改动接住 doc kind) |
+| 组合只向下 | ✅ 通过(app→section→widget,无反向) |
+| 出海全经 app action | ✅ 通过(写动作四件 endpoint + meta.set local;读面直给与既有 decisions/runs 读面同先例) |
+| 控件零 fetch | ✅ 通过(doc-editor.js 无 fetch(在 widgets/ 外,fetch 只在 app.js 父级) |
+| exec 归态 | ✅ 与 §3 设计表一致 |
+| 协议修改需求 | 1 项(W-text 显式 ariaLabel 选项,建议 W5 顺手带) |
 
 ## 9. 不做
 

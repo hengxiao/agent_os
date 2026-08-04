@@ -41,6 +41,8 @@ KNOWN = {
     "platform.run.launch",
     # M5:shell 的 endpoint 动作(§13.1)
     "platform.shell.theme.set", "platform.shell.session.create",
+    # D1:doc 的 endpoint 动作(docs/DOC-EDITOR.md §3)
+    "platform.doc.save", "platform.doc.snapshot", "platform.doc.rewind", "platform.doc.export",
 }
 
 
@@ -75,6 +77,7 @@ def test_default_manifests_all_valid():
         "conversation", "plan", "skill_pack", "gate_report", "diff", "publish", "table", "escalation",
         "run", "debug", "lab-draft",
         "skills", "runs", "tools", "lab", "debug-old",
+        "doc",  # D1(docs/DOC-EDITOR.md §2)
     }
 
 

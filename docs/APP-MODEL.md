@@ -565,3 +565,58 @@ shell 的操作一旦是 action,**agent 就能操作用户的界面**——这�
 - 触屏降级:长按菜单 = 同一 drop action 的非手势触发(a11y);
 - 测试:envelope schema 合规、accept 校验、两对标准实现与点击同源断言、
   未知 kind 源被拒不静默、扩展键可忽略。
+
+## 16. Context Cascade:动作触发时的逐级上下文协议(v0.3 增补)
+
+**问题**:widget 的动作常常需要不止自己的数据——一个挂在某段文本上的
+chat bubble 要回答"帮我精简这段",需要**点击的 span、所在段落、全文、
+所在 app 的状态**。这些分布在 widget 树的每一级上,触发点自己拿不全。
+
+**模型**:动作触发时,runtime 从触发 widget **沿树向上逐级收集上下文**,
+每层各贡献一个 fragment,组成级联信封发给 skill(经 action 管道):
+
+```
+widget.action 触发
+  → runtime.context_cascade(trigger_path):
+      每级(从近到远)调用该级的 context_provider() → fragment
+      widget → section → surface → app → shell
+  → envelope 随 action 参数发给 skill(exec: run/endpoint)
+```
+
+```jsonc
+{
+  "trigger": "/shell/tab/app-7f3a/surface/tab/field/prompt",
+  "cascade": [
+    { "scope": "widget",  "path": ".../field/prompt",
+      "data": { "span": [120, 156], "paragraph": "你是晚餐推荐助手…", "full_text": "…" } },
+    { "scope": "section", "path": ".../section/prompt",
+      "data": { "member": "dinner.planner", "fields_summary": "description/inputs 已填" } },
+    { "scope": "app",     "path": "/shell/tab/app-7f3a",
+      "data": { "kind": "lab-draft", "ref": "dinner.planner", "tier": "none" } },
+    { "scope": "shell",   "path": "/shell",
+      "data": { "active_session": "conv-12", "theme": "classic" } }
+  ]
+}
+```
+
+### 16.1 纪律
+
+1. **每级只贡献自己的 fragment**:widget 不知道 app 有什么,app 不替
+   widget 说话——`context_provider` 是 manifest/控件声明的一部分
+   (widget 协议加 `context: (state) => fragment`);
+2. **级联单向向上,不横向打听**:fragment 只能来自祖先链(§14 路径
+   的每一级前缀),同级/下级不可见——上下文边界 = 树边界,这也是
+   权限边界(子帧看不到兄弟,沿用帧隔离哲学);
+3. **action 声明需要的级数**:manifest 的 action 可加
+   `context: ["widget", "app"]`(缺省全链)——轻动作不背大信封;
+4. **原文进信封,纪律管呈现**:cascade 可以含全文/原文(给 skill 用),
+   但显示给用户的摘要仍守禁忌词纪律(两个面不混);
+5. **测试**:级联顺序(近→远)、每级只出自己 fragment(无横向)、
+   action 级数裁剪、某级缺 provider 时跳过不炸、信封与 §14 路径一致。
+
+### 16.2 首个消费者:chat bubble
+
+chat bubble(见 docs/WIDGETS.md W-bubble)是本协议的首个落地:
+气泡挂在任意 widget 上,submit 时 runtime 自动级联——span/段落/全文
+来自 text widget,成员与草稿状态来自 app,助手回复因此**看着全文改
+一段**,而不是看着一段猜全文。

@@ -154,6 +154,27 @@ app(业务对象:skill-pack/run/...)
   时区选择,见不做);
 - **测试**:键盘输入校验/range 倒置警示/快捷项/翻页键盘路径/六主题。
 
+### W-bubble — 聊天气泡(锚点评论,核心控件)
+
+- **用途**:挂在任意 widget 上的 Confluence 式 comment——右键(或锚点钮)
+  在文本/字段/用例上开气泡,提疑问或修改意见,**气泡里的助手会回复**;
+  是 Flow C 边注的完全体(边注=只进不出,气泡=可来回);
+- **state**:{anchor: <§14 路径+可选 span>, messages: [{role, text, ts}],
+  open: bool, busy: bool, draft: string};
+- **actions**:
+  - open/close(local;anchor 即本控件路径,span 可选);
+  - **send(exec: run,经 context cascade)**——提交时 runtime 自动走
+    APP-MODEL §16 级联:本控件出 span/段落/全文,祖先出成员/草稿/会话;
+    助手(评论技能,白名单收口:只读级联内容,回复建议;**不能直接改**)
+    在气泡里回复;
+  - apply_reply(local,把某条回复作为批注/修改建议提交给父组件——
+    由父组件决定接不接受,气泡不越权);
+- **细节**:气泡卡(锚点引用行 + 消息流 + 输入框),多条气泡并存于同一
+  widget(计数徽标);未读标记;busy 骨架;
+- **a11y**:role=log(消息区)、role=dialog(气泡卡,Esc 关闭、Enter 发送);
+- **测试**:级联信封内容(span+全文+app 状态三级都在)/回复渲染/
+  apply_reply 只发事件不直接改/多条并存/Esc/Enter。
+
 ## 3. 组合与装配规则
 
 - **widget 组合只允许向下**:section 可以组合 widget,widget 可以组合 widget(W-form 内嵌 W-table);禁止反向(app 进 widget);
@@ -182,12 +203,12 @@ app(业务对象:skill-pack/run/...)
 | 期 | 内容 |
 |---|---|
 | W1 | Widget 协议与注册表 + W-text + W-json(编辑器是基础中的基础) |
-| W2 | W-table + W-kv(表格家族;tests/attrs 的直接受益者) |
+| W2 | W-table + W-kv + **W-bubble(含 APP-MODEL §16 context cascade 落地)**:表格家族 + 锚点聊天气泡,首个级联消费者 |
 | W3 | W-form + W-list + W-tree + W-date(数据输入与导航;run.launch 表单化落地;browse 时间窗) |
 | W4 | W-diff + W-md + W-log + W-chart(呈现家族;agent 消息/调试面/usage 可视化的统一) |
 
 每期交付:协议实现 + 该期控件 + 测试库 + 至少一个真实装配点
-(W1 装进 lab 编辑器;W2 装进 tests 编辑;W3 装进 run.launch 与 browse 时间窗;W4 装进对话流与 usage 面板)。
+(W1 装进 lab 编辑器;W2 装进 tests 编辑与 **Flow C 迭代模式的边注气泡化**;W3 装进 run.launch 与 browse 时间窗;W4 装进对话流与 usage 面板)。
 
 ## 7. 不做
 

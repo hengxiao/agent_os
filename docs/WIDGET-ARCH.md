@@ -157,7 +157,7 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 | W5.1 ✅ | 基座:render/logic 分文件模式 + `css/widgets.css` 拆出 + 更新协议校验(render 面)+ W-text/W-json 先迁(lab 编辑器行为测试不破) | 两控件自渲染;选区保留测试过 |
 | W5.2 ✅ | W-table/W-kv/W-form/W-list 迁移(装配点:run.launch 表单/lab 下拉不破) | 装配点测试过 |
 | W5.3 ✅ | W-tree/W-date/W-chart/W-log/W-diff/W-md/W-bubble 迁移 | 全部 render 纯函数 |
-| W5.4 | 清扫:宿主手写桥接代码删除;架构测试记录更新(弯腰点 ①⑤ 关闭情况) | 无装饰器残留 |
+| W5.4 ✅ | 清扫:宿主手写桥接代码删除;架构测试记录更新(弯腰点 ①⑤ 关闭情况) | 无装饰器残留 |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
@@ -221,6 +221,42 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 >   挂载期常量经 opts 传入,不进 state。
 > - **排障**:ns-tree 的"单层链折叠 + 一级默认展开"会让深名单链 namespace
 >   变一级——自动展开测试须用"分叉 + ≥阈值"结构才能造出默认折叠态。
+>
+> **W5.4 实现注**(2026-08-04,分支 debugger;清扫):
+> - **装饰器残留排查(验收:无残留)**:全部 mount 调用点逐一看过——
+>   lab.js(4 个编辑器挂点 + W-list 下拉)、usage-panel.js(W-chart)、
+>   lab-iterate.js(W-bubble)、platform/app.js(W-form/W-log/W-date)、
+>   doc-editor.js(W-bubble + W-md 预览)——均已是一行 mount + 空挂点
+>   (或岛屿模式首渲,见 W5.1 注),无宿主手写控件 DOM;launch-dialog.js
+>   无 widget 桥接。死代码:无(D5 已删 doc-editor 的 W-text shim;W-json
+>   的旧 hint 槽复用代码随 W5.1 重写退役)。
+> - **两条 grep 复核**(2026-08-04 实测):
+>   1. `widgets/*.js` 逻辑文件 innerHTML 只允许两种形态——
+>      `host.innerHTML = render<Kind>(...)`(单次产出赋值)与 destroy 的
+>      清空;字面 HTML 标签扫描(`<div/<span/<button/<input`)零命中;
+>   2. `css/widgets.css` 硬编码色值扫描(`#xxx`/`#xxxxxx`)零命中
+>      (全契约 token;`font-size: 8px` 等尺寸值不在色值面)。
+> - **W-bubble 装配切割线(评估结论:不切,关闭此项)**:控件
+>   (w-bubble)负责气泡卡本体——锚点引用行/消息流/输入框/busy 骨架/
+>   submit/apply/open/close 事件语义;宿主(doc-editor)保留——浮出定位壳
+>   (.doc-bubble-pop + 箭头,锚在段落块上,是宿主布局)、✕/marker 显隐
+>   交互(未读数来自 doc-editor 的 seen 游标,与批注列表同源,是应用态)、
+>   预览重渲后的挂回(innerHTML 重渲的 DOM 稳定性不归控件假设——D2 弯腰点
+>   ②的既有裁决:挂回是 mount 方职责)。**不切的理由**:切进去需要控件
+>   认识 seen 游标/未读数/段落锚三个 doc-editor 概念,通用控件被应用语义
+>   污染;交互行为零变化优先。
+> - **弯腰点 ①⑤ 关闭情况**(出处:docs/DOC-EDITOR.md D1 架构测试记录):
+>   - **①(W-text aria-label vs 字符串骨架)** → **已关闭(W5.1)**:
+>     新形态 mount 接受显式 `label`/`field` 选项(host dataset 推导),
+>     aria-label 由控件 render 自产出;doc-editor 的 host shim 在 D5 两栏
+>     重构时已删(无 textarea 面),D1 建议的"显式选项优先于 DOM 读取"
+>     落地。
+>   - **⑤(doc 的入口从哪开)** → **已关闭(D4)**:doc_list 对话卡 +
+>     卡上"新建文档"入口(data-doc-create,唯一名起稿)落地,正是 D1
+>     建议的"对话卡接入"路径;与 W5 无关但记录关闭。
+>   - 另:D2 弯腰点②(innerHTML 重渲 vs 气泡宿主)的处置 = 宿主挂回
+>     (沿用,见上切割线);D2 弯腰点①(bubble anchor 对象 vs 字符串)
+>     维持"留特例"裁决不变。
 
 ## 4. 不做
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -55,7 +56,12 @@ from agent_os.skills.draft_store import (
 )
 from agent_os.skills.gate import GateError, validate_draft
 from agent_os.skills.iterate import edit_members, run_iterate
-from agent_os.skills.lab_assistant import ITERATOR_NAME, iterator_skill
+from agent_os.skills.lab_assistant import (
+    DOC_COMMENTER_NAME,
+    ITERATOR_NAME,
+    doc_commenter_skill,
+    iterator_skill,
+)
 from agent_os.skills.package import promote_package
 
 _log = logging.getLogger("agent_os.platform")
@@ -133,6 +139,15 @@ class DocCreateBody(BaseModel):
     name: str
     title: str = ""
     text: str = ""
+
+
+class DocCommentBody(BaseModel):
+    """``POST /api/docs/{name}/comment``(D2,docs/DOC-EDITOR.md §5):
+    段落气泡提交的信封——锚点 + 批注 + §16 级联上下文。"""
+
+    anchor: str = ""
+    text: str = ""
+    cascade: list[dict[str, Any]] = []
 
 
 #: 升权档 → 人话(W2 decisions 聚合字段;摘要层禁 tier 术语,前端按 tier 自取 copy,
@@ -321,6 +336,60 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             raise HTTPException(status_code=400, detail=str(e)) from e
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.get("/api/docs/{name}/bubbles")
+    def read_doc_bubbles(name: str) -> list[dict[str, Any]]:
+        """全文档气泡流(D2:气泡种子——开关不丢,服务端 DocStore bubbles/ 是事实源)。"""
+        try:
+            return doc_store.read_bubbles(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/docs/{name}/comment")
+    def doc_comment(name: str, body: DocCommentBody) -> dict[str, Any]:
+        """段落气泡提交(D2,docs/DOC-EDITOR.md §3/§5;与 W2 lab comment 同先例):
+        信封(anchor+text+cascade)→ doc_commenter run(tools=[] 白名单空,
+        只读级联)→ reply/edits;**双方消息落 bubbles/(开关不丢)**。"""
+        try:
+            doc_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        try:
+            kernel = manager.assemble_lab_kernel(
+                OverlaySkillRegistry(
+                    manager.shared_skills_registry(),
+                    lab_store,
+                    extra={DOC_COMMENTER_NAME: doc_commenter_skill()},
+                )
+            )
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"评论助手不可用: {e}") from e
+        try:
+            result = asyncio.run(
+                kernel.run(
+                    DOC_COMMENTER_NAME,
+                    {"anchor": body.anchor, "text": body.text, "cascade": body.cascade},
+                )
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"评论助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+        result = result or {}
+        reply = str(result.get("reply") or "")
+        edits = result.get("edits") if isinstance(result.get("edits"), list) else []
+        if not reply and edits:
+            reply = str(edits[0].get("suggestion") or "")
+        # 持久化(D2:开关不丢)——用户批注 + 助手回复进锚点消息流
+        doc_store.save_bubble(name, body.anchor, {"role": "user", "text": body.text})
+        doc_store.save_bubble(
+            name,
+            body.anchor,
+            {"role": "assistant", "text": reply, **({"edits": edits} if edits else {})},
+        )
+        return {"reply": reply, "edits": edits}
 
     # ------------------------------------------------------------------
     # 升权决策(W2,docs/ESCALATION.md §3):supervisor pending 的**纯转发**——
@@ -1066,6 +1135,39 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         doc = doc_store.read(name)
         return {"ok": True, "text": doc["text"], "filename": f"{name}.md"}
 
+    #: 锚点格式(docs/DOC-EDITOR.md §2.1):doc.md#L<start>-L<end>(1-based 行号区间)
+    _ANCHOR_RE = re.compile(r"^doc\.md#L(\d+)-L(\d+)$")
+
+    def _act_doc_apply(payload: dict[str, Any]) -> dict[str, Any]:
+        """platform.doc.apply(D2):**人按才落**——按锚点行号区间替换对应段。
+
+        越界/文档已变(行数对不上,或给了 expected 且原文不符)→ 400
+        "文档已变化,请重新评审";替换后保存走 DocStore.save(.bak 同惯例),
+        并记一条 system 消息进锚点消息流(apply 留痕)。
+        """
+        name = str(payload.get("name") or "")
+        anchor = str(payload.get("anchor") or "")
+        replace_text = str(payload.get("replace_text") or "")
+        expected = payload.get("expected")
+        m = _ANCHOR_RE.match(anchor)
+        if not m:
+            raise HTTPException(status_code=400, detail=f"锚点格式非法: {anchor!r}(须 doc.md#L<start>-L<end>)")
+        start, end = int(m.group(1)), int(m.group(2))
+        doc = doc_store.read(name)
+        lines = doc["text"].split("\n")
+        if start < 1 or end < start or end > len(lines):
+            raise HTTPException(status_code=400, detail="文档已变化,请重新评审")
+        if expected is not None and "\n".join(lines[start - 1 : end]) != str(expected):
+            raise HTTPException(status_code=400, detail="文档已变化,请重新评审")
+        new_lines = lines[: start - 1] + replace_text.split("\n") + lines[end:]
+        doc_store.save(name, "\n".join(new_lines))
+        doc_store.save_bubble(name, anchor, {"role": "system", "text": "已应用"})
+        return {
+            "ok": True,
+            "text": "已应用。",
+            "state": {"dirty": False, "text": doc_store.read(name)["text"]},
+        }
+
     def _act_shell_session_create(payload: dict[str, Any]) -> dict[str, Any]:
         """platform.shell.session.create(M5 §13.1):新会话(app 孵化,与 POST /api/sessions 同源)。"""
         session = sessions.create()
@@ -1103,6 +1205,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         "platform.doc.snapshot": _act_doc_snapshot,
         "platform.doc.rewind": _act_doc_rewind,
         "platform.doc.export": _act_doc_export,
+        "platform.doc.apply": _act_doc_apply,  # D2:comment.apply(人按才落)
     }
 
     registry = AppRegistry(known_skills=set(SKILL_BINDINGS))

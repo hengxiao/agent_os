@@ -292,4 +292,5 @@ export const COPY = {
   "platform.doc.truncate": "文档太大啦,预览先截一段(编辑器没事哦)",
   "platform.doc.rewind.confirm": "再点一次确认回退",
   "platform.doc.hasbubbles": "有讨论喵",
+  "platform.doc.apply": "用上",
 };

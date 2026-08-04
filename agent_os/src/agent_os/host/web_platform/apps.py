@@ -666,6 +666,19 @@ def default_manifests() -> list[dict[str, Any]]:
                     "args_input": {"view": {"type": "string"}, "dirty": {"type": "boolean"}},
                     "surface": ["tab"],
                 },
+                {
+                    # D2(§3 comment.apply;endpoint):agent 建议的替换文本,人按才落
+                    "id": "comment.apply",
+                    "label": "platform.doc.apply",
+                    "exec": {"mode": "endpoint", "ref": "platform.doc.apply"},
+                    "args_from": ["state.name"],
+                    "args_input": {
+                        "anchor": {"type": "string"},
+                        "replace_text": {"type": "string"},
+                        "expected": {"type": "string"},
+                    },
+                    "surface": ["tab"],
+                },
             ],
         },
         # ── M4b:legacy 五页(docs/APP-MODEL.md §8 迁移地图末行)────────────

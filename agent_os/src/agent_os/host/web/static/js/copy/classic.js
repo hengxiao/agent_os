@@ -301,4 +301,5 @@ export const COPY = {
   "platform.doc.truncate": "文档过大,预览截断显示(编辑器不受影响)",
   "platform.doc.rewind.confirm": "再点一次确认恢复",
   "platform.doc.hasbubbles": "有讨论",
+  "platform.doc.apply": "应用",
 };

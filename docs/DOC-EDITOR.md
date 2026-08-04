@@ -130,12 +130,50 @@ docs/<name>/
 
 ## 8. 分期
 
-| 期 | 内容 |
-|---|---|
 | D1 ✅ | doc_store + doc app kind + 编辑器(分屏/大纲/dirty/save/snapshot/rewind) |
-| D2 | 段落锚点 + W-bubble 接入(comment.send/apply)+ doc_commenter 技能 |
+| D2 ✅ | 段落锚点 + W-bubble 接入(comment.send/apply)+ doc_commenter 技能 |
 | D3 | 全文评审(锚点批注集自动挂段)+ lab NOTES.md 接点 |
 | D4 | 导出(.md/NOTES 写回)+ 对话卡片 + 打磨 |
+
+> **D2 实现注**(2026-08-03,分支 debugger):
+> `doc_commenter_skill`(skills/lab_assistant.py;tools=[] 白名单空,
+> 输出 {reply} 或 {edits:[{anchor,suggestion,replace_text}]});段落块切分
+> `mdBlocks`(空行分块,标题/列表项/表格行独占,1-based 行号区间,与大纲
+> 同源);预览按块渲染带 💬 锚点钮;`POST /api/docs/{name}/comment`
+> (comment.send,与 W2 lab comment 同先例:信封 → commenter run →
+> reply/edits,双方消息落 bubbles/);`comment.apply` 进 manifest 与管道
+> (endpoint;_act_doc_apply 按行号区间替换 + expected 校验,越界/已变
+> 报"文档已变化,请重新评审",应用后 store.save(.bak)+ system 留痕);
+> 气泡种子经 `GET /api/docs/{name}/bubbles`(开关不丢,服务端事实源)。
+
+### 架构测试记录(D2 增补;2026-08-03)
+
+**顺畅点**:
+1. **N4 花括号纪律在 doc_commenter 上又救一次场**:技能 prompt 里的
+   JSON 示例({reply}/{edits})撞上 render_prompt 的 str.format——
+   正是 N4 预检防的那类运行时必炸;`{{ }}` 转义解决。架构的"提示词
+   即模板"约定迫使所有技能作者面对转义,换来渲染语义唯一。
+2. **comment.send 没有进通用管道,是对的**:它需要大信封(cascade)+
+   即时回复回填气泡,通用管道(args_from+args_input)装 cascade 会逼出
+   怪 schema;专属端点与 W2 lab comment 同先例(读多写一,信封即参数)。
+   结论:§3 表里 send 标 run 是"内部起 run 语义",不是"必须过管道"——
+   管道的 run 态(M4a)服务的是**用户发起的长任务**,不是每次问答。
+3. **气泡持久化零前端状态**:bubbles/ 是服务端事实源,前端只挂种子——
+   开关/刷新/重渲都不丢,没有发明任何前端持久层。
+
+**弯腰点**:
+1. **W-bubble 的 anchor 是对象而 doc 锚点是字符串**。气泡引用行按
+   {member, path} 渲染,doc 锚点 = "doc.md#L2-L2" 单串。弯法:挂载时包
+   成 {member: 文档名, path: 锚点串},submit/apply 时拆回字符串。
+   建议:**留特例**(W-bubble 的 anchor 形态本来就没协议化,两个消费方
+   各包一层,比定协议便宜;第三个消费方出现时再统一 anchor schema)。
+2. **innerHTML 重渲与气泡宿主的矛盾**(D1 已撞,D2 正面解):
+   预览每输入重渲会把块内气泡宿主摘出 DOM。弯法:宿主元素打
+   data-anchor,重渲后按引用挂回(气泡不重建,消息流/未读都在)。
+   建议:**改协议**——给宿主类组件一个标准解法:widget mount 时若宿主
+   在"会被重渲的容器"里,由 mount 方传入 reattach 回调,控件库不假设
+   DOM 稳定性。这也是 D1 弯腰点①(host shim)的同源问题,值得 W5 合并
+   处理(字符串骨架 + 后挂载模式在整个项目里是常态)。
 
 > **D1 实现注**(2026-08-03,分支 debugger):
 > `skills/doc_store.py`(DraftStore 同构:点分名校验/.bak/versions/bubbles/

@@ -980,8 +980,21 @@ async function _loadDetail(kind, ref, data) {
       const res = await fetch(`/platform/api/docs/${encodeURIComponent(ref)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const doc = await res.json();
+      // D2:气泡种子(开关不丢;读面直给,与 doc 全文同一请求面)
+      let bubblesData = [];
+      try {
+        bubblesData = await (await fetch(`/platform/api/docs/${encodeURIComponent(ref)}/bubbles`)).json();
+      } catch {
+        bubblesData = []; // 气泡面故障不挡编辑器(降级为空种子)
+      }
       const mount = (host) => {
         state._docEditor = mountDocEditor(host, doc, {
+          seedFlows: bubblesData,
+          getTabInstance: () => state.tabs.find((t) => t.id === state.active),
+          reload: async () => {
+            state.detail = await _loadDetail("doc", ref, null);
+            renderMain();
+          },
           onViewChange: (view) => {
             const tab = state.tabs.find((t) => t.id === state.active);
             if (tab?.instance) {

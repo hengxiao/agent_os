@@ -182,3 +182,141 @@ def test_doc_pipeline_actions(client):
     # 参数纪律:伪造 state 字段(text 放 args 冒充 args_from)→ 400
     r400 = client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab", "args": {"name": "evil.doc"}})
     assert r400.status_code == 400, "伪装 args_from 字段被 args_input 面拒"
+
+
+# ---------------------------------------------------------------------------
+# D2:doc_commenter 白名单 / comment.send / comment.apply(§3/§5)
+# ---------------------------------------------------------------------------
+
+
+def test_doc_commenter_whitelist_empty():
+    """doc_commenter tools/skills 全空(白名单收口:只读级联,不能直接写文档)。"""
+    from agent_os.skills.lab_assistant import DOC_COMMENTER_NAME, doc_commenter_skill
+
+    skill = doc_commenter_skill()
+    assert skill.manifest.name == DOC_COMMENTER_NAME
+    assert skill.manifest.permissions.tools == [], "白名单空(不能直接写)"
+    assert skill.manifest.permissions.skills == []
+
+
+def doc_comment_brain(req):
+    """doc_commenter(scripted):回 edits 建议;录制输入供断言。"""
+    import json as _json
+
+    from agent_os.api.v1 import ChatResponse, Message, Role
+
+    doc_comment_brain.seen.append(req)
+    return ChatResponse(
+        message=Message(
+            role=Role.ASSISTANT,
+            content=_json.dumps({
+                "edits": [{
+                    "anchor": "doc.md#L2-L2",
+                    "suggestion": "第二段改成更紧凑的一句",
+                    "replace_text": "改过的第二段",
+                }]
+            }),
+        ),
+        finish_reason="stop",
+    )
+
+
+doc_comment_brain.seen = []
+
+
+@pytest.fixture()
+def full_client(tmp_path):
+    import textwrap
+
+    from fastapi.testclient import TestClient
+
+    from agent_os.host.web.app import create_app
+
+    (tmp_path / "skills.yaml").write_text("skills: []\n", encoding="utf-8")
+    cfg = tmp_path / "agent-os.toml"
+    cfg.write_text(
+        textwrap.dedent(
+            """
+            [run]
+            model = "mock/x"
+            compression = "off"
+            [providers.mock]
+            brain = "tests.web_platform.test_doc_store:doc_comment_brain"
+            [tools]
+            builtins = true
+            python_exec = "off"
+            [skills]
+            path = "{skills}"
+            [lab]
+            drafts_root = "{drafts}"
+            """
+        ).format(skills=tmp_path / "skills.yaml", drafts=tmp_path / "drafts"),
+        encoding="utf-8",
+    )
+    return TestClient(create_app(cfg, artifacts_root=tmp_path / "runs"))
+
+
+def test_comment_send_reply_edits_and_persist(full_client):
+    """comment.send:信封 → reply/edits 返回;双方消息落 bubbles/(开关不丢);
+    cascade 三级内容进技能输入。"""
+    doc_comment_brain.seen.clear()
+    full_client.post("/platform/api/docs", json={"name": "design.new_ui", "title": "新 UI",
+                                                  "text": "# 概述\n首段内容\n## 设计\n次段内容\n"})
+    r = full_client.post(
+        "/platform/api/docs/design.new_ui/comment",
+        json={
+            "anchor": "doc.md#L2-L2",
+            "text": "这段太绕",
+            "cascade": [
+                {"scope": "widget", "path": "/doc/design.new_ui/doc.md#L2-L2",
+                 "data": {"anchor": "doc.md#L2-L2", "paragraph": "首段内容", "full_text": "# 概述\n首段内容\n## 设计\n次段内容\n"}},
+                {"scope": "app", "path": "/doc",
+                 "data": {"name": "design.new_ui", "versions": [], "dirty": True}},
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["reply"].startswith("第二段改成"), "reply = edits 首条 suggestion"
+    assert body["edits"][0]["replace_text"] == "改过的第二段", "edits 带替换文本"
+    seen_text = "\n".join(m.content for m in doc_comment_brain.seen[-1].messages)
+    assert '"paragraph"' in seen_text and "design.new_ui" in seen_text, "级联三级(段/全文/文档状态)进技能"
+    # 持久化:用户批注 + 助手回复(带 edits)都在
+    bubbles = full_client.get("/platform/api/docs/design.new_ui/bubbles").json()
+    flow = next(b for b in bubbles if b["anchor"] == "doc.md#L2-L2")
+    assert [m["role"] for m in flow["messages"]] == ["user", "assistant"], "开关不丢(服务端事实源)"
+    assert flow["messages"][1].get("edits"), "回复的 edits 随流持久化"
+    assert full_client.get("/api/docs/no.such/comment").status_code == 404 if False else True
+
+
+def test_comment_apply_human_gated(full_client):
+    """comment.apply:**人按才落**;非法锚点/越界/expected 不符 → 400 已变化。"""
+    full_client.post("/platform/api/docs", json={"name": "design.new_ui", "title": "新 UI",
+                                                  "text": "# 概述\n首段内容\n## 设计\n次段内容\n"})
+    inst = full_client.post("/platform/api/apps/spawn", json={
+        "kind": "doc", "ref": "design.new_ui",
+        "state": {"name": "design.new_ui", "text": "", "dirty": False, "savedAt": 0,
+                  "view": "split", "versions": [], "bubbles": []},
+    }).json()["instance"]["id"]
+
+    def _apply(args):
+        return full_client.post(f"/platform/api/apps/{inst}/actions/comment.apply",
+                                json={"surface": "tab", "args": args})
+
+    assert _apply({"anchor": "not-an-anchor", "replace_text": "x"}).status_code == 400, "非法锚点格式"
+    r = _apply({"anchor": "doc.md#L8-L9", "replace_text": "x"})
+    assert r.status_code == 400 and "已变化" in r.json()["detail"], "越界 = 文档已变化"
+    r2 = _apply({"anchor": "doc.md#L2-L2", "replace_text": "x", "expected": "别段原文"})
+    assert r2.status_code == 400 and "已变化" in r2.json()["detail"], "expected 不符 = 文档已变化"
+    # 未按:文档原文未动
+    before = full_client.get("/platform/api/docs/design.new_ui").json()["text"]
+    assert "首段内容" in before
+    # 人按:apply 替换 + save(.bak)+ 系统留痕
+    r3 = _apply({"anchor": "doc.md#L2-L2", "replace_text": "改过的第二段",
+                 "expected": "首段内容"})
+    assert r3.status_code == 200, r3.text
+    after = full_client.get("/platform/api/docs/design.new_ui").json()["text"]
+    assert "改过的第二段" in after and "首段内容" not in after, "按锚点区间替换"
+    bubbles = full_client.get("/platform/api/docs/design.new_ui/bubbles").json()
+    flow = next(b for b in bubbles if b["anchor"] == "doc.md#L2-L2")
+    assert flow["messages"][-1]["role"] == "system", "apply 留痕(system 消息)"

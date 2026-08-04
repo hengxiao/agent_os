@@ -293,4 +293,5 @@ export const COPY = {
   "platform.doc.truncate": "文档过大,预览截示(编辑器无碍)",
   "platform.doc.rewind.confirm": "再点一次确认复旧",
   "platform.doc.hasbubbles": "有评议",
+  "platform.doc.apply": "施用",
 };

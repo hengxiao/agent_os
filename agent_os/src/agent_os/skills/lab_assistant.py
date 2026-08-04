@@ -25,6 +25,55 @@ ITERATOR_NAME = "skill.dev.iterator"
 #: 锚点评论技能名(W2,docs/WIDGETS.md W-bubble;APP-MODEL §16 首个 cascade 消费者)
 COMMENTER_NAME = "skill.dev.commenter"
 
+#: 文档评论技能名(D2,docs/DOC-EDITOR.md §5;commenter 先例:白名单空,只读级联)
+DOC_COMMENTER_NAME = "skill.dev.doc_commenter"
+
+_DOC_COMMENTER_PROMPT = """你是文档评论助手。用户在 Markdown 文档的某个段落上挂了气泡,输入给你:
+
+- anchor:段落锚点(doc.md#L<start>-L<end>,行号区间);
+- text:用户的问题或意见;
+- cascade:逐级上下文(APP-MODEL §16;近→远:锚点段原文、文档全文、文档名/版本/脏状态)。
+
+纪律(白名单收口):
+1. **只读**:你没有任何工具——只能读输入里的级联内容,**不能直接写文档**;
+2. 输出二选一(只输出一个 JSON,不要别的文字):
+   - 答疑/建议但不改文:{{"reply": "..."}};
+   - 建议改写:{{"edits": [{{"anchor": "<原样带回>", "suggestion": "一句话说清改什么",
+     "replace_text": "替换该段的完整新文本(Markdown)"}}]}};
+3. replace_text 只覆盖锚点段,不越界写全文;看着全文改一段,不看着一段猜全文;
+4. 不确定就回复建议人工确认,不编造上下文里没有的事实。"""
+
+
+def doc_commenter_skill() -> Skill:
+    """文档评论技能(D2;tools=[] —— 只读级联,输出 reply 或 edits 建议,不能直接写)。"""
+    manifest = SkillManifest(
+        name=DOC_COMMENTER_NAME,
+        version="0.1.0",
+        description=(
+            "文档评论助手。Use when 回应挂在 Markdown 文档段落上的气泡(只读级联给答疑或改写建议);"
+            "Do not use when 要直接改文档(它没有写面,也不能写)。"
+        ),
+        inputs={
+            "type": "object",
+            "properties": {
+                "anchor": {"type": "string", "description": "段落锚点 doc.md#L<start>-L<end>"},
+                "text": {"type": "string", "description": "用户批注"},
+                "cascade": {"type": "array", "description": "逐级上下文(§16 信封的 cascade 段)"},
+            },
+            "required": ["anchor", "text"],
+        },
+        outputs={
+            "type": "object",
+            "properties": {
+                "reply": {"type": "string"},
+                "edits": {"type": "array"},
+            },
+        },
+        permissions=SkillPermissions(tools=[], skills=[]),  # 白名单收口:只读级联内容
+        limits=SkillLimits(max_steps=4, timeout=60),
+    )
+    return Skill(manifest=manifest, prompt=_DOC_COMMENTER_PROMPT)
+
 _COMMENTER_PROMPT = """你是锚点评论助手。用户在某段内容上挂了气泡提问或提意见,输入给你:
 
 - anchor:锚点(§14 路径语义:成员/字段/可选 span 段落号);

@@ -299,4 +299,5 @@ export const COPY = {
   "platform.doc.truncate": "DOC TOO BIG, PREVIEW CUT (EDITOR OK)",
   "platform.doc.rewind.confirm": "CLICK AGAIN TO REWIND",
   "platform.doc.hasbubbles": "HAS DISCUSSIONS",
+  "platform.doc.apply": "APPLY",
 };

@@ -587,7 +587,18 @@ const assertClean = (html, who) => {
         cards: [{ type: "gate_report", v: 1, data: { draft: "lab.dinner", status: "pass", gates: {} }, actions: [] }],
         instance: { id: "app-spawn-lab.dinner", kind: "lab-draft", state: {} } });
     }
-    // D1(docs/DOC-EDITOR.md):doc 读面 + 写动作管道
+    // D2:气泡种子(comment.send)与 comment.apply 管道
+    if (url === "/platform/api/docs/design.new_ui/bubbles") {
+      return reply([{ anchor: "doc.md#L2-L2", messages: [{ role: "user", text: "旧批注", ts: 1 }] }]);
+    }
+    if (url === "/platform/api/docs/design.new_ui/comment") {
+      return reply({ reply: "建议:删第二句,留骨架",
+        edits: [{ anchor: "doc.md#L2-L2", suggestion: "删第二句", replace_text: "改过的第二段" }] });
+    }
+    if (url === "/platform/api/apps/app-spawn-design.new_ui/actions/comment.apply") {
+      return reply({ ok: true, text: "已应用。", state: { dirty: false },
+        instance: { id: "app-spawn-design.new_ui", kind: "doc", state: {} } });
+    }
     if (url === "/platform/api/docs/design.new_ui") {
       return reply({ name: "design.new_ui", text: "# 概述\n首段内容\n## 设计\n次段内容\n",
         meta: { title: "新 UI", savedAt: 1 }, versions: ["v001"] });
@@ -1395,6 +1406,85 @@ const assertClean = (html, who) => {
   const rwPost = calls.find((c) => c.url.includes("doc.rewind"));
   assert.ok(rwPost, "第二击走管道");
   assert.equal(JSON.parse(rwPost.body).args.version, "v001", "版本 = 下拉选中值");
+
+  /* ── D2:段落锚点 + W-bubble(comment.send/apply)───────────────── */
+
+  // 段落块切分(空行分块;标题/列表项/表格行独占)+ 锚点解析
+  const { mdBlocks, parseAnchor } = await import("../../../web_platform/static/doc-editor.js");
+  const blocks = mdBlocks("# 概述\n首段\n二段\n\n## 设计\n- 甲\n- 乙\n| a | b |\n");
+  assert.deepEqual(
+    blocks.map((b) => [b.start, b.end]),
+    [[1, 1], [2, 3], [5, 5], [6, 6], [7, 7], [8, 8]],
+    "块行号区间(与大纲同源)");
+  assert.deepEqual(parseAnchor("doc.md#L2-L7"), { start: 2, end: 7 }, "锚点解析");
+  assert.equal(parseAnchor("not-anchor"), null, "非法锚点 → null");
+
+  // 预览按段落块渲染,每块带 💬 锚点钮
+  const preview2 = docHost.querySelector("[data-doc-preview]");
+  assert.ok(preview2.innerHTML.includes('data-anchor="doc.md#L1-L1"'), "标题独占一块");
+  assert.ok(preview2.innerHTML.includes('data-anchor="doc.md#L2-L2"'), "段落块锚点格式");
+  assert.ok(preview2.innerHTML.includes("doc-anchor-btn"), "锚点钮在");
+
+  // 点锚点钮 → 开气泡(种子 = DocStore 持久流,开关不丢)
+  const anchorBtn = new StubEl("button");
+  anchorBtn.dataset.anchorBtn = "1";
+  const paraBlock = new StubEl("div");
+  paraBlock.dataset.anchor = "doc.md#L2-L2";
+  anchorBtn.closest = (sel) =>
+    sel === "[data-anchor-btn]" ? anchorBtn : sel === "[data-anchor]" ? paraBlock : null;
+  paraBlock.parentNode = preview2;
+  preview2.trigger("click", { target: anchorBtn });
+  await tick();
+  const bubbleHost = paraBlock.children.at(-1);
+  assert.ok(bubbleHost.innerHTML.includes("w-bubble"), "气泡卡挂载");
+  assert.ok(bubbleHost.innerHTML.includes("旧批注"), "种子消息(持久化,开关不丢)");
+  assert.ok(bubbleHost.innerHTML.includes("doc.md#L2-L2"), "锚点引用行");
+
+  // 提交 → 父级组 §16 信封出海(段落/全文/文档状态三级)
+  const input3 = new StubEl("input");
+  input3.dataset.bubbleDraft = "";
+  input3.parentNode = bubbleHost;
+  input3.value = "这段太绕";
+  bubbleHost.trigger("input", { target: input3 });
+  bubbleHost.trigger("keydown", { target: input3, key: "Enter" });
+  await tick();
+  await tick();
+  const commentPost = calls.find((c) => c.url === "/platform/api/docs/design.new_ui/comment");
+  assert.ok(commentPost, "comment.send 出海(专属端点)");
+  const envelope2 = JSON.parse(commentPost.body);
+  assert.equal(envelope2.anchor, "doc.md#L2-L2", "信封锚点");
+  assert.equal(envelope2.cascade[0].scope, "widget", "widget 级(fragment 在近端)");
+  assert.ok(envelope2.cascade[0].data.paragraph.includes("首段内容"), "段落原文进信封");
+  assert.ok(envelope2.cascade[0].data.full_text.includes("次段内容"), "全文进信封");
+  assert.equal(envelope2.cascade[1].data.name, "design.new_ui", "文档状态(app 级)进信封");
+  assert.ok(bubbleHost.innerHTML.includes("建议:删第二句"), "回复渲染进气泡");
+
+  // 多条并存:另一锚点再开一条,互不串
+  const anchorBtn2 = new StubEl("button");
+  anchorBtn2.dataset.anchorBtn = "1";
+  const paraBlock2 = new StubEl("div");
+  paraBlock2.dataset.anchor = "doc.md#L4-L4";
+  anchorBtn2.closest = (sel) =>
+    sel === "[data-anchor-btn]" ? anchorBtn2 : sel === "[data-anchor]" ? paraBlock2 : null;
+  paraBlock2.parentNode = preview2;
+  preview2.trigger("click", { target: anchorBtn2 });
+  await tick();
+  assert.ok(paraBlock2.children.at(-1).innerHTML.includes("w-bubble"), "第二条气泡并存");
+  assert.ok(!paraBlock2.children.at(-1).innerHTML.includes("旧批注"), "各锚点独立");
+
+  // apply:人按才落(经管道,replace_text 来自回复存证)
+  const applyBtn2 = new StubEl("button");
+  applyBtn2.dataset.apply = "2"; // assistant 消息索引(seed + 提交 + 回复)
+  applyBtn2.parentNode = bubbleHost;
+  bubbleHost.trigger("click", { target: applyBtn2 });
+  await tick();
+  const applyPost = calls.find((c) => c.url.includes("comment.apply"));
+  assert.ok(applyPost, "comment.apply 走 action 管道(endpoint 归态)");
+  assert.deepEqual(JSON.parse(applyPost.body).args,
+    { anchor: "doc.md#L2-L2", replace_text: "改过的第二段" },
+    "应用参数 = 锚点 + 回复的替换文本");
+  const docReads = calls.filter((c) => c.url === "/platform/api/docs/design.new_ui").length;
+  assert.ok(docReads >= 2, "应用后重载拿新全文");
 }
 
 console.log("platform.test.mjs: all assertions passed");

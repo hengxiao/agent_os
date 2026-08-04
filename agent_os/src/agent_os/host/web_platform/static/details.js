@@ -181,7 +181,7 @@ export function planDetailHtml(data) {
 /* run 详情:状态/结果 + 信号时间线(deriveTraceView/renderTrace 复用)。
    M3:状态允许时给动作按钮(stop/resume/rerun 走 action 管道,data-tab-act)
    与"开调试"链接(failed/running → replay 调试会话,docs/APP-MODEL.md §8 闭环) */
-export function runDetailHtml({ detail, signals }) {
+export function runDetailHtml({ detail, signals, launchSchema = null }) {
   const status = esc(detail?.status ?? "");
   const runId = detail?.run_id ?? detail?.id ?? "";
   const result =
@@ -198,10 +198,15 @@ export function runDetailHtml({ detail, signals }) {
     (["failed", "running", "aborted"].includes(detail?.status) && runId
       ? `<button class="btn" data-debug-run="${esc(runId)}">${esc(copy("platform.run.debug"))}</button>`
       : "");
-  // M4a 发起面归一:app 内"再跑一次"(留空 = 服务端按 schema 骨架;可填 JSON 改参)
+  // M4a 发起面归一:app 内"再跑一次";W3 起 inputs schema 已知时升级为
+  // W-form 逐字段表单(textarea 降级进"高级:JSON"折叠,两通道同源)
   const launch = runId
     ? `<div class="pf-sec">${esc(copy("platform.run.launch"))}</div>` +
-      `<textarea class="input mono" data-launch-input rows="3" placeholder="${esc(copy("platform.run.launch.ph"))}"></textarea>` +
+      (launchSchema
+        ? `<div data-launch-form="1"></div>` +
+          `<details class="wd-adv"><summary>${esc(copy("w.form.advanced"))}</summary>` +
+          `<textarea class="input mono" data-launch-input rows="3" placeholder="${esc(copy("platform.run.launch.ph"))}"></textarea></details>`
+        : `<textarea class="input mono" data-launch-input rows="3" placeholder="${esc(copy("platform.run.launch.ph"))}"></textarea>`) +
       `<div class="pf-card-actions"><button class="btn" data-tab-act="run.launch">${esc(copy("platform.run.launch"))}</button></div>`
     : "";
   return (

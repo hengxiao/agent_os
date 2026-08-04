@@ -17,3 +17,7 @@ export {
 export { TABLE_EDITOR_DEF, mountTableEditor } from "./w-table.js";
 export { KV_EDITOR_DEF, mountKvEditor, entriesToObject, objectToEntries, dupKeys } from "./w-kv.js";
 export { BUBBLE_DEF, mountBubble } from "./w-bubble.js";
+export { FORM_EDITOR_DEF, mountFormEditor, validateValues } from "./w-form.js";
+export { LIST_EDITOR_DEF, mountSelectList } from "./w-list.js";
+export { TREE_EDITOR_DEF, mountNsTreeWidget } from "./w-tree.js";
+export { DATE_EDITOR_DEF, mountDatePicker, parseIso, quickRange, rangeInverted, monthGridHtml } from "./w-date.js";

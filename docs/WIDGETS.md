@@ -204,8 +204,31 @@ app(业务对象:skill-pack/run/...)
 |---|---|
 | W1 ✅ | Widget 协议与注册表 + W-text + W-json(编辑器是基础中的基础) |
 | W2 ✅ | W-table + W-kv + **W-bubble(含 APP-MODEL §16 context cascade 落地)**:表格家族 + 锚点聊天气泡,首个级联消费者 |
-| W3 | W-form + W-list + W-tree + W-date(数据输入与导航;run.launch 表单化落地;browse 时间窗) |
+| W3 ✅ | W-form + W-list + W-tree + W-date(数据输入与导航;run.launch 表单化落地;browse 时间窗) |
 | W4 | W-diff + W-md + W-log + W-chart(呈现家族;agent 消息/调试面/usage 可视化的统一) |
+
+> **W3 实现注**(2026-08-03,分支 debugger):
+> - **W-form**(`w-form.js`):六类型生成(string/number/integer[min/max]/
+>   boolean/enum/嵌套 object/数组项编辑器);required 星标;默认值复用
+>   launch-dialog 的 skeletonFromSchema(逐字节一致有断言);
+>   `validateValues` 轻量字段校验(required/type/min-max;硬校验在服务端);
+>   **装配点 = run.launch**(web_platform run tab):schema 经
+>   `GET /api/skills/{name}` 取得,已知时 textarea 升级为逐字段表单,
+>   "高级:JSON"折叠保留 textarea;提交前 validate(不合先拦),
+>   args.input 与 textarea 时代同构直传;schema 未知/ad-hoc 保持 textarea;
+> - **W-list**(`w-list.js`):单/多选/过滤(平列表子串)/↑↓+Enter 键盘
+>   路径/空态;**装配点 = lab 草稿下拉**(原生 select 隐藏为表单模型锚——
+>   lab 的 change 委托与测试区域提取零改,W-list 驱动它;选 lab 不选
+>   平台会话下拉的理由:平台 sessionSel 是紧凑原生下拉且测试断言面大,
+>   草稿列表才是"可选列表"语义);
+> - **W-tree**(`w-tree.js`):**ns-tree.js 零改**——薄协议封装(构建/过滤/
+>   默认展开/渲染全委托 ns-tree.js 纯函数),控件层只补 state/actions/事件
+>   上行;装配留 W4(技能树仍用原件,不重复造轮子);
+> - **W-date**(`w-date.js`):date/datetime/range 三模;输入即时 ISO 校验;
+>   range 倒置警示(点选自动纠序);自绘月历(←→ 翻页键盘可达);
+>   quick 快捷项(今天/昨天/本周[周一起]/上周,本地时区);
+>   **装配点 = browse 时间窗**(平台 legacy runs tab:range 过滤行内 run,
+>   首屏行内渲染 + change 时 region 重渲)。
 
 > **W2 实现注**(2026-08-03,分支 debugger):
 > - **cascade**(`widgets/cascade.js`):`registerContextProvider`/`contextCascade`

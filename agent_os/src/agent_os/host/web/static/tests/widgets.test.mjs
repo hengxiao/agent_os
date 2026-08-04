@@ -411,3 +411,188 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
   host.trigger("keydown", { target: input, key: "Escape" });
   assert.equal(submissions.length, before, "Esc 关闭不产生提交");
 }
+
+/* ── W3:W-form / W-list / W-tree / W-date ─────────────────────── */
+
+const { mountFormEditor, validateValues, mountSelectList, mountNsTreeWidget,
+  mountDatePicker, parseIso, quickRange, rangeInverted, monthGridHtml } =
+  await import("../js/widgets/index.js");
+
+{
+  // W-form:六类型生成/required 星标/嵌套/数组项/默认值与 skeletonFromSchema 一致
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const schema = {
+    type: "object",
+    required: ["city"],
+    properties: {
+      city: { type: "string" },
+      n: { type: "integer", minimum: 1, maximum: 10 },
+      ratio: { type: "number" },
+      ok: { type: "boolean" },
+      kind: { type: "string", enum: ["a", "b"] },
+      addr: { type: "object", properties: { zip: { type: "string" } } },
+      tags: { type: "array", items: { type: "string" } },
+    },
+  };
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountFormEditor(host, { schema });
+  const html = () => host.innerHTML;
+  assert.ok(html().includes("wd-req"), "required 星标");
+  assert.ok(html().includes('type="number"'), "integer/number 列型");
+  assert.ok(html().includes('type="checkbox"'), "boolean 列型");
+  assert.ok(html().includes("<select"), "enum 列型");
+  assert.ok(html().includes("<fieldset"), "嵌套 object 组");
+  assert.deepEqual(w.values(), {
+    city: "", n: 1, ratio: 1, ok: false, kind: "", addr: { zip: "" }, tags: [],
+  }, "默认值与 skeletonFromSchema 一致");
+  // set_field + validate(required/integer min)
+  w.set_field("n", 0);
+  assert.equal(w.validate(), false, "minimum 约束拦");
+  assert.ok(w.state.errors.n.includes("不能小于 1"), "min 错误文案");
+  w.set_field("n", 5);
+  w.set_field("city", "北京");
+  assert.equal(w.validate(), true, "修完通过");
+  assert.deepEqual(w.state.errors, {}, "通过即清错");
+  // 数组项:增/删
+  const addBtn = new StubEl("button");
+  addBtn.dataset.fAdd = "tags";
+  addBtn.parentNode = host;
+  host.trigger("click", { target: addBtn });
+  assert.deepEqual(w.values().tags, [""], "数组项添加");
+  const delBtn = new StubEl("button");
+  delBtn.dataset.fDel = "tags/0";
+  delBtn.parentNode = host;
+  host.trigger("click", { target: delBtn });
+  assert.deepEqual(w.values().tags, [], "数组项删除");
+  // reset 回默认
+  w.reset();
+  assert.equal(w.values().city, "", "reset 回骨架");
+  // validateValues 纯函数:required/type/min-max
+  assert.ok(validateValues({ n: 0 }, { required: ["city"], properties: { n: { type: "integer", minimum: 1 } } }).city);
+  // 边界:空 schema / 畸形
+  const host2 = doc.createElement("div");
+  doc.body.appendChild(host2);
+  assert.doesNotThrow(() => mountFormEditor(host2, { schema: {} }), "空 schema 不炸");
+  assert.doesNotThrow(() => mountFormEditor(host2, { schema: { properties: { x: { type: "magic" } } } }), "未知列型降级 text");
+}
+
+{
+  // W-list:过滤/单选/多选/键盘导航/空态
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const items = [
+    { id: "a", label: "Alpha" },
+    { id: "b", label: "Beta" },
+    { id: "g", label: "Gamma" },
+  ];
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const events = [];
+  const w = mountSelectList(host, { items });
+  w.on("select", (p) => events.push(p));
+  assert.ok(host.innerHTML.includes('role="listbox"'), "role=listbox");
+  // 过滤(平列表子串)
+  w.filter("alp");
+  assert.ok(host.innerHTML.includes("Alpha") && !host.innerHTML.includes("Beta"), "过滤命中");
+  w.filter("");
+  // 单选切换(再点取消)
+  w.select("a");
+  assert.equal(w.state.selected, "a");
+  w.select("a");
+  assert.equal(w.state.selected, null, "单选再点取消");
+  // 键盘:↓ + Enter = activate
+  const acts = [];
+  w.on("activate", (p) => acts.push(p.id));
+  host.trigger("keydown", { target: host, key: "ArrowDown" });
+  host.trigger("keydown", { target: host, key: "Enter" });
+  assert.deepEqual(acts, ["b"], "键盘导航 ↓+Enter 激活第二项");
+  // 多选
+  const host2 = doc.createElement("div");
+  doc.body.appendChild(host2);
+  const w2 = mountSelectList(host2, { items, multi: true });
+  w2.select("a");
+  w2.select("g");
+  assert.deepEqual(w2.state.selected, ["a", "g"], "多选");
+  // 空态
+  const host3 = doc.createElement("div");
+  doc.body.appendChild(host3);
+  mountSelectList(host3, { items: [] });
+  assert.ok(host3.innerHTML.includes("没有可选项"), "空态");
+}
+
+{
+  // W-tree:ns-tree 薄封装(原件语义:折叠/默认展开/过滤/选中)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const items = [{ name: "weather.query" }, { name: "weather.forecast" }, { name: "ops.janitor" }];
+  const sels = [];
+  const w = mountNsTreeWidget(host, { items });
+  w.on("select", (p) => sels.push(p.id));
+  const html = () => host.innerHTML;
+  assert.ok(html().includes("weather.query"), "叶子渲染(ns-tree 原件路径)");
+  // toggle:折叠 weather 命名空间
+  const hasToggle = html().includes("data-ns-toggle");
+  if (hasToggle) {
+    w.toggle("weather");
+    assert.ok(!html().includes("weather.query") || !html().includes("weather.forecast"), "折叠后叶子藏起");
+    w.toggle("weather");
+    assert.ok(html().includes("weather.query"), "再展开");
+  }
+  // 过滤(ns-tree filterNsTree 语义:命中保留)
+  w.filter("janitor");
+  assert.ok(html().includes("ops.janitor"), "过滤命中");
+  assert.ok(!html().includes("weather.query"), "过滤排他");
+  w.filter("");
+  // 选中
+  const leaf = new StubEl("div");
+  leaf.dataset.wtLeaf = "weather.query";
+  leaf.parentNode = host;
+  host.trigger("click", { target: leaf });
+  assert.deepEqual(sels, ["weather.query"], "选中事件上行");
+}
+
+{
+  // W-date:输入校验/倒置警示/快捷项/翻页键盘/点选纠序
+  const doc = makeDocument();
+  globalThis.document = doc;
+  // 纯函数:ISO 校验
+  assert.ok(parseIso("2026-08-03"), "date 合法");
+  assert.equal(parseIso("2026-13-99"), null, "非法日期");
+  assert.equal(parseIso("not-a-date"), null, "非 ISO");
+  assert.ok(parseIso("2026-08-03T10:30", "datetime"), "datetime 合法");
+  // 快捷项(固定锚点)
+  const anchor = new Date(2026, 7, 5); // 2026-08-05 周三
+  assert.deepEqual(quickRange("today", anchor), { start: "2026-08-05", end: "2026-08-05" });
+  assert.deepEqual(quickRange("yesterday", anchor), { start: "2026-08-04", end: "2026-08-04" });
+  assert.deepEqual(quickRange("week", anchor), { start: "2026-08-03", end: "2026-08-05" }, "本周(周一起)");
+  assert.deepEqual(quickRange("lastweek", anchor), { start: "2026-07-27", end: "2026-08-02" }, "上周");
+  assert.ok(rangeInverted({ start: "2026-08-10", end: "2026-08-01" }), "倒置检出");
+  assert.ok(!rangeInverted({ start: "2026-08-01", end: "2026-08-10" }), "正序不警示");
+  assert.ok(monthGridHtml(2026, 7).includes('data-day="2026-08-01"'), "月历网格");
+  // 控件:range 输入倒置警示 + 点选纠序 + ←→ 翻页
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountDatePicker(host, { mode: "range" });
+  w.set("start", "2026-08-10");
+  w.set("end", "2026-08-01");
+  assert.ok(w.state.inverted, "输入倒置警示");
+  assert.ok(host.innerHTML.includes("起点晚于终点"), "警示上屏");
+  w.pick("2026-08-03");
+  w.pick("2026-08-01");
+  assert.deepEqual(w.state.value, { start: "2026-08-01", end: "2026-08-03" }, "点选自动纠序");
+  assert.ok(!w.state.inverted, "纠序后无警示");
+  const month0 = host.innerHTML.match(/wd-month-title">(\d+-\d+)</)?.[1];
+  host.trigger("keydown", { target: host, key: "ArrowRight" });
+  const month1 = host.innerHTML.match(/wd-month-title">(\d+-\d+)</)?.[1];
+  assert.notEqual(month1, month0, "→ 翻下一月(键盘可达)");
+  host.trigger("keydown", { target: host, key: "ArrowLeft" });
+  host.trigger("keydown", { target: host, key: "ArrowLeft" });
+  const month2 = host.innerHTML.match(/wd-month-title">(\d+-\d+)</)?.[1];
+  assert.notEqual(month2, month1, "← 翻上一月");
+  w.quick("today");
+  assert.equal(w.state.inverted, false, "快捷项重置警示");
+}

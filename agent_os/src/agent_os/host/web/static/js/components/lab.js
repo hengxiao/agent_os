@@ -18,7 +18,7 @@
 
 import { deleteJson, getJson, postJson, putJson } from "../api.js";
 import { copy } from "../themes.js";
-import { mountJsonEditor, mountTextEditor } from "../widgets/index.js";
+import { mountJsonEditor, mountSelectList, mountTextEditor } from "../widgets/index.js";
 import { deriveTraceView, renderTrace } from "./trace.js";
 import { emptyBlock, esc, toast } from "../util.js";
 import { TIER_PERM } from "./inbox.js";
@@ -293,7 +293,10 @@ export function topbarHtml(view) {
     .join("");
   return (
     `<div class="lab-top">` +
-    `<select class="input lab-select" data-lab="select">${options}</select>` +
+    // W3(docs/WIDGETS.md W-list):草稿下拉换可选列表——原生 select 隐藏为
+    // 表单模型锚(lab 的 change 委托/测试区域提取零改),W-list 驱动它
+    `<select class="input lab-select" data-lab="select" hidden>${options}</select>` +
+    `<span data-widget="select-list" data-wl-drafts class="wd-host"></span>` +
     `<input class="input mono lab-new-name" data-lab="new-name" placeholder="domain.action"` +
     ` aria-label="${esc(copy("lab.new"))}">` +
     `<select class="input lab-new-from" data-lab="new-from">` +
@@ -977,7 +980,28 @@ function _mountEditorWidgets(host) {
 
 function _renderTop() {
   const host = lab.root?.querySelector(".lab-top-host");
-  if (host) host.innerHTML = topbarHtml(lab) + (lab.confirming ? _promoteConfirmHtml() : "");
+  if (host) {
+    host.innerHTML = topbarHtml(lab) + (lab.confirming ? _promoteConfirmHtml() : "");
+    _mountDraftList(host); // W3:W-list 驱动隐藏的草稿 select(表单模型锚)
+  }
+}
+
+/* W3(docs/WIDGETS.md §6):草稿下拉 = W-list;选中即写隐藏 select 并派发
+   change(lab 的 data-lab="select" 委托路径零改,既有 _selectDraft 语义不变) */
+function _mountDraftList(host) {
+  const wl = host.querySelector("[data-wl-drafts]");
+  const sel = host.querySelector("[data-lab='select']");
+  if (!wl || !sel) return;
+  const items = (lab.drafts ?? []).map((d) => ({ id: d.name, label: d.name, hint: d.modified ?? "" }));
+  const list = mountSelectList(wl, { items, selected: lab.name ?? null });
+  list.on("select", ({ id }) => {
+    sel.value = id ?? "";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  list.on("activate", ({ id }) => {
+    sel.value = id ?? "";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 }
 
 export async function createDraft() {

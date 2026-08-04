@@ -8,6 +8,7 @@
 
 import { copy, initTheme, applyTheme, listThemes, currentThemeId } from "/static/js/themes.js";
 import { esc, toast } from "/static/js/util.js";
+import { mountDatePicker, mountFormEditor } from "/static/js/widgets/index.js";
 import { renderCardSurface } from "./cards.js";
 import { renderTabSurface } from "./details.js";
 
@@ -522,11 +523,12 @@ async function renderDetail() {
       `<button class="btn" data-it-retry>${esc(copy("platform.detail.retry"))}</button>`;
     return;
   }
-  if (d.mount) {
+  if (d.mount && !d.html) {
+    // legacy 整页挂载(自有内容,M4b)
     if (_legacyMountedFor !== d.mount) {
       host.innerHTML = "";
       try {
-        _legacyClose = await _mountLegacy(host, d.mount); // ES module 直接挂载(M4b)
+        _legacyClose = await _mountLegacy(host, d.mount);
         _legacyMountedFor = d.mount;
       } catch (e) {
         host.innerHTML = `<div class="pf-wait pf-errline">${esc(copy("platform.detail.error"))}: ${esc(e.message ?? e)}</div>`;
@@ -535,6 +537,7 @@ async function renderDetail() {
     return;
   }
   host.innerHTML = d.html ?? "";
+  if (d.mount) await d.mount(host); // html 之上的控件挂载(W3:run.launch 表单/browse 时间窗)
 }
 
 /* ── 数据:会话装载与选择(刷新恢复)──────────────────────────── */
@@ -726,11 +729,25 @@ async function _mountLegacy(host, kind) {
   return mod[closeName] ?? null;
 }
 
-/* runs legacy tab:摘要 + 深链 + 行内 run tab 直达(旧页无装配口的落法) */
-async function _legacyRunsHtml() {
-  const runs = await (await fetch("/api/runs")).json();
-  const failed = (runs ?? []).filter((r) => r.status === "failed").length;
-  const rows = (runs ?? [])
+/* W3:skill inputs schema(launch 表单数据源;拿不到 → null,发起面保持 textarea) */
+async function _skillInputs(skill) {
+  try {
+    const res = await fetch(`/api/skills/${encodeURIComponent(skill)}`);
+    if (!res.ok) return null;
+    const doc = await res.json();
+    return doc?.inputs && typeof doc.inputs === "object" && Object.keys(doc.inputs.properties ?? {}).length
+      ? doc.inputs
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/* runs legacy tab:摘要 + 深链 + 行内 run tab 直达(旧页无装配口的落法);
+   W3:browse 时间窗 = W-date range(过滤行内 run;quick 快捷项本地算)。
+   首屏行内渲染(区域提取可见);时间窗变更时走 region 重渲(真实 DOM 活性面) */
+function _runsRowsHtml(rows) {
+  return rows
     .slice(0, 8)
     .map(
       (r) =>
@@ -739,16 +756,44 @@ async function _legacyRunsHtml() {
         `<span class="pf-dim">${esc(r.status ?? "")}</span></div>`
     )
     .join("");
+}
+
+async function _legacyRunsHtml() {
+  const runs = await (await fetch("/api/runs")).json();
+  state._runsAll = runs ?? [];
+  const failed = state._runsAll.filter((r) => r.status === "failed").length;
   return (
     `<div class="pf-detail">` +
     `<div class="pf-detail-head">${esc(copy("platform.app.runs"))}</div>` +
-    `<div class="pf-card-sub">${esc(copy("platform.legacy.runs.line"))
-      .replace("{n}", String((runs ?? []).length))
+    `<div data-browse-range="1"></div>` +
+    `<div class="pf-card-sub" data-runs-count="1">${esc(copy("platform.legacy.runs.line"))
+      .replace("{n}", String(state._runsAll.length))
       .replace("{f}", String(failed))}</div>` +
     `<div class="pf-card-actions"><a class="btn" href="/#/runs">${esc(copy("platform.legacy.open"))}</a></div>` +
-    rows +
+    `<div data-runs-rows="1">${_runsRowsHtml(state._runsAll)}</div>` +
     `</div>`
   );
+}
+
+/* runs legacy tab 行渲染(时间窗过滤后;W-date change 驱动) */
+function _renderRunsRows(host, range) {
+  const all = state._runsAll ?? [];
+  const inRange = (r) => {
+    const day = String(r.started_at ?? "").slice(0, 10);
+    if (range?.start && day < range.start) return false;
+    if (range?.end && day > range.end) return false;
+    return true;
+  };
+  const rows = all.filter(inRange);
+  const failed = rows.filter((r) => r.status === "failed").length;
+  const count = host.querySelector("[data-runs-count]");
+  if (count) {
+    count.textContent = copy("platform.legacy.runs.line")
+      .replace("{n}", String(rows.length))
+      .replace("{f}", String(failed));
+  }
+  const rowsHost = host.querySelector("[data-runs-rows]");
+  if (rowsHost) rowsHost.innerHTML = _runsRowsHtml(rows);
 }
 
 /* spawn 的 state 归一(M3):args_from 的参数源——run 要 run_id、debug 要
@@ -794,6 +839,7 @@ function activateTab(id) {
 }
 
 async function openDetail(kind, ref, data) {
+  state._launchForm = null; // 换 tab 即弃旧表单(W3 表单态跟 tab 生命周期)
   const tab = { id: `d:${kind}:${ref}`, kind, title: _DETAIL_META[kind]?.title ?? ref, ref };
   const { tabs, active, opened } = openTab(state.tabs, tab);
   state.tabs = tabs;
@@ -876,7 +922,16 @@ async function _loadDetail(kind, ref, data) {
       ]);
       if (dRes.ok) {
         const [detail, signals] = await Promise.all([dRes.json(), sRes.json()]);
-        return { kind, ref, html: renderTabSurface(kind, { detail, signals }) };
+        // W3:launch schema 已知时发起面升级 W-form(未知/ad-hoc 保持 textarea)
+        const launchSchema = detail?.skill ? await _skillInputs(detail.skill) : null;
+        const mount = launchSchema
+          ? (host) => {
+              state._launchForm = mountFormEditor(host.querySelector("[data-launch-form]"), {
+                schema: launchSchema,
+              });
+            }
+          : null;
+        return { kind, ref, html: renderTabSurface(kind, { detail, signals, launchSchema }), mount };
       }
       // M4a:ad-hoc run(iterate 等不走产物面)回落 instance state——
       // running 态 = 持 run_id 且未终态,不发明新标志位(v0.2 §4)
@@ -907,8 +962,16 @@ async function _loadDetail(kind, ref, data) {
       const doc = await (await fetch(`/api/lab/drafts/${encodeURIComponent(ref)}`)).json();
       return { kind, ref, html: renderTabSurface(kind, doc) };
     }
-    // M4b legacy:runs = 深链摘要(旧列表页无装配口);其余四页 = ES module 挂载
-    if (kind === "runs") return { kind, ref, html: await _legacyRunsHtml() };
+    // M4b legacy:runs = 深链摘要 + W-date 时间窗(W3);其余四页 = ES module 挂载
+    if (kind === "runs") {
+      const html = await _legacyRunsHtml();
+      const mount = (host) => {
+        const picker = mountDatePicker(host.querySelector("[data-browse-range]"), { mode: "range" });
+        picker.on("change", ({ value }) => _renderRunsRows(host, value));
+        _renderRunsRows(host, null);
+      };
+      return { kind, ref, html, mount };
+    }
     if (_LEGACY_MODULE[kind]) return { kind, ref, mount: kind };
     return { kind, ref, error: `unknown detail kind: ${kind}` };
   } catch (e) {
@@ -1098,17 +1161,27 @@ async function tabAction(btn) {
   }
   btn.disabled = true;
   try {
-    // M4a:run.launch 的 input 来自发起面 textarea(留空 = 服务端骨架)
+    // M4a:run.launch 的 input 来自发起面;W3:W-form 优先(逐字段校验),
+    // 无表单时回 textarea JSON("高级:JSON" 或 schema 未知的面)
     let args = {};
     if (btn.dataset.tabAct === "run.launch") {
-      const raw = document.querySelector("#detailHost [data-launch-input]")?.value?.trim();
-      if (raw) {
-        try {
-          args = { input: JSON.parse(raw) };
-        } catch {
-          toast(copy("platform.run.launch.badjson"), "error");
+      if (state._launchForm) {
+        if (!state._launchForm.validate()) {
+          toast(copy("w.form.invalid"), "error");
           btn.disabled = false;
           return;
+        }
+        args = { input: state._launchForm.values() };
+      } else {
+        const raw = document.querySelector("#detailHost [data-launch-input]")?.value?.trim();
+        if (raw) {
+          try {
+            args = { input: JSON.parse(raw) };
+          } catch {
+            toast(copy("platform.run.launch.badjson"), "error");
+            btn.disabled = false;
+            return;
+          }
         }
       }
     }

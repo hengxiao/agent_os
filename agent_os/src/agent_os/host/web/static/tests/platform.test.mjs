@@ -600,6 +600,14 @@ const assertClean = (html, who) => {
       return reply({ run_id: "run-2", skill: "demo.fib", status: "running", result: null, error: "" });
     }
     if (url === "/api/runs/run-2/signals") return reply([]);
+    // W3:run.launch 表单 schema(ops.janitor 有 inputs;demo.fib 无 → textarea 面)
+    if (url === "/api/skills/ops.janitor") {
+      return reply({ name: "ops.janitor", inputs: { type: "object",
+        properties: { path: { type: "string" } }, required: ["path"] } });
+    }
+    if (url === "/api/skills/demo.fib") {
+      return { ok: false, status: 404, json: async () => ({ detail: "not found" }) };
+    }
     if (url === "/platform/api/apps/app-p1/actions/iterate.generate") {
       return reply({ ok: true, text: "已生成候选: description 精简", run_id: "run-9",
         run_status: "done", skill: "lab.dinner",
@@ -1025,19 +1033,26 @@ const assertClean = (html, who) => {
 
   /* ── M4a:run 真通道 + 发起面归一 ──────────────────────────── */
 
-  // 发起面:run tab 有 launch textarea + 按钮;留空 → args {}(服务端按 schema 骨架)
+  // 发起面:run tab 有 launch 按钮;W3 起 schema 已知时升级 W-form——
+  // 必填项留空先拦,填上后走管道(args.input 直传)
   doc.trigger("click", { target: runLink }); // run-1 tab(去重聚焦)
   await tick();
-  assert.ok(detailHtml().includes("data-launch-input"), "发起面 textarea 在(app 内改参)");
   assert.ok(detailHtml().includes('data-tab-act="run.launch"'), "再跑一次按钮在");
+  assert.ok(detailHtml().includes("data-launch-input"), "高级:JSON textarea 保留(折叠面)");
   const launchBtn = new StubEl("button");
   launchBtn.dataset.tabAct = "run.launch";
   launchBtn.parentNode = doc.body;
   doc.trigger("click", { target: launchBtn });
   await tick();
+  assert.ok(
+    !calls.some((c) => c.url === "/platform/api/apps/app-spawn-run-1/actions/run.launch"),
+    "W3:required 空值先拦(表单 validate 不过不发)");
+  probe.state._launchForm.set_field("path", "/tmp");
+  doc.trigger("click", { target: launchBtn });
+  await tick();
   const lPost = calls.find((c) => c.url === "/platform/api/apps/app-spawn-run-1/actions/run.launch");
   assert.ok(lPost, "launch 走 action 管道");
-  assert.deepEqual(JSON.parse(lPost.body).args, {}, "留空 = 服务端骨架(可改参的缺省)");
+  assert.deepEqual(JSON.parse(lPost.body).args, { input: { path: "/tmp" } }, "表单值直传(W3 表单面)");
   assert.equal(probe.state.active, "d:run:run-2", "run 通道产出 → 直接进新 run tab");
   assert.ok(detailHtml().includes("running"), "新 run tab 实时状态渲染");
 
@@ -1230,6 +1245,32 @@ const assertClean = (html, who) => {
   doc.trigger("click", { target: iconBtn });
   await tick();
   assert.equal(doc.body.dataset.iconMode, "0", "再点还原");
+
+  /* ── W3:browse 时间窗(W-date range 过滤行内 run)────────────── */
+
+  const runsBtn2 = new StubEl("button");
+  runsBtn2.dataset.openLegacy = "runs";
+  runsBtn2.parentNode = doc.body;
+  doc.trigger("click", { target: runsBtn2 });
+  await tick();
+  const rowsRegion = doc.querySelector("#detailHost").querySelector("[data-runs-rows]");
+  assert.ok(rowsRegion.innerHTML.includes("ops.janitor"), "初始全量(两行)");
+  const rangeHost = doc.querySelector("#detailHost").querySelector("[data-browse-range]");
+  const startInput = new StubEl("input"); // region 元素 dataset 为空,合成驱动(dom-stub 面)
+  startInput.dataset.wdStart = "1";
+  startInput.parentNode = rangeHost;
+  startInput.value = "2026-08-03";
+  rangeHost.trigger("input", { target: startInput });
+  await tick();
+  assert.ok(!rowsRegion.innerHTML.includes("ops.janitor"), "起点过滤后旧 run 出窗");
+  assert.ok(rowsRegion.innerHTML.includes("demo.fib"), "窗内 run 保留");
+  const endInput = new StubEl("input");
+  endInput.dataset.wdEnd = "1";
+  endInput.parentNode = rangeHost;
+  endInput.value = "2026-08-01";
+  rangeHost.trigger("input", { target: endInput });
+  await tick();
+  assert.ok(rangeHost.innerHTML.includes("起点晚于终点"), "倒置警示上屏");
 }
 
 console.log("platform.test.mjs: all assertions passed");

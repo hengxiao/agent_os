@@ -1,19 +1,28 @@
 # App 化 UI 模型(App-Model UI)技术文档
 
-> 版本:v0.3(§13 Shell as App:整个界面也是 app;v0.2 按独立评审修订——
->   三态 exec、state 服务端权威、安全论断重写,见 §12)
+> 版本:v0.5(§17 按核心原则复核代码后重写;v0.3 = Shell as App;
+>   v0.2 = 三态 exec / state 服务端权威,见 §12)
 > 对象:web_platform 的下一代 UI 架构——把 UI 看作一个操作系统,
->   对话 app 只是它的终端(PowerShell/cmd),世界改变动作经受仲裁的通道。
-> v0.2 修订(评审驱动,逐条见 §12):
->   1. **推翻 v0.1 "每个动作都是 skill 调用 → 内核仲裁自动覆盖" 的论断**——
->      该论断在其招牌例子上为假(promote 是 host 函数不走升权闸;工具分发
->      需要帧上下文,宿主调工具=自我授权)。改为**三态 exec**(§4/§7):
->      endpoint / run / local,各自的授权面显式声明;
->   2. **app.state 服务端权威**,客户端只发事件不发状态(§4);
->   3. 不变量措辞修正:改变外部世界的动作经受仲裁通道;纯 UI 动作不需要。
+>   对话 app 只是它的终端(PowerShell/cmd)。
+> **核心原则(用户给定,统摄全文)**:**所有 widget 都有 context,所有 action
+>   都是 skill;perform an action = 将合适的 context 给与对应的 skill 去执行。**
+>
+> **版本关系要读懂,否则会看到自相矛盾的两处**:
+> - **v0.2**(§4/§7/§12)按一次独立评审引入了**三态 exec**
+>   (endpoint / run / local),理由是"action=skill 则仲裁自动覆盖"当时为假;
+> - **v0.5**(§17)按核心原则复核后判定:那次评审的**实证没错、方向反了**
+>   ——正确的对齐是**把宿主函数升格为真 skill**,而不是把抽象降级为三态。
+>   同时更正了 v0.2 的一处**成本误判**(code 技能不进 agent loop,无 LLM
+>   开销,§17.1)。
+> - **因此 §4/§7 的三态 exec 是过渡态,不是终态**;`exec.mode` 升格后降级为
+>   元信息(只表示要不要起产物级 Run),执行一律经 `kernel.run()`。
+>   两处冲突时**以 §17 为准**。
+>
 > 关系:概念承接 `AGENTIC-UI.md` 方案 A;实现基础是 web_platform 现状;
->   红线遵守 `WEB-PLATFORM.md` §7(本模型的 exec 表是它的显式化,§7)。
-> 一句话:**每个 app 两张面孔;每个改变世界的动作都走在明说的仲裁通道里。**
+>   `WEB-PLATFORM.md` §7 的红线(不开新通道、没有第二条 promote 路径、
+>   升级动作仍过人)在升格后**逐条仍然成立**——升格不是绕开闸门的新通道。
+> 一句话:**每个 app 两张面孔;每个 action 都是一次 skill 调用,
+>   context 由框架逐级备齐后交给它。**
 
 ---
 
@@ -87,9 +96,15 @@
 
 ## 4. Action 管道:三态 exec
 
-**核心修正(v0.2)**:action 的执行方式不是单一的"skill 调用"——那是错误
-抽象(promote 是 host 函数、pin/spawn 无世界副作用、工具分发需要帧上下文)。
-正确模型是三态,每态的授权面显式声明:
+> **⚠ 本节是过渡态,终态见 §17。** v0.2 曾据此判定"三态"是正确模型;
+> v0.5 按核心原则复核后推翻了那个方向——正确对齐是**把宿主函数升格为真
+> skill**(§17.4 两级升格),`exec.mode` 随之降级为元信息(只表示要不要起
+> 产物级 Run),执行一律经 `kernel.run()`。下表描述的是**当前实现**,
+> 不是目标态;两者冲突以 §17 为准。
+
+**当时的修正理由(v0.2)**:action 的执行方式不是单一的"skill 调用"——
+认为那是错误抽象(promote 是 host 函数、pin/spawn 无世界副作用、工具分发
+需要帧上下文)。当时给出的三态模型,每态授权面显式声明:
 
 | exec | 语义 | 例子 | 授权面 |
 |---|---|---|---|
@@ -179,8 +194,14 @@ send(text):
 
 ## 7. 安全与信任面(v0.2 重写:授权面按 exec 态显式声明)
 
+> **⚠ 本节的结论已被 §17 部分推翻。** v0.2 说"action=skill 则仲裁自动覆盖"
+> 是错的——这个**实证仍然成立**(下面三条逐条为真)。但 v0.5 指出它证明的是
+> "**当时**没做到",不是"做不到":把宿主函数升格为真 skill、并把副作用面拆成
+> **tool**(§17.4 的 L1+L2 两级),仲裁覆盖就从话术变成结构。
+> **本节读作"为什么不能只靠改名就宣称安全",而不是"所以 UI 要有自己的权限层"。**
+
 v0.1 说"action = skill 调用 → 内核仲裁自动覆盖 UI 全部副作用,UI 不需要
-自己的权限层"——**这个论断是错的**,三处:
+自己的权限层"——**这个论断在当时是错的**,三处:
 
 1. 招牌例子是反例:`lab.pkg.promote` 这个 skill 不存在;promote 是 host
    函数(`promote_package()`),经 `POST /api/lab/packages/promote`,**不走
@@ -662,57 +683,189 @@ chat bubble(见 docs/WIDGETS.md W-bubble)是本协议的首个落地:
 
 ---
 
-## 17. 原则对齐审计(v0.4;2026-08-03)
+## 17. 原则对齐审计(v0.5;2026-08-05 复核代码后重写)
 
 > 核心原则(用户给定):**所有 widget 都有 context,所有 action 都是 skill;
 > perform an action = 将合适的 context 给与对应的 skill 去执行。**
-> 本节逐条检视现状(含 v0.2 三态 exec)对该原则的符合度。
+> 本节 v0.4 是首轮审计,v0.5 逐条**对代码复核**后重写——三处判定偏乐观、
+> 四处漏项、一处靠改术语达成的"符合",以及一条 v0.4 完全没写的关键结构
+> (§17.4 升格是两级)。
 
-### 17.1 与 v0.2 的张力先说清
+### 17.1 与 v0.2 的张力,以及一次成本误判的更正
 
-v0.2 评审曾证明"action=skill 调用则内核仲裁自动覆盖"在当时为假——
-promote 是 host 函数、工具分发需要帧上下文。那次评审的实证结论没错,
-但方向相反:**正确的对齐不是把抽象降级为三态 exec,而是把 endpoint 态的
-宿主函数升格为真 skill**,让"所有 action 都是 skill"成为事实,仲裁覆盖
-也才从话术变成结构。v0.2 的三态表过渡保留(§17.4 映射),exec 字段的
-实现语义逐步迁移。
+v0.2 评审证明"action=skill 调用则内核仲裁自动覆盖"在**当时**为假(promote
+是 host 函数、工具分发需要帧上下文)。那次评审的实证没错,但结论方向反了:
+**正确的对齐不是把抽象降级为三态 exec,而是把宿主函数升格为真 skill**,
+让"所有 action 都是 skill"成为事实,仲裁覆盖才从话术变结构。
 
-### 17.2 逐项审计
+**同时更正一条成本误判**(v0.4 审计与评审都写错了)。曾以为"每个动作升格
+= 一帧 + 一次 run + LLM",据此认为 `shell.theme.set` 这类动作开销与语义不成
+比例。查 `kernel/runner.py:389` 的 `_execute_frame`:
+
+```python
+if skill_obj.manifest.kind is SkillKind.CODE:
+    return await self._run_code_frame(frame, skill_obj)   # → Logic Kernel
+return await self._frame_loop(frame, skill_obj)           # → agent loop(LLM)
+```
+
+**code 技能完全不进 `_frame_loop`**——没有 LLM 往返、没有 `context.build`、
+没有压缩、没有 token 记账。真实开销 = 压帧/弹帧 + 4 个信号
+(`pre/post:frame.*`、`pre/post:logic.exec`)+ outputs schema 校验。
+
+而且 `kernel.run()` 是**进程内**的;run 产物(meta/trace/checkpoint/result)
+是宿主 `run_manager.start_run` 才写——`run_iterate` 走的正是前者。**所以有
+两档调用面**,不是每个动作都得起一个带产物的 Run。
+
+结论:成本不构成反对理由,**§17.5 因此选 (b) 全量升格**。
+
+### 17.2 真实符合度:0 / 36
+
+`web_platform/apps.py` 现有 **36 个 action:23 endpoint + 11 local + 2 run**。
+
+v0.4 读起来像"run 态那 2 个已符合"。但看分发实现,`app.py:1521` 的注释自陈
+**`endpoint/run 当前同一薄 handler 面`**;而那张映射表虽名为 `SKILL_BINDINGS`,
+值却是 Python 函数(`_act_scaffold_approve`、`_act_plan_confirm`…),生产
+registry 里**没有任何 `platform.*` 技能**。
+
+> **管道层面的真实符合度是 0/36。** 名字已按目标态起好(`platform.*`),
+> 实现一个都没到位——这反而是好事:升格不用改名,但文档不能让人以为
+> run 态已经符合。
+
+### 17.3 逐项审计(v0.5 修正表)
 
 | # | 现状 | 判定 | 处置 |
 |---|---|---|---|
-| 1 | **endpoint 态动作是 host 函数**(promote/recheck/rewind/run.stop/resume/rerun/debug.command/draft.check/draft.promote/doc.save/snapshot/export/shell.theme.set/session.create) | ❌ 不符合 | 升格为内置 skill:`platform.*` 命名空间的 code 技能(handler 落包内),在帧里执行——白名单/升权闸/数据闸才**真正**覆盖 UI 副作用。promote 的人确认保留(那是该 skill 的升权确认语义,不是冗余) |
-| 2 | **local 态动作是服务端 mutator**(shell.tab.open/close/move_tab、conversation pin) | ❌ 不符合 | 升格为 **local skill**:纯 state 变换函数(无副作用),同一 skill 接口、同一测试面;"local"从此是 skill 的副作用档而非执行通道 |
-| 3 | **widget actions 是裸 JS**(set_value/format/toggle…) | ❌ 不符合 | 同理建模为 local skill(宿主内执行,不进内核;形态 = def.actions 声明的纯函数),统一"action=skill"的表述 |
-| 4 | **cascade 是按需注册**(只有 bubble/comment 注册了 context_provider) | ❌ 不符合 | **所有 widget 默认有 context**:registry 注册时给每个 widget 一个缺省 context_provider(kind+state 摘要),声明者可覆盖;不提供 = 协议不合规 |
-| 5 | **action 管道不带 cascade**(args_from 只绑 state) | ❌ 不符合 | action 执行时**自动携带级联信封**(§16),args_from 是其子集;不需要全链的 action 用 `context: []` 显式声明(默认有,显式无) |
-| 6 | **对话 send/retry 是同步请求-响应**,不是 run/skill | ❌ 不符合 | 升格:send = 起 orchestrate run(skill 执行),回复以 run 终态回写(M4a 的 run 真通道同构) |
-| 7 | **decisions 作答走专属端点** `/api/decisions/{qid}`,不过管道 | ❌ 不符合 | 收编为 `escalation` app 的 action(endpoint→skill 后同 1)——supervisor 闭环语义不变,入口归一 |
-| 8 | **旧 `/api/cards/action`** 兼容面 | ⚠️ 过渡 | M6 退役(迁移完成后删) |
-| 9 | 升权确认(人审)/干净 context/args_from 服务端权威 | ✅ 符合 | 保留;升格后这些语义由 skill 的 tier 与帧模型原生承担 |
-| 10 | widget 零 fetch/事件上行 | ✅ 符合 | 保留;这正是"widget 有 context 但不执行 action"的控件侧表达 |
+| 1 | **全部 36 个 action 都是 host Python**(不止 v0.4 列的 14 个;`run` 态那 2 个也是) | ❌ | L1+L2 升格(§17.4) |
+| 2 | **11 个 local 是服务端 mutator**(shell.tab.open/close/move_tab、pin…) | ❌ | 升格为真 code skill(`tier: none`,无 tools),**不是**"叫 local skill 的 JS 闭包" |
+| 3 | **widget actions 是裸 JS**(set_value/format/toggle…) | ❌ | 同 #2 |
+| 4 | **cascade 的 provider 机制是死代码**:`registerContextProvider` 全仓**零调用点**;唯一消费者 lab-iterate 用 `cascadeProviders:` 按调用手搓传入 | ❌ | 比 v0.4 判的更弱——不是"按需注册",是**注册面从未启用**。registry 加缺省 provider,消费者改用注册制 |
+| 5 | action 管道不带 cascade(args_from 只绑 state) | ❌ | 管道自动携带级联信封;`context: []` 显式弃权 |
+| 6 | 对话 send/retry 是同步请求-响应 | ❌ | 升格为 orchestrate run |
+| 7 | decisions 作答走专属端点,不过管道 | ❌ | 收编为 `escalation` app 的 action |
+| 8 | **旧 web 的 27 个写端点整体在审计外** | ❌ **v0.4 漏项** | §8 迁移图以"legacy 五页不做改写"豁免——这是**规模最大的常驻偏离**。要么排进升格序,要么明确承认它是永久例外(那原则就有边界) |
+| 9 | **调试干预 `inject` / `modify`** | ❌ **v0.4 漏项** | v0.4 只列了 `debug.command`。这两个直接改写在跑帧的参数/注入消息后放行,是**全系统特权最高的 UI 动作**,最该经帧白名单与升权闸 |
+| 10 | **`/api/supervisor/{qid}/answer`(旧 web)** 与 platform 的 `decision.answer` 两条路径 | ❌ **v0.4 漏项** | 裁决作答有两个入口,收编时一并归一 |
+| 11 | **`/api/skills/reload`、草稿 `DELETE`** | ❌ **v0.4 漏项** | 前者热重载生产 registry(影响其后所有 run),后者 `rmtree`(连版本史一起删,见 SKILL-PACKAGES-V2 §6.11)。都是"改变世界",都不在任何清单里 |
+| 12 | 升权人审 / 干净 context / args_from 服务端权威 | ✅ | 保留;升格后由 skill 的 tier 与帧模型原生承担 |
+| 13 | widget 零 fetch、事件上行 | ✅ | 保留;这正是"widget 有 context 但不执行 action"的控件侧表达 |
 
-### 17.3 升格清单(下一步开发序)
+### 17.4 升格是两级 —— v0.4 只写了第一级
 
-1. `platform.*` 内置 skill 包:把 17.2-#1 的 host handler 逐个包成 code 技能
-   (skills.yaml 注册,trusted);管道 exec.endpoint 改为真实 skill 调用;
-2. local mutator → local skill(#2/#3);
-3. registry 缺省 context_provider(#4)+ 管道自动级联(#5);
-4. send/retry 归 run(#6)、decisions 收编(#7)、旧 cards/action 退役(#8);
-5. 全程红线:**promote 的人确认、升权人审、数据 authZ 一行都不许因升格而削弱**
-   ——升格让仲裁覆盖从话术变结构,不是绕开它的新通道。
+这是本次复核最重要的结构性发现。看 `_run_code_frame` 给 handler 的东西:
 
-### 17.4 验收(原则符合度测试)
+```python
+ctx=KernelLogicContext(self, frame, manifest) if trusted else None
+```
 
-- 静态扫描:任何 action 端点必须能映射到一个 skill(local/run);无孤端点;
-- 每个注册 widget 必有 context_provider(缺省或声明);
-- 管道抽样:任选 action,其执行输入含 cascade 信封(或显式 `context: []`);
-- 既有 941+ 测试全绿(行为零变化,只换执行面的身份)。
+TRUSTED 档的 handler 是**进程内的任意 Python**。如果只是把 `_act_plan_confirm`
+的函数体搬进 handler、里面照样直接 `promote_package(...)`,那么:
 
-### 17.5 职责分工(skill 定义逻辑,框架准备参数)
+- ✅ 拿到:帧、推导档、被低档调用时的升权闸、`pre/post:frame.*` 与
+  `logic.exec` 信号(→ trace/replay)、outputs 校验、timeout;
+- ❌ **没拿到**:三层权限交集与数据 authZ——**那两道闸在工具分发上**,
+  而这个 handler 根本没经 `ctx` 调工具,是直接 import 干活的。
 
-用户澄清(v0.4 补记):**action 的逻辑由 skill 定义;但"从 action 到备齐
-参数发给对应 skill"是框架的职责**。两边都不越界:
+结果是"**戴着 tier 徽章的宿主函数**"。§17.1 说升格让"仲裁从话术变结构",
+这句话只有做完第二级才成立。
+
+| 级 | 动作 | 拿到什么 | 适用面 |
+|---|---|---|---|
+| **L1** host 函数 → code skill | 机械搬运,便宜 | 帧 / 推导档 / 升权闸 / 信号 / trace / replay / outputs 校验 | **全部 36 个** |
+| **L2** 特权操作本身 → **Tool** | 要拆:skill 只做编排,副作用落在 tool 上 | **三层权限交集 + 数据 authZ** | 只给真有副作用的那些 |
+
+**L2 名单**(有真实世界副作用,必须拆出 tool):
+`plan.confirm`(promote 写盘 + reload)、`candidate.accept`、`doc.save`、
+`doc.apply`、`run.stop`/`resume`/`rerun`、`debug.modify`/`inject`、
+草稿 `delete`、`skills.reload`。
+
+以 `plan.confirm` 为例:L2 意味着 `promote_package` 的**写盘与 reload 变成
+一个声明了 `permission: WRITE` / `side_effect: reversible` 的 tool**,skill
+只负责取参数、调它、回写 state。这样"UI 副作用被内核仲裁"才是真的。
+
+**11 个 local 只需要 L1**——它们本来就没有副作用要仲裁,升格的收益是
+统一管道 + 进 trace(见 §17.5)。
+
+### 17.5 裁决:走 (b),全量真 skill
+
+v0.4 的 #2/#3 处置是把 local mutator 与 widget 裸 JS "**建模为 local skill**",
+并注明"宿主内执行,**不进内核**"。**这不是符合原则,是重新定义术语让原则
+为真**——若 "skill" 可以指一个不在 registry、无 manifest、无 tier、不进帧的
+JS 闭包,那"所有 action 都是 skill"就成了不可证伪的同义反复,验收里的静态
+扫描也退化成查命名规范。
+
+曾提出的二选一:
+
+- **(a)** 纯 UI 动作不算 action,退出概念,不叫 skill;
+- **(b)** 它们是真 skill:进 registry、有 manifest、`tier: none`、在帧里执行。
+
+**裁决:(b)。** 依据是 §17.1 更正后的成本实测——code 技能不进 agent loop,
+开销只有压帧 + 4 信号;`kernel.run()` 还可走进程内不落产物。既然便宜,就
+没有理由为了省开销把一类交互放到原则之外。
+
+**(b) 的额外收益**:UI 动作进 trace,agent 因此**真的能看见用户在界面上做了
+什么**,甚至能 replay——这正是 §13.2"UI 成为 agent 可寻址的"想要的,
+(a) 给不了。
+
+> 明确否决 **(c):叫它 skill 但不当 skill 做**。那是最坏的一种——原则看起来
+> 达成了,实际什么约束都没多。
+
+### 17.6 原则本身的一处未定义:读取算不算 action
+
+"所有 widget 都有 context"——**context 从哪来?** 今天是 app 去 GET 拉数据。
+
+- **算** → `platform.*` 还需一整套读 skill,GET 端点也要升格;
+- **不算** → context 的**供给面在原则之外**,需单独定义谁负责把数据放进
+  widget 的 context。
+
+**这条不定,§17.7 第 3 步"registry 缺省 context_provider"没法落笔**——
+不知道 provider 该从哪取数。建议裁决为"**读不算 action,但 context 供给必须
+声明式**":widget 的 `context` 声明自己要什么,由框架(§17.9 的职责分工)
+去取,widget 仍然零 fetch。
+
+### 17.7 升格序
+
+1. **`platform.*` 内置 skill 包(L1 全量)**:36 个 handler 逐个包成 code
+   技能,skills.yaml 注册、trusted 档;管道的 `exec.mode` 从"选执行通道"
+   降级为**元信息**(local/run 只表示要不要起产物级 Run),调用一律经
+   `kernel.run()`;
+2. **L2 拆 tool**:§17.4 名单逐个把副作用面拆成 tool,skill 退为编排;
+3. **cascade 上线**:registry 加缺省 `context_provider`(kind + state 摘要),
+   消费者改用注册制(现有 `_iterateProviders` 手搓形态退役);管道自动携带
+   信封,`context: []` 显式弃权;
+4. **收编三条旁路**:send/retry 归 run(#6)、decisions 归管道(#7)、
+   旧 `cards/action` 退役(过渡面);
+5. **旧 web 的 27 个写端点**(#8):先做归类决策(排期 or 永久例外),
+   `inject`/`modify`/`skills.reload`/草稿 `delete` 四个优先(#9/#11);
+6. **全程红线**:promote 的人确认、升权人审、数据 authZ **一行都不许因升格
+   而削弱**——升格让仲裁从话术变结构,不是绕开它的新通道。
+
+### 17.8 验收(原则符合度测试)
+
+- **静态扫描**:`apps.py` 每个 action 的 `exec.ref` 必须能在 registry 里解析
+  到一个真实 skill(不是 `SKILL_BINDINGS` 里的 Python 函数);无孤 handler;
+- **L2 断言**:§17.4 名单里的每个 skill,其副作用必须经 tool 分发——
+  handler 内禁止直接 import 业务写函数(静态扫描 import 面);
+- 每个注册 widget 必有 `context_provider`(缺省或声明);
+  `registerContextProvider` 的调用点数 > 0(当前为 **0**,即死代码);
+- 管道抽样:任选 action,其执行输入含 cascade 信封或显式 `context: []`;
+- **行为零变化**:既有 **950 passed / 10 skipped / 32 xfailed**(2026-08-05
+  实测基线)全绿——升格只换执行面的身份,不改语义。
+
+### 17.9 边界:force_sandbox 下的开销
+
+`RunConfig.logic_policy.force_sandbox = True` 时,`ctx` 变 None、代码跨进程经
+syscall 通道执行(`api/v1/run.py:22`)。**那种部署下每个 UI 动作都是一次子
+进程**,§17.1 的成本结论不适用。
+
+升格方案必须声明:platform 的动作 skill 在 force_sandbox 宿主下是**豁免**
+(它们是可信内置,与用户提供的 skill 不同源),还是接受代价。建议豁免,
+并在 `logic_policy` 上加一个显式的可信内置白名单——**豁免要显式,不能靠
+"恰好没被覆盖"**。
+
+### 17.10 职责分工(skill 定义逻辑,框架准备参数)
+
+用户澄清(v0.4 补记,v0.5 保留):**action 的逻辑由 skill 定义;但"从 action
+到备齐参数发给对应 skill"是框架的职责**。两边都不越界:
 
 | 框架(action 管道)负责 | skill 负责 |
 |---|---|

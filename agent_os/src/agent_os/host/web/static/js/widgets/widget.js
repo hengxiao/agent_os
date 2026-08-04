@@ -13,6 +13,26 @@
 
 import { registerContextProvider } from "./cascade.js";
 
+/* 选区/焦点保留(docs/WIDGET-ARCH.md §1.3;W5.1 必答题):全量重渲前后存取
+   聚焦元素的 selectionStart/End 与 activeElement,重渲后找回新元素并恢复。
+   ``selector``:重渲后找回元素的定位面(真实 DOM 缺省用聚焦元素 tag;
+   调用方可显式给——W-text/W-json 每宿主一个 textarea,直接传 "textarea";
+   多输入控件迁移时按 data-field 细化)。 */
+export function preserveSelection(host, fn, { selector = null } = {}) {
+  const doc = host.ownerDocument ?? globalThis.document;
+  const active = doc?.activeElement;
+  const inside = Boolean(active) && (active === host || Boolean(host.contains?.(active)));
+  const sel = selector ?? (inside ? String(active.tagName).toLowerCase() : null);
+  const [s, e] = inside ? [active.selectionStart, active.selectionEnd] : [0, 0];
+  fn();
+  if (!inside || !sel) return;
+  const next = host.querySelector(sel);
+  if (!next) return;
+  next.selectionStart = s;
+  next.selectionEnd = e;
+  next.focus?.();
+}
+
 export function createWidget(def, { state = {}, path = "", onRegister = null, onUnregister = null } = {}) {
   const listeners = {};
   let destroyed = false;

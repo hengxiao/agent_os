@@ -1,14 +1,32 @@
-/* W-json — JSON editor(docs/WIDGETS.md §2;带校验的文本编辑器)。
+/* W-json 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.2;W5.1 新形态:自渲染)。
 
-   state{value, dirty, error:{line, message}|null, schema};
+   state = W-text 面 + {error:{line, message}|null, schema};
    actions 全 local:set_value(即时 JSON 合法性校验)/format(一键美化,幂等)/
    validate(按 schema,字段级→行级提示);失焦校验;
    细节:**行级错误定位**(parse 错误的 position → 行号;schema 不合按字段名
-   搜行——错在哪一行显示,不是只报 message)。 */
+   搜行——错在哪一行显示,不是只报 message)。
+   铁律:本文件不拼 HTML(渲染全在 w-json.render.js);零 fetch;事件上行。 */
 
 import { copy } from "../themes.js";
 import { registerWidgetDef } from "./registry.js";
-import { mountTextEditor } from "./w-text.js";
+import { _mountText } from "./w-text.js";
+import { renderJsonEditor } from "./w-json.render.js";
+
+export const JSON_EDITOR_DEF = registerWidgetDef({
+  kind: "json-editor",
+  v: 1,
+  state_schema: { type: "object" },
+  state_defaults: { value: "", dirty: false, readonly: false, lang: "json", wrap: true, mono: true },
+  actions: [
+    { id: "set_value", exec: "local", args_input: { value: { type: "string" } } },
+    { id: "format", exec: "local" },
+    { id: "validate", exec: "local" },
+  ],
+  events: ["change", "commit", "revert"],
+  aria: { role: "textbox-multiline", keys: ["Escape"] },
+  surfaces: ["card", "tab"],
+  render: renderJsonEditor, // W5.1:render 面进 def(registry 校验形态)
+});
 
 export const JSON_EDITOR_DEF_KIND = "json-editor";
 
@@ -75,68 +93,73 @@ export function formatJson(text) {
   return JSON.stringify(JSON.parse(text), null, 2);
 }
 
-/* 挂进宿主(与 W-text 同族:textarea + 错误条 + format 钮;
-   errorSlot = 既有提示槽(lab 的 data-json-hint span)——写行级消息进去,
-   没有就自建 .wd-errbar;宿主监听挂在 host 上,后注册者后触发——
-   lab 的旧 hint 先写,本控件以行级信息收尾(§2 行级定位增强) */
-export function mountJsonEditor(host, { schema = null, path = "", onRegister = null, onUnregister = null } = {}) {
-  const textarea = host.querySelector("textarea");
-  if (!textarea) throw new Error("json-editor: host 里没有 textarea");
-  const widget = mountTextEditor(host, { path, onRegister, onUnregister });
-  widget.kind = JSON_EDITOR_DEF_KIND;
-  widget.state.schema = schema;
-  widget.state.error = null;
+/* 自渲染装配(§1.3;宿主给空挂点 + data-field 或显式 options)。
+   错误条/绿勾 = render 面;校验结果进出走局部 hidden/文本刷新(不重渲,
+   不打断输入);format 经 update 面(全量重渲 + 选区保留) */
+export function mountJsonEditor(host, { schema = null, ...opts } = {}) {
+  const widget = _mountText(host, JSON_EDITOR_DEF, {
+    ...opts,
+    mono: opts.mono ?? true, // JSON 编辑默认 mono 变体(行号槽)
+    extraState: { schema, error: null },
+  });
+  const textarea = () => host.querySelector("textarea");
 
-  const slot =
-    host.querySelector(".lab-hint") ??
-    (() => {
-      const bar = host.ownerDocument.createElement("div");
-      bar.className = "wd-errbar";
-      bar.hidden = true;
-      host.appendChild(bar);
-      return bar;
-    })();
-  const fmtBtn = host.ownerDocument.createElement("button");
-  fmtBtn.type = "button";
-  fmtBtn.className = "wd-format";
-  fmtBtn.textContent = copy("w.json.format");
-  host.appendChild(fmtBtn);
-
-  const show = (err) => {
-    widget.state.error = err;
-    if (slot.classList?.contains("wd-errbar")) slot.hidden = !err;
-    slot.textContent = err ? `${copy("w.json.errline").replace("{line}", String(err.line))}: ${err.message}` : "";
+  const check = () => {
+    const live = textarea()?.value; // 活元素优先(失焦校验时 input 可能没来过)
+    if (typeof live === "string") widget.state.value = live;
+    widget.state.error =
+      jsonErrorAt(widget.state.value) ?? schemaErrorAt(widget.state.value, widget.state.schema);
+    // 局部刷新(不重渲):错误条显隐 + 行级文案;绿勾随错误进出
+    const bar = host.querySelector(".wd-errbar");
+    if (bar) {
+      bar.hidden = !widget.state.error;
+      bar.textContent = widget.state.error
+        ? `${copy("w.json.errline").replace("{line}", String(widget.state.error.line))}: ${widget.state.error.message}`
+        : "";
+    }
+    const okMark = host.querySelector(".wd-json-ok");
+    if (okMark) okMark.hidden = Boolean(widget.state.error) || !widget.state.value.trim();
   };
 
-  const check = () => show(jsonErrorAt(textarea.value) ?? schemaErrorAt(textarea.value, widget.state.schema));
-
   host.addEventListener("input", (e) => {
-    if (e.target === textarea) check(); // 即时校验(后于宿主旧 hint 触发,行级收尾)
+    if (e.target === textarea()) check(); // 即时校验(行级定位)
   });
   host.addEventListener("focusout", (e) => {
-    if (e.target === textarea) check(); // 失焦校验(§2)
+    if (e.target === textarea()) check(); // 失焦校验(§2)
   });
-  fmtBtn.addEventListener("click", () => {
-    const err = jsonErrorAt(textarea.value);
-    if (err) return check(); // 不合法不美化(先修错,§2)
-    const [s, e] = [textarea.selectionStart, textarea.selectionEnd];
-    textarea.value = formatJson(textarea.value);
-    textarea.selectionStart = s;
-    textarea.selectionEnd = e;
-    textarea.dispatchEvent(new Event("input", { bubbles: true })); // 同步宿主表单模型(lab 的 data-field 委托)
-    show(null);
+  // 委托在 host(重渲后子元素换新,直接挂子元素监听会死——W5.1 自渲染纪律)
+  host.addEventListener("click", (e) => {
+    if (e.target.closest?.("[data-wd-format]")) return _format();
+    if (e.target.closest?.("[data-wd-errbar]") && widget.state.error) {
+      _jumpToLine(widget.state.error.line); // 错误条点击跳到错误行(§2.2)
+    }
   });
+
+  const _format = () => {
+    const ta = textarea();
+    if (!ta) return;
+    if (jsonErrorAt(ta.value)) return check(); // 不合法不美化(先修错,§2)
+    widget.update({ value: formatJson(ta.value) }); // 重渲 + 选区保留(W5.1 update 面)
+    textarea()?.dispatchEvent?.(new Event("input", { bubbles: true })); // 同步宿主表单模型(lab 的 data-field 委托)
+    check();
+  };
+
+  /* 错误条点击 → 光标跳到错误行行首(§2.2 交互) */
+  const _jumpToLine = (line) => {
+    const ta = textarea();
+    if (!ta) return;
+    const lines = String(ta.value).split("\n");
+    const pos = lines.slice(0, Math.max(0, line - 1)).reduce((n, l) => n + l.length + 1, 0);
+    ta.focus?.();
+    ta.selectionStart = pos;
+    ta.selectionEnd = pos;
+  };
 
   widget.validate = (schemaArg = widget.state.schema) => {
     widget.state.schema = schemaArg;
     check();
     return widget.state.error === null;
   };
-  const _destroy = widget.destroy.bind(widget);
-  widget.destroy = () => {
-    fmtBtn.remove();
-    if (slot.classList?.contains("wd-errbar")) slot.remove();
-    _destroy();
-  };
+  check(); // 初值显隐同步(stub/虚拟面 region 不解析 hidden 属性;真实 DOM 同值重写)
   return widget;
 }

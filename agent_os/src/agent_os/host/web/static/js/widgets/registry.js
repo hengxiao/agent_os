@@ -55,6 +55,12 @@ export function registerWidgetDef(def) {
   if (typeof def.context_provider !== "function") {
     throw new Error(`widget ${kind}: context_provider 必须是函数(§17.7-3)`);
   }
+  // W5.1(docs/WIDGET-ARCH.md §1):render 面校验——声明了 render 的 def
+  // 必须是 ``state → html 字符串`` 的纯函数(自渲染件;副作用纪律在
+  // render 文件注释 + 评审,注册期只能验形态)
+  if (def.render !== undefined && typeof def.render !== "function") {
+    throw new Error(`widget ${kind}: render 必须是纯函数(state→html;W5.1)`);
+  }
   _defs.set(kind, def);
   return def;
 }

@@ -18,7 +18,7 @@
 
 import { deleteJson, getJson, postJson, putJson } from "../api.js";
 import { copy } from "../themes.js";
-import { mountJsonEditor, mountSelectList, mountTextEditor } from "../widgets/index.js";
+import { mountJsonEditor, mountSelectList, mountTextEditor, renderJsonEditor, renderTextEditor } from "../widgets/index.js";
 import { deriveTraceView, renderTrace } from "./trace.js";
 import { emptyBlock, esc, toast } from "../util.js";
 import { TIER_PERM } from "./inbox.js";
@@ -196,27 +196,36 @@ export function editorHtml(view) {
     _field("name", "name", _text("name", f.name, true), isValidDraftName(f.name) ? "" : copy("lab.name.invalid")) +
     _field("version", "version", _text("version", f.version, true)) +
     _field("kind", "kind", _select("kind", f.kind, ["prompt", "code"])) +
-    // W1(docs/WIDGETS.md):description 换 W-text(textarea 本体不动,lab 表单模型零动)
+    // W5.1(docs/WIDGET-ARCH.md):自渲染件——挂点内联的就是控件 render 的首渲
+    // 产出(宿主不手写控件 DOM,只调它的 render 函数;岛屿模式:首渲进串,
+    // mount 幂等重渲 + 绑行为);值的所有权与同步仍在 lab 的 data-field 委托
+    // 模型(formToManifest/draftToForm 不动)
     _field("description", "description",
-      `<span data-widget="text-editor" data-variant="plain" class="wd-host">${_area("description", f.description, 2)}</span>`) +
+      `<span data-widget="text-editor" data-variant="plain" data-field="description" data-rows="2" class="wd-host">` +
+      renderTextEditor({ value: f.description, field: "description", label: "description", rows: 2 }) +
+      `</span>`) +
     `</section>`
   );
-  // 契约组(inputs/outputs:W-json 控件——行级错误定位 + format;hint 槽作 errbar 复用)
+  // 契约组(inputs/outputs:W-json 控件——行级错误定位 + format;错误条控件自渲染)
   groups.push(
     `<section class="lab-group" data-group="contract"><h3>${esc(copy("lab.group.contract"))}</h3>` +
     _field("inputs", "inputs (JSON Schema)",
-      `<span data-widget="json-editor" class="wd-host">${_area("inputsText", f.inputsText, 6)}` +
-      `<span class="lab-hint" data-json-hint="inputsText"></span></span>`) +
+      `<span data-widget="json-editor" data-field="inputsText" data-rows="6" class="wd-host">` +
+      renderJsonEditor({ value: f.inputsText, field: "inputsText", label: "inputsText", rows: 6, mono: true, error: null }) +
+      `</span>`) +
     _field("outputs", "outputs (JSON Schema)",
-      `<span data-widget="json-editor" class="wd-host">${_area("outputsText", f.outputsText, 6)}` +
-      `<span class="lab-hint" data-json-hint="outputsText"></span></span>`) +
+      `<span data-widget="json-editor" data-field="outputsText" data-rows="6" class="wd-host">` +
+      renderJsonEditor({ value: f.outputsText, field: "outputsText", label: "outputsText", rows: 6, mono: true, error: null }) +
+      `</span>`) +
     `</section>`
   );
   // 指令组(prompt 换 W-text mono 变体,W1)
   groups.push(
     `<section class="lab-group" data-group="instruction"><h3>${esc(copy("lab.group.instruction"))}</h3>` +
     _field("prompt", "prompt",
-      `<span data-widget="text-editor" data-variant="mono" class="wd-host">${_area("prompt", f.prompt, 10)}</span>`) +
+      `<span data-widget="text-editor" data-variant="mono" data-field="prompt" data-rows="10" class="wd-host">` +
+      renderTextEditor({ value: f.prompt, field: "prompt", label: "prompt", rows: 10, mono: true }) +
+      `</span>`) +
     _field("handlerPath", "handler (dotted path)", _text("handlerPath", f.handlerPath, true)) +
     _field("handler", "handler.py", _area("handler", f.handler, 6)) +
     _field("entry", "entry", _text("entry", f.entry, true)) +
@@ -966,15 +975,22 @@ function _renderEditor() {
   _mountEditorWidgets(host); // W1:四字段挂 widget(textarea 本体不动,表单模型零动)
 }
 
-/* W1(docs/WIDGETS.md §6):description/prompt 挂 W-text,inputs/outputs 挂 W-json。
-   控件只加微标/选区保留/行级错误/format——值的所有权与同步仍在 lab 的
-   data-field 委托模型(formToManifest/draftToForm 不动)。 */
+/* W5.1(docs/WIDGET-ARCH.md):description/prompt 挂 W-text,inputs/outputs 挂
+   W-json——自渲染件:挂点是空 host(带 data-field/variant/rows),控件自己产出
+   textarea/微标/错误条;值的所有权与同步仍在 lab 的 data-field 委托模型
+   (formToManifest/draftToForm 不动;值随 options 传入 = 当前 form 快照)。 */
 function _mountEditorWidgets(host) {
   for (const w of host.querySelectorAll('[data-widget="text-editor"]')) {
-    mountTextEditor(w, { path: `/lab/editor/field/${w.querySelector("textarea")?.dataset.field ?? ""}` });
+    mountTextEditor(w, {
+      value: lab.form?.[w.dataset.field] ?? "",
+      path: `/lab/editor/field/${w.dataset.field ?? ""}`,
+    });
   }
   for (const w of host.querySelectorAll('[data-widget="json-editor"]')) {
-    mountJsonEditor(w, { path: `/lab/editor/field/${w.querySelector("textarea")?.dataset.field ?? ""}` });
+    mountJsonEditor(w, {
+      value: lab.form?.[w.dataset.field] ?? "",
+      path: `/lab/editor/field/${w.dataset.field ?? ""}`,
+    });
   }
 }
 

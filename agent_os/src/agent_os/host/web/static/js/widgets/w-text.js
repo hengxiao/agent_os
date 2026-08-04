@@ -1,15 +1,18 @@
-/* W-text — text editor(docs/WIDGETS.md §2;多行文本,mono/plain 两变体)。
+/* W-text 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.1;W5.1 新形态:自渲染)。
 
-   state{value, dirty, readonly, lang, wrap, mono};
+   state{value, dirty, readonly, mono, rows, field, label};
    actions 全 local:set_value/commit(发 commit 事件)/revert(回 baseline);
-   细节:**选区保留**(commit/revert 写 value 前后存取 selectionStart/End,
-   重渲染不丢选区)、占位符(宿主 textarea 自带)、行数/字数微标、Esc=blur;
-   aria(role=textbox-multiline 经 textarea 天然角色 + aria-label 必填——
-   缺省从 data-field 推,不给就拒装,§2 a11y)。 */
+   细节:**选区保留**(update 全量重渲经 preserveSelection 存取选区/焦点)、
+   Esc=blur;aria-label 必填(从 field/label 推,不给就拒装,§2 a11y)。
+   铁律:本文件不拼 HTML(渲染全在 w-text.render.js);零 fetch;事件上行。
 
-import { copy } from "../themes.js";
+   生命周期(§1.3):mount = render(state) → host.innerHTML(控件自己产出,
+   宿主不预置元素)→ 委托绑在 host;输入只局部刷新微标/dirty 边条(不重渲,
+   输入态零干扰);update(patch) = state 合并 → 全量重渲(选区保留)。 */
+
 import { registerWidgetDef } from "./registry.js";
-import { createWidget } from "./widget.js";
+import { createWidget, preserveSelection } from "./widget.js";
+import { renderTextEditor, textEditorMicro } from "./w-text.render.js";
 
 export const TEXT_EDITOR_DEF = registerWidgetDef({
   kind: "text-editor",
@@ -24,74 +27,88 @@ export const TEXT_EDITOR_DEF = registerWidgetDef({
   events: ["change", "commit", "revert"],
   aria: { role: "textbox-multiline", keys: ["Escape"] },
   surfaces: ["card", "tab"],
+  render: renderTextEditor, // W5.1:render 面进 def(registry 校验形态)
 });
 
-/* 行数/字数微标(copy 六主题;技术内容直读,统计是本地计算) */
-function _micro(value) {
-  const lines = value ? value.split("\n").length : 0;
-  return copy("w.text.count").replace("{lines}", String(lines)).replace("{chars}", String(value.length));
+/* 自渲染装配(§1.3;宿主给空挂点 + data-field/data-variant/data-rows 或显式
+   options,控件自己产出全部元素)。``_extraState``/``_def`` 是 W-json 的
+   复用面(同族控件共用一套挂载逻辑)。 */
+export function mountTextEditor(host, { value = "", field = "", mono = null, rows = null, readonly = false, label = "", path = "", onRegister = null, onUnregister = null } = {}) {
+  return _mountText(host, TEXT_EDITOR_DEF, { value, field, mono, rows, readonly, label, path, onRegister, onUnregister });
 }
 
-/* 挂进宿主:host 内含一个 textarea(data-field;lab 表单模型零动——
-   控件只加微标/选区保留/commit-revert 语义,不接管值的所有权) */
-export function mountTextEditor(host, { path = "", onRegister = null, onUnregister = null } = {}) {
-  const textarea = host.querySelector("textarea");
-  if (!textarea) throw new Error("text-editor: host 里没有 textarea");
-  if (!textarea.getAttribute("aria-label")) {
-    const field = textarea.dataset?.field;
-    if (!field) throw new Error("text-editor: aria-label 必填(或给 data-field 推导)");
-    textarea.setAttribute("aria-label", field);
-  }
-  const widget = createWidget(TEXT_EDITOR_DEF, {
+export function _mountText(host, def, { value = "", field = "", mono = null, rows = null, readonly = false, label = "", path = "", onRegister = null, onUnregister = null, extraState = {} } = {}) {
+  const fieldName = field || host.dataset?.field || "";
+  const ariaLabel = label || fieldName;
+  if (!ariaLabel) throw new Error(`${def.kind}: aria-label 必填(或给 data-field 推导)`);
+  const widget = createWidget(def, {
     path,
-    state: { value: textarea.value, readonly: Boolean(textarea.readOnly), mono: host.dataset.variant === "mono" },
+    state: {
+      value: String(value ?? ""),
+      dirty: false,
+      readonly: Boolean(readonly),
+      mono: mono ?? host.dataset?.variant === "mono",
+      rows: rows ?? (Number(host.dataset?.rows) || 6),
+      field: fieldName,
+      label: ariaLabel,
+      ...extraState,
+    },
     onRegister,
     onUnregister,
   });
-  let baseline = textarea.value; // commit 锚点(revert 回这里)
+  let baseline = widget.state.value; // commit 锚点(revert 回这里)
 
-  const micro = host.ownerDocument.createElement("span");
-  micro.className = "wd-micro";
-  micro.textContent = _micro(textarea.value);
-  host.appendChild(micro);
-
-  const refresh = () => {
-    micro.textContent = _micro(textarea.value);
+  const textarea = () => host.querySelector("textarea");
+  const render = () => {
+    host.innerHTML = def.render(widget.state);
+    const ta = textarea();
+    // 元素值 ↔ state 对齐(真实 DOM 由文本内容自带;stub/异常面兜底同步)
+    if (ta && ta.value !== widget.state.value) ta.value = widget.state.value;
+    widget.el = ta;
+  };
+  // §1.3 update:state 合并 → 全量重渲(选区/焦点保留,W5.1 必答题;
+  // 定位面 = textarea——单输入控件每宿主一个)
+  widget.update = (patch) => {
+    Object.assign(widget.state, patch);
+    preserveSelection(host, render, { selector: "textarea" });
   };
 
+  /* 输入局部刷新(不重渲):微标 + dirty 边条 */
+  const syncDirty = () => {
+    host.querySelector(".wd-text")?.classList?.toggle("is-dirty", widget.state.dirty);
+    const micro = host.querySelector(".wd-micro");
+    if (micro) micro.textContent = textEditorMicro(widget.state.value);
+  };
+  render();
+  syncDirty(); // 初值同步(stub/虚拟面上 region 不带串内文本;真实 DOM 为同值重写)
+
   host.addEventListener("input", (e) => {
-    if (e.target !== textarea) return;
-    widget.state.value = textarea.value;
-    widget.state.dirty = textarea.value !== baseline;
-    refresh();
-    widget.emit("change", { value: textarea.value, dirty: widget.state.dirty });
+    const ta = textarea();
+    if (!ta || e.target !== ta) return;
+    widget.state.value = ta.value;
+    widget.state.dirty = ta.value !== baseline;
+    syncDirty();
+    widget.emit("change", { value: ta.value, dirty: widget.state.dirty });
   });
   host.addEventListener("keydown", (e) => {
-    if (e.target === textarea && e.key === "Escape") textarea.blur(); // Esc=blur(§2 a11y)
+    if (e.target === textarea() && e.key === "Escape") e.target.blur?.(); // Esc=blur(§2 a11y)
   });
 
   widget.commit = () => {
-    baseline = textarea.value;
+    baseline = widget.state.value;
     widget.state.dirty = false;
-    widget.emit("commit", { value: textarea.value });
+    syncDirty();
+    widget.emit("commit", { value: widget.state.value });
   };
   widget.revert = () => {
-    // 选区保留(§2):写回前后存取选区
-    const [s, e] = [textarea.selectionStart, textarea.selectionEnd];
-    textarea.value = baseline;
-    textarea.selectionStart = s;
-    textarea.selectionEnd = e;
-    widget.state.value = baseline;
-    widget.state.dirty = false;
-    refresh();
+    widget.update({ value: baseline, dirty: false }); // 全量重渲,选区保留
     widget.emit("revert", { value: baseline });
   };
   const _destroy = widget.destroy.bind(widget);
   widget.destroy = () => {
-    micro.remove();
+    host.innerHTML = ""; // 自渲染件:拆 = 清空自己产出的全部元素
     _destroy();
   };
-  widget.el = textarea;
-  widget.register(host.dataset.summary ?? "");
+  widget.register(host.dataset?.summary ?? "");
   return widget;
 }

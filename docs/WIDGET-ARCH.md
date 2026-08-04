@@ -154,10 +154,29 @@ selectionStart/End 与 document.activeElement,重渲后恢复(有测试)。
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| W5.1 | 基座:render/logic 分文件模式 + `css/widgets.css` 拆出 + 更新协议校验(render 面)+ W-text/W-json 先迁(lab 编辑器行为测试不破) | 两控件自渲染;选区保留测试过 |
+| W5.1 ✅ | 基座:render/logic 分文件模式 + `css/widgets.css` 拆出 + 更新协议校验(render 面)+ W-text/W-json 先迁(lab 编辑器行为测试不破) | 两控件自渲染;选区保留测试过 |
 | W5.2 | W-table/W-kv/W-form/W-list 迁移(装配点:run.launch 表单/lab 下拉不破) | 装配点测试过 |
 | W5.3 | W-tree/W-date/W-chart/W-log/W-diff/W-md/W-bubble 迁移 | 全部 render 纯函数 |
 | W5.4 | 清扫:宿主手写桥接代码删除;架构测试记录更新(弯腰点 ①⑤ 关闭情况) | 无装饰器残留 |
+
+> **W5.1 实现注**(2026-08-04,分支 debugger):
+> - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
+>   `widget.js` 加 `preserveSelection(host, fn, {selector})`(update 全量重渲
+>   前后存取 selectionStart/End + activeElement,重渲后恢复——选区保留测试
+>   在 widgets.test.mjs 的 W-text revert 块)。
+> - **两控件**:`w-text.render.js`/`w-json.render.js` = 纯函数
+>   `render(state)→html`(同 state 同 html/不改 state/XSS 转义,有单测);
+>   `w-text.js`/`w-json.js` 只留状态机/行为/事件,不拼 HTML;W-json 复用
+>   W-text 的 `_mountText`。效果面落地:mono 行号槽/右下微标/dirty 左边条/
+>   readonly 灰底/错误条(行级)/合法绿勾/format 钮/错误条点击跳行。
+> - **岛屿模式**:editorHtml 内联的就是控件 render 的首渲产出(宿主不手写
+>   控件 DOM,只调它的 render 函数),mount 幂等重渲 + 绑行为——lab 的
+>   data-field 委托模型与装配点行为测试零改动。
+> - **子元素监听纪律**:重渲会换元素,监听一律委托在 host(format/错误条
+>   点击),不直接挂子元素。
+> - **CSS**:`css/widgets.css` 从 app.css 拆出(137 行 wd-* 全量迁移 +
+>   W5.1 新增 .wd-text/.wd-gutter/.is-dirty/.is-readonly/.wd-json-ok),
+>   全 token 零硬编码色值;两个 index.html 各加一行 link。
 
 每控件迁移 = 逻辑文件(已有行为剥离)+ render 文件(新)+ 宿主装配点
 从"挂既有元素"改一行 mount——既有测试全绿是硬验收。

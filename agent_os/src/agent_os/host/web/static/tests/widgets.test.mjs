@@ -19,6 +19,7 @@ const { copy } = await import("../js/themes.js");
 const {
   registerWidgetDef, getWidgetDef, listWidgetKinds, createWidget,
   mountTextEditor, mountJsonEditor, locateJsonError, jsonErrorAt, schemaErrorAt, formatJson,
+  renderTextEditor, renderJsonEditor,
 } = await import("../js/widgets/index.js");
 
 /* ── 协议层 ───────────────────────────────────────────────────── */
@@ -96,89 +97,104 @@ const {
   }
 }
 
-/* ── W-text ───────────────────────────────────────────────────── */
+/* ── W-text(W5.1 新形态:自渲染;render 纯函数在 w-text.render.js)───── */
 
-function _textHost(doc, value = "hello\nworld", field = "prompt") {
+/* 新形态宿主 = 空挂点(控件自己产出全部元素,宿主不预置) */
+function _textHost(doc, { field = "prompt", variant = "plain", rows = 4 } = {}) {
   const host = doc.createElement("div");
   host.dataset.widget = "text-editor";
-  const ta = doc.createElement("textarea");
-  ta.dataset.field = field;
-  ta.value = value;
-  host.appendChild(ta);
+  host.dataset.field = field;
+  host.dataset.variant = variant;
+  host.dataset.rows = String(rows);
   doc.body.appendChild(host);
-  return { host, ta };
+  return host;
+}
+
+{
+  // render 纯函数(W5.1 验收):同 state 同 html;不写 state;语义类齐
+  const s1 = { value: "a\nb", dirty: true, mono: true, rows: 4, field: "prompt", label: "prompt" };
+  const h1 = renderTextEditor(s1);
+  assert.equal(h1, renderTextEditor(s1), "同 state 同 html(纯函数)");
+  assert.deepEqual(s1, { value: "a\nb", dirty: true, mono: true, rows: 4, field: "prompt", label: "prompt" },
+    "render 不改 state(无副作用)");
+  assert.ok(h1.includes("is-dirty"), "dirty 左边条类");
+  assert.ok(h1.includes("wd-gutter"), "mono 行号槽");
+  assert.ok(h1.includes('aria-label="prompt"'), "aria 自渲染进 textarea");
+  assert.ok(!renderTextEditor({ value: "x", mono: false, field: "d", label: "d" }).includes("wd-gutter"),
+    "plain 无行号槽");
+  assert.ok(renderTextEditor({ value: "x", readonly: true, field: "d", label: "d" }).includes("is-readonly"),
+    "readonly 灰底类");
+  assert.ok(renderTextEditor({ value: "<script>", field: "d", label: "d" }).includes("&lt;script&gt;"),
+    "值转义(XSS 不注入)");
 }
 
 {
   const doc = makeDocument();
   globalThis.document = doc;
-  const { host, ta } = _textHost(doc);
+  const host = _textHost(doc);
   const events = [];
-  const micro = () => host.querySelector(".wd-micro")?.textContent ?? "";
-  const w = mountTextEditor(host, { path: "/t/text" });
+  const w = mountTextEditor(host, { value: "hello\nworld", path: "/t/text" });
   w.on("change", (p) => events.push(p));
-  // aria:从 data-field 推导 aria-label(必填纪律)
-  assert.equal(ta.getAttribute("aria-label"), "prompt", "aria-label 推导");
-  // 渲染:微标在(行数/字数)
+  const ta = host.querySelector("textarea");
+  assert.ok(ta, "控件自己产出 textarea(宿主不预置)");
+  assert.ok(host.innerHTML.includes('aria-label="prompt"'), "aria-label 从 data-field 推导(渲染进串)");
+  const micro = () => host.querySelector(".wd-micro")?.textContent ?? "";
   assert.ok(micro().includes("2 行"), "微标行数");
   assert.ok(micro().includes("11 字"), "微标字数");
-  // 交互:input → dirty + change 事件 + 微标刷新
+  // 输入 → dirty + change + 微标局部刷新(不重渲:元素同一)
   ta.value = "hello\nworld\n!";
   host.trigger("input", { target: ta });
   assert.ok(w.state.dirty, "输入置 dirty");
   assert.equal(events.at(-1).dirty, true, "change 事件携带 dirty");
   assert.ok(micro().includes("3 行"), "微标随输入刷新");
+  assert.equal(host.querySelector("textarea"), ta, "输入不重渲(元素同一)");
   // commit → dirty 清零 + commit 事件
   let committed = "";
   w.on("commit", (p) => { committed = p.value; });
   w.commit();
-  assert.equal(committed, ta.value, "commit 事件值");
+  assert.equal(committed, "hello\nworld\n!", "commit 事件值");
   assert.ok(!w.state.dirty, "commit 清 dirty");
-  // revert 选区保留(重渲染不丢 selection)
+  // revert:全量重渲 + **选区/焦点保留**(W5.1 必答题)
   ta.value = "被改掉的";
   host.trigger("input", { target: ta });
+  ta.focus();
   ta.selectionStart = 2;
   ta.selectionEnd = 5;
   w.revert();
-  assert.equal(ta.value, committed, "revert 回 baseline");
-  assert.equal(ta.selectionStart, 2, "选区保留(start)");
-  assert.equal(ta.selectionEnd, 5, "选区保留(end)");
+  const ta2 = host.querySelector("textarea");
+  assert.ok(ta2 !== ta, "重渲换元素(自渲染全量重渲)");
+  assert.equal(ta2.value, committed, "revert 回 baseline(元素值随 render 同步)");
+  assert.equal(ta2.selectionStart, 2, "选区保留(start)");
+  assert.equal(ta2.selectionEnd, 5, "选区保留(end)");
+  assert.equal(doc.activeElement, ta2, "焦点保留(activeElement 恢复)");
   // Esc=blur
-  ta.blur = () => { ta.focused = false; };
-  ta.focus();
-  host.trigger("keydown", { target: ta, key: "Escape" });
-  assert.ok(!ta.focused, "Esc=blur");
+  ta2.blur = () => { ta2.focused = false; doc.activeElement = null; };
+  host.trigger("keydown", { target: ta2, key: "Escape" });
+  assert.ok(!ta2.focused, "Esc=blur");
   w.destroy();
-  assert.equal(host.querySelector(".wd-micro"), null, "destroy 拆微标");
+  assert.equal(host.querySelector(".wd-micro"), null, "destroy 清空自渲染元素");
+  assert.equal(host.querySelector("textarea"), null, "destroy 拆 textarea");
 }
 
 {
-  // 边界:超长文本微标不炸;aria-label 缺失且无 data-field → 拒装
+  // 边界:超长文本不炸;aria-label 无来源 → 拒装
   const doc = makeDocument();
   globalThis.document = doc;
-  const { host } = _textHost(doc, "x".repeat(120000));
-  assert.doesNotThrow(() => mountTextEditor(host), "超长文本不炸");
+  const big = _textHost(doc);
+  assert.doesNotThrow(() => mountTextEditor(big, { value: "x".repeat(120000) }), "超长文本不炸");
   const bare = doc.createElement("div");
-  bare.appendChild(doc.createElement("textarea"));
   doc.body.appendChild(bare);
-  assert.throws(() => mountTextEditor(bare), /aria-label/, "aria-label 必填");
+  assert.throws(() => mountTextEditor(bare), /aria-label/, "aria-label 必填(无 field/label 拒装)");
 }
 
 /* ── W-json ───────────────────────────────────────────────────── */
 
-function _jsonHost(doc, value = '{\n  "a": 1\n}') {
+function _jsonHost(doc, { field = "inputsText" } = {}) {
   const host = doc.createElement("div");
   host.dataset.widget = "json-editor";
-  const ta = doc.createElement("textarea");
-  ta.dataset.field = "inputsText";
-  ta.value = value;
-  ta.dispatchEvent = (ev) => ta.trigger(ev.type ?? ev, { target: ta }); // dom-stub 面
-  host.appendChild(ta);
-  const hint = doc.createElement("span");
-  hint.className = "lab-hint";
-  host.appendChild(hint);
+  host.dataset.field = field;
   doc.body.appendChild(host);
-  return { host, ta, hint };
+  return host;
 }
 
 {
@@ -201,40 +217,64 @@ function _jsonHost(doc, value = '{\n  "a": 1\n}') {
 }
 
 {
+  // render 纯函数(W5.1):同 state 同 html;format 钮/错误条/绿勾语义位
+  const sj = { value: '{"a": 1}', mono: true, rows: 6, field: "inputsText", label: "inputsText", error: null };
+  const hj = renderJsonEditor(sj);
+  assert.equal(hj, renderJsonEditor(sj), "json render 纯(同 state 同 html)");
+  assert.equal(sj.error, null, "render 不改 state");
+  assert.ok(hj.includes("wd-format"), "format 钮在");
+  assert.ok(hj.includes('data-wd-errbar="1" hidden'), "合法时错误条隐");
+  assert.ok(hj.includes("wd-json-ok") && !hj.includes('wd-json-ok" aria-hidden="true" hidden'), "合法绿勾显");
+  const hjErr = renderJsonEditor({ ...sj, error: { line: 2, message: "bad token" } });
+  assert.ok(hjErr.includes("bad token") && hjErr.includes('data-wd-errbar="1">'), "有错误 → 错误条显");
+  assert.ok(hjErr.includes('wd-json-ok" aria-hidden="true" hidden'), "有错误 → 绿勾隐");
+}
+
+{
   const doc = makeDocument();
   globalThis.document = doc;
-  const { host, ta, hint } = _jsonHost(doc);
-  const w = mountJsonEditor(host, { path: "/t/json" });
-  // 渲染:format 钮在;合法初值无错误条
-  assert.ok(host.querySelector(".wd-format"), "format 钮在");
-  assert.equal(hint.textContent, "", "合法初值无错误");
+  const host = _jsonHost(doc);
+  const w = mountJsonEditor(host, { value: '{\n  "a": 1\n}', path: "/t/json" });
+  const ta = host.querySelector("textarea");
+  const bar = () => host.querySelector(".wd-errbar");
+  assert.ok(ta, "自渲染产出 textarea");
+  assert.equal(w.kind, "json-editor", "kind 归位");
+  assert.ok(bar().hidden, "合法初值无错误条");
   // 交互:非法 JSON 即时校验 → 行级定位(错在哪一行,不是只报 message)
   ta.value = '{\n  "a": bad\n}';
   host.trigger("input", { target: ta });
   assert.ok(w.state.error, "即时校验出错");
-  assert.ok(hint.textContent.includes("第 2 行"), "行级错误定位上屏");
+  assert.ok(!bar().hidden && bar().textContent.includes("第 2 行"), "行级错误定位上错误条");
   // 修复 → 错误恢复
   ta.value = '{\n  "a": 1\n}';
   host.trigger("input", { target: ta });
   assert.equal(w.state.error, null, "错误恢复");
-  assert.equal(hint.textContent, "", "错误条清空");
+  assert.ok(bar().hidden, "错误条收起");
   // 失焦校验(§2)
   ta.value = "{bad";
   host.trigger("focusout", { target: ta });
   assert.ok(w.state.error, "失焦校验");
-  // format:不合法不美化;合法 → 美化 + 同步 input(宿主表单模型联动)
+  // 错误条点击 → 跳到错误行(§2.2;光标 = 行首偏移)
+  const barEl = bar();
+  barEl.closest = (sel) => (sel === "[data-wd-errbar]" ? barEl : null); // dom-stub:region 无 dataset
+  host.trigger("click", { target: barEl });
+  assert.equal(ta.selectionStart, 0, "点击错误条跳到错误行行首");
+  // format:不合法不美化;合法 → 美化(重渲 + 选区保留,新元素值同步)
   const fmtBtn = host.querySelector(".wd-format");
-  ta.value = "{bad";
-  fmtBtn.trigger("click", { target: fmtBtn });
-  assert.equal(ta.value, "{bad", "不合法不美化");
-  ta.value = '{"b":2,"a":1}';
-  fmtBtn.trigger("click", { target: fmtBtn });
-  assert.equal(ta.value, '{\n  "b": 2,\n  "a": 1\n}', "format 一键美化");
+  fmtBtn.closest = (sel) => (sel === "[data-wd-format]" ? fmtBtn : null); // dom-stub 同上
+  host.trigger("click", { target: fmtBtn });
+  assert.equal(host.querySelector("textarea").value, "{bad", "不合法不美化");
+  const ta3 = host.querySelector("textarea");
+  ta3.value = '{"b":2,"a":1}';
+  host.trigger("input", { target: ta3 }); // state 同步
+  host.trigger("click", { target: fmtBtn });
+  assert.equal(host.querySelector("textarea").value, '{\n  "b": 2,\n  "a": 1\n}',
+    "format 一键美化(重渲后新元素值随 render 同步)");
   // schema validate action
-  ta.value = '{"city": 1}';
+  host.querySelector("textarea").value = '{"city": 1}';
   assert.equal(w.validate({ properties: { city: { type: "string" } } }), false, "schema 不合");
   assert.ok(w.state.error.message.includes("city"), "字段级提示");
-  ta.value = '{"city": "bj"}';
+  host.querySelector("textarea").value = '{"city": "bj"}';
   assert.equal(w.validate(), true, "schema 校验通过");
 }
 

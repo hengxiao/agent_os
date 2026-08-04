@@ -3,9 +3,11 @@
    事件上行,数据下行,widget 不知道 app 存在。 */
 
 export { registerWidgetDef, getWidgetDef, listWidgetKinds } from "./registry.js";
-export { createWidget } from "./widget.js";
+export { createWidget, preserveSelection } from "./widget.js";
 export { registerContextProvider, contextCascade } from "./cascade.js";
 export { TEXT_EDITOR_DEF, mountTextEditor } from "./w-text.js";
+export { renderTextEditor, textEditorMicro } from "./w-text.render.js";
+export { renderJsonEditor } from "./w-json.render.js";
 export {
   JSON_EDITOR_DEF_KIND,
   locateJsonError,

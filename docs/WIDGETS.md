@@ -130,6 +130,30 @@ app(业务对象:skill-pack/run/...)
 - **细节**:跟随模式(新行自动滚底,上滚即暂停跟随并显示"回到底部"钮)、长窗口截断(保留尾部 N 行)、kind 着色(信号色 token);
 - **测试**:跟随/暂停/截断/复制。
 
+### W-chart — 图表(纯 SVG,零依赖)
+
+- **用途**:usage 趋势(token/成本随时间)、迭代分数曲线(版本间对比)、
+  run 时长分布;**不引图表库**(零 bundler 架构,SVG 直绘);
+- **state**:{series: [{name, points: [{x, y}]}], type: "line"|"bar"|"spark",
+  extent: {xmin, xmax, ymin, ymax} | "auto"};
+- **actions**:set_series(local)、hover(local,读值气泡)、toggle_series(local,多序列显隐);
+- **细节**:网格/轴刻度自动;空数据态("还没有数据");spark 变体(无轴行内迷你图,用于表格行内);长序列抽稀(>500 点降采样);
+- **a11y(图表的硬规则)**:**必须有等价数据表备选**——图旁可切"表格视图"(同一份 series 渲染成 W-table),读屏与打印都走它;图本体 aria-hidden=false + role=img + aria-label 摘要;
+- **测试**:三类型渲染/空态/抽稀/hover 读值/表格视图等价数据/六主题(token 色,不内嵌调色板)。
+
+### W-date — 日期时间控件
+
+- **用途**:browse 的时间窗(上周/今天/自定义区间)、任务排期(未来的
+  schedule 面)、报告区间;
+- **state**:{value: iso string | {start, end}, mode: "date"|"datetime"|"range",
+  min?, max?};
+- **actions**:set(local,键盘输入)、prev/next(local,翻页)、pick(local,日历点选)、
+  quick(local,今天/昨天/本周/上周 快捷项);
+- **细节**:输入与日历双通道(输入即时校验 ISO 格式);range 模式下
+  start>end 即时警示;月份翻页键盘可达(←→);时区按本地显示(不引入
+  时区选择,见不做);
+- **测试**:键盘输入校验/range 倒置警示/快捷项/翻页键盘路径/六主题。
+
 ## 3. 组合与装配规则
 
 - **widget 组合只允许向下**:section 可以组合 widget,widget 可以组合 widget(W-form 内嵌 W-table);禁止反向(app 进 widget);
@@ -159,16 +183,17 @@ app(业务对象:skill-pack/run/...)
 |---|---|
 | W1 | Widget 协议与注册表 + W-text + W-json(编辑器是基础中的基础) |
 | W2 | W-table + W-kv(表格家族;tests/attrs 的直接受益者) |
-| W3 | W-form + W-list + W-tree(数据输入与导航;run.launch 表单化落地) |
-| W4 | W-diff + W-md + W-log(呈现家族;agent 消息与调试面的统一) |
+| W3 | W-form + W-list + W-tree + W-date(数据输入与导航;run.launch 表单化落地;browse 时间窗) |
+| W4 | W-diff + W-md + W-log + W-chart(呈现家族;agent 消息/调试面/usage 可视化的统一) |
 
 每期交付:协议实现 + 该期控件 + 测试库 + 至少一个真实装配点
-(W1 装进 lab 编辑器;W2 装进 tests 编辑;W3 装进 run.launch;W4 装进对话流)。
+(W1 装进 lab 编辑器;W2 装进 tests 编辑;W3 装进 run.launch 与 browse 时间窗;W4 装进对话流与 usage 面板)。
 
 ## 7. 不做
 
 - 不做富文本/WYSIWYG(W-md 是查看器;编辑器是纯文本,代码编辑器属另一产品级组件);
-- 不做图表/chart(数据可视化未在需求面);
-- 不做日期时间控件(无使用场景);
+- **不引图表/日历第三方库**(零 bundler 架构;W-chart 纯 SVG 直绘,W-date 自绘月历——体量受控,见各控件定义);
+- 不做图表交互全家桶(缩放/刷选/导出 PNG;hover 读值与显隐已够本期);
+- 不做时区选择(本地时区显示;跨时区协作是另一个问题);
 - 不做拖拽造布局的 GUI 构建器(widget 是代码资产,组装在代码里);
 - 不重写已有稳定组件(ns-tree/diff 只控件化提取,不改行为)。

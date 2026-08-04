@@ -93,6 +93,10 @@ const DOC = {
     if (url === "/api/lab/packages/weather.query/closure") return reply(CLOSURE);
     if (url === "/api/lab/drafts/weather.query") return reply(DOC);
     if (url === "/api/lab/drafts/weather.query/comments") return reply({ round: "r1", comments: [] });
+    // W2:锚点评论(气泡 submit 的出海面)
+    if (url === "/api/lab/drafts/weather.query/comment") {
+      return reply({ reply: "建议:删第二句,保留首句骨架" });
+    }
     if (url === "/api/lab/drafts/weather.query/versions") {
       return reply(accepted ? [{ version: "v001", source: "iterate" }] : []);
     }
@@ -137,7 +141,8 @@ const DOC = {
   assert.ok(calls.find((c) => c.url.endsWith("/candidate/accept")), "accept 请求发出");
   assert.ok(region(".it-top").includes("v001"), "接受后版本下拉出现 v001");
 
-  /* 边注弹框键盘交互(商业 widget 标准):role=dialog、Enter 提交、Esc 关闭 */
+  /* 边注气泡(W2,docs/WIDGETS.md W-bubble):💬 开气泡 → Enter 提交(经 §16
+     cascade 出海到评论端点)→ 回复进气泡 → apply 采纳为边注挂左栏;Esc 关闭 */
   const unit = new StubEl("div");
   unit.dataset.anchor = JSON.stringify({ member: "weather.query", kind: "field", path: "description" });
   unit.parentNode = handle.root;
@@ -146,14 +151,33 @@ const DOC = {
   noteBtn.closest = (sel) =>
     sel === "[data-it-note]" ? noteBtn : sel === "[data-anchor]" ? unit : null;
   handle.root.trigger("click", { target: noteBtn });
-  const form = unit.querySelector(".it-note-form");
-  assert.ok(form, "💬 弹边注弹框");
-  assert.equal(form.getAttribute("role"), "dialog", "弹框 role=dialog");
-  const input = form.querySelector("input");
+  const bubbleHost = unit.children.find((c) => c.innerHTML.includes("w-bubble"));
+  assert.ok(bubbleHost, "💬 开气泡(W-bubble 挂载)");
+  assert.ok(bubbleHost.innerHTML.includes('role="dialog"'), "气泡卡 role=dialog");
+  assert.ok(bubbleHost.innerHTML.includes('role="log"'), "消息区 role=log");
+  assert.ok(bubbleHost.innerHTML.includes("weather.query"), "锚点引用行");
+  // Enter 提交:submit 事件 → 父级 POST comment(cascade 信封)→ 回复渲染
+  const input = new StubEl("input");
+  input.dataset.bubbleDraft = "";
+  input.parentNode = bubbleHost;
   input.value = "太啰嗦";
-  input.trigger("keydown", { key: "Enter" });
+  bubbleHost.trigger("input", { target: input });
+  bubbleHost.trigger("keydown", { target: input, key: "Enter" });
   await new Promise((r) => setTimeout(r, 0));
-  assert.ok(region(".it-left").includes("太啰嗦"), "Enter 提交 → 边注挂到左栏");
+  await new Promise((r) => setTimeout(r, 0));
+  const commentCall = calls.find((c) => c.url.endsWith("/comment"));
+  assert.ok(commentCall, "submit 经父级出海到评论端点");
+  const envelope = JSON.parse(commentCall.body);
+  assert.equal(envelope.anchor.member, "weather.query", "信封锚点");
+  assert.ok(Array.isArray(envelope.cascade) && envelope.cascade.length >= 2, "cascade 三级上下文随信");
+  assert.ok(bubbleHost.innerHTML.includes("建议:删第二句"), "回复渲染进气泡");
+  // apply_reply → 边注挂左栏(气泡不越权,采纳由父组件落地)
+  const applyBtn = new StubEl("button");
+  applyBtn.dataset.apply = "1";
+  applyBtn.parentNode = bubbleHost;
+  bubbleHost.trigger("click", { target: applyBtn });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(region(".it-left").includes("建议:删第二句"), "apply → 边注挂到左栏");
 
   const unit2 = new StubEl("div");
   unit2.dataset.anchor = JSON.stringify({ member: "weather.query", kind: "case", path: "case1.json" });
@@ -163,10 +187,13 @@ const DOC = {
   noteBtn2.closest = (sel) =>
     sel === "[data-it-note]" ? noteBtn2 : sel === "[data-anchor]" ? unit2 : null;
   handle.root.trigger("click", { target: noteBtn2 });
-  const form2 = unit2.querySelector(".it-note-form");
-  assert.ok(form2, "第二个弹框");
-  form2.querySelector("input").trigger("keydown", { key: "Escape" });
-  assert.equal(unit2.querySelector(".it-note-form"), null, "Esc 关闭弹框且不留批注");
+  const bubbleHost2 = unit2.children.find((c) => c.innerHTML.includes("w-bubble"));
+  assert.ok(bubbleHost2, "第二个气泡");
+  const input2 = new StubEl("input");
+  input2.dataset.bubbleDraft = "";
+  input2.parentNode = bubbleHost2;
+  bubbleHost2.trigger("keydown", { target: input2, key: "Escape" });
+  assert.ok(!region(".it-left").includes("case1.json ·"), "Esc 关闭不产生批注");
   closeIterate();
 }
 

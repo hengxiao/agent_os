@@ -110,3 +110,25 @@ const FRAMES = [
 }
 
 console.log("usage-panel.test.mjs: all assertions passed");
+
+import { makeDocument } from "./dom-stub.mjs";
+import { mountUsagePanel } from "../js/components/usage-panel.js";
+
+/* W4 并列装配:usage 帧 cost 折线图(W-chart;面板语义不变,图表并列在表格上方) */
+{
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const details = doc.createElement("details");
+  doc.body.appendChild(details);
+  const frames = [{ cost: 0.01 }, { cost: 0.03 }, { cost: 0.02 }];
+  const panel = mountUsagePanel(details, { load: async () => ({ frames, run: {} }) });
+  details.open = true;
+  details.trigger("toggle");
+  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  const body = details.querySelector(".us-body");
+  const chartRegion = body.querySelector("[data-us-chart]"); // 内容在 body region 内(dom-stub 区域模型)
+  assert.ok(chartRegion.innerHTML.includes("<svg"), "W-chart 并列挂载(帧 cost 折线 SVG)");
+  assert.ok(chartRegion.innerHTML.includes('role="img"'), "role=img");
+  assert.ok(body.innerHTML.includes("<table"), "等价数据表(原生 usage 表)仍在");
+  void panel;
+}

@@ -181,7 +181,7 @@ export function planDetailHtml(data) {
 /* run 详情:状态/结果 + 信号时间线(deriveTraceView/renderTrace 复用)。
    M3:状态允许时给动作按钮(stop/resume/rerun 走 action 管道,data-tab-act)
    与"开调试"链接(failed/running → replay 调试会话,docs/APP-MODEL.md §8 闭环) */
-export function runDetailHtml({ detail, signals }) {
+export function runDetailHtml({ detail, signals, launchSchema = null }) {
   const status = esc(detail?.status ?? "");
   const runId = detail?.run_id ?? detail?.id ?? "";
   const result =
@@ -198,14 +198,31 @@ export function runDetailHtml({ detail, signals }) {
     (["failed", "running", "aborted"].includes(detail?.status) && runId
       ? `<button class="btn" data-debug-run="${esc(runId)}">${esc(copy("platform.run.debug"))}</button>`
       : "");
+  // M4a 发起面归一:app 内"再跑一次";W3 起 inputs schema 已知时升级为
+  // W-form 逐字段表单(textarea 降级进"高级:JSON"折叠,两通道同源)
+  const launch = runId
+    ? `<div class="pf-sec">${esc(copy("platform.run.launch"))}</div>` +
+      (launchSchema
+        ? `<div data-launch-form="1"></div>` +
+          `<details class="wd-adv"><summary>${esc(copy("w.form.advanced"))}</summary>` +
+          `<textarea class="input mono" data-launch-input rows="3" placeholder="${esc(copy("platform.run.launch.ph"))}"></textarea></details>`
+        : `<textarea class="input mono" data-launch-input rows="3" placeholder="${esc(copy("platform.run.launch.ph"))}"></textarea>`) +
+      `<div class="pf-card-actions"><button class="btn" data-tab-act="run.launch">${esc(copy("platform.run.launch"))}</button></div>`
+    : "";
   return (
     `<div class="pf-detail">` +
     `<div class="pf-detail-head mono">${esc(detail?.skill ?? "")} ` +
     `<span class="lab-pkg-status" data-status="${status}">${status}</span></div>` +
     error + result +
     (actions ? `<div class="pf-card-actions">${actions}</div>` : "") +
+    launch +
     `<div class="pf-sec">${esc(copy("platform.detail.trace"))}</div>` +
     (trace || `<div class="pf-dim">${esc(copy("platform.detail.no.trace"))}</div>`) +
+    // W4(W-log 装配点):原始信号折叠区(跟随/复制/截断;trace 主视图不动)
+    (Array.isArray(signals) && signals.length
+      ? `<details class="wd-adv"><summary>${esc(copy("platform.detail.rawsign"))}</summary>` +
+        `<div data-raw-log="1"></div></details>`
+      : "") +
     `</div>`
   );
 }
@@ -263,6 +280,7 @@ export function draftTabHtml(data) {
     `<div class="pf-card-actions">` +
     `<button class="btn" data-tab-act="draft.check">${esc(copy("platform.draft.check"))}</button>` +
     `<button class="btn" data-tab-act="draft.promote">${esc(copy("platform.draft.promote"))}</button>` +
+    `<button class="btn" data-open-notes="1">${esc(copy("platform.doc.notes"))}</button>` +
     `<a class="btn" href="/#/lab/${encodeURIComponent(name)}">${esc(copy("platform.draft.open"))}</a>` +
     `</div>` +
     `<div class="pf-sec">prompt</div>` +
@@ -283,10 +301,74 @@ const _TAB_SURFACES = {
   decompose: (data) => decomposeDetailHtml(data),
   debug: (data) => debugDetailHtml(data),
   draft: (data) => draftTabHtml(data),
+  doc: (data) => docTabHtml(data),
 };
 
 export function renderTabSurface(kind, data) {
   const render = _TAB_SURFACES[kind];
   // 无 manifest 的 kind 拒绝渲染但不炸(docs/APP-MODEL.md §9 回退面)
   return render ? render(data) : `<div class="pf-detail"><pre class="mono">${esc(JSON.stringify(data ?? {}, null, 2))}</pre></div>`;
+}
+
+/* doc Tab Surface 骨架(D5,docs/DOC-EDITOR.md §2;两栏重构:左对话 35% / 右展示 65%):
+   静态 html 部分;交互挂载见 doc-editor.js(主对话/mdBlocks 展示/右键气泡/工具条)。
+   旧三/四栏(大纲/手写编辑/分屏/气泡栏)废弃——版本下拉/快照/rewind/导出/评审
+   收进右侧顶部极细工具条,大纲删除(导航靠滚动+气泡跳转)。 */
+export function docTabHtml(doc) {
+  const versions = (doc?.versions ?? [])
+    .map((v) => `<option value="${esc(v)}">${esc(v)}</option>`)
+    .join("");
+  return (
+    `<div class="pf-detail doc-editor">` +
+    `<div class="doc-cols2">` +
+    // 左:doc 作用域主对话(说需求 → agent 直接改文档)
+    `<div class="doc-chat">` +
+    `<div class="doc-chat-log" data-doc-chat-log="1" role="log"></div>` +
+    `<div class="doc-chat-composer">` +
+    `<input class="input" data-doc-chat-input="1"` +
+    ` placeholder="${esc(copy("platform.doc.chat.ph"))}" aria-label="${esc(copy("platform.doc.chat.ph"))}" />` +
+    `<button class="btn" data-doc-chat-send="1">${esc(copy("platform.doc.chat.send"))}</button>` +
+    `</div></div>` +
+    // 右:文档展示 + 极细工具条(版本/快照/rewind/导出/评审,小图标钮)
+    `<div class="doc-view">` +
+    `<div class="doc-toolbar">` +
+    `<b class="doc-title">${esc(doc?.meta?.title ?? doc?.name ?? "")}</b>` +
+    `<span class="pf-dim mono">${esc(doc?.name ?? "")}</span>` +
+    `<select class="input doc-tool" data-rewind-version="1" aria-label="${esc(copy("platform.doc.rewind"))}">${versions}</select>` +
+    `<button class="btn doc-tool" data-tab-act="doc.rewind" data-doc-rewind="1"` +
+    ` title="${esc(copy("platform.doc.rewind"))}">↩</button>` +
+    `<button class="btn doc-tool" data-tab-act="doc.snapshot" title="${esc(copy("platform.doc.snapshot"))}">⧉</button>` +
+    `<span class="doc-export">` +
+    `<button class="btn doc-tool" data-doc-export="1" title="${esc(copy("platform.doc.export"))}">⇩</button>` +
+    `<span class="doc-export-menu" data-export-menu="1" hidden>` +
+    `<button class="btn" data-export-mode="download">${esc(copy("platform.doc.download"))}</button>` +
+    `<button class="btn" data-export-mode="copy">${esc(copy("platform.doc.copy"))}</button>` +
+    (doc?.name?.startsWith("notes.")
+      ? `<span class="doc-export-note">${esc(copy("platform.doc.notes.saved"))}</span>`
+      : "") +
+    `</span></span>` +
+    `<span class="pf-spacer"></span>` +
+    `<button class="btn doc-tool" data-doc-review="1" title="${esc(copy("platform.doc.review"))}">🔍</button>` +
+    `</div>` +
+    `<div class="doc-preview" data-doc-preview="1"></div>` +
+    `<div class="doc-bubblebar" data-doc-bubblebar="1" aria-label="${esc(copy("platform.doc.bubblebar"))}"></div>` +
+    `</div>` +
+    `</div>` +
+    `<div class="doc-status">` +
+    `<span data-doc-chars="1"></span> · <span data-doc-dirty="1"></span>` +
+    `</div></div>`
+  );
+}
+
+/* 大纲解析(markdown 标题 → [{level, text, offset}];offset = 标题行字符偏移,
+   点击滚动定位用;非标题行跳过) */
+export function parseOutline(text) {
+  const out = [];
+  let offset = 0;
+  for (const line of String(text ?? "").split("\n")) {
+    const m = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (m) out.push({ level: m[1].length, text: m[2].trim(), offset });
+    offset += line.length + 1;
+  }
+  return out;
 }

@@ -16,7 +16,7 @@ import time
 from typing import Any
 
 #: 卡型注册表(v1;新增卡型 = 加一行 + 一个 build 函数 + schema 校验分支)
-CARD_TYPES = ("plan", "skill_pack", "gate_report", "diff", "publish", "table", "escalation")
+CARD_TYPES = ("plan", "skill_pack", "gate_report", "diff", "publish", "table", "escalation", "doc_list")
 
 #: action 白名单:action id → (method, endpoint 模板)。只允许指向既有端点
 #: (Lab / iterate / packages / candidate / versions),不引入新的 promote 路径。
@@ -183,8 +183,14 @@ def build_table_card(
     return _card("table", data)
 
 
-def build_escalation_card(
-    *,
+def build_doc_list_card(*, docs: list[dict[str, Any]]) -> dict[str, Any]:
+    """doc_list 卡(D4,docs/DOC-EDITOR.md §6 对话卡片):文档索引(标题/首行/
+    字数/状态)入对话;行内链接开 doc tab,卡上"新建"由前端经 /api/docs 完成
+    (编排只读,新建不入服务端编排)。"""
+    return _card("doc_list", {"docs": docs})
+
+
+def build_escalation_card(    *,
     question_id: str,
     skill: str,
     tier: str,
@@ -199,8 +205,8 @@ def build_escalation_card(
     data 形态 = EscalationRequest 的展示面(question_id/skill/tier/params/
     requested/reason_hint/options/asked_at)。``options`` 原样携带内核的按档
     选项(L2 三枚含 approve-run,L3 两枚——卡不自己造选项,语义裁决在内核)。
-    按钮不走 cards/action 白名单:作答是 supervisor 闭环,前端直调
-    ``POST /platform/api/decisions/{question_id}``(纯转发,零新权限通道)。
+    按钮不走 cards/action 白名单:作答是 supervisor 闭环,经 app action 管道
+    (``platform.decision.answer`` 技能;§17.7-4 收编,零新权限通道)。
     """
     if not question_id or not skill:
         raise ValueError("escalation 卡必须有 question_id 与 skill")

@@ -15,6 +15,8 @@
 import { getJson, postJson } from "../api.js";
 import { copy } from "../themes.js";
 import { esc, toast } from "../util.js";
+import { mountBubble } from "../widgets/index.js";
+import { registerContextProvider } from "../widgets/cascade.js";
 import { tierBadgeHtml } from "./lab.js";
 
 /* ── 纯函数 ─────────────────────────────────────────────────── */
@@ -286,6 +288,35 @@ async function _discard() {
   _renderRight();
 }
 
+/* W2 锚点路径(§14):/lab/iterate/member/<m>/<kind>/<path>[/span/<i>] */
+function _anchorPath(anchor) {
+  const base = `/lab/iterate/member/${anchor.member}/${anchor.kind}/${anchor.path}`;
+  return anchor.span ? `${base}/span/${anchor.span.start}` : base;
+}
+
+/* W2 §16:cascade 各级 fragment 提供者(每级只出自己的;widget 级 =
+   span/段落/全文,app 级 = 成员与草稿状态)。
+   §17.7-3:注册制(手搓 cascadeProviders 传入退役)——注册进 cascade 运行时,
+   返回注销函数清单(气泡 close 时注销;同锚点重开 = 同位替换不堆叠)。 */
+function _registerIterateProviders(anchor) {
+  return [
+    registerContextProvider(`/lab/iterate/member/${anchor.member}`, "widget", () => {
+      const doc = it.docs?.[anchor.member] ?? {};
+      const paras = _para(doc.prompt ?? "");
+      return {
+        span: anchor.span ?? null,
+        paragraph: anchor.span ? (paras[anchor.span.start] ?? "") : "",
+        full_text: anchor.kind === "span" || anchor.path === "prompt"
+          ? (doc.prompt ?? "")
+          : JSON.stringify((doc.manifest ?? {})[anchor.path] ?? ""),
+      };
+    }),
+    registerContextProvider("/lab/iterate", "app", () => ({
+      draft: it.name, member: anchor.member, tier: it.tier, note: it.note,
+    })),
+  ];
+}
+
 function _bind() {
   it.root.addEventListener("click", async (e) => {
     const act = e.target.closest("[data-it]")?.dataset.it;
@@ -311,32 +342,44 @@ function _bind() {
     } catch (err) {
       toast(err.message ?? String(err), "error");
     }
-    // 边注弹框(锚点单元的 💬;商业 widget 标准:role=dialog + Esc 关闭 + Enter 提交)
+    // 边注气泡(W2,docs/WIDGETS.md W-bubble;锚点单元的 💬):
+    // 气泡 = 锚点引用行 + 消息流 + 输入框;submit 经 §16 cascade 组装信封,
+    // 出海(POST comment)在本组件(父级),回复进气泡;apply → 边注(不越权)
     const noteBtn = e.target.closest("[data-it-note]");
     if (noteBtn) {
       const unit = noteBtn.closest("[data-anchor]");
-      if (!unit || unit.querySelector(".it-note-form")) return;
-      const form = document.createElement("div");
-      form.className = "it-note-form";
-      form.setAttribute("role", "dialog");
-      form.setAttribute("aria-label", copy("it.note.ph"));
-      form.innerHTML =
-        `<input class="input" placeholder="${esc(copy("it.note.ph"))}" aria-label="${esc(copy("it.note.ph"))}">` +
-        `<button class="btn">${esc(copy("it.note.add"))}</button>`;
-      const input = form.querySelector("input");
-      const submit = () => {
-        const text = input.value.trim();
-        if (!text) return;
-        it.notes.push({ anchor: JSON.parse(unit.dataset.anchor), text, at: Date.now() / 1000 });
-        _renderLeft();
-      };
-      form.querySelector("button").addEventListener("click", submit);
-      input.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter") submit();
-        if (ev.key === "Escape") form.remove(); // Esc 关闭,不产生批注
+      if (!unit || unit.querySelector(".w-bubble") || unit.querySelector(".it-note-form")) return;
+      const anchor = JSON.parse(unit.dataset.anchor);
+      // 既有边注数据兼容:该锚点已挂的 notes 作种子消息
+      const key = unit.dataset.anchor;
+      const seed = [...it.notes, ...it.savedComments]
+        .filter((n) => JSON.stringify(n.anchor ?? {}) === key)
+        .map((n) => ({ role: "user", text: n.text, ts: n.at ?? 0 }));
+      const host = document.createElement("div");
+      unit.appendChild(host);
+      const unreg = _registerIterateProviders(anchor); // §17.7-3:注册制(注销随 close)
+      const bubble = mountBubble(host, {
+        anchor, // 原样(与单元 data-anchor 同构,apply 落边注时锚键一致)
+        triggerPath: _anchorPath(anchor), // cascade 的 §14 触发路径(独立字段,不污染锚)
+        seedMessages: seed,
       });
-      unit.appendChild(form);
-      input.focus();
+      bubble.on("close", () => unreg.forEach((fn) => fn()));
+      bubble.on("submit", async ({ anchor: a, text, cascade }) => {
+        try {
+          const body = await postJson(`/api/lab/drafts/${encodeURIComponent(it.name)}/comment`, {
+            anchor: a, text, cascade: cascade.cascade,
+          });
+          bubble.receiveReply(body.reply ?? "");
+        } catch (err) {
+          bubble.receiveReply(`(助手暂不可用: ${err.message ?? err})`);
+        }
+      });
+      bubble.on("apply", ({ anchor: a, text }) => {
+        // apply_reply 只发事件:采纳为边注由父组件决定(气泡不越权)
+        it.notes.push({ anchor: a, text, at: Date.now() / 1000 });
+        _renderLeft();
+      });
+      bubble.focus();
     }
   });
   it.root.addEventListener("input", (e) => {

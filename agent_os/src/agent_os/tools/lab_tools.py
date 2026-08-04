@@ -20,6 +20,7 @@ write/create 是可逆写入(reversible;DraftStore save/create 自带 .bak/目�
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from agent_os.api.v1 import Permission, ToolResult
@@ -405,6 +406,97 @@ def register_iterate_tools(
             return ToolResult(ok=False, value=None, error=_err("invalid_args", str(e)))
         return ToolResult(
             value={"written": member, "note": "已写入候选区(未影响 working);等待用户评审"}
+        )
+
+
+#: 文档编辑工具组(D5,docs/DOC-EDITOR.md §5):doc 作用域主对话的全部动手能力——
+#: 恰好两件(读/改),围栏 = 只能动装配时指定的当前文档
+DOC_EDITOR_TOOLS = ("doc.read", "doc.edit")
+
+#: doc.edit 的锚点格式(与前端 doc-editor.js parseAnchor 同源):doc.md#L<start>-L<end>
+_DOC_ANCHOR_RE = re.compile(r"^doc\.md#L(\d+)-L(\d+)$")
+
+
+def register_doc_tools(registry: Any, *, store: Any, doc_name: str) -> None:
+    """把文档编辑工具组注册进 ``registry``(doc chat 端点的内核装配时调用)。
+
+    引用围栏(D5 信任边界):``doc_name`` = 当前文档 ref——两件工具都只接受
+    这个名字,越界(想读/改别的文档)直接 invalid_args,与 §6.7 同根:
+    助手不能隔着边界动别人的东西。
+    """
+
+    def _ref_fence(name: str) -> Any:
+        """引用围栏:只能动当前文档(doc_name),越界拒。"""
+        if name != doc_name:
+            return ToolResult(
+                ok=False,
+                value=None,
+                error=_err(
+                    "invalid_args",
+                    f"只能编辑当前文档 {doc_name}(越界引用 {name!r} 被拒)",
+                ),
+            )
+        return None
+
+    @registry.tool(name="doc.read", permission=Permission.READ, side_effect="none")
+    def doc_read(name: str, ctx: Any = None) -> ToolResult:
+        """读当前文档全文。
+
+        Use when 改之前需要确认行号/现状;Do not use when 已知全文(级联里有)。
+        """
+        fenced = _ref_fence(name)
+        if fenced is not None:
+            return fenced
+        try:
+            data = store.read(name)
+        except FileNotFoundError as e:
+            return ToolResult(ok=False, value=None, error=_err("not_found", str(e)))
+        except ValueError as e:
+            return ToolResult(ok=False, value=None, error=_err("invalid_args", str(e)))
+        return ToolResult(value={"name": data["name"], "text": data["text"]})
+
+    @registry.tool(name="doc.edit", permission=Permission.WRITE, side_effect="reversible")
+    def doc_edit(name: str, anchor: str = "", replace_text: str = "", ctx: Any = None) -> ToolResult:
+        """改当前文档:anchor 按行号区间替换该段;anchor="" 整文替换(新建/大改)。
+
+        Use when 按用户要求改文档;Do not use when 只是答疑(答疑不用工具)。
+        写 = DocStore.save(上一版自动 .bak,reversible)。
+        """
+        fenced = _ref_fence(name)
+        if fenced is not None:
+            return fenced
+        try:
+            current = store.read(name)
+        except FileNotFoundError as e:
+            return ToolResult(ok=False, value=None, error=_err("not_found", str(e)))
+        except ValueError as e:
+            return ToolResult(ok=False, value=None, error=_err("invalid_args", str(e)))
+        if not anchor:
+            new_text = replace_text  # 整文替换(空文档起稿/大改)
+        else:
+            m = _DOC_ANCHOR_RE.match(anchor)
+            if not m:
+                return ToolResult(
+                    ok=False,
+                    value=None,
+                    error=_err("invalid_args", f"锚点格式须为 doc.md#L<start>-L<end>: {anchor!r}"),
+                )
+            start, end = int(m.group(1)), int(m.group(2))
+            lines = current["text"].split("\n")
+            if start < 1 or end < start or end > len(lines):
+                return ToolResult(
+                    ok=False,
+                    value=None,
+                    error=_err(
+                        "invalid_args",
+                        f"锚点越界(文档共 {len(lines)} 行):{anchor}——先 doc.read 确认行号",
+                    ),
+                )
+            lines[start - 1 : end] = replace_text.split("\n")
+            new_text = "\n".join(lines)
+        store.save(name, new_text)
+        return ToolResult(
+            value={"changed": anchor or "full", "note": "已写入(上一版 .bak);右侧视图将重拉"}
         )
 
 

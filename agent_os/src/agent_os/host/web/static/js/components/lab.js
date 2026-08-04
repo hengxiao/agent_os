@@ -18,6 +18,7 @@
 
 import { deleteJson, getJson, postJson, putJson } from "../api.js";
 import { copy } from "../themes.js";
+import { mountJsonEditor, mountSelectList, mountTextEditor } from "../widgets/index.js";
 import { deriveTraceView, renderTrace } from "./trace.js";
 import { emptyBlock, esc, toast } from "../util.js";
 import { TIER_PERM } from "./inbox.js";
@@ -195,22 +196,27 @@ export function editorHtml(view) {
     _field("name", "name", _text("name", f.name, true), isValidDraftName(f.name) ? "" : copy("lab.name.invalid")) +
     _field("version", "version", _text("version", f.version, true)) +
     _field("kind", "kind", _select("kind", f.kind, ["prompt", "code"])) +
-    _field("description", "description", _area("description", f.description, 2)) +
+    // W1(docs/WIDGETS.md):description 换 W-text(textarea 本体不动,lab 表单模型零动)
+    _field("description", "description",
+      `<span data-widget="text-editor" data-variant="plain" class="wd-host">${_area("description", f.description, 2)}</span>`) +
     `</section>`
   );
-  // 契约组(inputs/outputs:JSON 文本域 + 实时合法性提示)
+  // 契约组(inputs/outputs:W-json 控件——行级错误定位 + format;hint 槽作 errbar 复用)
   groups.push(
     `<section class="lab-group" data-group="contract"><h3>${esc(copy("lab.group.contract"))}</h3>` +
-    _field("inputs", "inputs (JSON Schema)", _area("inputsText", f.inputsText, 6)) +
-    `<span class="lab-hint" data-json-hint="inputsText"></span>` +
-    _field("outputs", "outputs (JSON Schema)", _area("outputsText", f.outputsText, 6)) +
-    `<span class="lab-hint" data-json-hint="outputsText"></span>` +
+    _field("inputs", "inputs (JSON Schema)",
+      `<span data-widget="json-editor" class="wd-host">${_area("inputsText", f.inputsText, 6)}` +
+      `<span class="lab-hint" data-json-hint="inputsText"></span></span>`) +
+    _field("outputs", "outputs (JSON Schema)",
+      `<span data-widget="json-editor" class="wd-host">${_area("outputsText", f.outputsText, 6)}` +
+      `<span class="lab-hint" data-json-hint="outputsText"></span></span>`) +
     `</section>`
   );
-  // 指令组
+  // 指令组(prompt 换 W-text mono 变体,W1)
   groups.push(
     `<section class="lab-group" data-group="instruction"><h3>${esc(copy("lab.group.instruction"))}</h3>` +
-    _field("prompt", "prompt", _area("prompt", f.prompt, 10)) +
+    _field("prompt", "prompt",
+      `<span data-widget="text-editor" data-variant="mono" class="wd-host">${_area("prompt", f.prompt, 10)}</span>`) +
     _field("handlerPath", "handler (dotted path)", _text("handlerPath", f.handlerPath, true)) +
     _field("handler", "handler.py", _area("handler", f.handler, 6)) +
     _field("entry", "entry", _text("entry", f.entry, true)) +
@@ -287,7 +293,10 @@ export function topbarHtml(view) {
     .join("");
   return (
     `<div class="lab-top">` +
-    `<select class="input lab-select" data-lab="select">${options}</select>` +
+    // W3(docs/WIDGETS.md W-list):草稿下拉换可选列表——原生 select 隐藏为
+    // 表单模型锚(lab 的 change 委托/测试区域提取零改),W-list 驱动它
+    `<select class="input lab-select" data-lab="select" hidden>${options}</select>` +
+    `<span data-widget="select-list" data-wl-drafts class="wd-host"></span>` +
     `<input class="input mono lab-new-name" data-lab="new-name" placeholder="domain.action"` +
     ` aria-label="${esc(copy("lab.new"))}">` +
     `<select class="input lab-new-from" data-lab="new-from">` +
@@ -954,11 +963,45 @@ function _renderEditor() {
     return;
   }
   host.innerHTML = editorHtml(lab);
+  _mountEditorWidgets(host); // W1:四字段挂 widget(textarea 本体不动,表单模型零动)
+}
+
+/* W1(docs/WIDGETS.md §6):description/prompt 挂 W-text,inputs/outputs 挂 W-json。
+   控件只加微标/选区保留/行级错误/format——值的所有权与同步仍在 lab 的
+   data-field 委托模型(formToManifest/draftToForm 不动)。 */
+function _mountEditorWidgets(host) {
+  for (const w of host.querySelectorAll('[data-widget="text-editor"]')) {
+    mountTextEditor(w, { path: `/lab/editor/field/${w.querySelector("textarea")?.dataset.field ?? ""}` });
+  }
+  for (const w of host.querySelectorAll('[data-widget="json-editor"]')) {
+    mountJsonEditor(w, { path: `/lab/editor/field/${w.querySelector("textarea")?.dataset.field ?? ""}` });
+  }
 }
 
 function _renderTop() {
   const host = lab.root?.querySelector(".lab-top-host");
-  if (host) host.innerHTML = topbarHtml(lab) + (lab.confirming ? _promoteConfirmHtml() : "");
+  if (host) {
+    host.innerHTML = topbarHtml(lab) + (lab.confirming ? _promoteConfirmHtml() : "");
+    _mountDraftList(host); // W3:W-list 驱动隐藏的草稿 select(表单模型锚)
+  }
+}
+
+/* W3(docs/WIDGETS.md §6):草稿下拉 = W-list;选中即写隐藏 select 并派发
+   change(lab 的 data-lab="select" 委托路径零改,既有 _selectDraft 语义不变) */
+function _mountDraftList(host) {
+  const wl = host.querySelector("[data-wl-drafts]");
+  const sel = host.querySelector("[data-lab='select']");
+  if (!wl || !sel) return;
+  const items = (lab.drafts ?? []).map((d) => ({ id: d.name, label: d.name, hint: d.modified ?? "" }));
+  const list = mountSelectList(wl, { items, selected: lab.name ?? null });
+  list.on("select", ({ id }) => {
+    sel.value = id ?? "";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  list.on("activate", ({ id }) => {
+    sel.value = id ?? "";
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 }
 
 export async function createDraft() {

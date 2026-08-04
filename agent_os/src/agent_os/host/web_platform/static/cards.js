@@ -7,6 +7,7 @@
 
 import { copy } from "/static/js/themes.js";
 import { esc } from "/static/js/util.js";
+import { diffBodyHtml } from "/static/js/widgets/w-diff.js";
 
 /* 动作按钮:有 app instance(M1)即带新管道寻址(data-app-inst/action),
    旧 cards/action 的 data-card-act/payload 保留(过渡兼容,M3 退役) */
@@ -87,32 +88,12 @@ function gateReportCard(card) {
 
 /* diff 卡:字段新旧两列 + prompt 红绿行(Flow C 同构呈现)。
    注:对话流里只显示人话摘要(summaryHtml),本函数同时充当 diff 详情层。 */
+/* diff 卡:字段新旧两列 + prompt 红绿行(Flow C 同构呈现)。
+   W4 起本体渲染委托 W-diff 的 diffBodyHtml(split 模式,逐字节同语义);
+   对话流里只显示人话摘要(summaryHtml),本函数同时充当 diff 详情层。 */
 export function diffCard(card) {
   const d = card.data ?? {};
-  const members = (d.diff?.members ?? [])
-    .map((m) => {
-      const fields = (m.fields ?? [])
-        .map(
-          (f) =>
-            `<div class="pf-twocol" data-kind="${esc(f.kind)}">` +
-            `<div>${esc(JSON.stringify(f.old) ?? "—")}</div><div>${esc(JSON.stringify(f.new) ?? "—")}</div></div>`
-        )
-        .join("");
-      const lines = (m.prompt_diff ?? [])
-        .filter((l) => l.kind !== "same")
-        .map(
-          (l) =>
-            `<div class="pf-dline" data-kind="${esc(l.kind)}">${l.kind === "add" ? "+" : "-"} ${esc(l.text)}</div>`
-        )
-        .join("");
-      return (
-        `<div class="pf-dmember"><span class="mono">${esc(m.member)}</span>` +
-        `<span class="lab-pkg-status" data-status="${esc(m.status)}">${esc(m.status)}</span>` +
-        fields + lines + `</div>`
-      );
-    })
-    .join("");
-  return members || `<div class="pf-dim">${esc(copy("platform.no.changes"))}</div>`;
+  return diffBodyHtml(d.diff, { mode: "split" }) || `<div class="pf-dim">${esc(copy("platform.no.changes"))}</div>`;
 }
 
 /* publish 卡:成员 action 三态 + warnings 勾选门 */
@@ -391,14 +372,47 @@ function draftSummary(d) {
   );
 }
 
+/* doc 摘要卡(D1,docs/DOC-EDITOR.md §2.1 Card Surface):
+   标题 + 首行摘要 + 字数 + 状态(快照数/气泡数)——人话,技术面在 tab */
+function docSummary(d) {
+  const subs = [];
+  if (d.chars) subs.push(copy("platform.doc.chars").replace("{n}", String(d.chars)));
+  if (d.versions) subs.push(`v${d.versions}`);
+  if (d.has_bubbles) subs.push(copy("platform.doc.hasbubbles"));
+  return (
+    `<div class="pf-card-lead">「${esc(d.title ?? d.name ?? "")}」${esc(d.first_line ? `: ${d.first_line}` : "")}</div>` +
+    (subs.length ? `<div class="pf-card-sub">${esc(subs.join(" · "))}</div>` : "")
+  );
+}
+
+/* doc_list 摘要卡(D4 对话卡片):文档索引行(点开 doc tab)+ 新建按钮 */
+function docListSummary(d) {
+  const rows = (d.docs ?? [])
+    .map(
+      (doc) =>
+        `<div class="pf-pkgrow"><button class="pf-detail-link" data-detail-kind="doc" ` +
+        `data-detail-ref="${esc(doc.name)}" data-detail='{}'>${esc(doc.title ?? doc.name)}</button> ` +
+        `<span class="pf-dim">${esc(doc.first_line ?? "")} · ${doc.chars ?? 0} 字` +
+        `${doc.has_bubbles ? " · " + esc(copy("platform.doc.hasbubbles")) : ""}</span></div>`
+    )
+    .join("");
+  return (
+    `<div class="pf-card-lead">${esc(copy("platform.doc.list"))}</div>` +
+    (rows || `<div class="pf-card-sub">${esc(copy("platform.doc.none"))}</div>`) +
+    rows +
+    `<div class="pf-card-actions"><button class="btn" data-doc-create="1">${esc(copy("platform.doc.create"))}</button></div>`
+  );
+}
+
 /* 摘要卡渲染入口:一句结论(加粗)+ 补充行 + 详情链接/动作区(右下)。
    ``depth``(M2,docs/APP-MODEL.md §6):嵌套层级——对话流卡 = 1,tab 内嵌卡 = 2;
    第 3 层起卡只读,不加"打开"链接(防俄罗斯套娃)。 */
-export function summaryHtml(card, depth = 1) {
+export function summaryHtml(card, depth = 1, regPath = "", ref = "") {
   const type = card?.type ?? "";
   const d = card?.data ?? {};
   const render = { plan: planSummary, skill_pack: packSummary, gate_report: gateSummary,
-    diff: diffSummary, publish: publishSummary, debug: debugSummary, lab_draft: draftSummary }[type];
+    diff: diffSummary, publish: publishSummary, debug: debugSummary, lab_draft: draftSummary,
+    doc: docSummary, doc_list: docListSummary }[type];
   const body = type === "escalation" ? escalationSummary(d, card?.instance)
     : render ? render(d) : type === "table" ? tableSummary(card)
     : `<pre class="mono">${esc(JSON.stringify(d, null, 2))}</pre>`;
@@ -421,7 +435,9 @@ export function summaryHtml(card, depth = 1) {
               : "";
   const actions = (card?.actions ?? []).map((a) => _act(a, card?.instance)).join("");
   return (
-    `<div class="pf-card" data-card="${esc(type)}">` +
+    `<div class="pf-card" data-card="${esc(type)}"` +
+    (regPath ? ` data-reg-path="${esc(regPath)}" data-detail-ref="${esc(ref)}" draggable="true"` : "") +
+    `>` +
     body +
     (link || actions ? `<div class="pf-card-actions">${link}${actions}</div>` : "") +
     `</div>`
@@ -430,7 +446,8 @@ export function summaryHtml(card, depth = 1) {
 
 /* Card Surface 分发(docs/APP-MODEL.md §3/§8;M1 概念归位):
    渲染按 "app kind + surface" 寻址——卡型即 app kind,摘要渲染即 card surface。
-   ``depth``(M2 §6):嵌套层级透传(第 3 层只读,见 summaryHtml)。 */
-export function renderCardSurface(card, depth = 1) {
-  return summaryHtml(card, depth);
+   ``depth``(M2 §6):嵌套层级透传(第 3 层只读,见 summaryHtml)。
+   ``regPath``/``ref``(M5 §14/§15):widget 寻址与 DnD envelope 的载体。 */
+export function renderCardSurface(card, depth = 1, regPath = "", ref = "") {
+  return summaryHtml(card, depth, regPath, ref);
 }

@@ -2,6 +2,9 @@
 
 选路规则(§9.2):``manifest.logic.mode == "sandbox"`` 或
 ``RunConfig.logic_policy.force_sandbox`` → SANDBOX;否则 TRUSTED(code 技能默认可信)。
+豁免面(docs/APP-MODEL.md §17.9):force_sandbox 下命中
+``logic_policy.trusted_builtin_prefixes`` 的可信内置(platform.* 动作技能)
+仍走 TRUSTED——显式白名单,不靠"恰好没被覆盖"。
 动态代码不经本路由——``system.python.exec`` 工具直接持有 SANDBOX 实例(§9.4,强制无配置项)。
 """
 
@@ -20,11 +23,17 @@ class LogicKernelRouter:
         self._by_trust: dict[TrustLevel, Any] = {k.trust: k for k in kernels}
 
     def route(self, manifest: SkillManifest, config: RunConfig) -> Any:
-        """按 §9.2 规则选后端;目标等级未装配属装配错误 → ToolDispatchError。"""
+        """按 §9.2 规则选后端;目标等级未装配属装配错误 → ToolDispatchError。
+
+        §17.9(显式豁免):force_sandbox 时,命中 ``logic_policy.
+        trusted_builtin_prefixes`` 的内置技能(platform.* 等)仍走 TRUSTED;
+        技能自报 ``logic.mode == "sandbox"`` 优先于一切豁免(显式声明最强)。
+        """
         mode = (manifest.logic or {}).get("mode")
+        exempt = manifest.name.startswith(tuple(config.logic_policy.trusted_builtin_prefixes))
         trust = (
             TrustLevel.SANDBOX
-            if mode == "sandbox" or config.logic_policy.force_sandbox
+            if mode == "sandbox" or (config.logic_policy.force_sandbox and not exempt)
             else TrustLevel.TRUSTED
         )
         kernel = self._by_trust.get(trust)

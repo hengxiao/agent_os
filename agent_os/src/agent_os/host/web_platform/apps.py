@@ -234,6 +234,10 @@ class AppInstanceStore:
             return None  # id 合法面(防穿越;非法 id 一律查无)
         return self._by_id.get(instance_id)
 
+    def all(self) -> list[dict[str, Any]]:
+        """全量 instance(M4b 主动汇报:按 created_by 回溯发起会话的扫描面)。"""
+        return list(self._by_id.values())
+
     def update_state(self, instance_id: str, patch: dict[str, Any]) -> None:
         """结果回写(§4 action 管道:skill 调用结果写回 app.state)+ 落盘。"""
         inst = self.get(instance_id)
@@ -305,6 +309,68 @@ def default_manifests() -> list[dict[str, Any]]:
 
     return [
         {
+            # M5(docs/APP-MODEL.md §13):根 app——唯一由 bootstrap 实例化、
+            # 不由 action 孵化的特例(递归有底);与所有 manifest 过同一协议校验
+            "kind": "shell",
+            "v": 1,
+            "title": "shell",
+            "surfaces": {"card": "shell.card", "tab": "shell.tab"},
+            "state_schema": obj(
+                tabs={"type": "array"},
+                active_tab={"type": "string"},
+                theme={"type": "string"},
+                sessions={"type": "array"},
+                layout={"type": "object"},
+                widgets={"type": "object"},
+                # M5 增补(桌面化 root widget):desktop={pinned, wallpaper}
+                desktop={"type": "object"},
+            ),
+            "actions": [
+                # §13.1:tab 管理是 local(仅改 shell.state,不出海);
+                # theme/session 是 endpoint(持久化偏好/孵化会话,绑定薄 handler)
+                {"id": "shell.tab.open", "label": "platform.shell.tab.open",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"id": {"type": "string"}, "instance_id": {"type": "string"},
+                                 "kind": {"type": "string"}, "ref": {"type": "string"},
+                                 "title": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.tab.focus", "label": "platform.shell.tab.focus",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"tab": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.tab.close", "label": "platform.shell.tab.close",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"tab": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.theme.set", "label": "platform.shell.theme.set",
+                 "exec": {"mode": "endpoint", "ref": "platform.shell.theme.set"}, "args_from": [],
+                 "args_input": {"theme": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.session.create", "label": "platform.shell.session.create",
+                 "exec": {"mode": "endpoint", "ref": "platform.shell.session.create"}, "args_from": [],
+                 "args_input": {},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.layout.set", "label": "platform.shell.layout.set",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"icon_mode": {"type": "boolean"}},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.layout.move_tab", "label": "platform.shell.layout.move_tab",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"tab": {"type": "string"}, "before": {"type": "string"}},
+                 "surface": ["card", "tab"]},
+                # M5 增补(桌面化 root widget):最小化 = 无激活 tab(回桌面,tab 保留);
+                # desktop.set = 桌面开关持久化(壁纸;pinned 键预留,本期无 UI 面)
+                {"id": "shell.tab.minimize", "label": "platform.shell.tab.minimize",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {},
+                 "surface": ["card", "tab"]},
+                {"id": "shell.desktop.set", "label": "platform.shell.desktop.set",
+                 "exec": {"mode": "local"}, "args_from": [],
+                 "args_input": {"wallpaper": {"type": "boolean"}},
+                 "surface": ["card", "tab"]},
+            ],
+        },
+        {
             "kind": "conversation",
             "v": 1,
             "title": "{title}",
@@ -371,6 +437,15 @@ def default_manifests() -> list[dict[str, Any]]:
             "surfaces": {"card": "diff.card", "tab": "diff.tab"},
             "state_schema": obj(name={"type": "string"}),
             "actions": [
+                {
+                    "id": "iterate.generate",
+                    "label": "platform.act.iterate",
+                    # M4a:run 真通道(v0.2 §4)——agentic 起 run,管道 spawn run app 持 run_id
+                    "exec": {"mode": "run", "ref": "platform.iterate.generate"},
+                    "args_from": ["state.name"],
+                    "args_input": {"comments": {"type": "array"}, "note": {"type": "string"}},
+                    "surface": ["card", "tab"],
+                },
                 {
                     "id": "candidate.accept",
                     "label": "platform.act.accept",
@@ -452,7 +527,10 @@ def default_manifests() -> list[dict[str, Any]]:
             "title": "{run_id}",
             "surfaces": {"card": "run.card", "tab": "run.tab"},
             "state_schema": obj(
-                run_id={"type": "string"}, status={"type": "string"}, result={"type": "object"}
+                run_id={"type": "string"},
+                status={"type": "string"},
+                result={},
+                skill={"type": "string"},
             ),
             "actions": [
                 {
@@ -474,6 +552,15 @@ def default_manifests() -> list[dict[str, Any]]:
                     "label": "platform.run.rerun",
                     "exec": {"mode": "endpoint", "ref": "platform.run.rerun"},
                     "args_from": ["state.run_id"],
+                    "surface": ["card", "tab"],
+                },
+                {
+                    # M4a 发起面归一:app 内"再跑一次"(input 骨架可改,服务端校验)
+                    "id": "run.launch",
+                    "label": "platform.run.launch",
+                    "exec": {"mode": "run", "ref": "platform.run.launch"},
+                    "args_from": ["state.skill"],
+                    "args_input": {"input": {"type": "object"}},
                     "surface": ["card", "tab"],
                 },
             ],
@@ -524,4 +611,88 @@ def default_manifests() -> list[dict[str, Any]]:
                 },
             ],
         },
+        # ── D1(docs/DOC-EDITOR.md §2):doc app kind ─────────────────────
+        {
+            "kind": "doc",
+            "v": 1,
+            "title": "{name}",
+            "surfaces": {"card": "doc.card", "tab": "doc.tab"},
+            "state_schema": obj(
+                name={"type": "string"},
+                text={"type": "string"},
+                dirty={"type": "boolean"},
+                savedAt={"type": "number"},
+                view={"type": "string"},
+                versions={"type": "array"},
+                bubbles={"type": "array"},
+            ),
+            "actions": [
+                {
+                    "id": "doc.save",
+                    "label": "platform.doc.save",
+                    "exec": {"mode": "endpoint", "ref": "platform.doc.save"},
+                    "args_from": ["state.name"],
+                    "args_input": {"text": {"type": "string"}},
+                    "surface": ["card", "tab"],
+                },
+                {
+                    "id": "doc.snapshot",
+                    "label": "platform.doc.snapshot",
+                    "exec": {"mode": "endpoint", "ref": "platform.doc.snapshot"},
+                    "args_from": ["state.name"],
+                    "surface": ["tab"],
+                },
+                {
+                    "id": "doc.rewind",
+                    "label": "platform.doc.rewind",
+                    "exec": {"mode": "endpoint", "ref": "platform.doc.rewind"},
+                    "args_from": ["state.name"],
+                    "args_input": {"version": {"type": "string"}},
+                    "surface": ["tab"],
+                },
+                {
+                    "id": "doc.export",
+                    "label": "platform.doc.export",
+                    "exec": {"mode": "endpoint", "ref": "platform.doc.export"},
+                    "args_from": ["state.name"],
+                    "surface": ["card", "tab"],
+                },
+                {
+                    "id": "meta.set",
+                    "label": "platform.doc.meta.set",
+                    # 视图切换/标题等纯 state(docs/DOC-EDITOR.md §3;local mutator 注册面)
+                    "exec": {"mode": "local"},
+                    "args_from": [],
+                    "args_input": {"view": {"type": "string"}, "dirty": {"type": "boolean"}},
+                    "surface": ["tab"],
+                },
+                {
+                    # D2(§3 comment.apply;endpoint):agent 建议的替换文本,人按才落
+                    "id": "comment.apply",
+                    "label": "platform.doc.apply",
+                    "exec": {"mode": "endpoint", "ref": "platform.doc.apply"},
+                    "args_from": ["state.name"],
+                    "args_input": {
+                        "anchor": {"type": "string"},
+                        "replace_text": {"type": "string"},
+                        "expected": {"type": "string"},
+                    },
+                    "surface": ["tab"],
+                },
+            ],
+        },
+        # ── M4b:legacy 五页(docs/APP-MODEL.md §8 迁移地图末行)────────────
+        # 旧 UI 整页以 Tab Surface 接入(能挂 ES module 的直接挂载,runs 深链);
+        # state 最小(本页无服务端动作;打开/关闭走 Compositor,local 语义)
+        *[
+            {
+                "kind": kind,
+                "v": 1,
+                "title": "{" + kind + "}",
+                "surfaces": {"card": f"{kind}.card", "tab": f"{kind}.tab"},
+                "state_schema": obj(),
+                "actions": [],
+            }
+            for kind in ("skills", "runs", "tools", "lab", "debug-old")
+        ],
     ]

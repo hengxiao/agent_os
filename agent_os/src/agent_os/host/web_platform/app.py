@@ -6,7 +6,8 @@
 - ``POST /api/sessions/{id}/messages``:user 发意图 → orchestrator 产 agent 消息(+卡);
 - ``POST /api/cards/action``:卡片按钮统一入口——**白名单裁决**(artifacts.ACTION_WHITELIST)
   → 转发既有能力(draft create / iterate / packages promote / candidate / rewind),
-  不引入新的 promote 路径(§7 红线)。
+  不引入新的 promote 路径(§7 红线)。**deprecated**(§17.7-4:M1 前持久化旧卡
+  的兼容面,新卡全部走 app action 管道;无新调用方,退役留清理)。
 
 静态目录 ``static/`` 预留给下一步前端(本期不挂载空目录,前端落地时再挂)。
 """
@@ -16,16 +17,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from agent_os.api.v1 import ProviderError, derive_skill_tier
 from agent_os.host.web_platform.apps import (
     AppInstanceStore,
     AppRegistry,
@@ -35,24 +37,40 @@ from agent_os.host.web_platform.apps import (
 )
 from agent_os.host.web_platform.artifacts import (
     ACTION_WHITELIST,
-    build_diff_card,
     build_escalation_card,
-    build_gate_report_card,
-    build_publish_card,
-    build_skill_pack_card,
     build_table_card,
     validate_card,
 )
-from agent_os.host.web_platform.orchestrator import Orchestrator
+from agent_os.host.web_platform.orchestrator import Orchestrator, human_error
 from agent_os.host.web_platform.sessions import SessionStore, new_message
 from agent_os.kernel.errors import SkillLoadError
-from agent_os.skills.draft_store import OverlaySkillRegistry, smoke_case_from_schema
-from agent_os.skills.gate import GateError, validate_draft
-from agent_os.skills.iterate import edit_members, run_iterate
-from agent_os.skills.lab_assistant import ITERATOR_NAME, iterator_skill
-from agent_os.skills.package import promote_package
+from agent_os.skills.doc_store import DocStore
+from agent_os.skills.draft_store import OverlaySkillRegistry
+from agent_os.skills.lab_assistant import (
+    DOC_COMMENTER_NAME,
+    DOC_EDITOR_NAME,
+    DOC_REVIEWER_NAME,
+    doc_commenter_skill,
+    doc_editor_skill,
+    doc_reviewer_skill,
+)
+from agent_os.skills.platform import (
+    PLATFORM_LOCAL_SKILLS,
+    build_platform_kernel,
+    platform_skill_names,
+)
+from agent_os.tools.lab_tools import register_doc_tools
 
 _log = logging.getLogger("agent_os.platform")
+
+
+#: severity 单源(D4 打磨;与前端 doc-editor.js 的 DOC_SEVERITIES 字面一致——
+#: 后端校验集在此,前端类名/copy 在 doc-editor.js,两端各一份单一事实源)
+DOC_SEVERITIES = ("must", "should", "nit")
+
+#: 锚点格式(docs/DOC-EDITOR.md §2.1):doc.md#L<start>-L<end>(1-based 行号区间;
+#: review 批注集校验用;platform.doc.apply 技能侧另有同形一份——skills/platform/)
+_ANCHOR_RE = re.compile(r"^doc\.md#L(\d+)-L(\d+)$")
 
 
 class MessageBody(BaseModel):
@@ -71,23 +89,21 @@ class CardActionBody(BaseModel):
     session_id: str | None = None
 
 
-class DecisionBody(BaseModel):
-    """升权作答(W2):answer 必须是该问题 options 之一(裁决在 run_manager)。"""
-
-    answer: str
-
-
 class AppActionBody(BaseModel):
     """app action 管道(docs/APP-MODEL.md §4;M1):表面 + 事件参数。
 
     ``surface``:调用来自哪张面孔(card/tab)——manifest 据此校验表面合法;
     ``args``:事件参数(warnings_ack/version 等,合并进 state 绑定参数,事件优先);
-    ``session_id``(可选):结果以 agent 消息回插该会话(因果可见,§5.2)。
+    ``session_id``(可选):结果以 agent 消息回插该会话(因果可见,§5.2);
+    ``cascade``(可选,§17.7-3):级联信封(§16)——前端按触发路径经注册
+    provider 组装(widget 零 fetch,服务端信任边界不变);action 声明
+    ``context: []`` = 显式弃权(信封不进执行输入)。
     """
 
     surface: str = "card"
     args: dict[str, Any] = {}
     session_id: str | None = None
+    cascade: list[dict[str, Any]] | None = None
 
 
 class AppSpawnBody(BaseModel):
@@ -100,9 +116,87 @@ class AppSpawnBody(BaseModel):
     created_by: str = ""
 
 
+class WidgetRegisterBody(BaseModel):
+    """widget 注册(docs/APP-MODEL.md §14;M5):Surface 渲染时登记,卸载注销。
+
+    ``summary_hint`` = 该 widget 的人话摘要(卡面禁忌词纪律:前端给的必须是
+    摘要层文字,服务端只做存储不改造)。
+    """
+
+    path: str
+    kind: str = ""
+    summary_hint: str = ""
+
+
+class WidgetPathBody(BaseModel):
+    """agent 动词(docs/APP-MODEL.md §14.3):read/focus 的 path 载荷。
+
+    act 本期不过管道(M5 边界:用户点击语义已通;agent 的 act 权限收口留 M6)。
+    """
+
+    path: str
+
+
+class DocCreateBody(BaseModel):
+    """``POST /api/docs``(D1):新建文档(点分名校验在 store 层)。"""
+
+    name: str
+    title: str = ""
+    text: str = ""
+
+
+class DocCommentBody(BaseModel):
+    """``POST /api/docs/{name}/comment``(D2,docs/DOC-EDITOR.md §5):
+    段落气泡提交的信封——锚点 + 批注 + §16 级联上下文。"""
+
+    anchor: str = ""
+    text: str = ""
+    cascade: list[dict[str, Any]] = []
+
+
+class DocChatBody(BaseModel):
+    """``POST /api/docs/{name}/chat``(D5,docs/DOC-EDITOR.md §5):
+    doc 作用域主对话的一轮——只有用户消息;全文/批注由服务端自己装信封。"""
+
+    text: str = ""
+
+
 #: 升权档 → 人话(W2 decisions 聚合字段;摘要层禁 tier 术语,前端按 tier 自取 copy,
 #: 本字段是给非前端消费方/调试面的固定中文)
 _TIER_HUMAN = {"none": "只读", "reversible": "可改能撤销", "irreversible": "不可逆需审批"}
+
+
+def _sse(data: dict[str, Any]) -> str:
+    """一条 SSE data 帧(event 名由调用方前缀)。"""
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _stream_diff(
+    pending_ids: list[str],
+    terminal_runs: list[dict[str, Any]],
+    seen: dict[str, set[str] | None],
+) -> list[tuple[str, dict[str, Any]]]:
+    """SSE 单周期 diff(M4b):返回 [(event, data)];seen 原地更新。
+
+    首周期(None)只建立基线不补报存量(前端 mount 时已拉;TestClient 整读
+    不了无限流,帧语义由本纯函数单测守)。
+    """
+    events: list[tuple[str, dict[str, Any]]] = []
+    current = set(pending_ids)
+    if seen["decisions"] is not None:
+        new = sorted(current - seen["decisions"])
+        if new:
+            events.append(("decision.new", {"question_ids": new}))
+    seen["decisions"] = current
+    terminal_ids = {r["run_id"] for r in terminal_runs}
+    if seen["terminal"] is not None:
+        for r in terminal_runs:
+            if r["run_id"] not in seen["terminal"]:
+                events.append(
+                    ("run.finished", {"run_id": r["run_id"], "skill": r["skill"], "status": r["status"]})
+                )
+    seen["terminal"] = terminal_ids
+    return events
 
 
 def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -> FastAPI:
@@ -117,10 +211,31 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         provider=providers,
         model=route_model,
         name_taken=lambda n: _name_taken(manager, lab_store, n),
+        docs_provider=lambda: doc_store.list(),  # D4:doc 意图数据源(只读)
     )
     #: app instance 存储(M2 文件持久化:卡创建即登记,kind+ref 去重,
     #: 重启后卡 dict 上的 instance id 仍可解析——M1 旧卡 404 的缺口在此关闭)
     instances = AppInstanceStore(Path(artifacts_root) / "platform_apps")
+    #: 文档存储(D1,docs/DOC-EDITOR.md §4):docs_root 缺省 <artifacts>/docs
+    doc_store = DocStore(Path(artifacts_root) / "docs")
+    #: shell 根 app(docs/APP-MODEL.md §13;M5):bootstrap 实例化的唯一特例
+    #: (不由 action 孵化);kind+ref="shell" 去重 → 布局随 instance 持久化,
+    #: 重启恢复(tab 顺序/激活 tab/图标列)
+    _SHELL_STATE_DEFAULT: dict[str, Any] = {
+        "tabs": [{"id": "conv", "instance_id": "", "kind": "conversation", "ref": "conv", "title": "对话"}],
+        "active_tab": "conv",
+        "theme": "",
+        "sessions": [],
+        "layout": {"order": [], "icon_mode": False},
+        "widgets": {},
+        # M5 增补(桌面化 root widget):桌面态 = active_tab 为 "";pinned 预留(本期无 UI 面)
+        "desktop": {"pinned": [], "wallpaper": True},
+    }
+    shell_inst, _ = instances.register(
+        kind="shell", ref="shell", title="shell",
+        state=json.loads(json.dumps(_SHELL_STATE_DEFAULT)),  # 深拷贝(默认值不被 mutate)
+        created_by="",
+    )
 
     # ------------------------------------------------------------------
     # app instance 登记(docs/APP-MODEL.md §2;M1:创建卡时登记,卡上带 instance id)
@@ -203,6 +318,220 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             raise HTTPException(status_code=500, detail=f"编排产物不合卡协议: {e}") from e
 
     # ------------------------------------------------------------------
+    # 文档(D1,docs/DOC-EDITOR.md §4):/api/docs CRUD(读面直给;
+    # 写动作(save/snapshot/rewind/export)一律经 app action 管道,§3 归态)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/docs")
+    def list_docs() -> list[dict[str, Any]]:
+        """文档索引(Card Surface 数据源:标题/首行/字数/最近编辑/状态)。"""
+        return doc_store.list()
+
+    @app.post("/api/docs", status_code=201)
+    def create_doc(body: DocCreateBody) -> dict[str, Any]:
+        """新建文档(点分名校验 = 穿越防护;重名 409)。"""
+        try:
+            return doc_store.create(body.name, title=body.title, text=body.text)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+
+    @app.get("/api/docs/{name}")
+    def read_doc(name: str) -> dict[str, Any]:
+        """读文档全文 + meta(+ 版本列表,编辑器的版本下拉数据源)。"""
+        try:
+            doc = doc_store.read(name)
+            doc["versions"] = [v["version"] for v in doc_store.list_versions(name)]
+            doc["chat"] = doc_store.read_chat(name)  # D5:左栏主对话种子(开关不丢)
+            return doc
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.get("/api/docs/{name}/bubbles")
+    def read_doc_bubbles(name: str) -> list[dict[str, Any]]:
+        """全文档气泡流(D2:气泡种子——开关不丢,服务端 DocStore bubbles/ 是事实源)。"""
+        try:
+            return doc_store.read_bubbles(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/docs/{name}/review")
+    def doc_review(name: str) -> dict[str, Any]:
+        """全文评审(D3,docs/DOC-EDITOR.md §5;exec: run + cascade):
+        信封 = 全文 + 大纲 + 最近 diff(v-1 → working,有版本时)→ doc_reviewer
+        (tools=[] 白名单空)→ 锚点批注集;**自动挂段**(每条批注进对应锚点的
+        气泡流,带 severity)+ 落 review/<ts>.json(历史可查)。"""
+        try:
+            doc = doc_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        text = doc["text"]
+        outline = [
+            {"level": len(m.group(1)), "text": m.group(2).strip()}
+            for ln in text.splitlines()
+            if (m := re.match(r"^(#{1,6})\s+(.*)$", ln))
+        ]
+        # 最近 diff(v-1 → working;difflib 行级,变体行才进,封顶 4000 字符)
+        diff_text = ""
+        versions = doc_store.list_versions(name)
+        if versions:
+            vdoc = Path(artifacts_root) / "docs" / name / "versions" / versions[0]["version"] / "doc.md"
+            try:
+                old = vdoc.read_text(encoding="utf-8")
+                if old != text:
+                    import difflib
+
+                    diff_text = "\n".join(
+                        ln
+                        for ln in difflib.unified_diff(old.splitlines(), text.splitlines(), lineterm="", n=0)
+                        if ln.startswith(("+", "-")) and not ln.startswith(("+++", "---"))
+                    )[:4000]
+            except OSError:
+                diff_text = ""
+        try:
+            kernel = manager.assemble_lab_kernel(
+                OverlaySkillRegistry(
+                    manager.shared_skills_registry(),
+                    lab_store,
+                    extra={DOC_REVIEWER_NAME: doc_reviewer_skill()},
+                )
+            )
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"评审助手不可用: {e}") from e
+        try:
+            result = asyncio.run(
+                kernel.run(DOC_REVIEWER_NAME, {"text": text, "outline": outline, "diff": diff_text})
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"评审助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+        # 批注集校验(锚点格式 + severity 白名单 + text 非空;不合条丢弃,不炸)
+        notes = []
+        for note in (result or {}).get("notes") or []:
+            if (
+                isinstance(note, dict)
+                and _ANCHOR_RE.match(str(note.get("anchor") or ""))
+                and note.get("severity") in DOC_SEVERITIES
+                and str(note.get("text") or "").strip()
+            ):
+                notes.append(
+                    {"anchor": str(note["anchor"]), "severity": note["severity"], "text": str(note["text"]).strip()}
+                )
+        fname = doc_store.save_review(name, notes)
+        # 气泡雨:每条批注自动挂进对应锚点的气泡流(severity 随消息)
+        for note in notes:
+            doc_store.save_bubble(
+                name,
+                note["anchor"],
+                {"role": "assistant", "text": note["text"], "severity": note["severity"], "review": fname},
+            )
+        return {"notes": notes, "review_file": fname}
+
+    @app.post("/api/docs/{name}/comment")
+    def doc_comment(name: str, body: DocCommentBody) -> dict[str, Any]:
+        """段落气泡提交(D2,docs/DOC-EDITOR.md §3/§5;与 W2 lab comment 同先例):
+        信封(anchor+text+cascade)→ doc_commenter run(tools=[] 白名单空,
+        只读级联)→ reply/edits;**双方消息落 bubbles/(开关不丢)**。"""
+        try:
+            doc_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        try:
+            kernel = manager.assemble_lab_kernel(
+                OverlaySkillRegistry(
+                    manager.shared_skills_registry(),
+                    lab_store,
+                    extra={DOC_COMMENTER_NAME: doc_commenter_skill()},
+                )
+            )
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"评论助手不可用: {e}") from e
+        try:
+            result = asyncio.run(
+                kernel.run(
+                    DOC_COMMENTER_NAME,
+                    {"anchor": body.anchor, "text": body.text, "cascade": body.cascade},
+                )
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"评论助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+        result = result or {}
+        reply = str(result.get("reply") or "")
+        edits = result.get("edits") if isinstance(result.get("edits"), list) else []
+        if not reply and edits:
+            reply = str(edits[0].get("suggestion") or "")
+        # 持久化(D2:开关不丢)——用户批注 + 助手回复进锚点消息流
+        doc_store.save_bubble(name, body.anchor, {"role": "user", "text": body.text})
+        doc_store.save_bubble(
+            name,
+            body.anchor,
+            {"role": "assistant", "text": reply, **({"edits": edits} if edits else {})},
+        )
+        return {"reply": reply, "edits": edits}
+
+    @app.post("/api/docs/{name}/chat")
+    def doc_chat(name: str, body: DocChatBody) -> dict[str, Any]:
+        """doc 作用域主对话(D5,docs/DOC-EDITOR.md §5):
+        信封(text + cascade[文档名/全文/全部 bubbles 批注])→ doc_editor run
+        (白名单 = 当前文档的 doc.read/doc.edit,工具侧引用围栏双保险)→
+        {reply, changed};**changed = run 前后全文对比**(不信技能自报);
+        双侧消息落 chat.json(开关不丢)。"""
+        try:
+            doc = doc_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        before = doc["text"]
+        cascade = [
+            {
+                "scope": "app",
+                "path": f"/doc/{name}",
+                "data": {
+                    "name": name,
+                    "full_text": before,
+                    # 批注全量进信封:"按批注改一遍"由主对话直接覆盖
+                    "bubbles": doc_store.read_bubbles(name),
+                },
+            }
+        ]
+        try:
+            kernel = manager.assemble_lab_kernel(
+                OverlaySkillRegistry(
+                    manager.shared_skills_registry(),
+                    lab_store,
+                    extra={DOC_EDITOR_NAME: doc_editor_skill()},
+                )
+            )
+            register_doc_tools(kernel.tools, store=doc_store, doc_name=name)
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"编辑助手不可用: {e}") from e
+        try:
+            result = asyncio.run(
+                kernel.run(DOC_EDITOR_NAME, {"text": body.text, "cascade": cascade})
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"编辑助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+        reply = str((result or {}).get("reply") or "")
+        changed = doc_store.read(name)["text"] != before  # 全文对比判 changed
+        # 持久化(D5:开关不丢)——用户消息 + 助手回复进主对话流
+        doc_store.save_chat(name, {"role": "user", "text": body.text})
+        doc_store.save_chat(name, {"role": "assistant", "text": reply})
+        return {"reply": reply, "changed": changed}
+
+    # ------------------------------------------------------------------
     # 升权决策(W2,docs/ESCALATION.md §3):supervisor pending 的**纯转发**——
     # 聚合/作答都走 run_manager 的既有收件箱面,零新权限通道
     # ------------------------------------------------------------------
@@ -239,19 +568,8 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
 
     @app.get("/api/decisions")
     def list_decisions() -> list[dict[str, Any]]:
-        """待决升权请求列表(人话字段 tier_human 随行)。"""
+        """待决升权请求列表(人话字段 tier_human 随行;读面保留——§17.6:读不算 action)。"""
         return _decision_rows()
-
-    @app.post("/api/decisions/{question_id}")
-    def answer_decision(question_id: str, body: DecisionBody) -> dict[str, Any]:
-        """作答转发:找不到 → 404;answer 不在 options → 400(与旧 web 收件箱同归类)。"""
-        try:
-            manager.supervisor_answer(question_id, body.answer)
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        return {"ok": True}
 
     @app.post("/api/sessions/{session_id}/decisions/present")
     def present_decisions(session_id: str) -> dict[str, Any]:
@@ -293,22 +611,131 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         return {"presented": presented}
 
     # ------------------------------------------------------------------
+    # 主动汇报(M4b,docs/APP-MODEL.md §4):本会话发起的 run 到终态 →
+    # agent 消息 + 结果卡进会话(幂等游标随会话持久化)
+    # ------------------------------------------------------------------
+
+    def _session_of(inst: dict[str, Any]) -> str:
+        """created_by 链回溯(管道 spawn 的 run app 父级是 instance,再上一级
+        才是会话):走到非 instance 前缀即停(会话 id 或 "")。"""
+        created_by = str(inst.get("created_by") or "")
+        for _ in range(8):  # 限深防环(异常数据)
+            if not created_by.startswith("app-"):
+                return created_by
+            parent = instances.get(created_by)
+            if parent is None:
+                return ""
+            created_by = str(parent.get("created_by") or "")
+        return ""
+
+    def _terminal_run(run_id: str) -> dict[str, Any] | None:
+        """终态 run 摘要(产物 result.json 优先,内存态兜底;未终态 → None)。"""
+        result = _read_json(Path(artifacts_root) / "runs" / run_id / "result.json")
+        if result and result.get("status") in ("done", "failed", "aborted"):
+            meta = _read_json(Path(artifacts_root) / "runs" / run_id / "meta.json") or {}
+            status = result["status"]
+            return {
+                "skill": meta.get("skill") or "",
+                "status": status,
+                "summary": "跑完了" if status == "done" else human_error(result.get("error") or "")[:120] or "失败",
+            }
+        try:
+            state = manager.state_of(run_id)
+        except Exception:  # noqa: BLE001
+            state = None
+        if state and state.get("status") in ("done", "failed", "aborted"):
+            record = state.get("record") or {}
+            status = state["status"]
+            return {
+                "skill": state.get("skill") or record.get("skill") or "",
+                "status": status,
+                "summary": "跑完了" if status == "done"
+                else human_error(record.get("error") or state.get("error") or "")[:120] or "失败",
+            }
+        return None
+
+    @app.post("/api/sessions/{session_id}/runs/present")
+    def present_runs(session_id: str) -> dict[str, Any]:
+        """主动汇报:本会话发起的 run(经 instance.created_by 链回溯)到达终态
+        → agent 消息 + 结果卡进会话;presented_runs 游标随会话落盘(幂等)。"""
+        try:
+            session = sessions.get(session_id)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        seen = set(session.get("presented_runs") or [])
+        presented = []
+        for inst in instances.all():
+            if inst["kind"] != "run" or _session_of(inst) != session_id:
+                continue
+            rid = inst["ref"]
+            if rid in seen:
+                continue
+            term = _terminal_run(rid)
+            if term is None:
+                continue
+            failed = term["status"] != "done"
+            text = f"「{term['skill']}」" + (
+                f"失败了: {term['summary']}(详情见下卡)。" if failed else "跑完了,结果见下卡。"
+            )
+            card = build_table_card(
+                title="运行结果",
+                columns=["run", "skill", "摘要"],
+                rows=[[rid[:8], term["skill"], term["summary"]]],
+                ref={"kind": "run", "id": rid},
+            )
+            msg = new_message("agent", text=text, cards=[card])
+            _register_cards(msg["cards"], created_by=session_id)
+            sessions.append(session_id, msg)
+            seen.add(rid)
+            presented.append(msg)
+        if presented:
+            sessions.put_fields(session_id, presented_runs=sorted(seen))
+        return {"presented": presented}
+
+    # ------------------------------------------------------------------
+    # SSE transport(M4b,docs/APP-MODEL.md §4):decision.new / run.finished
+    # + keepalive(服务端 2s 巡检 diff;断线由前端回落轮询,与 workbench 同哲学)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/stream")
+    async def stream() -> StreamingResponse:
+        async def gen() -> Any:
+            seen: dict[str, set[str] | None] = {"decisions": None, "terminal": None}
+            while True:
+                try:
+                    pending_ids = [r["question_id"] for r in _decision_rows()]
+                    terminal_runs = [
+                        {k: r[k] for k in ("run_id", "skill", "status")}
+                        for r in _recent_runs(manager, artifacts_root)
+                        if r["status"] in ("done", "failed", "aborted")
+                    ]
+                    for event, data in _stream_diff(pending_ids, terminal_runs, seen):
+                        yield f"event: {event}\n" + _sse(data)
+                except Exception as e:  # noqa: BLE001 — 巡检面异常不炸流(下周期续)
+                    _log.info("SSE 巡检异常(下周期续): %s", e)
+                yield ": ka\n\n"  # keepalive(代理/浏览器不断线)
+                await asyncio.sleep(2)
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    # ------------------------------------------------------------------
     # 卡片动作(统一入口:白名单裁决 → 转发既有能力,§7 不开新通道)
     # ------------------------------------------------------------------
 
     @app.post("/api/cards/action")
     def card_action(body: CardActionBody) -> dict[str, Any]:
-        """旧动作入口(过渡期保留,M3 退役;裁决面 ACTION_WHITELIST 不变)。
-        handler 与新 action 管道**同一份实现**(_ACTION_HANDLERS/SKILL_BINDINGS)。"""
+        """**deprecated**(§17.7-4):旧卡面兼容入口——M1 前持久化的卡没有 instance,
+        前端旧面仍走这里;新卡一律走 app action 管道。裁决面 ACTION_WHITELIST 不变,
+        与新管道**同一份实现**(同一批 platform.* code 技能)。"""
         if body.action_id not in ACTION_WHITELIST:
             raise HTTPException(
                 status_code=400,
                 detail=f"action {body.action_id!r} 不在白名单(裁决面 ACTION_WHITELIST)",
             )
-        handler = _ACTION_HANDLERS.get(body.action_id)
-        if handler is None:
+        ref = _CARD_ACTION_REFS.get(body.action_id)
+        if ref is None:
             raise HTTPException(status_code=400, detail=f"action {body.action_id!r} 本期未接线")
-        result = _run_handler(handler, body.payload)
+        result = _run_handler(ref, body.payload)
         _register_cards(result.get("cards") or [], created_by=body.session_id or "")
         # 对话持久化(§3):带 session_id 时,动作结果以 agent 消息落进会话
         if body.session_id and result.get("text"):
@@ -318,338 +745,55 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             )
         return result
 
-    def _run_handler(fn: Any, payload: dict[str, Any]) -> dict[str, Any]:
-        """调 handler 并统一异常归类(旧 cards/action 与新 action 管道同一映射面)。"""
+    def _run_handler(ref: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """经 platform 内核跑动作技能(§17.7 L1:``kernel.run()`` 进程内,不落产物——
+        run_iterate 先例;旧 cards/action 与新 action 管道同一调用面)。
+
+        技能侧把可归类错误折成 ``_action_error`` 信封(异常过不了 Logic Kernel
+        执行边界,会塌成 RUNTIME_ERROR 丢状态码);此处原位翻译成 HTTPException——
+        状态码/文案与升格前的 _run_handler 逐字一致(行为零变化,§17.8)。
+        """
         try:
-            return fn(payload)
-        except FileExistsError as e:
-            # 草稿重名(重复批准/历史残留):友好 409,不 500(读屏层是人话,详情给原文)
-            raise HTTPException(status_code=409, detail=f"同名草稿已存在:{e}") from e
-        except ProviderError as e:
-            # N7(O7):凭证/模型服务故障 → 503 人话(前端系统气泡;不 500 不裸英文类名)
-            raise HTTPException(
-                status_code=503,
-                detail="模型服务暂不可用(凭证可能已过期),请刷新凭证后重试",
-            ) from e
-        except GateError as e:
-            raise HTTPException(status_code=409, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except FileNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+            result = asyncio.run(platform_kernel.run(ref, payload))
         except SkillLoadError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        if isinstance(result, dict) and isinstance(result.get("_action_error"), dict):
+            err = result["_action_error"]
+            raise HTTPException(status_code=int(err["status"]), detail=str(err["detail"]))
+        return result
 
     # ------------------------------------------------------------------
-    # action 处理器(每件都薄:调既有 store/gate/package 能力)
+    # action 技能面(docs/APP-MODEL.md v0.5 §17.7 升格序第 1 步;L1 全量):
+    # 全部 handler 升格为 platform.* 内置 code 技能(skills/platform/ 包,
+    # 包内 skills.yaml 注册,trusted 档);本侧只留依赖注入与分发——
+    # SKILL_BINDINGS/_LOCAL_MUTATORS 的函数表形态退役(技能名 → 技能
+    # 的注册引用由 platform 内核的 registry 承担)。
     # ------------------------------------------------------------------
 
-    def _act_scaffold_approve(payload: dict[str, Any]) -> dict[str, Any]:
-        """scaffold.approve(意图①批准):创建首稿 → 五关 → skill_pack + gate_report 卡。
-
-        N3(O3,B2):首稿即带 1 个合 schema 的冒烟用例(tests/smoke.json,
-        按 inputs schema 骨架生成)——首稿 G4 不再必然 warn。
-        """
-        name = str(payload.get("name") or "")
-        template = payload.get("template") or None
-        lab_store.create(name, template=template)
-        draft = lab_store.read(name)
-        if not draft["tests"]:
-            case = smoke_case_from_schema((draft["manifest"] or {}).get("inputs"))
-            if case is not None:
-                lab_store.save(
-                    name,
-                    manifest=draft["manifest"],
-                    prompt=draft["prompt"],
-                    handler=draft["handler"],
-                    tests={"smoke.json": case},
-                )
-                draft = lab_store.read(name)
-        report = validate_draft(
-            draft,
-            production=manager.shared_skills_registry(),
-            tools=manager.shared_tools_registry(),
-            store=lab_store,
-        )
-        lab_store.save_gate_report(name, report)
-        tier = derive_skill_tier(
-            lab_store.load_skill(name).manifest, manager.shared_tools_registry(),
-            OverlaySkillRegistry(manager.shared_skills_registry(), lab_store),
-        )
-        members = edit_members(lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(), name)
-        return {
-            "ok": True,
-            "text": f"首稿完成: {name}(推导档 {tier})。五关 {report['status']};"
-            f"{'可以继续迭代,或生成提交计划。' if report['status'] != 'fail' else '有红关,先修再提交。'}",
-            "cards": [
-                build_skill_pack_card(name=name, tier=tier, members=members),
-                build_gate_report_card(
-                    draft=name, status=report["status"], gates=report["gates"],
-                    plan_payload={"root": name},
-                ),
-            ],
+    platform_kernel = build_platform_kernel(
+        {
+            "manager": manager,
+            "lab_store": lab_store,
+            "doc_store": doc_store,
+            "sessions": sessions,
+            "instances": instances,
+            "artifacts_root": artifacts_root,
+            "read_json": _read_json,
         }
+    )
 
-    def _act_plan_confirm(payload: dict[str, Any]) -> dict[str, Any]:
-        """plan.confirm:走既有 packages/promote(P2 原子提交;不开新通道)。"""
-        plan_id = str(payload.get("plan_id") or "")
-        warnings_ack = bool(payload.get("warnings_ack"))
-        result = promote_package(
-            store=lab_store,
-            plan_id=plan_id,
-            warnings_ack=warnings_ack,
-            production=manager.shared_skills_registry(),
-            tools=manager.shared_tools_registry(),
-            principal=manager.principal().subject,
-            skillsets_root=manager.skillsets_root(),
-        )
-        if result.get("set"):
-            manager.refresh_skillsets()
-        return {
-            "ok": True,
-            "text": f"已发布 {result['root']}({result['form']},hash {result['package_hash'][:8]})。",
-            "cards": [
-                build_skill_pack_card(
-                    name=result["root"],
-                    tier="",
-                    members=[m["name"] for m in result["members"]],
-                )
-            ],
-        }
-
-    def _act_candidate_accept(payload: dict[str, Any]) -> dict[str, Any]:
-        """candidate.accept(与 Lab 端点同语义):快照 → 覆盖 working → 清候选。"""
-        name = str(payload.get("name") or "")
-        members = edit_members(
-            lab_store, manager.shared_skills_registry(), manager.shared_tools_registry(), name
-        )
-        cand = lab_store.candidate_members(name)
-        if not cand:
-            raise FileNotFoundError(f"无候选: {name}")
-        latest = lab_store.list_versions(name)
-        _, comments = lab_store.latest_comments(name)
-        vid = lab_store.snapshot(
-            name, members, source="iterate",
-            parent=latest[0]["version"] if latest else None,
-            comments_digest=f"{len(comments)} 条边注",
-            prefer_candidate=True,  # N2:快照 = 被接受的候选内容(B4)
-        )
-        for member in cand:
-            data = lab_store.read_candidate_member(name, member)
-            current = lab_store.read(member)
-            lab_store.save(
-                member,
-                manifest=data["manifest"] or {},
-                prompt=data["prompt"],
-                handler=current["handler"],
-                tests=data["tests"] or None,
-            )
-        lab_store.clear_candidate(name)
-        return {"ok": True, "text": f"已接受为 {vid}(候选已覆盖 working)。"}
-
-    def _act_candidate_discard(payload: dict[str, Any]) -> dict[str, Any]:
-        lab_store.clear_candidate(str(payload.get("name") or ""))
-        return {"ok": True, "text": "已放弃该候选(working 未动)。"}
-
-    def _act_version_rewind(payload: dict[str, Any]) -> dict[str, Any]:
-        name = str(payload.get("name") or "")
-        version = str(payload.get("version") or "")
-        lab_store.restore_version(name, version)
-        return {"ok": True, "text": f"已恢复到 {version}(版本历史未动)。"}
-
-    def _act_plan_recheck(payload: dict[str, Any]) -> dict[str, Any]:
-        """plan.recheck:生成提交计划(复用 packages/plan;返回 publish 卡)。"""
-        from agent_os.skills.package import build_plan
-
-        root = str(payload.get("root") or "")
-        plan = build_plan(
-            root,
-            store=lab_store,
-            production=manager.shared_skills_registry(),
-            tools=manager.shared_tools_registry(),
-            smoke_runner=None,
-        )
-        return {
-            "ok": True,
-            "text": f"提交计划已生成(hash {plan['package_hash'][:8]});"
-            f"阻塞 {len(plan['blockers'])} 项。",
-            "cards": [
-                build_publish_card(
-                    root=root,
-                    members=plan["members"],
-                    plan_id=plan["plan_id"],
-                    package_hash=plan["package_hash"],
-                    blockers=plan["blockers"],
-                    warnings=plan["warnings"],
-                )
-            ],
-        }
-
-    def _act_iterate_generate(payload: dict[str, Any]) -> dict[str, Any]:
-        """iterate.generate:Flow C 同一条生成路径(产出 diff 卡)。"""
-        name = str(payload.get("name") or "")
-        result = run_iterate(
-            manager.assemble_lab_kernel(
-                OverlaySkillRegistry(
-                    manager.shared_skills_registry(),
-                    lab_store,
-                    extra={ITERATOR_NAME: iterator_skill()},
-                )
-            ),
-            store=lab_store,
-            production=manager.shared_skills_registry(),
-            tools_registry=manager.shared_tools_registry(),
-            name=name,
-            comments=list(payload.get("comments") or []),
-            note=str(payload.get("note") or ""),
-        )
-        return {
-            "ok": True,
-            "text": f"已生成候选: {result['reply']}",
-            "cards": [build_diff_card(name=name, diff=result["diff"])],
-        }
-
-    _ACTION_HANDLERS = {
-        "scaffold.approve": _act_scaffold_approve,
-        "plan.confirm": _act_plan_confirm,
-        "candidate.accept": _act_candidate_accept,
-        "candidate.discard": _act_candidate_discard,
-        "version.rewind": _act_version_rewind,
-        "plan.recheck": _act_plan_recheck,
-        "iterate.generate": _act_iterate_generate,
+    #: 旧卡面 action(过渡期保留;§17.7 第 4 步退役)→ platform.* 技能名
+    _CARD_ACTION_REFS = {
+        "scaffold.approve": "platform.scaffold.approve",
+        "plan.confirm": "platform.plan.confirm",
+        "candidate.accept": "platform.candidate.accept",
+        "candidate.discard": "platform.candidate.discard",
+        "version.rewind": "platform.version.rewind",
+        "plan.recheck": "platform.plan.recheck",
+        "iterate.generate": "platform.iterate.generate",
     }
 
-    # ------------------------------------------------------------------
-    # app 协议面(docs/APP-MODEL.md;M1):manifest 注册表 + action 管道 + spawn。
-    # SKILL_BINDINGS 把 manifest 的 skill 键映射到**同一份**薄 handler——
-    # 白名单从代码升格为 manifest 数据,零新权限通道(§7 红线不变)。
-    # ------------------------------------------------------------------
-
-    def _act_decision_answer(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.decision.answer:升权作答(answer 由管道按 action_id 注入)。"""
-        qid = str(payload.get("question_id") or "")
-        answer = str(payload.get("answer") or "")
-        try:
-            manager.supervisor_answer(qid, answer)
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        return {"ok": True, "text": "已记录你的决定。", "state": {"resolved": answer}}
-
-    # ── M3 handlers(docs/APP-MODEL.md §8):run/debug/lab-draft 三 kind 的
-    # skill 绑定——每件都是既有 manager 能力的薄转发(manager 方法是 async,
-    # 与 LLM 路由同款 asyncio.run 私有循环),零新权限通道 ─────────────────
-
-    def _act_run_stop(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.run.stop:中止在途 run(不在途 → 409,与旧 web stop 同归类)。"""
-        run_id = str(payload.get("run_id") or "")
-        ok = asyncio.run(manager.stop_run(run_id))
-        if not ok:
-            raise HTTPException(status_code=409, detail=f"run 不在在途状态,无法停止: {run_id}")
-        return {"ok": True, "text": "已发送停止请求(run 在下一个安全点中止)。", "state": {"status": "stopping"}}
-
-    def _act_run_resume(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.run.resume:从 checkpoint 恢复(404/400/409 同旧 web resume)。"""
-        run_id = str(payload.get("run_id") or "")
-        try:
-            record = asyncio.run(manager.resume_run(run_id))
-        except FileNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except Exception as e:  # ResumeConflictError 等状态冲突归 409
-            if "Conflict" in type(e).__name__:
-                raise HTTPException(status_code=409, detail=str(e)) from e
-            raise
-        return {
-            "ok": True,
-            "text": f"恢复运行完成: {record.get('status')}",
-            "state": {"status": record.get("status", "")},
-        }
-
-    def _act_run_rerun(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.run.rerun:按产物 meta 的 skill+input 重跑(新 run;结果卡挂新锚)。"""
-        run_id = str(payload.get("run_id") or "")
-        meta = _read_json(Path(artifacts_root) / "runs" / run_id / "meta.json")
-        if meta is None:
-            raise HTTPException(status_code=404, detail=f"找不到 run 产物: {run_id}")
-        new_id = asyncio.run(manager.start_run(meta.get("skill") or "", meta.get("input") or {}))
-        return {
-            "ok": True,
-            "text": f"已按原参数重跑,新 run: {new_id[:8]}。",
-            "cards": [
-                build_table_card(
-                    title="重跑",
-                    columns=["run", "skill", "摘要"],
-                    rows=[[new_id[:8], meta.get("skill") or "", "已启动"]],
-                    ref={"kind": "run", "id": new_id},
-                )
-            ],
-        }
-
-    def _act_debug_command(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.debug.command:放行/停止(command 由管道按 action_id 注入:
-        debug.continue→continue,debug.stop→stop;非 paused → 409)。"""
-        sid = str(payload.get("session_id") or "")
-        command = str(payload.get("command") or "continue")
-        try:
-            asyncio.run(manager.debug_command(sid, command))
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except Exception as e:  # AgentOSError(非 paused)归 409
-            if "Error" in type(e).__name__:
-                raise HTTPException(status_code=409, detail=str(e)) from e
-            raise
-        human = "已放行。" if command == "continue" else "已发送停止。"
-        return {"ok": True, "text": human, "state": {"last_command": command}}
-
-    def _act_draft_check(payload: dict[str, Any]) -> dict[str, Any]:
-        """platform.draft.check:草稿五关(与 Lab validate 端点同逻辑;返回 gate_report 卡)。"""
-        name = str(payload.get("name") or "")
-        draft = lab_store.read(name)
-        report = validate_draft(
-            draft,
-            production=manager.shared_skills_registry(),
-            tools=manager.shared_tools_registry(),
-            store=lab_store,
-        )
-        lab_store.save_gate_report(name, report)
-        return {
-            "ok": True,
-            "text": f"检查完成: {report['status']}",
-            "cards": [
-                build_gate_report_card(
-                    draft=name, status=report["status"], gates=report["gates"],
-                    plan_payload={"root": name},
-                )
-            ],
-        }
-
-    SKILL_BINDINGS = {
-        # exec 归态(v0.2 §4;归错态 = 授权漏洞,评审面):
-        #   endpoint = 确定性写,转发既有端点(下方除标注外全部);
-        #   run = agentic 起 run(iterate.generate——当前与 endpoint 同 handler
-        #   面,真 run 通道 spawn run app 持 run_id 归 M4);local 不在此表(不出海)。
-        "platform.scaffold.approve": _act_scaffold_approve,
-        "platform.iterate.generate": _act_iterate_generate,  # run 态(见上注释)
-        "platform.candidate.accept": _act_candidate_accept,
-        "platform.candidate.discard": _act_candidate_discard,
-        "platform.version.rewind": _act_version_rewind,
-        "platform.plan.recheck": _act_plan_recheck,
-        "platform.plan.confirm": _act_plan_confirm,
-        "platform.decision.answer": _act_decision_answer,
-        # M3(docs/APP-MODEL.md §8):run/debug/lab-draft 三 kind 的绑定(全 endpoint)
-        "platform.run.stop": _act_run_stop,
-        "platform.run.resume": _act_run_resume,
-        "platform.run.rerun": _act_run_rerun,
-        "platform.debug.command": _act_debug_command,
-        "platform.draft.check": _act_draft_check,
-    }
-
-    registry = AppRegistry(known_skills=set(SKILL_BINDINGS))
+    registry = AppRegistry(known_skills=platform_skill_names())
     for _manifest in default_manifests():
         registry.register(_manifest)
     #: 内省面(测试/调试;registry 是进程静态面,实例存储是 M1 内存态)
@@ -658,9 +802,21 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
 
     @app.post("/api/apps/spawn", status_code=201)
     def app_spawn(body: AppSpawnBody) -> dict[str, Any]:
-        """spawn(§4):从卡面"打开"创建 app instance;kind 须在注册表,kind+ref 去重。"""
-        if registry.get(body.kind) is None:
+        """spawn(§4):从卡面"打开"创建 app instance;kind 须在注册表,kind+ref 去重。
+
+        M4a:初始 state 按 manifest 的 ``state_schema`` 校验(不合 → 400,
+        "登记即伪造"在此关闭;schema 以现状卡 data 为准,additionalProperties 默认放行)。
+        """
+        manifest = registry.get(body.kind)
+        if manifest is None:
             raise HTTPException(status_code=400, detail=f"未注册的 app kind: {body.kind!r}")
+        try:
+            jsonschema.validate(body.state, manifest["state_schema"])
+        except jsonschema.ValidationError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"spawn state 不合 {body.kind} 的 state_schema: {e.message}",
+            ) from e
         inst, opened = instances.register(
             kind=body.kind, ref=body.ref, title=body.title or body.ref,
             state=body.state, created_by=body.created_by,
@@ -674,6 +830,60 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         if inst is None:
             raise HTTPException(status_code=404, detail=f"找不到 app instance: {instance_id}")
         return inst
+
+    # ------------------------------------------------------------------
+    # shell 与 widget 寻址(M5,docs/APP-MODEL.md §13/§14)
+    # ------------------------------------------------------------------
+
+    @app.get("/api/shell")
+    def get_shell() -> dict[str, Any]:
+        """shell 根 app:tab 条/布局的唯一事实源(前端镜像消费,§13)。"""
+        return instances.get(shell_inst["id"])
+
+    @app.post("/api/widgets/register")
+    def widget_register(body: WidgetRegisterBody) -> dict[str, Any]:
+        """widget 注册(§14.2 注册制):Surface 渲染登记,随 shell.state 持久化。"""
+        state = shell_inst["state"]
+        state.setdefault("widgets", {})[body.path] = {
+            "kind": body.kind, "summary_hint": body.summary_hint,
+        }
+        instances.update_state(shell_inst["id"], state)
+        return {"ok": True}
+
+    @app.post("/api/widgets/unregister")
+    def widget_unregister(body: WidgetPathBody) -> dict[str, Any]:
+        """widget 注销(卸载即注销;注销后 read/focus 404)。"""
+        state = shell_inst["state"]
+        state.setdefault("widgets", {}).pop(body.path, None)
+        instances.update_state(shell_inst["id"], state)
+        return {"ok": True}
+
+    def _widget_read(path: str) -> dict[str, Any]:
+        """路径解析(§14;查 registry 不查 DOM):人话摘要,不存在 → 404。
+        ``{path:path}`` 转换器剥前导斜杠——按 "/x" 与 "x" 两形归一查。"""
+        widgets = shell_inst["state"].get("widgets", {})
+        w = widgets.get(path) or widgets.get("/" + path.lstrip("/"))
+        if w is None:
+            raise HTTPException(status_code=404, detail=f"找不到 widget: {path}")
+        return {"path": path, "kind": w.get("kind", ""), "summary": w.get("summary_hint", "")}
+
+    @app.get("/api/widgets/{path:path}")
+    def widget_get(path: str) -> dict[str, Any]:
+        """路径解析端点(M5 §2):read 的 GET 形。"""
+        return _widget_read(path)
+
+    @app.post("/api/widgets/read")
+    def widget_read(body: WidgetPathBody) -> dict[str, Any]:
+        """agent 动词 read(§14.3):人话摘要(禁忌词纪律由登记方摘要层保证)。"""
+        return _widget_read(body.path)
+
+    @app.post("/api/widgets/focus")
+    def widget_focus(body: WidgetPathBody) -> dict[str, Any]:
+        """agent 动词 focus(§14.3):解析同源(404 一致);滚动+高亮在前端执行
+        (本端点只裁决存在性——focus 不改世界,local 语义)。
+        act 本期不过管道:用户点击语义已通;agent 的 act 权限收口留 M6。"""
+        _widget_read(body.path)
+        return {"ok": True, "path": body.path}
 
     @app.post("/api/apps/{instance_id}/actions/{action_id}")
     def app_action(instance_id: str, action_id: str, body: AppActionBody) -> dict[str, Any]:
@@ -698,11 +908,30 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             )
         mode = action["exec"]["mode"]
         if mode == "local":
-            # v0.2 §4:local 是纯 UI 动作(不出海、不进管道)——调到管道即拒绝
-            raise HTTPException(
-                status_code=400,
-                detail=f"action {action_id!r} 是 local 态(纯 UI 动作不出海),不应调到管道",
+            # §17.7 L1:local 也是真 code 技能(tier none,无副作用面)——
+            # exec.mode 降级为元信息,调用一律经 kernel.run(进程内);
+            # 无服务端技能的 local(conversation 的 spawn/pin/close 等前端
+            # 本地动作)调到管道仍拒绝(M3.5 语义不变)
+            local_ref = PLATFORM_LOCAL_SKILLS.get(action_id)
+            if local_ref is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"action {action_id!r} 是 local 态(纯 UI 动作不出海),不应调到管道",
+                )
+            try:
+                input_args = validate_args_input(action, body.args)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            # §17.10 框架备参:_instance_id/_state 由管道注入(非客户端载荷面)
+            result = _run_handler(
+                local_ref,
+                apply_action_cascade(
+                    action,
+                    {"_instance_id": instance_id, "_state": inst["state"], **input_args},
+                    body.cascade,
+                ),
             )
+            return {**result, "instance": inst}
         try:
             input_args = validate_args_input(action, body.args)  # 客户端载荷的唯一合法面
         except ValueError as e:
@@ -718,9 +947,26 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         if ref == "platform.debug.command":
             # 调试命令 = action id 末段(debug.continue→continue,debug.stop→stop)
             payload["command"] = action_id.split(".")[-1]
-        # endpoint/run 当前同一薄 handler 面(run 态语义 = agentic 起 run;
-        # 真 run 通道——spawn run app 持 run_id——归 M4,v0.2 §4)
-        result = _run_handler(SKILL_BINDINGS[ref], payload)
+        payload = apply_action_cascade(action, payload, body.cascade)  # §17.7-3 级联信封
+        # §17.7 L1:endpoint/run 同一 kernel.run 调用面,exec.mode 只是元信息——
+        # **run 态**(v0.2 §4,M4a):长任务 = spawn run app 持 run_id——技能结果
+        # 带 run_id 时登记 run instance,响应附 run_instance(用户可直接进
+        # run tab;running 态 = 持 run_id 且未终态)
+        result = _run_handler(ref, payload)
+        if mode == "run" and result.get("run_id"):
+            run_inst, _opened = instances.register(
+                kind="run",
+                ref=result["run_id"],
+                title=result["run_id"][:8],
+                state={
+                    "run_id": result["run_id"],
+                    "skill": result.get("skill", ""),
+                    "status": result.get("run_status") or result.get("status") or "running",
+                    **({"result": result["result"]} if "result" in result else {}),
+                },
+                created_by=instance_id,
+            )
+            result = {**result, "run_instance": run_inst}
         if isinstance(result.get("state"), dict):
             instances.update_state(instance_id, result["state"])
         _register_cards(result.get("cards") or [], created_by=instance_id)
@@ -793,6 +1039,16 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         pass
     return None
+
+
+def apply_action_cascade(
+    action: dict[str, Any], payload: dict[str, Any], cascade: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    """§17.7-3(管道自动携带级联信封):执行输入并入 ``cascade``;
+    action 声明 ``context: []`` = 显式弃权(§16.1,轻动作不背大信封)。"""
+    if cascade is None or action.get("context") == []:
+        return payload
+    return {**payload, "cascade": cascade}
 
 
 def _iso_ts(value: Any) -> float:

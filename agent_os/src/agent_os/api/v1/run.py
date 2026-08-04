@@ -17,9 +17,16 @@ __all__ = ["LogicPolicy", "Run", "RunConfig", "RunStatus", "ToolPolicy"]
 
 @dataclass
 class LogicPolicy:
-    """§2.4:``force_sandbox = True`` 时一切逻辑代码强制沙箱(多租户宿主场景,§9.2)。"""
+    """§2.4:``force_sandbox = True`` 时一切逻辑代码强制沙箱(多租户宿主场景,§9.2)。
+
+    ``trusted_builtin_prefixes``(docs/APP-MODEL.md §17.9):force_sandbox 下的
+    **显式**可信内置白名单——命中的内置技能(默认 ``platform.*``,UI 动作技能,
+    与用户提供技能不同源)仍走 TRUSTED 进程内执行;豁免写在这里是显式声明,
+    不靠"恰好没被覆盖"。空元组 = 不豁免任何技能。
+    """
 
     force_sandbox: bool = False
+    trusted_builtin_prefixes: tuple[str, ...] = ("platform.",)
 
 
 @dataclass

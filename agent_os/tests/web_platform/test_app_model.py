@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,14 @@ KNOWN = {
     # M3:run/debug/lab-draft 三 kind 的绑定键
     "platform.run.stop", "platform.run.resume", "platform.run.rerun",
     "platform.debug.command", "platform.draft.check",
+    # M4a:发起面(run 态)
+    "platform.run.launch",
+    # M5:shell 的 endpoint 动作(§13.1)
+    "platform.shell.theme.set", "platform.shell.session.create",
+    # D1:doc 的 endpoint 动作(docs/DOC-EDITOR.md §3)
+    "platform.doc.save", "platform.doc.snapshot", "platform.doc.rewind", "platform.doc.export",
+    # D2:comment.apply(docs/DOC-EDITOR.md §3)
+    "platform.doc.apply",
 }
 
 
@@ -60,13 +69,17 @@ def _manifest(**over):
 
 
 def test_default_manifests_all_valid():
-    """首批 kind 全部合法(M1 八个 + M3 三个:run/debug/lab-draft)。"""
+    """首批 kind 全部合法(M1 八个 + M3 三个 + M4b 五个 + M5 shell;
+    shell 与普通 manifest 过同一协议校验——无特例代码路径,§13.4)。"""
     reg = AppRegistry(known_skills=KNOWN)
     for m in default_manifests():
         reg.register(m)
     assert set(reg.kinds()) == {
+        "shell",
         "conversation", "plan", "skill_pack", "gate_report", "diff", "publish", "table", "escalation",
         "run", "debug", "lab-draft",
+        "skills", "runs", "tools", "lab", "debug-old",
+        "doc",  # D1(docs/DOC-EDITOR.md §2)
     }
 
 
@@ -513,3 +526,290 @@ def test_authz_exec_modes(client):
     after = (list(client.manager.stopped), list(client.manager.answered),
              list(client.manager.debug_cmds), list(client.manager.runs_started))
     assert before == after, "local 动作零出海(无任何 handler/manager 调用)"
+
+
+# ---------------------------------------------------------------------------
+# M4a:run 真通道 + 发起面归一 + spawn state_schema 校验(docs/APP-MODEL.md §10)
+# ---------------------------------------------------------------------------
+
+
+def test_m4a_spawn_state_schema_validation(client):
+    """spawn 初始 state 按 manifest state_schema 校验:不合 → 400(登记即伪造关闭)。"""
+    bad = client.post("/api/apps/spawn", json={"kind": "run", "ref": "r1", "state": {"run_id": 123}})
+    assert bad.status_code == 400
+    assert "state_schema" in bad.json()["detail"]
+    good = client.post("/api/apps/spawn",
+                       json={"kind": "run", "ref": "r1", "state": {"run_id": "r1", "skill": "demo.fib"}})
+    assert good.status_code == 201
+
+
+@pytest.fixture()
+def iterate_client(tmp_path: Path) -> TestClient:
+    """真装配 + iterator brain(候选真写盘;run 通道的 run_id 有真实来源)。"""
+    (tmp_path / "skills.yaml").write_text("skills: []\n", encoding="utf-8")
+    cfg = tmp_path / "agent-os.toml"
+    cfg.write_text(
+        """
+[run]
+model = "mock/x"
+compression = "off"
+[providers.mock]
+brain = "tests.web.test_lab_iterate:iterator_brain"
+[tools]
+builtins = true
+python_exec = "off"
+[skills]
+path = "{skills}"
+[lab]
+drafts_root = "{drafts}"
+""".format(skills=tmp_path / "skills.yaml", drafts=tmp_path / "drafts"),
+        encoding="utf-8",
+    )
+    return TestClient(create_app(cfg, artifacts_root=tmp_path / "runs"))
+
+
+def test_m4a_iterate_run_channel(iterate_client):
+    """exec.mode=run:iterate.generate → spawn run app 持 run_id(可进 run tab);
+    running 态 = 持 run_id 且未终态(状态来自真实 run 记录,不发明标志位)。"""
+    client = iterate_client
+    client.post("/api/lab/drafts", json={"name": "lab.it"})
+    inst = client.post("/platform/api/apps/spawn",
+                       json={"kind": "diff", "ref": "lab.it", "state": {"name": "lab.it"}}).json()["instance"]["id"]
+    r = client.post(f"/platform/api/apps/{inst}/actions/iterate.generate",
+                    json={"surface": "tab", "args": {"note": ""}})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["run_id"], "handler 透传 run_id(run_iterate 真 run)"
+    run_inst = body.get("run_instance")
+    assert run_inst and run_inst["kind"] == "run", "管道 spawn run app"
+    assert run_inst["state"]["run_id"] == body["run_id"], "run app 持 run_id(v0.2 §4)"
+    assert run_inst["state"]["status"] in ("done", "failed", "running"), "状态来自真实 run 记录"
+    got = client.get(f"/platform/api/apps/{run_inst['id']}").json()
+    assert got["state"]["run_id"] == body["run_id"], "run instance 持久化可解析(进 run tab 的锚)"
+
+
+def test_m4a_run_launch(full_client, tmp_path):
+    """发起面归一:run.launch 缺省骨架 → start_run → 新 run instance;
+    客户端改参不合 schema → 400。"""
+    client = full_client
+    inst = client.post("/platform/api/apps/spawn",
+                       json={"kind": "run", "ref": "seed", "state": {"run_id": "seed", "skill": "weather.query"}}
+                       ).json()["instance"]["id"]
+    r = client.post(f"/platform/api/apps/{inst}/actions/run.launch",
+                    json={"surface": "tab", "args": {}})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["run_id"] and body.get("run_instance"), "起 run + spawn run app 持 run_id"
+    # 产物面:runs/<new_id>/meta.json(start_run 异步起线程,短轮询等落盘)
+    import time as _time
+
+    metas = []
+    for _ in range(50):
+        metas = list((tmp_path / "runs").rglob("meta.json"))
+        if any(body["skill"].encode() in m.read_bytes() for m in metas):
+            break
+        _time.sleep(0.1)
+    assert any(body["skill"].encode() in m.read_bytes() for m in metas), "新 run 落了产物"
+
+    bad = client.post(f"/platform/api/apps/{inst}/actions/run.launch",
+                      json={"surface": "tab", "args": {"input": {"city": 123}}})
+    assert bad.status_code == 400
+    assert "inputs schema" in bad.json()["detail"], "改参不合 schema 被拒"
+
+    good = client.post(f"/platform/api/apps/{inst}/actions/run.launch",
+                       json={"surface": "tab", "args": {"input": {"city": "北京"}}})
+    assert good.status_code == 200, "合法改参放行(用户可改的落点)"
+
+
+# ---------------------------------------------------------------------------
+# M4b:主动汇报 + SSE transport + legacy kinds(docs/APP-MODEL.md §10)
+# ---------------------------------------------------------------------------
+
+
+def test_m4b_runs_present_reports_to_owner_session(client, tmp_path):
+    """主动汇报:本会话发起的 run(created_by 链回溯)到终态 → agent 消息 + 卡;
+    幂等(游标随会话持久化);别会话发起的 run 不报。"""
+    sid = client.post("/api/sessions").json()["id"]
+    other = client.post("/api/sessions").json()["id"]
+    # 产物层落一个失败 run(meta/result)
+    run_dir = tmp_path / "runs" / "rep-1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "meta.json").write_text(json.dumps({"run_id": "rep-1", "skill": "demo.fib",
+                                                    "started_at": "2026-08-03T10:00:00+00:00"}))
+    (run_dir / "result.json").write_text(json.dumps(
+        {"status": "failed", "result": None, "error": "ProviderError: 401 token expired", "usage": {}}))
+    # 本会话的发起链:tab spawn 的 run instance(created_by=sid);
+    # 另挂一个别会话的(created_by=other)对照
+    client.post("/api/apps/spawn", json={"kind": "run", "ref": "rep-1", "created_by": sid,
+                                          "state": {"run_id": "rep-1", "skill": "demo.fib"}})
+    client.post("/api/apps/spawn", json={"kind": "run", "ref": "rep-2", "created_by": other,
+                                          "state": {"run_id": "rep-2", "skill": "demo.fib"}})
+    r = client.post(f"/api/sessions/{sid}/runs/present")
+    presented = r.json()["presented"]
+    assert len(presented) == 1, "只报本会话发起的"
+    msg = presented[0]
+    assert "demo.fib" in msg["text"] and "失败" in msg["text"]
+    assert "ProviderError" not in msg["text"], "人话摘要(N1 纪律)"
+    assert msg["cards"][0]["data"]["ref"] == {"kind": "run", "id": "rep-1"}, "结果卡带 run 锚"
+    assert msg["cards"][0]["instance"], "结果卡登记 instance(M1 同轨)"
+
+    assert client.post(f"/api/sessions/{sid}/runs/present").json()["presented"] == [], "幂等"
+    session = client.get(f"/api/sessions/{sid}").json()
+    assert session.get("presented_runs") == ["rep-1"], "游标随会话持久化"
+
+    # 管道 spawn 的二级 created_by 链(run app 的父级是 instance,父级的父级才是会话)
+    parent = client.post("/api/apps/spawn", json={"kind": "skill_pack", "ref": "lab.chain",
+                                                   "created_by": sid}).json()["instance"]["id"]
+    run_dir2 = tmp_path / "runs" / "rep-3"
+    run_dir2.mkdir(parents=True)
+    (run_dir2 / "meta.json").write_text(json.dumps({"run_id": "rep-3", "skill": "demo.fib",
+                                                     "started_at": "2026-08-03T11:00:00+00:00"}))
+    (run_dir2 / "result.json").write_text(json.dumps({"status": "done", "result": {"x": 1},
+                                                       "error": "", "usage": {}}))
+    child = client.post("/api/apps/spawn", json={"kind": "run", "ref": "rep-3",
+                                                  "created_by": parent,
+                                                  "state": {"run_id": "rep-3", "skill": "demo.fib"}})
+    assert child.status_code == 201
+    r2 = client.post(f"/api/sessions/{sid}/runs/present").json()["presented"]
+    assert len(r2) == 1 and "跑完了" in r2[0]["text"], "created_by 链回溯到会话(二级)"
+
+
+def test_m4b_sse_stream(client):
+    """SSE:路由注册在案 + 帧语义(_stream_diff 纯函数)。
+
+    TestClient 会把响应体收完才返回(实测:无限 SSE 流连 headers 都拿不到),
+    无限流不能走 TestClient——端点存在性用 openapi 面钉,帧语义用纯函数守。
+    """
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/api/stream" in paths, "SSE 端点注册在案"
+
+    from agent_os.host.web_platform.app import _stream_diff
+
+    seen: dict[str, set[str] | None] = {"decisions": None, "terminal": None}
+    # 首周期建基线,不补报存量
+    assert _stream_diff(["esc-0"], [{"run_id": "r0", "skill": "a", "status": "done"}], seen) == []
+    # pending 新增 → decision.new;终态新增 → run.finished;消失/重复不出帧
+    events = _stream_diff(
+        ["esc-0", "esc-1"],
+        [{"run_id": "r0", "skill": "a", "status": "done"},
+         {"run_id": "r1", "skill": "demo.fib", "status": "failed"}],
+        seen,
+    )
+    assert ("decision.new", {"question_ids": ["esc-1"]}) in events
+    assert ("run.finished", {"run_id": "r1", "skill": "demo.fib", "status": "failed"}) in events
+    assert _stream_diff(["esc-0"], [{"run_id": "r0", "skill": "a", "status": "done"}], seen) == []
+
+
+# ---------------------------------------------------------------------------
+# M5:shell app 化 + widget 寻址(docs/APP-MODEL.md §13/§14/§15)
+# ---------------------------------------------------------------------------
+
+
+def _shell(client):
+    return client.get("/api/shell").json()
+
+
+def _shell_act(client, shell_id, action, args=None):
+    return client.post(f"/api/apps/{shell_id}/actions/{action}",
+                       json={"surface": "tab", "args": args or {}})
+
+
+def test_m5_shell_bootstrap_and_tab_actions(client):
+    """bootstrap 实例化(conv 恒首);tab.open 去重聚焦/focus/close 回落;
+    全部经管道(local mutator 仅改 state,不出海)。"""
+    shell = _shell(client)
+    assert shell["kind"] == "shell"
+    assert shell["state"]["tabs"][0]["id"] == "conv", "bootstrap:conv 恒首"
+    assert shell["state"]["active_tab"] == "conv"
+    sid = shell["id"]
+
+    r = _shell_act(client, sid, "shell.tab.open",
+                   {"id": "d:run:r1", "instance_id": "app-r1", "kind": "run", "ref": "r1", "title": "运行详情"})
+    assert r.status_code == 200, r.text
+    state = _shell(client)["state"]
+    assert state["active_tab"] == "d:run:r1"
+    assert len(state["tabs"]) == 2
+    # kind+ref 去重(不同 id 同 ref → 聚焦不重复开)
+    _shell_act(client, sid, "shell.tab.open",
+               {"id": "d:run:r1-b", "kind": "run", "ref": "r1", "title": "运行详情"})
+    state = _shell(client)["state"]
+    assert len(state["tabs"]) == 2, "同 kind+ref 去重"
+    assert state["active_tab"] == "d:run:r1", "聚焦已有 tab"
+    # focus/close
+    _shell_act(client, sid, "shell.tab.focus", {"tab": "conv"})
+    assert _shell(client)["state"]["active_tab"] == "conv"
+    _shell_act(client, sid, "shell.tab.focus", {"tab": "d:run:r1"})
+    _shell_act(client, sid, "shell.tab.close", {"tab": "d:run:r1"})
+    state = _shell(client)["state"]
+    assert [t["id"] for t in state["tabs"]] == ["conv"]
+    assert state["active_tab"] == "conv", "关闭回落 conversation(关闭≠销毁语义)"
+
+
+def test_m5_shell_layout_persistence(tmp_path):
+    """布局持久化:move_tab 重排 + icon_mode 开关 → 新 app(同 root)重启恢复。"""
+    manager = _FakeManager()
+    c1 = TestClient(create_platform_app(manager=manager, lab_store=None, artifacts_root=tmp_path))
+    sid = _shell(c1)["id"]
+    for tid, ref in (("d:run:r1", "r1"), ("d:gate:g1", "g1")):
+        _shell_act(c1, sid, "shell.tab.open",
+                   {"id": tid, "kind": tid.split(":")[1], "ref": ref, "title": tid})
+    _shell_act(c1, sid, "shell.layout.move_tab", {"tab": "d:gate:g1", "before": "d:run:r1"})
+    _shell_act(c1, sid, "shell.layout.set", {"icon_mode": True})
+    _shell_act(c1, sid, "shell.theme.set", {"theme": "ink"})
+
+    c2 = TestClient(create_platform_app(manager=manager, lab_store=None, artifacts_root=tmp_path))
+    state = _shell(c2)["state"]
+    assert [t["id"] for t in state["tabs"]] == ["conv", "d:gate:g1", "d:run:r1"], "重排持久化"
+    assert state["layout"]["icon_mode"] is True, "图标列开关持久化"
+    assert state["theme"] == "ink", "主题偏好持久化(endpoint 态)"
+
+
+def test_m5_shell_session_create(client):
+    """shell.session.create(endpoint):新会话 + conversation instance 登记。"""
+    sid = _shell(client)["id"]
+    r = _shell_act(client, sid, "shell.session.create")
+    assert r.status_code == 200, r.text
+    session = r.json()["session"]
+    assert client.get(f"/api/sessions/{session['id']}").status_code == 200
+
+
+def test_m5_widget_registry(client):
+    """widget 注册/解析(read 人话摘要)/focus 同源/注销后 404。"""
+    path = "/shell/tab/app-r1/surface/tab/section/findings"
+    assert client.post("/api/widgets/register",
+                       json={"path": path, "kind": "gate_report", "summary_hint": "4 项通过,1 个建议"}
+                       ).status_code == 200
+    got = client.get(f"/api/widgets{path}").json()
+    assert got["summary"] == "4 项通过,1 个建议", "read = 人话摘要(摘要层文字)"
+    assert client.post("/api/widgets/read", json={"path": path}).json()["path"] == path
+    assert client.post("/api/widgets/focus", json={"path": path}).json()["ok"] is True
+    assert client.get("/api/widgets/shell/tab/nope").status_code == 404, "未注册 404"
+    assert client.post("/api/widgets/focus", json={"path": "/nope"}).status_code == 404, "focus 与 read 同源 404"
+    client.post("/api/widgets/unregister", json={"path": path})
+    assert client.get(f"/api/widgets{path}").status_code == 404, "注销后 404"
+
+
+def test_m5_desktop_minimize_and_wallpaper(tmp_path):
+    """桌面化 root widget(M5 增补):desktop 默认键在;bootstrap 后最小化 =
+    无激活 tab(active_tab "",tab 保留);壁纸开关持久化(重启恢复)。"""
+    manager = _FakeManager()
+    c1 = TestClient(create_platform_app(manager=manager, lab_store=None, artifacts_root=tmp_path))
+    shell = _shell(c1)
+    assert shell["state"]["desktop"] == {"pinned": [], "wallpaper": True}, "desktop 默认键"
+    sid = shell["id"]
+    _shell_act(c1, sid, "shell.tab.open",
+               {"id": "d:run:r1", "kind": "run", "ref": "r1", "title": "运行详情"})
+    r = _shell_act(c1, sid, "shell.tab.minimize")
+    assert r.status_code == 200, r.text
+    state = _shell(c1)["state"]
+    assert state["active_tab"] == "", "最小化 = 无激活 tab(桌面主屏)"
+    assert [t["id"] for t in state["tabs"]] == ["conv", "d:run:r1"], "最小化≠关闭(tab 保留)"
+    # 壁纸开关:local 态,参数过 args_input schema(非 bool 拒)
+    assert _shell_act(c1, sid, "shell.desktop.set", {"wallpaper": "x"}).status_code == 400
+    _shell_act(c1, sid, "shell.desktop.set", {"wallpaper": False})
+    assert _shell(c1)["state"]["desktop"]["wallpaper"] is False
+
+    c2 = TestClient(create_platform_app(manager=manager, lab_store=None, artifacts_root=tmp_path))
+    state = _shell(c2)["state"]
+    assert state["desktop"]["wallpaper"] is False, "壁纸开关持久化(重启恢复)"
+    assert state["active_tab"] == "", "桌面态持久化"

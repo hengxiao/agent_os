@@ -46,5 +46,8 @@
 - [SKILL-PACKAGES-V2.md](SKILL-PACKAGES-V2.md) — 能力包详细设计:业界对照与四方案,推荐路线(两闭包/两阶段严格性/plan/先证后换,P2 按此实现)。
 - [LAB-ITERATION.md](LAB-ITERATION.md) — Lab 迭代工作流 spec:访谈初始化 → 首稿 → 批注式迭代 → 版本回溯(spec,未实现)。
 - [WEB-PLATFORM.md](WEB-PLATFORM.md) — Web Platform(方案 A 对话中枢)技术档案:会话模型/产物卡协议/意图编排/卡片动作白名单(后端骨架已实现,前端下一步)。
+- [APP-MODEL.md](APP-MODEL.md) — App 化 UI 模型:app/双表面/exec 三态/shell as app/§14 寻址/§16 cascade(M1-M5 已实现)。
+- [WIDGETS.md](WIDGETS.md) — 基础 Widget 库设计:widget 协议/注册表/W-text 至 W-chart 十二控件(W1-W4 已实现)。
+- [DOC-EDITOR.md](DOC-EDITOR.md) — 文档编辑器(doc app kind):doc_store/双表面编辑器/段落气泡/评审气泡雨/NOTES 接点/导出(D1-D4 已实现;含架构实弹测试报告终版)。
 - [LAB-ITERATION-FLOWS.md](LAB-ITERATION-FLOWS.md) — 迭代交互流对比报告:三栏批注 / 对话驱动 / diff+边注 三方案对比与选型指引(静态原型见 `agent_os/src/agent_os/host/web/static/proto/`)。
 - [AGENTIC-UI.md](AGENTIC-UI.md) — Agentic 时代 UI/UX 重设计:"人是操作员 vs 指挥者"诊断、三套方案(A 对话中枢 / B 任务中心 / C 活动流工作台)、逐部分流程再造、推荐路线(C 先做 → B 概念 → A 主干)。

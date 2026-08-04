@@ -74,12 +74,15 @@ from agent_os.skills.gate import validate_draft as validate_gate_draft
 from agent_os.skills.iterate import candidate_diff, edit_members, run_iterate
 from agent_os.skills.lab_assistant import (
     ASSISTANT_NAME,
+    COMMENTER_NAME,
     ITERATOR_NAME,
     assistant_skill,
+    commenter_skill,
     iterator_skill,
 )
 from agent_os.skills.manifest import validate_manifest
 from agent_os.skills.package import build_plan, promote_package
+from agent_os.skills.platform import build_platform_kernel
 from agent_os.tools.lab_tools import register_lab_tools
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -238,6 +241,15 @@ class LabAssistantBody(BaseModel):
 
     request: str
     draft: str
+
+
+class LabCommentBody(BaseModel):
+    """``POST /api/lab/drafts/{name}/comment``(W2,docs/WIDGETS.md W-bubble):
+    气泡提交的信封——锚点 + 批注 + §16 级联上下文。"""
+
+    anchor: dict[str, Any] = {}
+    text: str = ""
+    cascade: list[dict[str, Any]] = []
 
 
 class LabIterateBody(BaseModel):
@@ -518,6 +530,10 @@ def _debug_session_doc(session: Any) -> dict[str, Any]:
         "frame_stack": _jsonable(session.frame_stack),
         # rerun 可用性(live 会话有创建参数 origin;replay/CLI 为 None)
         "rerunnable": session.origin is not None,
+        # 流可观测性(测试确定性面;additive):SSE 生成器已启动 + 其 hits 差分基线。
+        # 没有这两个字段,流消费方只能盲睡猜测生成器是否启动(既有 flake 根因)
+        "stream_attached": bool(getattr(session, "stream_attached", False)),
+        "stream_seen": dict(getattr(session, "stream_seen", None) or {}),
     }
 
 
@@ -539,6 +555,12 @@ def create_app(
     manager = RunManager(config_path, Path(artifacts_root), skillsets_dir=skillsets_dir)
     root = Path(artifacts_root)
     app = FastAPI(title="Agent OS Web UI")
+
+    # OAuth 凭证 15 分钟过期:daemon 线程用 refresh_token 自动续期(见 token_refresh.py;
+    # 凭证库不存在时(如用长期 API key 部署)自动不启用)
+    from agent_os.host.web.token_refresh import start_token_refresher
+
+    start_token_refresher()
 
     if token:
         @app.middleware("http")
@@ -809,11 +831,15 @@ def create_app(
         """热重载 skills 文件(§4.3;mtime 检查,只影响后续新建的 run,§6.1)。
 
         D6:body 可带 ``skill_set`` 限定重载哪个 set;缺省全部。
+        L2(§17.7):经 platform.skills.reload 技能 + tool(帧白名单面收编,§17.3 #11)。
         """
-        try:
-            return {"reloaded": manager.reload_skills(body.skill_set if body else None)}
-        except (RunValidationError, SkillLoadError) as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+        result = asyncio.run(
+            platform_kernel.run(
+                "platform.skills.reload", {"skill_set": (body.skill_set if body else "") or ""}
+            )
+        )
+        _raise_action_error(result)  # 400 归类在技能侧(RunValidationError/SkillLoadError)
+        return {"reloaded": result["reloaded"]}
 
     @app.get("/api/tools")
     def list_tools() -> list[dict[str, Any]]:
@@ -825,6 +851,17 @@ def create_app(
     # ------------------------------------------------------------------
 
     lab_store = _lab_store(config_path, root)
+
+    # §17.7 升格序第 2 步(L2):旧 web 的最高特权写面(skills.reload / 草稿 delete /
+    # 调试 modify/inject)收编为 platform.* 技能 + tool——调用经帧白名单 ∩ 权限交集
+    # 与数据 authZ,不再是裸 host 函数(本内核与 web_platform 管道内核各自独立装配)
+    platform_kernel = build_platform_kernel({"manager": manager, "lab_store": lab_store})
+
+    def _raise_action_error(result: Any) -> None:
+        """技能信封 → HTTPException(与 web_platform 管道 _run_handler 同语义)。"""
+        if isinstance(result, dict) and isinstance(result.get("_action_error"), dict):
+            err = result["_action_error"]
+            raise HTTPException(status_code=int(err["status"]), detail=str(err["detail"]))
 
     def _lab_overlay() -> OverlaySkillRegistry:
         """生产 registry + 草稿层(草稿优先;L1 仅服务推导档,test-run 装配属 L3)。"""
@@ -910,13 +947,10 @@ def create_app(
 
     @app.delete("/api/lab/drafts/{name}")
     def lab_delete_draft(name: str) -> dict[str, Any]:
-        """删草稿(§1.5;L2 语义,UI 已确认)。"""
-        try:
-            lab_store.delete(name)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except FileNotFoundError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+        """删草稿(§1.5;L2 语义,UI 已确认;§17.7 L2:经 platform.draft.delete
+        技能 + tool 收编——rmtree 连版本史,全包唯一 irreversible 面)。"""
+        result = asyncio.run(platform_kernel.run("platform.draft.delete", {"name": name}))
+        _raise_action_error(result)  # 400(非法名)/404(不存在)归类在技能侧
         return {"ok": True, "name": name}
 
     @app.get("/api/lab/drafts/{name}/tier")
@@ -1232,6 +1266,37 @@ def create_app(
                 status_code=503, detail=f"助手暂不可用: {type(e).__name__}: {e}"
             ) from e
 
+    @app.post("/api/lab/drafts/{name}/comment")
+    def lab_comment(name: str, body: LabCommentBody) -> dict[str, Any]:
+        """锚点评论(W2,docs/WIDGETS.md W-bubble;APP-MODEL §16 首个 cascade 消费者):
+        信封(anchor + text + cascade 逐级上下文)→ 评论技能(tools=[] 白名单收口,
+        只读级联、回复建议、**不能直接改**)→ {reply}。"""
+        try:
+            lab_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        kernel = manager.assemble_lab_kernel(
+            OverlaySkillRegistry(
+                manager.shared_skills_registry(),
+                lab_store,
+                extra={COMMENTER_NAME: commenter_skill()},
+            )
+        )
+        try:
+            result = asyncio.run(
+                kernel.run(
+                    COMMENTER_NAME,
+                    {"anchor": body.anchor, "text": body.text, "cascade": body.cascade},
+                )
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+        return {"reply": (result or {}).get("reply", "")}
+
     def _lab_candidate_diff(name: str) -> dict[str, Any]:
         """working vs candidate 的结构化 diff(skills/iterate.py 纯函数)。"""
         return candidate_diff(
@@ -1527,25 +1592,33 @@ def create_app(
 
     @app.post("/api/debug/sessions/{sid}/modify")
     async def post_debug_modify(sid: str, body: DebugModifyBody) -> dict[str, Any]:
-        """干预:改本次工具调用参数(仅暂停在 pre:tool.call;改完即放行)。"""
-        try:
-            await manager.debug_modify(sid, body.patch)
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=e.args[0]) from None
-        except AgentOSError as e:
-            raise HTTPException(status_code=409, detail=str(e)) from None
+        """干预:改本次工具调用参数(仅暂停在 pre:tool.call;改完即放行)。
+
+        L2(§17.7):经 platform.debug.intervene 技能 + tool 收编(§17.3 #9:
+        全系统特权最高的 UI 动作,必须经帧白名单与权限交集)。"""
+        result = await platform_kernel.run(
+            "platform.debug.intervene",
+            {"session_id": sid, "command": "modify", "patch": body.patch},
+        )
+        _raise_action_error(result)  # 404(会话不在)/409(非 paused)归类在技能侧
         return {"ok": True}
 
     @app.post("/api/debug/sessions/{sid}/inject")
     async def post_debug_inject(sid: str, body: DebugInjectBody) -> dict[str, Any]:
-        """干预:向指定帧注入 USER/INJECTED 消息(``frame_id`` 缺省=暂停帧;注入后放行)。"""
-        try:
-            frame_id = await manager.debug_inject(sid, body.frame_id, body.text)
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=e.args[0]) from None
-        except AgentOSError as e:
-            raise HTTPException(status_code=409, detail=str(e)) from None
-        return {"ok": True, "frame_id": frame_id}
+        """干预:向指定帧注入 USER/INJECTED 消息(``frame_id`` 缺省=暂停帧;注入后放行)。
+
+        L2(§17.7):同 modify,经 platform.debug.intervene 技能 + tool 收编。"""
+        result = await platform_kernel.run(
+            "platform.debug.intervene",
+            {
+                "session_id": sid,
+                "command": "inject",
+                "frame_id": body.frame_id or "",
+                "text": body.text,
+            },
+        )
+        _raise_action_error(result)
+        return {"ok": True, "frame_id": result["frame_id"]}
 
     @app.get("/api/debug/sessions/{sid}/frames/{fid}")
     def get_debug_frame(sid: str, fid: str) -> dict[str, Any]:
@@ -1574,10 +1647,13 @@ def create_app(
             return f"event: {name}\ndata: {json.dumps(_jsonable(data), ensure_ascii=False)}\n\n"
 
         async def events() -> AsyncIterator[str]:
+            # 流可观测性(测试确定性面):生成器启动即标记,hits 基线对快照可见
+            session.stream_attached = True
             yield _event("state", _debug_session_doc(session))
             # prev_state 不取当前态:已暂停的会话在连接后立即补发 paused(迟到客户端)
             prev_state = ""
             hits = {bp.id: bp.hits for bp in session.breakpoints}
+            session.stream_seen = hits  # 同一 dict:差分推进对快照实时可见
             idle = 0.0
             while True:
                 emitted = False

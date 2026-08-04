@@ -2,7 +2,7 @@
 
 - escalation 卡协议:注册/校验/options 按档原样携带(L2 三枚、L3 两枚);
 - decisions:聚合(tier_human 人话字段、普通 question 过滤、收件箱异常降级空表)、
-  作答转发(ok / 404 / 400 归类与旧 web 收件箱一致);
+  作答经 action 管道收编(§17.7-4:ok / 404 归类与旧 web 收件箱一致;专属端点退役);
 - present 轮询汇聚:新 pending → agent 消息 + escalation 卡落会话(持久化)+ 幂等;
 - LLM 意图路由(scripted MockProvider,不碰真 LLM):命中各意图 /
   故障回落规则 / schema 不合回落;browse 意图(时间窗过滤 + 逐行详情锚)。
@@ -151,15 +151,27 @@ def test_decisions_aggregate_degrades(tmp_path):
 
 
 def test_decisions_answer_forwarding(client):
-    """作答转发:ok 落 run_manager;missing → 404;answer 不合 options → 400。"""
-    r = client.post("/api/decisions/esc-1", json={"answer": "approve-once"})
+    """作答收编(§17.7-4):经 escalation app 的 action 管道(platform.decision.answer
+    技能)——ok 落 run_manager;missing → 404(已被处理,归类保留);答案非法 →
+    manifest 裁决 404(比专属端点的 manager 400 更早一层);专属端点退役。"""
+    def _answer(qid: str, action: str):
+        inst = client.post("/api/apps/spawn", json={
+            "kind": "escalation", "ref": qid,
+            "state": {"question_id": qid, "skill": "ops.janitor"},
+        }).json()["instance"]["id"]
+        return client.post(f"/api/apps/{inst}/actions/{action}", json={"surface": "card"})
+
+    r = _answer("esc-1", "approve-once")
     assert r.status_code == 200
     assert client.manager.answered == [("esc-1", "approve-once")]
 
-    r404 = client.post("/api/decisions/missing", json={"answer": "approve-once"})
-    assert r404.status_code == 404
-    r400 = client.post("/api/decisions/esc-1", json={"answer": "bad-answer"})
-    assert r400.status_code == 400
+    r404 = _answer("missing", "approve-once")
+    assert r404.status_code == 404, "已被处理/不存在 → 404(与旧收件箱同归类)"
+    rbad = _answer("esc-1", "bad-answer")
+    assert rbad.status_code == 404 and "无 action" in rbad.json()["detail"], "manifest 裁决先于 manager"
+    assert (
+        client.post("/api/decisions/esc-1", json={"answer": "approve-once"}).status_code == 404
+    ), "作答专属端点已退役(§17.7-4)"
 
 
 # ---------------------------------------------------------------------------

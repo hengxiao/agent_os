@@ -12,6 +12,7 @@
    经 workbench 事件委托(data-action="us-sort" / "us-retry")转发。 */
 
 import { emptyBlock, esc, fmtCost, shortId, shortSkill } from "../util.js";
+import { mountChart } from "../widgets/index.js";
 
 /* ── 列定义(纯数据):key 对齐后端 usage 端点帧行字段(rca.py USAGE_FRAME_KEYS)── */
 export const USAGE_COLUMNS = [
@@ -175,10 +176,23 @@ export function mountUsagePanel(details, { load } = {}) {
         `</div>`;
       return;
     }
-    body.innerHTML = usageTableHtml(state.usage, {
-      sortKey: state.sortKey,
-      sortDir: state.sortDir,
-    });
+    body.innerHTML =
+      `<div class="us-chart" data-us-chart="1"></div>` +
+      usageTableHtml(state.usage, {
+        sortKey: state.sortKey,
+        sortDir: state.sortDir,
+      });
+    // W4(W-chart 并列装配):帧 cost 折线图;等价数据表 = 下方 usage 表
+    // (本面板原生,硬规则天然满足)+ 控件自带表格切换;面板语义不变(并列,不替换)
+    const chartHost = body.querySelector("[data-us-chart]");
+    if (chartHost) {
+      const frames = state.usage?.frames ?? [];
+      mountChart(chartHost, {
+        series: [{ name: "cost", points: frames.map((f, i) => ({ x: i + 1, y: Number(f?.cost) || 0 })) }],
+        type: "line",
+        label: `usage cost per frame(${frames.length} 帧)`,
+      });
+    }
     if (summaryTotals) summaryTotals.textContent = `· ${totalsLine(state.usage)}`;
   }
 

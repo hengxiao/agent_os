@@ -138,10 +138,7 @@ function renderTabs() {
   host.innerHTML = state.tabs
     .map((t) => {
       const active = t.id === state.active;
-      const close =
-        t.kind !== "conversation"
-          ? `<button class="pf-tab-x" data-tab-x="${esc(t.id)}" aria-label="${esc(copy("platform.tab.close"))}">✕</button>`
-          : "";
+      const close = `<button class="pf-tab-x" data-tab-x="${esc(t.id)}" aria-label="${esc(copy("platform.tab.close"))}">✕</button>`;
       const label = t.kind === "conversation" ? copy("platform.tab.chat") : t.title;
       // 触屏降级(§15.4):长按出的"移到最左/最右"菜单(与 DnD 同一 move_tab action)
       const lp =
@@ -234,7 +231,7 @@ function renderDesktop() {
    legacy 应用 → openDetail(同 launcher,shell.tab.open) */
 function openDesktopIcon(id) {
   state.startOpen = false; // 开始菜单项同源此口,点完即收
-  if (id === "conv") return activateTab("conv");
+  if (id === "conv") return openConversation(); // conv 可关:不在时按恒首语义补回
   if (state.closedTabs.some((t) => t.id === id)) return reopenTab(id);
   return openDetail(id, id, {});
 }
@@ -306,7 +303,7 @@ function cycleTheme() {
 }
 
 /* 窗口标题栏(激活 app 最大化时):图标 + 标题 + 最小化(回桌面,tab 保留)
-   + 关闭(✕,走 M5 关闭≠销毁进最近关闭;conversation 不可关闭,与 tab 条一致) */
+   + 关闭(✕,走 M5 关闭≠销毁进最近关闭;有桌面后 conversation 同样可关) */
 function renderTitlebar() {
   const host = $("#titlebar");
   if (!host) return;
@@ -317,10 +314,7 @@ function renderTitlebar() {
     return;
   }
   const label = tab.kind === "conversation" ? copy("platform.tab.chat") : tab.title;
-  const close =
-    tab.kind !== "conversation"
-      ? `<button class="pf-win-x" data-win-close aria-label="${esc(copy("platform.tab.close"))}">✕</button>`
-      : "";
+  const close = `<button class="pf-win-x" data-win-close aria-label="${esc(copy("platform.tab.close"))}">✕</button>`;
   host.innerHTML =
     `<span class="pf-win-ico" aria-hidden="true">${esc((label || "?").trim().charAt(0))}</span>` +
     `<span class="pf-win-title">${esc(label)}</span>` +
@@ -923,15 +917,28 @@ async function _loadDetail(kind, ref, data) {
 }
 
 function closeDetail(id) {
-  const { tabs, active, closed } = closeTab(state.tabs, id, "conv");
+  const wasActive = state.active === id;
+  // 关闭回退:普通 tab 回 conv;conv 自己可关(有桌面)——回下一个 tab 或桌面("");
+  // 兜底:closeTab 的 fallback 可能指向刚被删的 conv,必须钳制到存在的 tab(或桌面)
+  const { tabs, active, closed } = closeTab(state.tabs, id, id === "conv" ? "" : "conv");
   state.tabs = tabs;
-  state.active = active;
+  state.active = tabs.some((t) => t.id === active) ? active : (tabs[0]?.id ?? "");
   if (closed) state.closedTabs = pushClosed(state.closedTabs, closed); // M2:关闭≠销毁
   shellAction("shell.tab.close", { tab: id }); // M5:关闭 = shell action(回镜收敛)
   _widgetCall("/platform/api/widgets/unregister", { path: `/shell/tab/${id}/surface/tab` });
-  if (state.active === "conv") state.detail = null;
+  if (wasActive || state.active === "") state.detail = null; // 关的是激活 tab(或回桌面)→ 详情作废
   renderTabs();
   renderMain();
+}
+
+/* 打开/回到对话 tab(conv 也可关:不在 tab 条时先按 conv 恒首语义补回) */
+function openConversation() {
+  if (!state.tabs.some((t) => t.id === "conv")) {
+    state.tabs.unshift({ id: "conv", kind: "conversation", title: "", ref: "conv" });
+    // conv 恒首 + 去重由服务端同一语义收敛(M5 增补:conv 可关后可再开)
+    shellAction("shell.tab.open", { kind: "conversation", ref: "conv", id: "conv", title: copy("platform.tab.chat") });
+  }
+  return activateTab("conv");
 }
 
 /* 重开(M2):从最近关闭回到 tab 条并聚焦(同一 tab id/ref → 同 instance) */
@@ -1180,7 +1187,7 @@ function bind() {
     if (e.target.closest("[data-win-close]")) return closeDetail(state.active); // ✕ 关闭≠销毁
     if (e.target.closest("[data-tray-live]")) return reconnectStream();
     if (e.target.closest("[data-tray-theme]")) return cycleTheme();
-    if (e.target.closest("[data-tray-inbox]")) return activateTab("conv"); // 决策在对话里处理
+    if (e.target.closest("[data-tray-inbox]")) return openConversation(); // 决策在对话里处理(conv 可关,补回再激活)
     const tabX = e.target.closest("[data-tab-x]");
     if (tabX) {
       e.stopPropagation(); // ✕ 不触发 tab 激活

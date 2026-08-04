@@ -872,6 +872,20 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     def _mut_tab_open(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         state = inst["state"]
         tabs = state.setdefault("tabs", [])
+        # conversation 是唯一且恒首:已存在则聚焦,不追加(conv 可关后由此补回)
+        if args.get("kind") == "conversation":
+            conv = next((t for t in tabs if t.get("kind") == "conversation"), None)
+            if conv is None:
+                tabs.insert(0, {
+                    "id": args.get("id", "conv"), "instance_id": args.get("instance_id", ""),
+                    "kind": "conversation", "ref": args.get("ref", "conv"),
+                    "title": args.get("title", ""),
+                })
+                state["active_tab"] = args.get("id", "conv")
+            else:
+                state["active_tab"] = conv["id"]
+            instances.update_state(inst["id"], state)
+            return {"ok": True}
         existing = next(
             (t for t in tabs
              if t.get("kind") != "conversation" and t.get("kind") == args.get("kind") and t.get("ref") == args.get("ref")),
@@ -896,9 +910,14 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     def _mut_tab_close(inst: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
         state = inst["state"]
         tab_id = args.get("tab", "")
-        state["tabs"] = [t for t in state.get("tabs", []) if t.get("id") != tab_id]
+        tabs = [t for t in state.get("tabs", []) if t.get("id") != tab_id]
+        state["tabs"] = tabs
         if state.get("active_tab") == tab_id:
-            state["active_tab"] = "conv"  # 关闭回落 conversation(销毁是显式动作,close≠destroy)
+            # 关闭回落:普通 tab 回 conv;conv 自己可关(有桌面)——回下一个 tab,空则桌面("")
+            state["active_tab"] = next(
+                (t["id"] for t in tabs if t.get("id") == "conv"),
+                tabs[0]["id"] if tabs else "",
+            )
         instances.update_state(inst["id"], state)
         return {"ok": True}
 

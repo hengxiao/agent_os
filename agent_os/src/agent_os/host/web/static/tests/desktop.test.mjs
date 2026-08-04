@@ -53,6 +53,15 @@ const shellState = {
 const shellMutate = (action, args) => {
   const s = shellState;
   if (action === "shell.tab.open") {
+    if (args.kind === "conversation") {
+      const conv = s.tabs.find((t) => t.kind === "conversation");
+      if (conv) s.active_tab = conv.id;
+      else {
+        s.tabs.unshift({ id: args.id ?? "conv", instance_id: args.instance_id ?? "", kind: "conversation", ref: args.ref ?? "conv", title: args.title });
+        s.active_tab = args.id ?? "conv";
+      }
+      return { ok: true, instance: { id: "app-shell", kind: "shell", state: s } };
+    }
     const ex = s.tabs.find((t) => t.kind !== "conversation" && t.kind === args.kind && t.ref === args.ref);
     if (ex) s.active_tab = ex.id;
     else {
@@ -62,7 +71,10 @@ const shellMutate = (action, args) => {
   } else if (action === "shell.tab.focus") s.active_tab = args.tab;
   else if (action === "shell.tab.close") {
     s.tabs = s.tabs.filter((t) => t.id !== args.tab);
-    if (s.active_tab === args.tab) s.active_tab = "conv";
+    if (s.active_tab === args.tab) {
+      // 新语义:普通 tab 回 conv;conv 自己可关 → 下一个 tab,空则桌面("")
+      s.active_tab = s.tabs.find((t) => t.id === "conv")?.id ?? s.tabs[0]?.id ?? "";
+    }
   } else if (action === "shell.tab.minimize") s.active_tab = ""; // 最小化 = 无激活 tab(桌面)
   else if (action === "shell.desktop.set") {
     if ("wallpaper" in args) s.desktop.wallpaper = Boolean(args.wallpaper);
@@ -139,7 +151,7 @@ assert.equal(probe.state.active, "conv", "boot 回落对话(M5 语义不动)");
 assert.ok(doc.querySelector("#desktop").hidden, "有激活 tab 时桌面隐藏");
 assert.ok(!doc.querySelector("#titlebar").hidden, "激活态标题栏在");
 assert.ok(titleHtml().includes("对话"), "标题栏 = 激活 tab 标题");
-assert.ok(!titleHtml().includes("data-win-close"), "对话不可关闭(与 tab 条一致:无 ✕)");
+assert.ok(titleHtml().includes("data-win-close"), "对话标题栏也有 ✕(有桌面后不再是特权不可关)");
 assert.ok(titleHtml().includes("data-win-min"), "标题栏有最小化");
 assert.equal(doc.body.dataset.desktop, "0", "非桌面态样式钩子");
 
@@ -277,6 +289,40 @@ assert.ok(trayHtml().includes("moe"), "托盘显示当前主题");
 clickOn({ trayLive: "" });
 await tick();
 assert.ok(trayHtml().includes("data-tray-live"), "live 项点击重连不炸(降级态保持)");
+
+/* ── conv 可关(有桌面后对话是普通 app):✕ → 桌面 → 图标恒首补回 ── */
+
+{
+  // 关闭对话 tab:服务端回落 = 下一个 tab 或桌面("");conv 进最近关闭可重开
+  clickOn({ deskOpen: "conv" });
+  await tick();
+  assert.equal(probe.state.active, "conv", "先回到对话");
+  assert.ok(tabsHtml().includes('data-tab-x="conv"'), "对话 tab 也有 ✕(不再是特权不可关)");
+  clickOn({ winClose: "" });
+  await tick();
+  assert.ok(!probe.state.tabs.some((t) => t.id === "conv"), "conv 从 tab 条关闭");
+  assert.equal(probe.state.active, "d:tools:tools", "关 conv 后回落第一个剩余 tab");
+  // 逐个关掉 → 桌面
+  clickOn({ winClose: "" });
+  await tick();
+  assert.equal(probe.state.active, "d:skills:skills", "再关一个 → 顺序回落");
+  clickOn({ winClose: "" });
+  await tick();
+  assert.equal(probe.state.active, "", "全部关闭后回桌面");
+  assert.ok(!doc.querySelector("#desktop").hidden, "桌面可见");
+  // 桌面图标补回:conv 恒首 + 激活(服务端去重聚焦语义)
+  clickOn({ deskOpen: "conv" });
+  await tick();
+  assert.equal(probe.state.tabs[0]?.id, "conv", "重开后 conv 恒首");
+  assert.equal(probe.state.active, "conv", "重开后激活对话");
+  assert.ok(shellCalls("shell.tab.open").length >= 1, "补回走 shell.tab.open(同源)");
+  // 再关 → 收件箱点击也走 openConversation(补回再激活)
+  clickOn({ winClose: "" });
+  await tick();
+  clickOn({ trayInbox: "" });
+  await tick();
+  assert.equal(probe.state.active, "conv", "收件箱 → openConversation 补回激活");
+}
 
 /* ── M5 不回归:图标列开关持久化(shell.layout.set)───────────── */
 

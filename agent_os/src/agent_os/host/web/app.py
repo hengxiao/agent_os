@@ -551,6 +551,12 @@ def create_app(
     root = Path(artifacts_root)
     app = FastAPI(title="Agent OS Web UI")
 
+    # OAuth 凭证 15 分钟过期:daemon 线程用 refresh_token 自动续期(见 token_refresh.py;
+    # 凭证库不存在时(如用长期 API key 部署)自动不启用)
+    from agent_os.host.web.token_refresh import start_token_refresher
+
+    start_token_refresher()
+
     if token:
         @app.middleware("http")
         async def _require_token(request: Request, call_next):  # type: ignore[no-untyped-def]

@@ -5,9 +5,25 @@
    - actions 结构齐(id 必填),且**只允许 local**——endpoint/run 出现即拒
      (§1.3 铁律 1:widget 永不直接调后端,出海只有 events,授权面只在 app 层);
    - events 是字符串清单(未声明的事件实例侧 emit 不发,见 widget.js);
-   - aria.role 必填(商业 widget 标准);surfaces ⊆ {card, tab} 且非空。 */
+   - aria.role 必填(商业 widget 标准);surfaces ⊆ {card, tab} 且非空;
+   - **context_provider 必有**(§17.7-3:"所有 widget 都有 context"的注册面)——
+     缺省给内置缺省(kind + state 摘要),声明者可覆盖;给了非函数 = 不合规拒。 */
 
 const _defs = new Map();
+
+/* 缺省 context fragment:kind + state 摘要(紧凑、可 JSON 序列化;
+   完整 state 由声明方自己的 provider 给出,缺省只给"我是谁+大概状态") */
+function _defaultProvider(kind) {
+  return (state) => {
+    let summary = "";
+    try {
+      summary = JSON.stringify(state ?? {}).slice(0, 120);
+    } catch {
+      summary = String(state); // 循环引用等:降级为字符串,不炸级联
+    }
+    return { kind, state_summary: summary };
+  };
+}
 
 export function registerWidgetDef(def) {
   const kind = def?.kind;
@@ -31,6 +47,13 @@ export function registerWidgetDef(def) {
   const faces = def.surfaces ?? [];
   if (!faces.length || faces.some((f) => !["card", "tab"].includes(f))) {
     throw new Error(`widget ${kind}: surfaces 非法: ${faces}`);
+  }
+  // §17.7-3:缺省 provider 兜底,声明者可覆盖;非函数 = 协议不合规
+  if (def.context_provider === undefined || def.context_provider === null) {
+    def.context_provider = _defaultProvider(kind);
+  }
+  if (typeof def.context_provider !== "function") {
+    throw new Error(`widget ${kind}: context_provider 必须是函数(§17.7-3)`);
   }
   _defs.set(kind, def);
   return def;

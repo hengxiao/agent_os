@@ -703,9 +703,17 @@ const assertClean = (html, who) => {
     }
     if (url === "/api/runs/bad-run/signals") return reply([]);
     if (url === "/platform/api/decisions/esc-1" && options.method === "POST") {
-      return reply({ ok: true });
+      return reply({ ok: true }); // §17.7-4 收编后不应再被调(断言兜底)
     }
     if (url === "/platform/api/decisions/esc-gone" && options.method === "POST") {
+      return { ok: false, status: 404, json: async () => ({ detail: "找不到 supervisor 问题: esc-gone" }) };
+    }
+    // §17.7-4:decisions 作答收编 action 管道(无 instance 旧卡先 spawn escalation)
+    if (url === "/platform/api/apps/app-spawn-esc-1/actions/approve-once") {
+      return reply({ ok: true, text: "已记录你的决定。", state: { resolved: "approve-once" },
+        instance: { id: "app-spawn-esc-1", kind: "escalation", state: {} } });
+    }
+    if (url === "/platform/api/apps/app-spawn-esc-gone/actions/deny") {
       return { ok: false, status: 404, json: async () => ({ detail: "找不到 supervisor 问题: esc-gone" }) };
     }
     if (url === "/platform/api/sessions/s1/decisions/present") {
@@ -949,16 +957,23 @@ const assertClean = (html, who) => {
   await probe.pollDecisions();
   assert.equal(probe.state.messages.length, before + 1, "重复轮询不重复插入");
 
-  // 就地作答:批准一次 → POST 转发 → 卡片标记已决(置灰 + 状态字)
+  // 就地作答:批准一次 → 收编后经 action 管道(spawn escalation instance →
+  // actions/approve-once)→ 卡片标记已决(置灰 + 状态字)
   const approveBtn = new StubEl("button");
   approveBtn.dataset.decision = "esc-1";
   approveBtn.dataset.answer = "approve-once";
   approveBtn.parentNode = doc.body;
   doc.trigger("click", { target: approveBtn });
   await tick();
-  const decPost = calls.find((c) => c.url === "/platform/api/decisions/esc-1");
-  assert.ok(decPost, "decisions 作答请求发出");
-  assert.deepEqual(JSON.parse(decPost.body), { answer: "approve-once" });
+  const decPost = calls.find((c) => c.url === "/platform/api/apps/app-spawn-esc-1/actions/approve-once");
+  assert.ok(decPost, "decisions 作答经 action 管道(§17.7-4 收编)");
+  assert.equal(JSON.parse(decPost.body).surface, "card", "管道表面 = card");
+  assert.ok(
+    calls.some((c) => c.url === "/platform/api/apps/spawn" && (c.body ?? "").includes('"escalation"')),
+    "无 instance 旧卡先 spawn escalation instance(去重幂等)");
+  assert.ok(
+    !calls.some((c) => c.url.startsWith("/platform/api/decisions/") && c.method === "POST"),
+    "作答专属端点不再被调(旁路收编)");
   assert.ok(logHtml().includes("已批准"), "已决状态字");
   const escCard = probe.state.messages.at(-1).cards[0];
   assert.equal(escCard.data.resolved, "approve-once", "卡数据标记已决(重渲仍置灰)");
@@ -1631,6 +1646,18 @@ const assertClean = (html, who) => {
   const cmSize = probe.state._docEditor.bubbles.size;
   pv5.trigger("contextmenu", { target: cmBlock }); // 再右键同一块 = 聚焦,不重复开
   assert.equal(probe.state._docEditor.bubbles.size, cmSize, "防重复开(同锚点 early-return)");
+
+  // §17.7-3:管道自动携带级联信封(开泡已注册 /doc/<name> app 级 provider)
+  const snapBtn2 = new StubEl("button");
+  snapBtn2.dataset.tabAct = "doc.snapshot";
+  snapBtn2.parentNode = doc.body;
+  doc.trigger("click", { target: snapBtn2 });
+  await tick();
+  const snapPost2 = calls.filter((c) => c.url.includes("doc.snapshot")).at(-1);
+  const snapBody2 = JSON.parse(snapPost2.body);
+  assert.ok(Array.isArray(snapBody2.cascade), "action 请求体带 cascade 信封");
+  assert.equal(snapBody2.cascade[0].scope, "app", "app 级 fragment 在信封");
+  assert.equal(snapBody2.cascade[0].data.name, "design.new_ui", "fragment = 当前文档状态");
 
   // 主对话:发送 → chat 端点(请求体 {text})→ changed=true → 右侧重拉重渲
   const getsBefore = calls.filter((c) => c.url === "/platform/api/docs/design.new_ui").length;

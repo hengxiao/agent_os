@@ -15,9 +15,15 @@
 
 const _providers = []; // {prefix, scope, fn}
 
-/* 注册某级路径前缀的 context_provider;返回注销函数。 */
+/* 注册某级路径前缀的 context_provider;返回注销函数(注销随 widget destroy)。
+
+   §17.7-3(注册面启用):同 (prefix, scope) 重复注册 = **替换**(最新赢)——
+   宿主重挂载(doc tab reload 等)不会在同一路径堆叠过期闭包;注销只摘自己
+   (若已被替换则不动新注册)。 */
 export function registerContextProvider(prefix, scope, fn) {
   const entry = { prefix, scope, fn };
+  const stale = _providers.findIndex((p) => p.prefix === prefix && p.scope === scope);
+  if (stale >= 0) _providers.splice(stale, 1); // 同位替换(重挂载语义)
   _providers.push(entry);
   return () => {
     const i = _providers.indexOf(entry);

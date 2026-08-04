@@ -6,11 +6,17 @@
    - **不调后端**:本目录禁止出现 fetch((代码评审纪律,静态扫描进 widgets 测试);
    - **寻址**(APP-MODEL §14):path = 父级前缀 + 叶子段,由 mount 方给;
      登记/注销经 onRegister/onUnregister 回调——注册动作本身是宿主职责
-     (widget 不调注册端点,那也算出海)。 */
+     (widget 不调注册端点,那也算出海);
+   - **context**(§17.7-3):register() 时把 def.context_provider 按 path 注册进
+     cascade 运行时(scope "widget"),destroy 注销——"所有 widget 都有 context"
+     的运行时面;无 path 的实例不可寻址,不注册。 */
+
+import { registerContextProvider } from "./cascade.js";
 
 export function createWidget(def, { state = {}, path = "", onRegister = null, onUnregister = null } = {}) {
   const listeners = {};
   let destroyed = false;
+  let unregisterProvider = null;
   const widget = {
     kind: def.kind,
     def,
@@ -26,11 +32,17 @@ export function createWidget(def, { state = {}, path = "", onRegister = null, on
     },
     /* 登记叶子路径(渲染时由 mount 方调用一次;摘要由宿主补,控件不编) */
     register(summaryHint = "") {
-      if (!destroyed && path && onRegister) onRegister(path, { kind: def.kind, summary_hint: summaryHint });
+      if (destroyed || !path) return;
+      if (onRegister) onRegister(path, { kind: def.kind, summary_hint: summaryHint });
+      // §17.7-3:provider 随 register 进 cascade 运行时(读实时 state)
+      unregisterProvider = registerContextProvider(path, "widget", (c) =>
+        def.context_provider(widget.state, c)
+      );
     },
     destroy() {
       if (destroyed) return;
       destroyed = true;
+      if (unregisterProvider) unregisterProvider(); // 注销随 destroy(§17.7-3)
       if (path && onUnregister) onUnregister(path);
       for (const key of Object.keys(listeners)) delete listeners[key];
     },

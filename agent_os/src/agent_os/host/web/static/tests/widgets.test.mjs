@@ -53,6 +53,22 @@ const {
     actions: [], events: [], aria: {}, surfaces: ["tab"] }), /aria/);
   assert.throws(() => registerWidgetDef({ kind: "t-b4", v: 1, state_schema: null,
     actions: [], events: [], aria: { role: "x" }, surfaces: ["tab"] }), /state_schema/);
+  // §17.7-3:context_provider 必有——缺省兜底(kind + state 摘要,可序列化);
+  // 声明者可覆盖;非函数拒注册
+  const d1 = registerWidgetDef({ kind: "t-ctx", v: 1, state_schema: { type: "object" },
+    actions: [], events: [], aria: { role: "x" }, surfaces: ["tab"] });
+  assert.equal(typeof d1.context_provider, "function", "未声明也有缺省 provider");
+  const frag = d1.context_provider({ a: 1 });
+  assert.equal(frag.kind, "t-ctx", "缺省 fragment 带 kind");
+  assert.ok(frag.state_summary.includes("a"), "缺省 fragment 带 state 摘要");
+  assert.deepEqual(JSON.parse(JSON.stringify(frag)), frag, "缺省 fragment 可 JSON 序列化");
+  const d2 = registerWidgetDef({ kind: "t-ctx2", v: 1, state_schema: { type: "object" },
+    actions: [], events: [], aria: { role: "x" }, surfaces: ["tab"],
+    context_provider: (s) => ({ mine: s.v }) });
+  assert.deepEqual(d2.context_provider({ v: 7 }), { mine: 7 }, "声明者覆盖缺省");
+  assert.throws(() => registerWidgetDef({ kind: "t-ctx3", v: 1, state_schema: { type: "object" },
+    actions: [], events: [], aria: { role: "x" }, surfaces: ["tab"], context_provider: "x" }),
+    /context_provider/, "非函数 provider 拒注册(协议不合规)");
 }
 
 {
@@ -267,6 +283,28 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
   assert.equal(contextCascade("/t/x").cascade.length, 1, "全局注册生效");
   unreg();
   assert.equal(contextCascade("/t/x").cascade.length, 0, "注销即止");
+  // §17.7-3:同位替换(重挂载不堆叠过期闭包)+ widget 实例 register/destroy 挂接
+  registerContextProvider("/r", "app", () => ({ v: 1 }));
+  registerContextProvider("/r", "app", () => ({ v: 2 }));
+  const envR = contextCascade("/r/x");
+  assert.equal(envR.cascade.length, 1, "同 prefix+scope 替换不堆叠");
+  assert.equal(envR.cascade[0].data.v, 2, "最新注册赢");
+  const wctx = createWidget(getWidgetDef("t-ctx"), { path: "/t/ctx", state: { a: 1 } });
+  wctx.register();
+  const envW = contextCascade("/t/ctx");
+  assert.equal(envW.cascade[0].scope, "widget", "register 后 widget fragment 进级联");
+  assert.equal(envW.cascade[0].data.kind, "t-ctx", "缺省 provider 供 fragment");
+  wctx.destroy();
+  assert.equal(contextCascade("/t/ctx").cascade.length, 0, "destroy 注销(注销随 destroy)");
+  // §17.8 静态扫描:registerContextProvider 调用点 > 0(注册面不再是死代码)
+  const { readFileSync } = await import("node:fs");
+  let callsites = 0;
+  for (const rel of ["../js/widgets/widget.js", "../js/components/lab-iterate.js",
+    "../../../web_platform/static/doc-editor.js"]) {
+    const src = readFileSync(new URL(rel, import.meta.url), "utf8");
+    callsites += (src.match(/registerContextProvider\(/g) || []).length;
+  }
+  assert.ok(callsites > 0, "registerContextProvider 有真实调用点(>0)");
 }
 
 {

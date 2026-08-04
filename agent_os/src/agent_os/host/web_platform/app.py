@@ -6,7 +6,8 @@
 - ``POST /api/sessions/{id}/messages``:user 发意图 → orchestrator 产 agent 消息(+卡);
 - ``POST /api/cards/action``:卡片按钮统一入口——**白名单裁决**(artifacts.ACTION_WHITELIST)
   → 转发既有能力(draft create / iterate / packages promote / candidate / rewind),
-  不引入新的 promote 路径(§7 红线)。
+  不引入新的 promote 路径(§7 红线)。**deprecated**(§17.7-4:M1 前持久化旧卡
+  的兼容面,新卡全部走 app action 管道;无新调用方,退役留清理)。
 
 静态目录 ``static/`` 预留给下一步前端(本期不挂载空目录,前端落地时再挂)。
 """
@@ -88,23 +89,21 @@ class CardActionBody(BaseModel):
     session_id: str | None = None
 
 
-class DecisionBody(BaseModel):
-    """升权作答(W2):answer 必须是该问题 options 之一(裁决在 run_manager)。"""
-
-    answer: str
-
-
 class AppActionBody(BaseModel):
     """app action 管道(docs/APP-MODEL.md §4;M1):表面 + 事件参数。
 
     ``surface``:调用来自哪张面孔(card/tab)——manifest 据此校验表面合法;
     ``args``:事件参数(warnings_ack/version 等,合并进 state 绑定参数,事件优先);
-    ``session_id``(可选):结果以 agent 消息回插该会话(因果可见,§5.2)。
+    ``session_id``(可选):结果以 agent 消息回插该会话(因果可见,§5.2);
+    ``cascade``(可选,§17.7-3):级联信封(§16)——前端按触发路径经注册
+    provider 组装(widget 零 fetch,服务端信任边界不变);action 声明
+    ``context: []`` = 显式弃权(信封不进执行输入)。
     """
 
     surface: str = "card"
     args: dict[str, Any] = {}
     session_id: str | None = None
+    cascade: list[dict[str, Any]] | None = None
 
 
 class AppSpawnBody(BaseModel):
@@ -569,19 +568,8 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
 
     @app.get("/api/decisions")
     def list_decisions() -> list[dict[str, Any]]:
-        """待决升权请求列表(人话字段 tier_human 随行)。"""
+        """待决升权请求列表(人话字段 tier_human 随行;读面保留——§17.6:读不算 action)。"""
         return _decision_rows()
-
-    @app.post("/api/decisions/{question_id}")
-    def answer_decision(question_id: str, body: DecisionBody) -> dict[str, Any]:
-        """作答转发:找不到 → 404;answer 不在 options → 400(与旧 web 收件箱同归类)。"""
-        try:
-            manager.supervisor_answer(question_id, body.answer)
-        except KeyError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        return {"ok": True}
 
     @app.post("/api/sessions/{session_id}/decisions/present")
     def present_decisions(session_id: str) -> dict[str, Any]:
@@ -736,8 +724,9 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
 
     @app.post("/api/cards/action")
     def card_action(body: CardActionBody) -> dict[str, Any]:
-        """旧动作入口(过渡期保留,M3 退役;裁决面 ACTION_WHITELIST 不变)。
-        与新 action 管道**同一份实现**(§17.7 L1:同一批 platform.* code 技能)。"""
+        """**deprecated**(§17.7-4):旧卡面兼容入口——M1 前持久化的卡没有 instance,
+        前端旧面仍走这里;新卡一律走 app action 管道。裁决面 ACTION_WHITELIST 不变,
+        与新管道**同一份实现**(同一批 platform.* code 技能)。"""
         if body.action_id not in ACTION_WHITELIST:
             raise HTTPException(
                 status_code=400,
@@ -936,7 +925,11 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             # §17.10 框架备参:_instance_id/_state 由管道注入(非客户端载荷面)
             result = _run_handler(
                 local_ref,
-                {"_instance_id": instance_id, "_state": inst["state"], **input_args},
+                apply_action_cascade(
+                    action,
+                    {"_instance_id": instance_id, "_state": inst["state"], **input_args},
+                    body.cascade,
+                ),
             )
             return {**result, "instance": inst}
         try:
@@ -954,6 +947,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         if ref == "platform.debug.command":
             # 调试命令 = action id 末段(debug.continue→continue,debug.stop→stop)
             payload["command"] = action_id.split(".")[-1]
+        payload = apply_action_cascade(action, payload, body.cascade)  # §17.7-3 级联信封
         # §17.7 L1:endpoint/run 同一 kernel.run 调用面,exec.mode 只是元信息——
         # **run 态**(v0.2 §4,M4a):长任务 = spawn run app 持 run_id——技能结果
         # 带 run_id 时登记 run instance,响应附 run_instance(用户可直接进
@@ -1045,6 +1039,16 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         pass
     return None
+
+
+def apply_action_cascade(
+    action: dict[str, Any], payload: dict[str, Any], cascade: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    """§17.7-3(管道自动携带级联信封):执行输入并入 ``cascade``;
+    action 声明 ``context: []`` = 显式弃权(§16.1,轻动作不背大信封)。"""
+    if cascade is None or action.get("context") == []:
+        return payload
+    return {**payload, "cascade": cascade}
 
 
 def _iso_ts(value: Any) -> float:

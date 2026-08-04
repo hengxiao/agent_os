@@ -8,6 +8,7 @@
 
 import { copy, initTheme, applyTheme, listThemes, currentThemeId } from "/static/js/themes.js";
 import { esc, toast } from "/static/js/util.js";
+import { contextCascade } from "/static/js/widgets/cascade.js";
 import { mountDatePicker, mountFormEditor, mountLogViewer } from "/static/js/widgets/index.js";
 import { looksMarkdown, mdToHtml } from "/static/js/widgets/w-md.js";
 import { mountDocEditor } from "./doc-editor.js";
@@ -1081,20 +1082,25 @@ function _markResolved(questionId, resolved) {
 async function answerDecision(btn) {
   const qid = btn.dataset.decision;
   const answer = btn.dataset.answer;
-  const instId = btn.dataset.appInst; // M1:有 instance 走新 action 管道(作答 = action id)
   btn.disabled = true;
   try {
-    const res = instId
-      ? await fetch(`/platform/api/apps/${encodeURIComponent(instId)}/actions/${encodeURIComponent(answer)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ surface: "card" }),
-        })
-      : await fetch(`/platform/api/decisions/${encodeURIComponent(qid)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ answer }),
-        });
+    // §17.7-4(#7 旁路收编):作答一律经 action 管道(skill = platform.decision.answer);
+    // 无 instance 的旧卡(M1 前持久化遗留)先 spawn escalation instance(去重幂等)
+    let instId = btn.dataset.appInst;
+    if (!instId) {
+      const sp = await fetch("/platform/api/apps/spawn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "escalation", ref: qid, state: { question_id: qid, skill: "" } }),
+      });
+      if (!sp.ok) throw new Error((await sp.json()).detail ?? `HTTP ${sp.status}`);
+      instId = (await sp.json()).instance?.id;
+    }
+    const res = await fetch(`/platform/api/apps/${encodeURIComponent(instId)}/actions/${encodeURIComponent(answer)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ surface: "card", session_id: state.current }),
+    });
     if (!res.ok) {
       // 404 = 已被别处处理(旧收件箱/另一标签页);400 = 答案不合(协议串没变,按已处理提示)
       _markResolved(qid, "gone");
@@ -1243,7 +1249,14 @@ async function tabAction(btn) {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ surface: "tab", args, session_id: state.current }),
+        // §17.7-3:级联信封随 action 出海(前端经注册 provider 组装;
+        // 触发路径 = tab 的 §14 路径;widget 零 fetch,信任边界不变)
+        body: JSON.stringify({
+          surface: "tab",
+          args,
+          session_id: state.current,
+          cascade: contextCascade(`/${tab.kind}/${tab.ref}`).cascade,
+        }),
       }
     );
     if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);

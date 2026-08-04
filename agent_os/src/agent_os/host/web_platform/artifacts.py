@@ -205,8 +205,8 @@ def build_escalation_card(    *,
     data 形态 = EscalationRequest 的展示面(question_id/skill/tier/params/
     requested/reason_hint/options/asked_at)。``options`` 原样携带内核的按档
     选项(L2 三枚含 approve-run,L3 两枚——卡不自己造选项,语义裁决在内核)。
-    按钮不走 cards/action 白名单:作答是 supervisor 闭环,前端直调
-    ``POST /platform/api/decisions/{question_id}``(纯转发,零新权限通道)。
+    按钮不走 cards/action 白名单:作答是 supervisor 闭环,经 app action 管道
+    (``platform.decision.answer`` 技能;§17.7-4 收编,零新权限通道)。
     """
     if not question_id or not skill:
         raise ValueError("escalation 卡必须有 question_id 与 skill")

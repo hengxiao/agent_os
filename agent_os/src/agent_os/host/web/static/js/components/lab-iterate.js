@@ -16,6 +16,7 @@ import { getJson, postJson } from "../api.js";
 import { copy } from "../themes.js";
 import { esc, toast } from "../util.js";
 import { mountBubble } from "../widgets/index.js";
+import { registerContextProvider } from "../widgets/cascade.js";
 import { tierBadgeHtml } from "./lab.js";
 
 /* ── 纯函数 ─────────────────────────────────────────────────── */
@@ -294,29 +295,25 @@ function _anchorPath(anchor) {
 }
 
 /* W2 §16:cascade 各级 fragment 提供者(每级只出自己的;widget 级 =
-   span/段落/全文,app 级 = 成员与草稿状态) */
-function _iterateProviders(anchor) {
+   span/段落/全文,app 级 = 成员与草稿状态)。
+   §17.7-3:注册制(手搓 cascadeProviders 传入退役)——注册进 cascade 运行时,
+   返回注销函数清单(气泡 close 时注销;同锚点重开 = 同位替换不堆叠)。 */
+function _registerIterateProviders(anchor) {
   return [
-    {
-      prefix: `/lab/iterate/member/${anchor.member}`,
-      scope: "widget",
-      fn: () => {
-        const doc = it.docs?.[anchor.member] ?? {};
-        const paras = _para(doc.prompt ?? "");
-        return {
-          span: anchor.span ?? null,
-          paragraph: anchor.span ? (paras[anchor.span.start] ?? "") : "",
-          full_text: anchor.kind === "span" || anchor.path === "prompt"
-            ? (doc.prompt ?? "")
-            : JSON.stringify((doc.manifest ?? {})[anchor.path] ?? ""),
-        };
-      },
-    },
-    {
-      prefix: "/lab/iterate",
-      scope: "app",
-      fn: () => ({ draft: it.name, member: anchor.member, tier: it.tier, note: it.note }),
-    },
+    registerContextProvider(`/lab/iterate/member/${anchor.member}`, "widget", () => {
+      const doc = it.docs?.[anchor.member] ?? {};
+      const paras = _para(doc.prompt ?? "");
+      return {
+        span: anchor.span ?? null,
+        paragraph: anchor.span ? (paras[anchor.span.start] ?? "") : "",
+        full_text: anchor.kind === "span" || anchor.path === "prompt"
+          ? (doc.prompt ?? "")
+          : JSON.stringify((doc.manifest ?? {})[anchor.path] ?? ""),
+      };
+    }),
+    registerContextProvider("/lab/iterate", "app", () => ({
+      draft: it.name, member: anchor.member, tier: it.tier, note: it.note,
+    })),
   ];
 }
 
@@ -360,12 +357,13 @@ function _bind() {
         .map((n) => ({ role: "user", text: n.text, ts: n.at ?? 0 }));
       const host = document.createElement("div");
       unit.appendChild(host);
+      const unreg = _registerIterateProviders(anchor); // §17.7-3:注册制(注销随 close)
       const bubble = mountBubble(host, {
         anchor, // 原样(与单元 data-anchor 同构,apply 落边注时锚键一致)
         triggerPath: _anchorPath(anchor), // cascade 的 §14 触发路径(独立字段,不污染锚)
         seedMessages: seed,
-        cascadeProviders: _iterateProviders(anchor),
       });
+      bubble.on("close", () => unreg.forEach((fn) => fn()));
       bubble.on("submit", async ({ anchor: a, text, cascade }) => {
         try {
           const body = await postJson(`/api/lab/drafts/${encodeURIComponent(it.name)}/comment`, {

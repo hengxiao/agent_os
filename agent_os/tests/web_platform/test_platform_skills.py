@@ -197,6 +197,17 @@ def test_force_sandbox_explicit_whitelist():
     assert router.route(forced, cfg).trust is TrustLevel.SANDBOX
 
 
+def test_pipeline_cascade_envelope():
+    """§17.7-3(管道自动携带级联信封):cascade 进执行输入;context: [] 显式弃权;
+    无信封不带键(行为零变化)。"""
+    from agent_os.host.web_platform.app import apply_action_cascade
+
+    env = [{"scope": "app", "path": "/doc/x", "data": {"name": "x"}}]
+    assert apply_action_cascade({}, {"a": 1}, env)["cascade"] == env, "信封进执行输入"
+    assert apply_action_cascade({"context": []}, {"a": 1}, env) == {"a": 1}, "context: [] 显式弃权"
+    assert apply_action_cascade({}, {"a": 1}, None) == {"a": 1}, "无信封不带键"
+
+
 def test_kernel_run_inprocess_smoke(tmp_path):
     """行为面:技能经 kernel.run 进程内执行(无宿主面依赖的最小 deps)。"""
     kernel = build_platform_kernel(

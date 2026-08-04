@@ -839,14 +839,27 @@ JS 闭包,那"所有 action 都是 skill"就成了不可证伪的同义反复,�
    一并收编**(调试 modify/inject → `platform.debug.intervene`、草稿 delete
    → `platform.draft.delete`[全包唯一 irreversible]、skills.reload →
    `platform.skills.reload`),旧端点改为跑对应技能,行为逐字不变;
-3. **cascade 上线**:registry 加缺省 `context_provider`(kind + state 摘要),
-   消费者改用注册制(现有 `_iterateProviders` 手搓形态退役);管道自动携带
-   信封,`context: []` 显式弃权;
-4. **收编三条旁路**:send/retry 归 run(#6)、decisions 归管道(#7)、
-   旧 `cards/action` 退役(过渡面);
-5. **旧 web 的 27 个写端点**(#8):先做归类决策(排期 or 永久例外);
+3. **cascade 上线** ✅(2026-08-05,分支 debugger):WidgetDef registry 加
+   **缺省 `context_provider`**(kind + state 摘要,声明者可覆盖,非函数拒注册),
+   widget 实例 `register()`/`destroy()` 自动挂/摘 cascade 运行时;
+   消费者改注册制(W-bubble 的 doc-editor 与 lab-iterate 手搓
+   `cascadeProviders:` 传入均退役,注销随 destroy,同位替换不堆叠);
+   管道自动携带级联信封(`AppActionBody.cascade`,前端按 tab 路径经注册
+   provider 组装,widget 零 fetch 信任边界不变),action 可声明
+   `context: []` 显式弃权(`apply_action_cascade`);
+4. **收编三条旁路** ✅(2026-08-05,分支 debugger):decisions 作答归管道
+   (#7——前端一律经 escalation app 的 action,skill =
+   `platform.decision.answer`;无 instance 的旧卡先 spawn 再走管道;
+   404"已被处理"归类保留;专属端点 `POST /api/decisions/{qid}` 已删除,
+   GET 列表是读面保留);旧 `POST /platform/api/cards/action` **实测仍有
+   调用面**(M1 前持久化旧卡无 instance,前端 cardAction 旧路径在用)——
+   按预定裁决**保留并标 deprecated**,不新增调用方;send/retry 归 run
+   经评估**不做**(见实现注结论);
+5. **旧 web 的 27 个写端点**(#8)✅(归类决策,2026-08-05):
    ~~`inject`/`modify`/`skills.reload`/草稿 `delete` 四个优先(#9/#11)~~
-   ——四个优先项已在第 2 步收编(L2 工具面);
+   已在第 2 步收编(L2 工具面);其余写端点的归类决策——**随 §8 迁移地图
+   逐步收编,未迁移前承认是 legacy 例外**(原则有边界,边界就是 §8 的时间表;
+   每收编一个旧页,其写端点随页退役或升格,不再单列排期);
 6. **全程红线**:promote 的人确认、升权人审、数据 authZ **一行都不许因升格
    而削弱**——升格让仲裁从话术变结构,不是绕开它的新通道。
 
@@ -917,6 +930,41 @@ JS 闭包,那"所有 action 都是 skill"就成了不可证伪的同义反复,�
 >   (草稿写是 lab.draft.* 工具面地盘),保持直调;conversation send/retry
 >   归 run 留第 4 步;§17.8 的 L2 静态扫描(handler AST 禁直调业务写函数)
 >   落在 test_platform_skills.py::test_l2_handlers_no_direct_side_effect_calls。
+>
+> **第 3/4/5 步实现注**(2026-08-05,分支 debugger,cascade 上线 + 旁路收编 ✅):
+> - **cascade 注册制**:`widgets/registry.js` 的 WidgetDef 新增
+>   `context_provider`——缺省兜底(kind + state 摘要,JSON 可序列化),
+>   声明者覆盖,非函数拒注册("widget 没有 provider = 协议不合规"落到
+>   registerWidgetDef 校验);`widgets/widget.js` 在 `register()` 时把
+>   provider 按 path 挂进 cascade 运行时(scope "widget",读实时 state),
+>   `destroy()` 注销;`cascade.js` 的注册加**同位替换**语义(同 prefix+scope
+>   最新赢,宿主重挂载不堆叠过期闭包)。消费者侧:doc-editor 的气泡
+>   (widget 级 = 锚点段+全文,app 级 = 文档状态,挂 `/doc/<name>[/<anchor>]`)
+>   与 lab-iterate(`_iterateProviders` 手搓形态退役为
+>   `_registerIterateProviders`,注销随气泡 close)都改注册制——
+>   `registerContextProvider` 调用点从 0 变为 5(widget.js/lab-iterate/
+>   doc-editor),死代码验收闭合。
+> - **管道携带信封**:`AppActionBody.cascade`(可选)——前端 tab action
+>   poster 按 `/{kind}/{ref}` 路径经 `contextCascade` 组装随 body 出海
+>   (widget 零 fetch,组装在前端,服务端信任边界不变);管道经
+>   `apply_action_cascade` 并入执行输入,action 声明 `context: []` 弃权。
+> - **decisions 收编(#7)**:前端 answerDecision 一律经 action 管道
+>   (无 instance 的 M1 前旧卡先 spawn escalation instance 再走,去重幂等);
+>   404"已被处理"归类保留;`POST /api/decisions/{qid}` 专属端点**已删除**
+>   (GET /api/decisions 列表是读面,§17.6 保留);答案非法现在由 manifest
+>   裁决 404("无 action",比旧端点的 manager 400 更早一层——归类变化
+>   只此一处,语义等价:都是拒绝)。test_platform_w2 的作答断言改走管道。
+> - **cards/action 实测结论**:前端 cardAction 的旧面(M1 前持久化卡无
+>   instance)仍在调——按任务预定裁决**保留端点并标 deprecated**,
+>   测试(test_platform_api/test_cred_degrade/test_scaffold_smoke)不动。
+> - **send/retry 归 run 评估结论(不做)**:对话 send 是亚秒级同步应答
+>   (orchestrator 规则/薄 LLM 路由),改 run 跟踪面要动消息泵 + 会话持久化
+>   + SSE 三处,收益(可跟踪/可 replay)对同步交互不抵改动面;且 send 是
+>   对话主通道(§5)不是"动作"。**保持同步现状**,留口:若将来对话应答
+>   长任务化,再按 run 通道归一(M4a 发起面已有先例)。
+> - **第 5 步归类决策**:四个最高特权写面已在第 2 步收编;其余旧 web 写
+>   端点随 §8 迁移地图逐页收编,未迁移前承认 legacy 例外(原则边界 = §8
+>   时间表),不再单列排期。
 
 ### 17.8 验收(原则符合度测试)
 
@@ -925,7 +973,8 @@ JS 闭包,那"所有 action 都是 skill"就成了不可证伪的同义反复,�
 - **L2 断言**:§17.4 名单里的每个 skill,其副作用必须经 tool 分发——
   handler 内禁止直接 import 业务写函数(静态扫描 import 面);
 - 每个注册 widget 必有 `context_provider`(缺省或声明);
-  `registerContextProvider` 的调用点数 > 0(当前为 **0**,即死代码);
+  `registerContextProvider` 的调用点数 > 0(v0.5 审计时为 **0**(死代码);
+  第 3 步后 = 5,widgets 测试静态扫描断言);
 - 管道抽样:任选 action,其执行输入含 cascade 信封或显式 `context: []`;
 - **行为零变化**:既有 **950 passed / 10 skipped / 32 xfailed**(2026-08-05
   实测基线)全绿——升格只换执行面的身份,不改语义。

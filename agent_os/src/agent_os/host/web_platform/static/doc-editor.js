@@ -10,6 +10,7 @@
 
 import { copy } from "/static/js/themes.js";
 import { mdToHtml, mountBubble } from "/static/js/widgets/index.js";
+import { registerContextProvider } from "/static/js/widgets/cascade.js";
 
 // 长文档阈值(§2/§7 边界):>200KB 预览截断提示,不炸(展示面只读,无编辑器)
 const PREVIEW_LIMIT = 200 * 1024;
@@ -122,23 +123,23 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     const bubbleHost = document.createElement("div");
     bubbleHost.dataset.anchor = anchor; // 重渲后按引用挂回(见 renderPreview)
     blockEl.appendChild(bubbleHost);
+    // §17.7-3:cascade provider 注册制(手搓 cascadeProviders 传入退役)——
+    // widget 级(锚点段+全文)挂在触发路径上,app 级(文档名/版本/脏)挂在
+    // /doc/<name>;注销随气泡 close(destroy);重开同锚点 = 同位替换不堆叠
+    const unreg = [
+      registerContextProvider(`/doc/${doc.name}/${anchor}`, "widget", () => ({
+        anchor, paragraph: blockTextOf(anchor), full_text: currentText,
+      })),
+      registerContextProvider(`/doc/${doc.name}`, "app", () => ({
+        name: doc.name, versions: doc.versions ?? [], dirty,
+      })),
+    ];
     const bubble = mountBubble(bubbleHost, {
       anchor: { member: doc.name, path: anchor }, // 引用行展示(成员 · 锚点)
       triggerPath: `/doc/${doc.name}/${anchor}`,
       seedMessages: (seedByAnchor[anchor] ?? []).map((m) => ({ role: m.role, text: m.text })),
-      cascadeProviders: [
-        {
-          prefix: `/doc/${doc.name}`,
-          scope: "widget",
-          fn: () => ({ anchor, paragraph: blockTextOf(anchor), full_text: currentText }),
-        },
-        {
-          prefix: "/doc",
-          scope: "app",
-          fn: () => ({ name: doc.name, versions: doc.versions ?? [], dirty }),
-        },
-      ],
     });
+    bubble.on("close", () => unreg.forEach((fn) => fn())); // 注销随 destroy(§17.7-3)
     bubble.on("submit", async ({ anchor: a, text, cascade }) => {      // comment.send(§3 run+cascade):出海在父级(本组件)——专属端点
       const anchorStr = typeof a === "string" ? a : (a?.path ?? "");
       try {

@@ -353,6 +353,8 @@ export const COPY = {
   "w.diff.ctx": "{n} 行未变(上下文中)",
   "w.diff.nochange": "没有差异",
   "w.md.empty": "文档为空",
+  "w.md.preview": "预览",
+  "w.md.source": "源码",
   "w.bubble.you": "我",
   "w.bubble.comment": "批注",
   "w.bubble.fail": "发送失败,检查网络",

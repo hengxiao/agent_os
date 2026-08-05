@@ -425,14 +425,21 @@ def w_json():
     g.append(ts(52, 457, "✕", 12, DANGER, 600))
     g.append(ts(68, 457, "第 4 行:缺右括号", 12, FG0, 500))
     g.append(ts(1040, 457, "点击跳转 →", 11, FG2, anchor="end"))
-    # card(错误态:左边条 --danger)
+    # card(v2 · 用户验收反馈:错误态左边条 --danger;状态行 + 顶层键 chips + meta)
     g += card()
     g.append(rs(24, 516, 3, 152, 0, DANGER))
     g.append(ts(40, 536, "✕", 12, DANGER, 600))
     g.append(ts(56, 536, "第 4 行:缺右括号", 12, DANGER, 500))
-    g.append(ts(40, 566, '{ "name": "dinner-bot", …', 12, FG1, mono=True))
+    # v2:顶层键名 chips(前 4 个,溢出 +N,mono;撤掉首行原文预览——「{」没有信息量)
+    kx = 40
+    for k in ["name", "budget", "tags", "active"]:
+        p, kw = pill(kx, 552, k, "neutral", size=11, mono=True)
+        g.append(p)
+        kx += kw + 6
+    p, _ = pill(kx, 552, "+1", "neutral", size=11)
+    g.append(p)
     g.append(ls(38, 640, 350, 640, LINE))
-    g.append(ts(38, 660, "218 B · 6 键 · 3 分钟前", 11, FG2))
+    g.append(ts(38, 660, "5 键 · 218 B · 3 分钟前", 11, FG2))
     # 状态变体:合法 / 空态
     vb, (o1, o2) = vboxes(["合法 · ✓ 徽标", "EMPTY · 空态"])
     g += vb
@@ -455,7 +462,7 @@ def w_table():
     tab_head(g, "trip.tasks · 6 行 × 4 列")
     cols = [("名称", "Aa", 68, 320, True), ("优先级", "#", 388, 160, False),
             ("状态", "≡", 548, 200, False), ("截止", None, 748, 260, False)]
-    # 状态列头 hover(bg-2 + 排序/菜单)
+    # 状态列头 hover(bg-2;v2:排序/⋯ 视觉槽已撤)
     g.append(rs(548, 124, 200, 32, 0, BG2))
     for name, icon, x, cw, req in cols:
         tx = x + 12
@@ -469,10 +476,9 @@ def w_table():
         g.append(ts(tx, 145, name, 12, FG1, 500))
         if req:
             g.append(ts(tx + tw(name, 12) + 3, 145, "*", 12, DANGER, 600))
-    g.append(ts(722, 146, "↑", 11, FG1, anchor="end"))
-    g.append(ts(740, 146, "⋯", 12, FG1, anchor="end"))
     g.append(ls(40, 156.5, 1040, 156.5, LINE))
-    # 行:r2 hover / r3 选中 / r4 名称格内联编辑(焦点环)
+    # 行(v2 · 用户验收反馈:KV 式常驻可编辑——值即隐形 input;拖柄/排序槽全撤):
+    # r2 hover / r3 选中 / r4 名称格 focus 显形(焦点环 = 「focus 才显」实例)
     rows = [("故宫门票预约", "1", "进行中", "live", "2026-08-06"),
             ("机票比价", "2", "待办", "neutral", "2026-08-08"),
             ("酒店确认单", "3", "已完成", "ok", "2026-08-05"),
@@ -486,7 +492,6 @@ def w_table():
     for i, (name, n, st, tone, date) in enumerate(rows):
         top = top0 + i * pitch
         base = top + 25
-        g.append(ts(54, base, "⠿", 12, FG1 if i == 1 else FG2, op=None if i == 1 else 0.3))
         val, cur = (name[:-1], True) if name.endswith("|") else (name, False)
         g.append(ts(80, base, val, 13, FG0))
         if cur:
@@ -499,7 +504,7 @@ def w_table():
             g.append(ts(1024, base, "✕", 12, FG1, anchor="middle"))
         if i < 5:
             g.append(ls(40, top + pitch + 0.5, 1040, top + pitch + 0.5, LINE, op=0.6))
-    # 内联编辑:框与行高齐(内容区 4px 内边距,行内 32px),焦点环在框外 1px
+    # 常驻编辑器:平时隐形,focus 才显(框与行高齐,焦点环在框外 1px)
     g.append(rs(72, top0 + 3 * pitch + 4, 308, 32, 6, BG2))
     g.append(ring(72, top0 + 3 * pitch + 4, 308, 32, 6))
     # + 添加行(整宽虚线)
@@ -524,8 +529,8 @@ def w_table():
         g.append(ts(262, y, st, 12, FG1))
     g.append(ls(38, 640, 350, 640, LINE))
     g.append(ts(350, 660, "查看全部 →", 12, LIVE, anchor="end"))
-    # 状态变体:空态 / 拖动中
-    vb, (o1, o2) = vboxes(["EMPTY · 空态", "拖动中 · 浮起 + 指示线"])
+    # 状态变体:空态 / 常编辑(隐形 input + focus 显形)
+    vb, (o1, o2) = vboxes(["EMPTY · 空态", "常编辑 · 隐形 input"])
     g += vb
     g.append(ts(o1[0], o1[1] + 8, "名称", 11, FG2, 500))
     g.append(ts(o1[0] + 120, o1[1] + 8, "优先级", 11, FG2, 500))
@@ -533,19 +538,17 @@ def w_table():
     g.append(skeleton_row(o1[0], o1[1] + 30, [90, 60]))
     b, _ = button(o1[0], o1[1] + 56, "添加第一行", "primary", h=26)
     g.append(b)
-    rows2 = ["机票比价", "酒店确认单", "保险购买"]
+    rows2 = ["机票比价", "酒店确认单|", "保险购买"]
     for i, nm in enumerate(rows2):
         y = o2[1] + 4 + i * 34
-        if i == 1:
-            continue
-        g.append(ts(o2[0] + 16, y + 17, nm, 12, FG0))
+        val, cur = (nm[:-1], True) if nm.endswith("|") else (nm, False)
+        g.append(ts(o2[0] + 16, y + 17, val, 12, FG0))
+        if cur:  # focus 才显的实例
+            g.append(rs(o2[0] + 8, y - 1, o2[2] - 24, 32, 6, BG2))
+            g.append(ring(o2[0] + 8, y - 1, o2[2] - 24, 32, 6))
+            g.append(ts(o2[0] + 16, y + 17, val, 12, FG0))
+            g.append(rs(o2[0] + 16 + tw(val, 12) + 1, y + 5, 2, 16, 0, LIVE))
         g.append(ls(o2[0], y + 26.5, o2[0] + o2[2], y + 26.5, LINE, op=0.6))
-    g.append(ls(o2[0], o2[1] + 35, o2[0] + o2[2], o2[1] + 35, LIVE, 2))  # 目标指示线
-    fy = o2[1] + 42
-    g += shadow(o2[0] + 8, fy, o2[2] - 16, 28, 6, 2)  # 拖动行浮起
-    g.append(rs(o2[0] + 8, fy, o2[2] - 16, 28, 6, BG2, LINE_STRONG))
-    g.append(ts(o2[0] + 18, fy + 18, "⠿", 11, FG1))
-    g.append(ts(o2[0] + 36, fy + 18, "酒店确认单", 12, FG0))
     return svg_doc(g)
 
 
@@ -612,59 +615,56 @@ def w_kv():
 def w_form():
     g = page("W-form · schema 表单", "Stripe 结账 / Linear 设置")
     tab_head(g, "alert_rule · schema form")
-    # 行 1:规则名称(焦点)/ 通知渠道 select + 虚线次要钮
+    # v2 · 用户验收反馈:**单列为主**(Stripe 式整齐排版;两列网格撤掉)
+    # 字段 1:规则名称(label 上置 → 控件(焦点)→ help 贴控件下)
     g.append(ts(40, 136, "规则名称", 12, FG0, 500))
     g.append(ts(40 + tw("规则名称", 12) + 3, 136, "*", 12, DANGER, 600))
-    g.append(input_box(40, 142, 480, value="延迟告警", focused=True))
+    g.append(input_box(40, 142, 560, value="延迟告警", focused=True))
     g.append(ts(40, 190, "显示在告警列表与通知标题", 11, FG2))
-    g.append(ts(560, 136, "通知渠道", 12, FG0, 500))
-    g.append(rs(560, 142, 480, 32, 6, BG2, LINE))
-    g.append(ts(572, 163, "邮件", 13, FG0))
-    g.append(ts(1028, 164, "▾", 12, FG2, anchor="end"))
-    g.append(rs(560, 182, 480, 32, 6, "none", LINE, dash="5 4"))  # 次要钮:虚线框
-    g.append(ts(800, 203, "+ 添加 Webhook", 12, FG2, anchor="middle"))
-    # 行 2:阈值 stepper(错误)/ 级别 enum chips(中选中,高 hover)
-    g.append(ts(40, 230, "阈值(ms)", 12, FG0, 500))
-    g.append(ts(40 + tw("阈值(ms)", 12) + 3, 230, "*", 12, DANGER, 600))
-    g.append(rs(40, 236, 480, 32, 6, BG2, DANGER))
-    g.append(ts(56, 257, "−", 14, FG1, anchor="middle"))
-    g.append(ls(72, 244, 72, 260, LINE))
-    g.append(ts(268, 257, "0", 12, FG0, mono=True, anchor="middle"))
-    g.append(ls(464, 244, 464, 260, LINE))
-    g.append(ts(480, 257, "+", 13, FG1, anchor="middle"))
-    g.append(ts(40, 284, "⚠", 11, DANGER))
-    g.append(ts(56, 284, "阈值需在 1–10000 之间", 11, DANGER))
-    g.append(ts(560, 230, "级别", 12, FG0, 500))
-    cx = 560
+    # 字段 2:阈值 stepper(错误:控件红边 + 行内 ⚠ 人话)
+    g.append(ts(40, 226, "阈值(ms)", 12, FG0, 500))
+    g.append(ts(40 + tw("阈值(ms)", 12) + 3, 226, "*", 12, DANGER, 600))
+    g.append(rs(40, 232, 560, 32, 6, BG2, DANGER))
+    g.append(ts(56, 253, "−", 14, FG1, anchor="middle"))
+    g.append(ls(72, 240, 72, 256, LINE))
+    g.append(ts(320, 253, "0", 12, FG0, mono=True, anchor="middle"))
+    g.append(ls(584, 240, 584, 256, LINE))
+    g.append(ts(592, 253, "+", 13, FG1, anchor="middle"))
+    g.append(ts(40, 280, "⚠", 11, DANGER))
+    g.append(ts(56, 280, "阈值需在 1–10000 之间", 11, DANGER))
+    # 字段 3:级别 enum chips(中选中,高 hover)
+    g.append(ts(40, 312, "级别", 12, FG0, 500))
+    cx = 40
     for name, st in [("低", None), ("中", "sel"), ("高", "hover")]:
-        c, cw = chip(cx, 236, name, selected=st == "sel", hover=st == "hover")
+        c, cw = chip(cx, 318, name, selected=st == "sel", hover=st == "hover")
         g.append(c)
         cx += cw + 8
-    g.append(ts(560, 284, "影响通知优先级与颜色", 11, FG2))
-    # 行 3:boolean 独占一行(label 上置,switch 在下;另示一个关态)
-    g.append(ts(40, 302, "启用告警", 12, FG0, 500))
-    g.append(switch(40, 308, on=True))
-    g.append(ts(88, 323, "关闭后规则暂停评估", 11, FG2))
-    g.append(ts(560, 302, "失败时自动重试", 12, FG0, 500))
-    g.append(switch(560, 308, on=False))
-    g.append(ts(648, 323, "重试 3 次后转为人工", 11, FG2))
-    # 嵌套 object:卡片化分组
-    g.append(rs(40, 340, 1000, 88, 8, BG2, LINE))
-    g.append(ts(56, 364, "通知对象", 13, FG0, 500))
-    g.append(ts(56 + tw("通知对象", 13) + 10, 364, "alertmanager 接收方", 11, FG2))
-    g.append(ts(56, 384, "邮箱", 11, FG2, 500))
-    g.append(rs(56, 390, 440, 32, 6, BG1, LINE))
-    g.append(ts(68, 411, "oncall@agent-os.dev", 13, FG0))
-    g.append(ts(540, 384, "Webhook", 11, FG2, 500))
-    g.append(rs(540, 390, 464, 32, 6, BG1, LINE))
-    g.append(ts(552, 411, "https://…", 13, FG2))
+    g.append(ts(40, 364, "影响通知优先级与颜色", 11, FG2))
+    # 字段 4:boolean switch(label 上置,switch 在下,help 贴控件下)
+    g.append(ts(40, 396, "启用告警", 12, FG0, 500))
+    g.append(switch(40, 402, on=True))
+    g.append(ts(40, 438, "关闭后规则暂停评估", 11, FG2))
+    # 嵌套 object:卡片化分组(标题 500 + 描述弱色 + 内边距)
+    g.append(rs(40, 460, 1000, 96, 8, BG2, LINE))
+    g.append(ts(56, 484, "通知对象", 13, FG0, 500))
+    g.append(ts(56 + tw("通知对象", 13) + 10, 484, "alertmanager 接收方", 11, FG2))
+    g.append(ts(56, 508, "邮箱", 11, FG2, 500))
+    g.append(rs(56, 514, 460, 32, 6, BG1, LINE))
+    g.append(ts(68, 535, "oncall@agent-os.dev", 13, FG0))
+    # 数组项:虚线添加
+    g.append(ts(40, 590, "通知渠道", 12, FG0, 500))
+    g.append(rs(40, 596, 560, 32, 6, BG2, LINE))
+    g.append(ts(52, 617, "邮件", 13, FG0))
+    g.append(ts(588, 618, "▾", 12, FG2, anchor="end"))
+    g.append(rs(40, 636, 560, 32, 6, "none", LINE, dash="5 4"))
+    g.append(ts(320, 657, "+ 添加 Webhook", 12, FG2, anchor="middle"))
     # 底部操作行贴底:reset 居左 + live 圆点「有未保存改动」,主按钮居右
-    b1, w1 = button(40, 440, "重置", "ghost")
+    b1, w1 = button(40, 684, "重置", "ghost", h=26)
     g.append(b1)
-    g.append(cs(40 + w1 + 14, 454, 3, LIVE))
-    g.append(ts(40 + w1 + 24, 458, "有未保存改动", 11, FG2))
-    b2, w2 = button(0, 0, "保存规则", "primary")
-    g.append(f'<g transform="translate({1040 - w2},440)">{b2}</g>')
+    g.append(cs(40 + w1 + 14, 697, 3, LIVE))
+    g.append(ts(40 + w1 + 24, 701, "有未保存改动", 11, FG2))
+    b2, w2 = button(0, 0, "保存规则", "primary", h=26)
+    g.append(f'<g transform="translate({1040 - w2},684)">{b2}</g>')
     # card:必填完成度
     g += card()
     g.append(ts(38, 536, "告警规则 · form", 13, FG0, 500))
@@ -761,10 +761,12 @@ def w_tree():
              (None, "query", 1, False, None, None),
              ("▸", "ops", 0, True, "1", None),
              ("▸", "data", 0, True, "4", None)]
-    top0, pitch = 128, 28
+    # v2 · 用户验收反馈:紧凑化(行高 24px、缩进 12px/级、chevron 10px;
+    # 行内只留 图标 + 名称 + 计数胶囊弱)
+    top0, pitch = 128, 24
     for i, (chev, name, lv, is_dir, badge, st) in enumerate(nodes):
         top = top0 + i * pitch
-        base = top + 19
+        base = top + 17
         if st == "hover":
             g.append(rs(40, top, 1000, pitch, 0, BG2))
         elif st == "cur":
@@ -772,8 +774,8 @@ def w_tree():
             g.append(rs(40, top, 2, pitch, 0, LIVE))
         cx = 48 + lv * 12
         if chev:
-            g.append(ts(cx, base, chev, 11, FG2))
-        nx = cx + 18
+            g.append(ts(cx, base, chev, 10, FG2))
+        nx = cx + 14
         if is_dir:
             fg = FG0 if st == "anc" else FG1  # 父链名称转正文色
             g.append(ts(nx, base, name, 13, fg, 500))
@@ -781,7 +783,7 @@ def w_tree():
             g.append(ts(nx, base, name, 12, FG0 if st == "cur" else FG1, mono=True))
         if badge:
             bx = nx + tw(name, 13 if is_dir else 12, not is_dir) + 8
-            p, _ = pill(bx, top + 5, badge, "neutral", h=18)
+            p, _ = pill(bx, top + 3, badge, "neutral", h=18)
             g.append(p)
     g.append(ring(40, 124, 1000, 10 * pitch + 8, 6))
     # card:面包屑 + N 叶子
@@ -1180,6 +1182,9 @@ def w_diff():
 # ═══ 3.12 W-md ════════════════════════════════════════════════════════════
 def w_md():
     g = page("W-md · Markdown 查看器", "GitHub README / Notion 页面")
+    # v2 · 用户裁决:view source 选择(segmented「预览 | 源码」置右上)
+    sg, sgw = segmented(0, 0, ["预览", "源码"], active=0)
+    g.append(f'<g transform="translate({1040 - sgw},88)">{sg}</g>')
     tab_head(g, "trip_report.md · 渲染视图")
     # 左栏:h1 + 段落(行内 code / 链接 hover 下划线)+ h2 + 列表 + 引用
     g.append(ts(40, 140, "云南六日行程方案", 20, FG0, 600))

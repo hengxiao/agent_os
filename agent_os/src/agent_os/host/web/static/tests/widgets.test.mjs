@@ -368,8 +368,11 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
   const ht = renderTableEditor(st);
   assert.equal(ht, renderTableEditor(st), "table render 纯(同 state 同 html)");
   assert.deepEqual(st.selected, ["r1"], "render 不改 state");
-  assert.ok(ht.includes("⠿"), "行首拖柄(§2.3)");
-  assert.ok(ht.includes("wd-th-ico"), "列头类型语义图标(§3.3)");
+  assert.ok(ht.includes("wd-cell-in"), "常驻可编辑 input(§3.3 v2;无编辑态)");
+  assert.ok(ht.includes("wd-cell-sel"), "enum = 隐形样式原生 select(§3.3 v2)");
+  assert.ok(!ht.includes("⠿") && !ht.includes("draggable"), "行 DnD 已退役(v2:拖柄/拖拽面移除)");
+  assert.ok(ht.includes("wd-th-ico"), "列头类型语义图标(保留)");
+  assert.ok(!ht.includes("wd-th-act"), "排序/⋯ 视觉槽已撤(v2)");
   assert.ok(ht.includes("甲&lt;script&gt;"), "单元格值转义(XSS 不注入)");
   assert.ok(ht.includes('data-selected="1"'), "选中行标记");
   assert.ok(renderTableEditor({ rows: [], selected: [], schema: { columns: [{ key: "name", type: "text", label: "名" }] } })
@@ -402,18 +405,19 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
   assert.ok(html().includes("wd-req"), "required 星标");
   assert.ok(html().includes('role="grid"'), "role=grid");
   assert.ok(html().includes('type="checkbox"'), "boolean 列编辑器(始终交互)");
-  assert.ok(html().includes("wd-chip"), "enum 展示态 = chip(§3.3)");
-  // 单元格点击进内联编辑(§3.3):enum 出 select,text 出 32px input
-  const cellEl = new StubEl("span");
-  cellEl.dataset.cell = `${w.state.rows[0].id}:kind`;
-  cellEl.closest = (sel) => (sel === "[data-cell]" ? cellEl : null);
-  host.trigger("click", { target: cellEl });
-  assert.ok(html().includes("<select"), "enum 单元格点击出 select 编辑器(§3.3)");
-  const cellName = new StubEl("span");
-  cellName.dataset.cell = `${w.state.rows[0].id}:name`;
-  cellName.closest = (sel) => (sel === "[data-cell]" ? cellName : null);
-  host.trigger("click", { target: cellName });
-  assert.ok(html().includes("wd-cell-in"), "text 单元格点击出内联 input(§3.3)");
+  assert.ok(html().includes("wd-cell-sel"), "enum = 隐形样式原生 select(v2)");
+  assert.ok(html().includes("wd-cell-in"), "text = 常驻隐形 input(v2)");
+  // Excel 键盘走格(§3.3 v2):Tab 横向、Enter 下移、→ 端点跨格
+  const cell00 = new StubEl("input"); // (r0,name) 光标在末尾 → → 跨到 (r0,n)
+  cell00.dataset.cell = `${w.state.rows[0].id}:name`;
+  cell00.value = "甲";
+  cell00.selectionStart = 1;
+  cell00.selectionEnd = 1;
+  cell00.closest = (sel) => (sel === "[data-cell]" ? cell00 : null);
+  host.trigger("keydown", { target: cell00, key: "ArrowRight", preventDefault: () => {} });
+  // (stub 面:querySelector 带值选择器无区域,走格在真实 DOM 生效;
+  //  此处验证处理器不炸且不再走旧编辑态)
+  assert.ok(!("editing" in w.state), "无编辑态(v2:常驻编辑器)");
   // 增行(骨架按列型)
   w.add_row();
   assert.equal(w.state.rows.length, 2);
@@ -429,33 +433,25 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
   w.move_row(w.state.rows[2].id, w.state.rows[0].id);
   assert.deepEqual(ids(), ["丙", "", "乙"], "move_row 重排(before 插入)");
   assert.ok(changes.length >= 3, "change 事件上行");
-  // Alt+↑ 键盘移行
+  // Alt+↑ 键盘移行(v2 保留)
   const rowEl = new StubEl("tr");
   rowEl.dataset.row = w.state.rows[1].id;
   rowEl.closest = (sel) => (sel === "[data-row]" ? rowEl : null);
   const before = ids();
   host.trigger("keydown", { target: rowEl, key: "ArrowUp", altKey: true });
   assert.notDeepEqual(ids(), before, "Alt+↑ 移行");
-  // DnD envelope(§15 合规)
-  let setDataArgs = null;
+  // 行 DnD 已退役(§3.3 v2):无 draggable、无 envelope、无拖拽监听
+  assert.ok(!html().includes("draggable"), "行不带 draggable(v2 退役)");
   const rowEl2 = new StubEl("tr");
   rowEl2.dataset.row = w.state.rows[0].id;
   rowEl2.closest = (sel) => (sel === "[data-row]" ? rowEl2 : null);
+  let setDataArgs = null;
   const dt = { types: ["application/x-agent-os-widget"], setData: (m, v) => { setDataArgs = [m, v]; }, getData: () => "" };
   host.trigger("dragstart", { target: rowEl2, dataTransfer: dt });
-  const env = JSON.parse(setDataArgs[1]);
-  assert.equal(env.source_kind, "table-row", "envelope source_kind");
-  assert.ok(env.source.startsWith("/t/table/row/"), "envelope source = §14 路径");
-  assert.ok("position" in env, "position 键在(强制最小集)");
-  // drop 重排(落到空区 = 移到末尾;accept 校验:非 table-row 源不动)
-  const sourceName = w.state.rows[0].cells.name;
-  const dtDrop = { types: ["application/x-agent-os-widget"], getData: () => JSON.stringify({ source: env.source, source_kind: "table-row", position: {} }) };
-  host.trigger("drop", { target: host, dataTransfer: dtDrop, preventDefault: () => {} });
-  assert.equal(ids().at(-1), sourceName, "落到空区 = 移到末尾(before 缺省)");
-  const order1 = ids();
-  const dtBad = { types: ["application/x-agent-os-widget"], getData: () => JSON.stringify({ source: "/x", source_kind: "evil" }) };
-  host.trigger("drop", { target: host, dataTransfer: dtBad, preventDefault: () => {} });
-  assert.deepEqual(ids(), order1, "未知 kind 源被拒(不静默)");
+  assert.equal(setDataArgs, null, "dragstart 不产 envelope(v2 DnD 退役)");
+  const orderBefore = ids();
+  host.trigger("drop", { target: host, dataTransfer: dt, preventDefault: () => {} });
+  assert.deepEqual(ids(), orderBefore, "drop 不再受理(退役后无路径)");
   // 空态(§3.3:表头 + 骨架行 + 「添加第一行」主操作)
   const host2 = doc.createElement("div");
   doc.body.appendChild(host2);
@@ -1032,14 +1028,15 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
         h.includes("一&lt;script&gt;") && !h.includes("四"),
       "标题行(名称+dirty 点+打开→)+ 前 3 行预览(末行渐隐,第 4 行不进卡)+ meta 行;值转义"],
     ["json-editor", renderJsonEditor,
-      { value: '{"a<": 1}', mono: true, rows: 6, field: "j", label: "j", error: null }, {},
-      (h) => h.includes("wd-json-ok") && h.includes('{&quot;a&lt;&quot;: 1}') && !h.includes("wd-format"),
-      "合法绿勾 + 首行预览;无 format 钮;key 转义"],
+      { value: '{\n  "name": "bot",\n  "n<": 1,\n  "tags": [],\n  "active": true,\n  "extra": 0\n}', mono: true, rows: 6, field: "j", label: "j", error: null }, {},
+      (h) => h.includes("wd-json-ok") && h.includes("wd-card-keys") && h.includes('wd-chip mono">name') &&
+        h.includes('wd-chip mono">n&lt;') && h.includes("+1") && !h.includes("wd-format") && !h.includes("wd-card-line"),
+      "状态行 + 顶层键 chips(前 4 溢出 +1)+ meta;无 format 钮/无首行预览(v2);键名转义"],
     ["json-editor(错误)", renderJsonEditor,
       { value: '{\n  "a": bad\n}', mono: true, field: "j", label: "j", error: { line: 2, message: "bad token" } }, {},
       (h) => h.includes('data-wd-errbar="1">') && h.includes("第 2 行") && h.includes("bad token") &&
-        h.includes('wd-json-ok" hidden'),
-      "错误红条(行级)+ 绿勾隐"],
+        h.includes('wd-json-ok" hidden') && h.includes("is-err"),
+      "错误红条(行级)+ 绿勾隐 + 左边条 danger"],
     ["table-editor", renderTableEditor,
       { rows: [{ id: "r1", cells: { name: "甲<b>", n: 1, ok: true, kind: "a" } }, { id: "r2", cells: { name: "乙", n: 2 } },
           { id: "r3", cells: { name: "丙", n: 3 } }],
@@ -1339,9 +1336,9 @@ console.log("widgets.test.mjs: W6.0/W6.1 design assertions passed");
   assert.ok(ht.includes("wd-table-scroll"), "sticky 列头滚动容器");
   assert.ok(ht.includes('wd-th-ico'), "类型语义图标槽");
   assert.ok(ht.includes(">Aa<") && ht.includes(">#<") && ht.includes(">≡<") && ht.includes(">📅<"), "Aa/#/≡/📅 图标");
-  assert.ok(ht.includes("wd-th-act"), "hover 显排序/⋯槽");
+  assert.ok(!ht.includes("wd-th-act"), "排序/⋯ 视觉槽已撤(v2)");
   assert.ok(ht.includes('class="wd-add" data-wd-add'), "整宽虚线添加行");
-  assert.ok(ht.includes("wd-chip wd-cell"), "enum 展示态 chip");
+  assert.ok(ht.includes("wd-cell-sel"), "enum 常驻原生 select(v2;chip 展示态退役)");
   // 空态:表头 + 骨架行 + 主操作(§3.3/§1.5)
   const he = renderTableEditor({ rows: [], selected: [], schema: { columns: cols }, title: "" });
   assert.ok(he.includes("<thead") && he.includes("wd-skeleton") && he.includes("wd-btn-primary"),
@@ -1350,30 +1347,33 @@ console.log("widgets.test.mjs: W6.0/W6.1 design assertions passed");
 }
 
 {
-  // W-table 行为:editing 退出(focusout 离表/Enter);DnD 视觉反馈类
+  // W-table 行为(v2):常驻编辑器无编辑态;Excel 走格处理器;DnD 全面退役
   const doc = makeDocument();
   globalThis.document = doc;
   const host = doc.createElement("div");
   doc.body.appendChild(host);
-  const w = mountTableEditor(host, { columns: [{ key: "name", type: "text", label: "名" }], rows: [{ name: "甲" }], title: "T" });
-  const cell = new StubEl("span");
+  const w = mountTableEditor(host, { columns: [{ key: "name", type: "text", label: "名" }, { key: "n", type: "number", label: "数" }, { key: "k", type: "enum", label: "类", options: ["a", "b"] }], rows: [{ name: "甲", n: 1, k: "a" }], title: "T" });
+  assert.ok(!("editing" in w.state), "无编辑态(v2:常驻 input/select)");
+  assert.ok(host.innerHTML.includes("wd-cell-in") && host.innerHTML.includes("wd-cell-sel"), "常驻编辑器在场");
+  // Excel 走格(合成端点光标;stub 面带值选择器无区域,断处理器路径不炸)
+  const cell = new StubEl("input");
   cell.dataset.cell = `${w.state.rows[0].id}:name`;
+  cell.value = "甲";
+  cell.selectionStart = 1;
+  cell.selectionEnd = 1;
   cell.closest = (sel) => (sel === "[data-cell]" ? cell : null);
-  host.trigger("click", { target: cell });
-  assert.equal(w.state.editing, `${w.state.rows[0].id}:name`, "点击进编辑");
-  const ed = new StubEl("input"); // 编辑态 input(region 无 dataset,合成驱动)
-  ed.closest = (sel) => (sel === "[data-cell]" ? ed : null);
-  host.trigger("keydown", { target: ed, key: "Enter" });
-  assert.equal(w.state.editing, "", "Enter 退出编辑(§3.3)");
-  // dragstart 浮起类(视觉反馈,§3.3)
+  host.trigger("keydown", { target: cell, key: "ArrowRight", preventDefault: () => {} });
+  host.trigger("keydown", { target: cell, key: "Tab", preventDefault: () => {} });
+  host.trigger("keydown", { target: cell, key: "Enter", preventDefault: () => {} });
+  assert.ok(true, "Tab/Enter/→ 走格处理器不炸(真实 DOM 焦点迁移在浏览器生效)");
+  // 退役面:无 draggable/无 envelope/无浮起类
+  assert.ok(!host.innerHTML.includes("draggable"), "无 draggable(v2)");
   const rowEl = new StubEl("tr");
   rowEl.dataset.row = w.state.rows[0].id;
   rowEl.closest = (sel) => (sel === "[data-row]" ? rowEl : null);
   const dt = { types: ["application/x-agent-os-widget"], setData: () => {}, getData: () => "" };
   host.trigger("dragstart", { target: rowEl, dataTransfer: dt });
-  assert.ok(rowEl.classList.contains("wd-dragging"), "拖动中行浮起类(wd-dragging)");
-  host.trigger("dragend", { target: rowEl });
-  assert.ok(true, "dragend 清理不炸");
+  assert.ok(!rowEl.classList.contains("wd-dragging"), "无拖动浮起类(v2 退役)");
 }
 
 {
@@ -1903,3 +1903,121 @@ console.log("widgets.test.mjs: W6.4 design assertions passed");
 }
 
 console.log("widgets.test.mjs: W6.5 acceptance-fix assertions passed");
+
+/* ── W6.6:六条设计裁决(用户验收反馈 2026-08-05;DESIGN v2)───────── */
+
+{
+  // 裁决1:W-json card v2 = 状态行 + 顶层键 chips(前 4 溢出 +N,mono)+
+  // meta(N 键 · 大小 · 时间);无首行预览;错误态左边条保留
+  const ok = renderJsonEditor({ value: '{\n  "alpha": 1,\n  "beta": 2,\n  "gamma": 3,\n  "delta": 4,\n  "epsilon": 5\n}',
+    field: "j", label: "j" }, { surface: "card" });
+  assert.ok(ok.includes("✓ JSON 合法 · 5 键"), "状态行 ✓(带键数)");
+  assert.ok(ok.includes("wd-card-keys"), "顶层键 chips 区");
+  assert.equal((ok.match(/wd-chip mono/g) ?? []).length, 4, "chips 恰好前 4 个");
+  assert.ok(ok.includes('wd-chip">+1<'), "溢出 +N");
+  assert.ok(!ok.includes("wd-card-line"), "无首行原文预览(v2 裁决)");
+  const arr = renderJsonEditor({ value: "[1, 2]", field: "j", label: "j" }, { surface: "card" });
+  assert.ok(!arr.includes("wd-card-keys"), "非 object → 无键 chips");
+  assert.ok(arr.includes("2 B · 0 键") || arr.includes("B"), "非 object 仍有 meta(大小)");
+}
+
+{
+  // 裁决2:W-table v2 = KV 常驻编辑 + Excel 键盘 + DnD 全撤(结构面已覆盖,
+  // 此处钉键盘分支存在性与退役面)
+  const src = readFileSync(join(import.meta.dirname, "../js/widgets/w-table.js"), "utf-8");
+  assert.ok(src.includes("_focusCell"), "走格函数在");
+  assert.ok(src.includes('e.key === "Tab"') && src.includes("e.shiftKey"), "Tab/Shift+Tab 横向走格");
+  assert.ok(src.includes('e.key === "Enter"'), "Enter 下移");
+  assert.ok(src.includes("selectionStart") && src.includes("ArrowLeft") && src.includes("ArrowRight"),
+    "左右方向键端点跨格(checkbox/select 无光标直跨)");
+  assert.ok(!src.includes("dragstart") && !src.includes("source_kind"), "DnD/envelope 逻辑一并退役(源码面)");
+  assert.ok(!src.includes("dataTransfer"), "零 dataTransfer 残留");
+}
+
+{
+  // 裁决3:W-form 排版(v2 单列;字段根内 label→control→help→err 顺序)
+  const wcss = readFileSync(join(import.meta.dirname, "../css/widgets.css"), "utf-8");
+  assert.ok(/\.wd-form-grid \{[^}]*grid-template-columns: 1fr/.test(wcss), "单列为主(v2)");
+  const { SAMPLES } = await import("../js/widgets/samples.js");
+  const s = SAMPLES["schema-form"].samples[0].options;
+  const h = renderFormEditor({ values: { city: "x" }, errors: { city: "必填" }, dirty: false,
+    title: s.title, schema: s.schema });
+  // 每字段 = label + control + help? + err? 的顺序与嵌套关系(排版结构断言)
+  const blocks = [...h.matchAll(/<label class="lab-field[^"]*">([\s\S]*?)<\/label>/g)].map((m) => m[1]);
+  assert.ok(blocks.length >= 2, "字段块在位");
+  for (const b of blocks) {
+    const iLabel = b.indexOf("lab-label");
+    const iCtrl = b.search(/data-f=|wd-stepwrap|wd-switch/);
+    assert.ok(iLabel >= 0 && iCtrl > iLabel, "字段顺序:label 上置 → 控件");
+    const iHelp = b.indexOf("wd-help");
+    const iErr = b.indexOf("wd-errbar");
+    if (iHelp >= 0) assert.ok(iHelp > iCtrl, "help 贴控件下");
+    if (iErr >= 0) assert.ok(iErr > iCtrl, "err 在控件后");
+  }
+  assert.ok(h.indexOf("wd-errbar") > h.indexOf('data-f="city"'), "错误行收在字段根内(F4 语义保持)");
+}
+
+{
+  // 裁决4:W-tree 紧凑化(行高/缩进/chevron;结构面)
+  const wcss = readFileSync(join(import.meta.dirname, "../css/widgets.css"), "utf-8");
+  assert.ok(/\.wd-tree \.ns-row \{[^}]*min-height: calc\(var\(--s6\) \+ 2px\)/.test(wcss), "行高 ≈26px");
+  assert.ok(/var\(--ns-depth, 0\) \* var\(--s3\)/.test(wcss), "缩进 12px/级(--s3)");
+  assert.ok(/\.wd-tree \.ns-toggle \{[^}]*var\(--text-2xs\)/.test(wcss), "chevron 10px");
+}
+
+{
+  // 裁决5:W-date 可用性——输入选区保留重渲 + capture 点外收层 + 右缘翻转
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountDatePicker(host, { mode: "date", value: "2026-08-01" });
+  const ta = host.querySelector("[data-wd-value]");
+  ta.focus();
+  ta.selectionStart = 7;
+  ta.selectionEnd = 7;
+  ta.value = "2026-08-0";
+  host.trigger("input", { target: ta });
+  const ta2 = host.querySelector("[data-wd-value]");
+  assert.equal(doc.activeElement, ta2, "输入重渲不丢焦点(§3.8 v2;W5.1 选区保留同答案)");
+  assert.equal(ta2.selectionStart, 7, "光标位置保留(逐字输入不跳)");
+  assert.ok(ta2.value === "2026-08-0", "输入值随 state 同步");
+  // capture 委托(真根因:pick 后重渲,bubble 阶段 document 收 click 时目标
+  // 已脱离文档 → 误收层;capture 在重渲前执行)
+  const src = readFileSync(join(import.meta.dirname, "../js/widgets/w-date.js"), "utf-8");
+  assert.ok(/addEventListener\?\.\("click", _onDocClick, true\)/.test(src), "点外收层走 capture 阶段");
+  const wcss = readFileSync(join(import.meta.dirname, "../css/widgets.css"), "utf-8");
+  assert.ok(wcss.includes(".wd-date-layer.right"), "右缘翻转类在(_flipLayer 接线)");
+}
+
+{
+  // 裁决6:W-md 预览 | 源码(segmented;源码态 = W-text readonly 同族)
+  const src = "# 标题\n\n- 甲\n- 乙";
+  const h = renderMarkdownViewer({ source: src, title: "trip.md", view: "source" });
+  assert.ok(h.includes('data-md-view="source" data-on="1"'), "segmented 源码态激活");
+  assert.ok(h.includes("wd-md-src") && h.includes("wd-gutter") && h.includes("wd-md-src-pre"), "源码态 = 行号槽 + mono pre");
+  assert.ok(h.includes("wd-micro"), "源码态右下微标(W-text 同族)");
+  assert.ok(h.includes('data-md-copyall="1"'), "全文复制钮(两态都在)");
+  const hp = renderMarkdownViewer({ source: src, title: "trip.md", view: "preview" });
+  assert.ok(hp.includes('data-md-view="preview" data-on="1"') && hp.includes("<li>"), "预览态渲染不变");
+  // 切换不重取数据(同 source;mount 面)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountMarkdownViewer(host, { source: src, title: "t" });
+  const seg = new StubEl("button");
+  seg.dataset.mdView = "source";
+  seg.closest = (sel) => (sel === "[data-md-view]" ? seg : null);
+  host.trigger("click", { target: seg });
+  assert.equal(w.state.view, "source", "segmented 切换进 state");
+  assert.ok(host.innerHTML.includes("wd-md-src-pre"), "切换即渲源码态");
+  const copies = [];
+  w.on("copy", (p) => copies.push(p.text));
+  const all = new StubEl("button");
+  all.closest = (sel) => (sel === "[data-md-copyall]" ? all : null);
+  host.trigger("click", { target: all });
+  assert.deepEqual(copies, [src], "源码态复制全文(emit copy 同文)");
+}
+
+console.log("widgets.test.mjs: W6.6 ruling assertions passed");

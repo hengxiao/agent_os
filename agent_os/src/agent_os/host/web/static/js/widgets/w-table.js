@@ -1,10 +1,13 @@
-/* W-table 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.3;W5.2 新形态:自渲染)。
+/* W-table 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.3;W5.2 新形态:自渲染;
+   W6.6 视觉按 docs/WIDGET-DESIGN.md §3.3 v2 简化)。
 
-   state{rows: [{id, cells: {...}}], selected: [ids], schema: {columns: [...]}};
+   state{rows: [{id, cells: {...}}], selected: [ids], schema: {columns: [...]}, title};
    列定义驱动({key, type: text|number|boolean|enum, label, required?, options?});
    actions 全 local:add_row/remove_row/move_row/set_cell/remove_selected;
-   细节:行 DnD 排序走 §15 标准 envelope({source, source_kind:"table-row",
-   position:{before}})、新增行骨架、空态、role=grid + Alt+↑/↓ 键盘移行;
+   v2(用户验收反馈):**KV 式常驻可编辑**(隐形 input,无编辑态切换)、
+   **Excel 键盘逻辑**(Tab/Shift+Tab 横向走格、Enter 下移、左右方向键在
+   光标位于端点时跨格)、**行 DnD 与 envelope 一并退役**(Alt+↑/↓ 键盘
+   移行保留)、行 DnD 排序走 §15 的标准 envelope 随之移除;
    change 事件上行(数据下行,事件上行,§3)。
    铁律:本文件不拼 HTML(渲染全在 w-table.render.js);零 fetch;事件上行;
    监听一律委托在 host(重渲会换掉子元素)。 */
@@ -12,8 +15,6 @@
 import { registerWidgetDef } from "./registry.js";
 import { bindCardOpen, createWidget } from "./widget.js";
 import { renderTableEditor } from "./w-table.render.js";
-
-const _DND_MIME = "application/x-agent-os-widget";
 
 export const TABLE_EDITOR_DEF = registerWidgetDef({
   kind: "table-editor",
@@ -51,9 +52,8 @@ function _skeleton(col) {
    + title(面板头,可选)。
    返回 widget;父组件 on("change", ...) 收全部 mutation。
    双形态(§1.4):surface="card" 时渲染摘要卡,宿主委托只挂 open。
-   W6.2(§3.3):单元格展示态点击进内联编辑(state.editing = "id:key",
-   blur/Enter/Esc 退出);DnD 全程视觉反馈(wd-dragging 浮起 +
-   wd-drop-before 2px --live 指示线)。 */
+   v2(§3.3,用户验收反馈):KV 式常驻可编辑(无编辑态);Excel 键盘走格;
+   行 DnD/envelope 退役(Alt+↑/↓ 键盘移行保留)。 */
 export function mountTableEditor(host, { columns, rows = [], title = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(TABLE_EDITOR_DEF, {
     path,
@@ -62,7 +62,6 @@ export function mountTableEditor(host, { columns, rows = [], title = "", path = 
       rows: rows.map((r) => _newRow(columns, r.cells ?? r)),
       selected: [],
       title,
-      editing: "",
     },
     onRegister,
     onUnregister,
@@ -97,9 +96,18 @@ export function mountTableEditor(host, { columns, rows = [], title = "", path = 
   widget.set_cell = (id, key, value) => {
     const row = widget.state.rows.find((r) => r.id === id);
     if (row) row.cells[key] = value;
-    _changed(); // set_cell 不重渲(输入中,选区/焦点不丢)
+    _changed(); // set_cell 不重渲(常驻编辑器自身即显示,输入零干扰)
   };
   widget.serialize = () => widget.state.rows.map((r) => ({ ...r.cells }));
+
+  /* Excel 走格(§3.3 v2):把焦点移到 (ri, ci) 的单元格,返回是否命中 */
+  const _focusCell = (ri, ci) => {
+    const rs = widget.state.rows;
+    const cols = widget.state.schema?.columns ?? [];
+    if (ri < 0 || ri >= rs.length || ci < 0 || ci >= cols.length) return false;
+    host.querySelector(`[data-cell="${rs[ri].id}:${cols[ci].key}"]`)?.focus?.();
+    return true;
+  };
 
   if (surface === "card") {
     bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
@@ -108,28 +116,11 @@ export function mountTableEditor(host, { columns, rows = [], title = "", path = 
     if (e.target.closest("[data-wd-add]")) return widget.add_row();
     const x = e.target.closest("[data-row-x]");
     if (x) return widget.remove_row(x.dataset.rowX);
-    const cell = e.target.closest("[data-cell]");
-    if (cell && !/^(INPUT|SELECT)$/.test(cell.tagName ?? "")) {
-      // 展示态单元格 → 内联编辑(§3.3;boolean 是控件本体,不进编辑态)
-      widget.state.editing = cell.dataset.cell;
-      render();
-      const ed = host.querySelector(".wd-cell-in") ?? host.querySelector("select[data-cell]");
-      ed?.focus?.();
-      return;
-    }
     const tr = e.target.closest("[data-row]");
-    if (tr && !cell) {
+    if (tr && !e.target.closest("[data-cell]")) {
       widget.state.selected = [tr.dataset.row];
       render();
     }
-  });
-  // 内联编辑退出:焦点离开表格才收(表内转移交给 click 换槽,§3.3)
-  host.addEventListener("focusout", (e) => {
-    if (!widget.state.editing) return;
-    const next = e.relatedTarget;
-    if (next && host.contains?.(next)) return;
-    widget.state.editing = "";
-    render();
   });
   host.addEventListener("input", (e) => {
     const cell = e.target.closest("[data-cell]")?.dataset.cell;
@@ -143,15 +134,36 @@ export function mountTableEditor(host, { columns, rows = [], title = "", path = 
     const [id, key] = cell.split(":");
     widget.set_cell(id, key, e.target.value);
   });
-  // Alt+↑/↓ 键盘移行(§2 a11y);编辑态 Enter/Esc 退出(§3.3)
+  // 键盘(v2):Tab/Shift+Tab 横向走格、Enter 下移、←/→ 光标位于端点时跨格
+  // (checkbox/select 无文本光标,方向键直接跨格);Alt+↑/↓ 键盘移行(§2 a11y)
   host.addEventListener("keydown", (e) => {
-    if ((e.key === "Enter" || e.key === "Escape") && e.target.closest?.("[data-cell]")) {
-      if (widget.state.editing) {
-        widget.state.editing = "";
-        e.target.blur?.();
-        render();
+    const cellEl = e.target.closest?.("[data-cell]");
+    if (cellEl) {
+      const cols = widget.state.schema?.columns ?? [];
+      const [id, key] = cellEl.dataset.cell.split(":");
+      const ri = widget.state.rows.findIndex((r) => r.id === id);
+      const ci = cols.findIndex((c) => c.key === key);
+      if (ri < 0 || ci < 0) return;
+      const noCaret = cellEl.type === "checkbox" || cellEl.tagName === "SELECT";
+      if (e.key === "Tab") {
+        e.preventDefault?.();
+        if (e.shiftKey) _focusCell(ci > 0 ? ri : ri - 1, ci > 0 ? ci - 1 : cols.length - 1);
+        else _focusCell(ci + 1 < cols.length ? ri : ri + 1, ci + 1 < cols.length ? ci + 1 : 0);
+        return;
       }
-      return;
+      if (e.key === "Enter") {
+        e.preventDefault?.();
+        _focusCell(ri + 1, ci); // Enter 下移(Excel 逻辑;末行不动)
+        return;
+      }
+      const atStart = noCaret || ((cellEl.selectionStart ?? 0) === 0 && (cellEl.selectionEnd ?? 0) === 0);
+      const atEnd =
+        noCaret ||
+        ((cellEl.selectionStart ?? 0) === String(cellEl.value ?? "").length &&
+          (cellEl.selectionEnd ?? 0) === String(cellEl.value ?? "").length);
+      if (e.key === "ArrowLeft" && atStart) _focusCell(ri, ci - 1);
+      if (e.key === "ArrowRight" && atEnd) _focusCell(ri, ci + 1);
+      return; // 其余键归编辑(不拦)
     }
     if (!e.altKey) return;
     const tr = e.target.closest("[data-row]");
@@ -162,48 +174,6 @@ export function mountTableEditor(host, { columns, rows = [], title = "", path = 
     if (e.key === "ArrowDown" && i >= 0 && i < rs.length - 1) {
       widget.move_row(tr.dataset.row, rs[i + 2]?.id ?? "");
     }
-  });
-  // 行 DnD(§15):envelope 产出 + accept 校验 + drop 重排;
-  // 视觉反馈(§3.3):拖动中 wd-dragging 浮起 + 目标 wd-drop-before 指示线
-  host.addEventListener("dragstart", (e) => {
-    const tr = e.target.closest("[data-row]");
-    if (!tr) return;
-    tr.classList?.add("wd-dragging");
-    e.dataTransfer?.setData(_DND_MIME, JSON.stringify({
-      source: `${path}/row/${tr.dataset.row}`, source_kind: "table-row", position: {},
-    }));
-  });
-  host.addEventListener("dragend", () => {
-    host.querySelector(".wd-dragging")?.classList?.remove("wd-dragging");
-    host.querySelector(".wd-drop-before")?.classList?.remove("wd-drop-before");
-  });
-  host.addEventListener("dragover", (e) => {
-    if ([...(e.dataTransfer?.types ?? [])].includes(_DND_MIME)) {
-      e.preventDefault();
-      host.classList.add("pf-drop-ok");
-      host.querySelector(".wd-drop-before")?.classList?.remove("wd-drop-before");
-      e.target.closest?.("[data-row]")?.classList?.add("wd-drop-before");
-    }
-  });
-  host.addEventListener("dragleave", () => {
-    host.classList.remove("pf-drop-ok");
-    host.querySelector(".wd-drop-before")?.classList?.remove("wd-drop-before");
-  });
-  host.addEventListener("drop", (e) => {
-    host.classList.remove("pf-drop-ok");
-    host.querySelector(".wd-drop-before")?.classList?.remove("wd-drop-before");
-    host.querySelector(".wd-dragging")?.classList?.remove("wd-dragging");
-    let env = null;
-    try {
-      env = JSON.parse(e.dataTransfer?.getData(_DND_MIME) ?? "null");
-    } catch {
-      env = null;
-    }
-    if (!env || env.source_kind !== "table-row") return; // accept 外源不高亮不接收(§15.2)
-    e.preventDefault();
-    const sourceId = String(env.source ?? "").split("/").pop();
-    const before = e.target.closest("[data-row]")?.dataset.row ?? "";
-    if (sourceId && sourceId !== before) widget.move_row(sourceId, before);
   });
   }
 

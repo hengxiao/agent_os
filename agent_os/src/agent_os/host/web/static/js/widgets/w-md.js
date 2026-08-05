@@ -15,7 +15,7 @@ export const MD_VIEWER_DEF = registerWidgetDef({
   kind: "md-viewer",
   v: 1,
   state_schema: { type: "object" },
-  state_defaults: { source: "" },
+  state_defaults: { source: "", view: "preview" },
   actions: [],
   events: ["copy", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "document", keys: [] },
@@ -58,8 +58,27 @@ export function mountMarkdownViewer(host, { source = "", title = "", path = "", 
   if (surface === "card") {
     bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
   } else {
-  // 代码块复制钮(§2.12;委托在 host——重渲会换掉子元素)
+  // 委托在 host(重渲会换掉子元素,W5.1 纪律)
   host.addEventListener("click", (e) => {
+    // 预览 | 源码(§3.12 v2;切换不重取数据,同一份 state.source)
+    const v = e.target.closest?.("[data-md-view]");
+    if (v) {
+      widget.state.view = v.dataset.mdView === "source" ? "source" : "preview";
+      return render();
+    }
+    // 全文复制(两态都在,§3.12 v2)
+    const all = e.target.closest?.("[data-md-copyall]");
+    if (all) {
+      const text = widget.state.source;
+      globalThis.navigator?.clipboard?.writeText?.(text);
+      widget.emit("copy", { text });
+      all.textContent = "✓";
+      setTimeout(() => {
+        all.textContent = "⧉";
+      }, 1000);
+      return;
+    }
+    // 代码块复制钮(§2.12)
     const btn = e.target.closest?.("[data-md-copy]");
     if (!btn) return;
     const text = _codeBlockAt(widget.state.source, Number(btn.dataset.mdCopy));

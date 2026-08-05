@@ -14,7 +14,7 @@
    铁律:本文件不拼 HTML(渲染全在 w-date.render.js);零 fetch;监听委托在 host。 */
 
 import { registerWidgetDef } from "./registry.js";
-import { bindCardOpen, createWidget } from "./widget.js";
+import { bindCardOpen, createWidget, preserveSelection } from "./widget.js";
 import { monthGridHtml, renderDatePicker } from "./w-date.render.js";
 
 export { monthGridHtml }; // 兼容面(迁至渲染面;原从本文件导出)
@@ -100,13 +100,17 @@ export function mountDatePicker(
   };
   const _changed = () => widget.emit("change", { value: widget.state.value });
 
-  /* 弹层边缘翻转(§3.8):下方不够长就向上开(stub/无测量环境安全跳过) */
+  /* 弹层边缘翻转(§3.8):下方不够长就上翻,右缘出视口就右对齐
+     (stub/无测量环境安全跳过) */
   const _flipLayer = () => {
     const layer = host.querySelector("[data-wd-layer]");
     if (!layer?.getBoundingClientRect || typeof globalThis.innerHeight !== "number") return;
     const r = layer.getBoundingClientRect();
     const up = r.bottom > globalThis.innerHeight && r.top - r.height > 0;
     layer.classList?.toggle("up", up);
+    // 右缘翻转(§3.8 v2):右出视口 → 贴宿主右边
+    const right = typeof globalThis.innerWidth === "number" && r.right > globalThis.innerWidth;
+    layer.classList?.toggle("right", Boolean(right));
   };
 
   /* 纠序闪提示(§3.8:自动纠序是可感知反馈,不静默改值) */
@@ -139,7 +143,9 @@ export function mountDatePicker(
     } else {
       widget.state.invalid = { which: "value", text };
     }
-    render();
+    // §3.8 v2(用户验收):输入逐字重渲会丢焦点/光标——选区保留重渲
+    // (W5.1 基座同一答案;定位面 = 对应输入框的 data 属性选择器)
+    preserveSelection(host, render, { selector: `[data-wd-${which}="1"]` });
     _changed();
   };
   widget.pick = (day) => {
@@ -239,7 +245,10 @@ export function mountDatePicker(
       render();
     }
   });
-  // 点外收层(§3.8;委托挂在 document,destroy 时摘除)
+  // 点外收层(§3.8;委托挂 document 的 **capture 阶段**——pick/翻月会整树
+  // 重渲,若用 bubble 阶段,document 在重渲之后才收到 click,目标元素已
+  // 脱离文档,contains 判 false → 把弹层内点击误判为「外」而误收层;
+  // capture 在宿主重渲之前执行,contains 仍然成立。destroy 时摘除)
   const _doc = host.ownerDocument ?? globalThis.document;
   const _onDocClick = (e) => {
     if (!widget.state.open) return;
@@ -247,7 +256,7 @@ export function mountDatePicker(
     widget.state.open = false;
     render();
   };
-  _doc?.addEventListener?.("click", _onDocClick);
+  _doc?.addEventListener?.("click", _onDocClick, true);
   const _destroy = widget.destroy.bind(widget);
   widget.destroy = () => {
     if (_noticeTimer) clearTimeout(_noticeTimer);

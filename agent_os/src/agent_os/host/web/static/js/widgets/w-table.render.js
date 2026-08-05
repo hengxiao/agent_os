@@ -1,14 +1,15 @@
-/* W-table 渲染面(docs/WIDGET-ARCH.md §1.1/§2.3;W5.2 自渲染;W6.2 按
-   docs/WIDGET-DESIGN.md §3.3 重做视觉):
+/* W-table 渲染面(docs/WIDGET-ARCH.md §1.1/§2.3;W5.2 自渲染;W6.6 按
+   docs/WIDGET-DESIGN.md §3.3 v2 · 用户验收反馈简化):
    ``renderTableEditor(state, {surface}) -> html`` **纯函数**——无副作用、不写 state、
    不发事件、不调后端;只产出语义 class(``wd-*``),视觉全走契约 token。
 
-   tab(§3.3):面板头(title · N 行 × M 列)+ sticky 列头(类型语义图标 +
-   名称 500 + 必填红 * + hover 显排序/⋯ 槽);行 40px,hover=--bg-2、选中=
-   --live 左条 + 8% 浅底(反馈只改底色);拖柄 ⠿ 平时 30% 透明行 hover 全显;
-   单元格展示态点击进内联编辑(32px 框;boolean 始终 checkbox、enum 编辑态
-   出 select——展示态为 chip);行尾 ✕ 仅 hover 显;「+ 添加行」整宽虚线
-   hover 变实 + --live 字色;空态 = 表头 + 骨架行 + 「添加第一行」主操作。
+   tab(§3.3 v2):面板头(title · N 行 × M 列)+ sticky 列头(类型语义图标 +
+   名称 500 + 必填红 *;排序/⋯ 槽已撤);行 40px,hover=--bg-2、选中=
+   --live 左条 + 8% 浅底(反馈只改底色);**单元格 = KV 式常驻可编辑**
+   (隐形 input,focus 才显;enum = 隐形样式原生 select;boolean =
+   checkbox)——无编辑态切换;行尾 ✕ 仅 hover 显;「+ 添加行」整宽虚线
+   hover 变实 + --live 字色;**行 DnD 全撤**(拖柄/指示线/浮起/envelope
+   退役);空态 = 表头 + 骨架行 + 「添加第一行」主操作。
    card(§3.3):标题行(表名 + 「N 行」徽标)+ 迷你列头(≤3 列,溢出 +N)+
    前 2 行只读(网格对齐)+「查看全部 →」;整卡 = open 入口。 */
 
@@ -18,23 +19,28 @@ import { copy } from "../themes.js";
 const _TYPE_ICONS = { text: "Aa", number: "#", enum: "≡", date: "📅", boolean: "☑" };
 
 /* state → html(纯);state 面:{rows:[{id,cells}], selected:[ids], schema:{columns},
-   title?, editing?("id:key" 内联编辑槽)} */
+   title?}
+   v2(§3.3 · 用户验收反馈 2026-08-05):**KV 式常驻可编辑**(隐形 input,
+   focus 才显;enum = 隐形样式原生 select;boolean = checkbox)——「点击进
+   编辑模式」的态切换废除;**行 DnD 全撤**(拖柄/指示线/浮起/envelope
+   退役,Alt+↑/↓ 键盘移行保留);列头保留(类型图标 + 名称 + 必填 *,
+   排序/⋯ 视觉槽撤掉),sticky 保持;行尾 ✕ hover 显;「+ 添加行」虚线行;
+   空态 = 表头 + 骨架行 + 「添加第一行」主操作。 */
 export function renderTableEditor(state, { surface = "tab" } = {}) {
   if (surface === "card") return _tableCardHtml(state);
   const columns = state.schema?.columns ?? [];
   const rs = state.rows ?? [];
   const selected = state.selected ?? [];
-  const editing = state.editing ?? "";
   const count = copy("w.table.count").replace("{r}", String(rs.length)).replace("{c}", String(columns.length));
   const thead =
-    `<thead><tr><th class="wd-drag" aria-hidden="true"></th>` +
+    `<thead><tr>` +
     columns
       .map(
         (c) =>
           `<th><span class="wd-th-ico" aria-hidden="true">${_TYPE_ICONS[c.type] ?? "Aa"}</span>` +
           `<span class="wd-th-name">${esc(c.label ?? c.key)}</span>` +
           (c.required ? `<span class="wd-req" aria-hidden="true">*</span>` : "") +
-          `<span class="wd-th-act" aria-hidden="true">↑</span><span class="wd-th-act" aria-hidden="true">⋯</span></th>`
+          `</th>`
       )
       .join("") +
     `<th></th></tr></thead>`;
@@ -43,13 +49,12 @@ export function renderTableEditor(state, { surface = "tab" } = {}) {
         .map(
           (r) =>
             `<tr data-row="${r.id}"${selected.includes(r.id) ? ' data-selected="1"' : ""}` +
-            ` draggable="true" tabindex="0">` +
-            `<td class="wd-drag" aria-hidden="true">⠿</td>` +
-            columns.map((c) => `<td>${_cellHtml(c, r, editing)}</td>`).join("") +
+            ` tabindex="0">` +
+            columns.map((c) => `<td>${_cellHtml(c, r)}</td>`).join("") +
             `<td><button class="wd-row-x" data-row-x="${r.id}" aria-label="${esc(copy("w.table.del"))}">✕</button></td></tr>`
         )
         .join("")
-    : `<tr class="wd-skel-row" aria-hidden="true"><td></td>` +
+    : `<tr class="wd-skel-row" aria-hidden="true">` +
       columns
         .map((c, i) => `<td><span class="wd-skeleton" style="width:${i === 0 ? 90 : 60}px;height:10px"></span></td>`)
         .join("") +
@@ -65,9 +70,10 @@ export function renderTableEditor(state, { surface = "tab" } = {}) {
   );
 }
 
-/* 单元格(列型驱动):boolean 始终 checkbox;编辑态 = 32px input / enum select;
-   展示态 = 文本(enum 为 chip),点击进编辑(§3.3;逻辑面管 state.editing) */
-function _cellHtml(col, row, editing) {
+/* 单元格(v2:常驻编辑器,列型驱动):text/number = 隐形 input(focus 显);
+   enum = 隐形样式原生 select;boolean = checkbox(始终交互);
+   值随 input/change 事件即时同步(逻辑面 set_cell,不重渲) */
+function _cellHtml(col, row) {
   const ref = `${row.id}:${col.key}`;
   const value = row.cells[col.key];
   const label = esc(col.label ?? col.key);
@@ -77,27 +83,20 @@ function _cellHtml(col, row, editing) {
       ` aria-label="${label}">`
     );
   }
-  if (editing === ref) {
-    if (col.type === "enum") {
-      return (
-        `<select data-cell="${ref}" aria-label="${label}">` +
-        (col.options ?? [])
-          .map((o) => `<option value="${esc(o)}"${o === value ? " selected" : ""}>${esc(o)}</option>`)
-          .join("") +
-        `</select>`
-      );
-    }
-    const type = col.type === "number" ? "number" : "text";
+  if (col.type === "enum") {
     return (
-      `<input class="wd-cell-in" type="${type}" data-cell="${ref}" value="${esc(String(value ?? ""))}"` +
-      ` aria-label="${label}">`
+      `<select class="wd-cell-sel" data-cell="${ref}" aria-label="${label}">` +
+      (col.options ?? [])
+        .map((o) => `<option value="${esc(o)}"${o === value ? " selected" : ""}>${esc(o)}</option>`)
+        .join("") +
+      `</select>`
     );
   }
-  const text = String(value ?? "");
-  if (col.type === "enum") {
-    return `<span class="wd-chip wd-cell" data-cell="${ref}">${esc(text)}</span>`;
-  }
-  return `<span class="wd-cell" data-cell="${ref}">${esc(text)}</span>`;
+  const type = col.type === "number" ? "number" : "text";
+  return (
+    `<input class="wd-cell-in" type="${type}" data-cell="${ref}" value="${esc(String(value ?? ""))}"` +
+    ` aria-label="${label}">`
+  );
 }
 
 /* card 面(§3.3):标题行 + 迷你列头(网格对齐,≤3 列溢出 +N)+ 前 2 行只读 +

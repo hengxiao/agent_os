@@ -9,7 +9,7 @@
    代码块 mono 卡片 + 复制钮(data-md-copy = 代码块序号,逻辑面按序取文)。 */
 
 import { copy } from "../themes.js";
-import { relTime } from "./w-text.render.js";
+import { relTime, textEditorMicro } from "./w-text.render.js";
 
 /* 链接白名单:仅 http(s) 与站内相对;javascript:/data:/vbscript: 一律剥壳成纯文本 */
 function _safeHref(url) {
@@ -128,17 +128,30 @@ export function mdToHtml(md) {
   return out.join("");
 }
 
-/* state → html(纯);state 面:{source, title?}
-   双形态(§1.4):surface="card" → 首个标题 + 首段摘录(2 行截断,CSS);
-   无代码块复制钮(卡内不渲染代码块) */
+/* state → html(纯);state 面:{source, title?, view?("preview"|"source")} */
 export function renderMarkdownViewer(state, { surface = "tab" } = {}) {
   if (surface === "card") return _mdCardHtml(state);
-  if (!String(state.source ?? "").trim()) {
+  const view = state.view ?? "preview";
+  if (!String(state.source ?? "").trim() && view === "preview") {
     return (
       `<div class="wd-md" role="document">` +
       `<div class="wd-empty-box"><span class="wd-empty-ico" aria-hidden="true">¶</span>` +
       `<span class="wd-empty-guide">${esc(copy("w.md.empty"))}</span></div></div>`
     );
+  }
+  const barInner =
+    (state.title ? `<span class="wd-pane-title">${esc(state.title)} · md</span>` : "") +
+    `<span class="wd-md-bar-side">` +
+    `<span class="wd-seg">` +
+    `<button class="wd-seg-btn" data-md-view="preview"${view === "preview" ? ' data-on="1"' : ""}>${esc(copy("w.md.preview"))}</button>` +
+    `<button class="wd-seg-btn" data-md-view="source"${view === "source" ? ' data-on="1"' : ""}>${esc(copy("w.md.source"))}</button>` +
+    `</span>` +
+    `<button type="button" class="wd-md-copyall" data-md-copyall="1" title="${esc(copy("w.md.copy"))}"` +
+    ` aria-label="${esc(copy("w.md.copy"))}">⧉</button>` +
+    `</span>`;
+  const bar = state.title ? `<div class="wd-pane-head">${barInner}</div>` : `<div class="wd-md-bar">${barInner}</div>`;
+  if (view === "source") {
+    return `<div class="wd-md" role="document">${bar}${_mdSourceHtml(state)}</div>`;
   }
   let idx = 0; // 局部计数(纯函数内,无副作用外泄)
   const body = mdToHtml(state.source ?? "").replace(/<pre class="mono wd-md-code">/g, () => {
@@ -148,11 +161,23 @@ export function renderMarkdownViewer(state, { surface = "tab" } = {}) {
     idx += 1;
     return tag;
   });
+  return `<div class="wd-md" role="document">${bar}${body}</div>`;
+}
+
+/* 源码态(§3.12 v2 · 用户裁决):W-text readonly 同族视觉——行号槽 +
+   mono pre + 右下微标;内容为原始 markdown(不重取数据,同一份 source) */
+function _mdSourceHtml(state) {
+  const src = String(state.source ?? "");
+  const lines = src.split("\n");
   return (
-    `<div class="wd-md" role="document">` +
-    (state.title ? `<div class="wd-pane-head"><span class="wd-pane-title">${esc(state.title)} · md</span></div>` : "") +
-    body +
-    `</div>`
+    `<div class="wd-md-src">` +
+    `<div class="wd-editor">` +
+    `<div class="wd-gutter" aria-hidden="true"><div class="wd-gutter-in">` +
+    lines.map((_, i) => `<span class="wd-gl" data-line="${i + 1}">${i + 1}</span>`).join("") +
+    `</div></div>` +
+    `<div class="wd-code wd-md-src-code"><pre class="wd-md-src-pre">${esc(src)}\n</pre>` +
+    `<span class="wd-micro-box"><span class="wd-micro">${esc(textEditorMicro(src))}</span></span>` +
+    `</div></div></div>`
   );
 }
 

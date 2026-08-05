@@ -344,6 +344,8 @@ export const COPY = {
   "w.diff.ctx": "{n} 行没变(上下文里)",
   "w.diff.nochange": "没有差异喵",
   "w.md.empty": "文档是空的",
+  "w.md.preview": "预览",
+  "w.md.source": "源码",
   "w.bubble.you": "我",
   "w.bubble.comment": "批注",
   "w.bubble.fail": "发送失败,看看网络",

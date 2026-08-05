@@ -207,6 +207,7 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 | W6.3 ✅ | W-list/W-tree/W-date 按设计终稿重做(§3.6-3.8):命中高亮/调光过滤/双月弹层/纠序闪提示 | 行为测试全绿 + 视觉结构断言过 |
 | W6.4 ✅ | W-chart/W-log/W-diff/W-md/W-bubble 按设计终稿重做(§3.9-3.13):tooltip/深色面板/双编码行/排印阶梯/气泡卡 | 行为测试全绿 + 视觉结构断言过 |
 | W6.5 ✅ | 视觉验收报告发现项(F1-F7)+ 流程两项(构建号/文案契约) | 对比度实测断言 + 结构断言全绿 |
+| W6.6 ✅ | 六条设计裁决(用户验收反馈 v2):json card/表格简化/表单单列/树紧凑/日期可用性/md view source | 裁决断言全绿;DESIGN v2 + 效果图重生成 |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
@@ -499,6 +500,46 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 >   页角构建号元素 + `widget-sandbox.js` 的 `BUILD` 常量(单一来源,
 >   手动同步,测试盯三方一致);WIDGET-DESIGN.md 新增 §5「主题文案契约」
 >   (功能文案随主题变是特性:classic 逐字对 spec,其它主题只验语义)。
+>
+> **W6.6 实现注**(2026-08-05,分支 debugger;六条设计裁决 = 用户验收反馈,
+>   优先级高于效果图/规格书原文;DESIGN 以「变更记录」v2 同步,未静默改条文):
+> - **① W-json card 重设计**:状态行(✓/✕ 同前)+ **顶层键名 chips**
+>   (前 4 溢出 +N,mono,_topKeys 纯函数)+ meta(N 键 · 大小 · 相对时间);
+>   **首行原文预览撤掉**(「{」没有信息量);错误态左边条 danger 保留。
+> - **② W-table 简化**:单元格 = **KV 式常驻可编辑**(隐形 input,focus
+>   才显;enum = 隐形样式原生 select,boolean = checkbox),**编辑态切换
+>   全废**(state.editing/点击进编辑/focusout 退出全部移除);**Excel 键盘
+>   逻辑**(Tab/Shift+Tab 横向、Enter 下移、←/→ 光标位于端点时跨格,
+>   checkbox/select 无光标直跨);**行 DnD 与 envelope 一并退役**(拖柄
+>   列/draggable/dragstart·over·leave·drop·end 监听/_DND_MIME 全删,
+>   Alt+↑/↓ 键盘移行保留);列头撤排序/⋯ 槽,sticky 保持;✕ hover 显与
+>   虚线添加行保留。API 面(add_row/remove_row/move_row/set_cell/
+>   serialize)零变化。
+> - **③ W-form 排版**:诊断 = W6.2 发明的两列网格在字段高不齐时显乱
+>   (F4 收根后每字段已是单 grid 项),裁决**单列为主**(grid 1fr);
+>   「排版结构断言」钉每字段 label→control→help?→err? 的顺序与嵌套。
+> - **④ W-tree 紧凑化**(widget 作用域 CSS,不动共享 app.css 的 .ns-row):
+>   行高 ≈26px、缩进 12px/级(--s3)、chevron 10px;行内只留 图标+名称+
+>   计数胶囊;hover/选中/调光/键盘全保留。
+> - **⑤ W-date 可用性(真实浏览器三条根因 → 修法)**:
+>   1) 输入逐字重渲丢焦点/光标 → `set()` 改 `preserveSelection`
+>      (定位面 = `[data-wd-{which}="1"]`,有断言);
+>   2) **点外收层误伤弹层内点击**:pick/翻月整树重渲,bubble 阶段的
+>      document 委托收到 click 时目标已脱离文档,contains 误判为「外」
+>      → 一点就关 → 委托改 **capture 阶段**(重渲之前执行,contains 成立);
+>   3) 右缘出视口 → `_flipLayer` 加横向翻转(`.wd-date-layer.right` 贴
+>      宿主右边);层叠/z-index/双月小容器复查无问题(弹层 absolute 出
+>      网格流,340px 容器不裁)。
+> - **⑥ W-md view source**:segmented「预览 | 源码」(copy 键 w.md.preview/
+>   w.md.source 六主题);state.view ∈ {preview, source},切换不重取数据;
+>   源码态 = W-text readonly 同族(行号槽复用编辑器共享件 + mono pre +
+>   右下微标);**全文复制钮两态都在**(emit copy 全文 + 1s ✓)。
+> - **效果图**:`scripts/gen_widget_design_svgs.py` 的 w-json(键 chips)/
+>   w-table(常驻编辑+撤拖柄排序槽)/ w-form(单列)/ w-tree(24px 紧凑)/
+>   w-md(segmented)已更新并幂等重生成;w-date 视觉无变化(v2 是行为修复,
+>   静态效果图无差异),函数未动仅重跑。
+> - **BUILD**:2026-08-05 → 2026-08-05.2(widget-sandbox.js + widget.html
+>   全部 ?v= 同步;测试盯三方一致)。
 
 ## 4. 不做
 

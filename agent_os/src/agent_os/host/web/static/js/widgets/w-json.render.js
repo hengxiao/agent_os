@@ -130,17 +130,18 @@ function _hl(text, mset) {
   return out;
 }
 
-/* card 面(§3.2):状态行(✓ 合法胶囊 / ✕ 错误行)+ 首行 mono 预览 +
-   meta(大小 · 键数 · 相对时间);错误态整卡左边条 --danger(.is-err);
+/* card 面(§3.2 v2 · 用户验收反馈 2026-08-05):状态行(✓ 合法胶囊 / ✕
+   第 N 行错误行)+ **顶层键名 chips**(前 4 个,溢出 +N,mono)+ meta
+   (N 键 · 大小 · 相对时间);**首行原文预览已撤**——「{」没有信息量;
+   错误态整卡左边条 --danger(.is-err)保留;
    .wd-json-ok/.wd-errbar 钩子与逻辑面 check() 的局部刷新同构(不重渲) */
 function _jsonCardHtml(state) {
   const value = String(state.value ?? "");
   const err = state.error ?? null;
   const valid = !err && value.trim();
-  const firstLine = value ? value.split("\n")[0] : "";
+  const topKeys = _topKeys(value);
   const keys = jsonKeyCount(value);
-  const meta = [_fmtSize(value)];
-  if (keys !== null) meta.push(copy("w.json.keys").replace("{n}", String(keys)));
+  const meta = [...(keys !== null ? [copy("w.json.keys").replace("{n}", String(keys))] : []), _fmtSize(value)];
   if (state.updated_at) meta.push(relTime(state.updated_at));
   return (
     `<div class="wd-text wd-json wd-card${err ? " is-err" : ""}${state.dirty ? " is-dirty" : ""}${state.readonly ? " is-readonly" : ""}"` +
@@ -152,10 +153,27 @@ function _jsonCardHtml(state) {
     `</span>` +
     `<span class="wd-card-go">${esc(copy("w.card.go"))}</span>` +
     `</span>` +
-    `<span class="wd-card-line mono">${esc(value.trim() ? firstLine : copy("w.card.empty"))}</span>` +
-    `<span class="wd-card-meta">${esc(meta.join(" · "))}</span>` +
+    (topKeys.length
+      ? `<span class="wd-card-keys">` +
+        topKeys.slice(0, 4).map((k) => `<span class="wd-chip mono">${esc(k)}</span>`).join("") +
+        (topKeys.length > 4 ? `<span class="wd-chip">+${topKeys.length - 4}</span>` : "") +
+        `</span>`
+      : "") +
+    `<span class="wd-card-meta"><span class="wd-card-meta-txt">${esc(meta.join(" · "))}</span></span>` +
     `</div>`
   );
+}
+
+/* 顶层键名(v2 card chips 的数据面;非 object/非法 JSON → []) */
+function _topKeys(text) {
+  let doc;
+  try {
+    doc = JSON.parse(String(text ?? ""));
+  } catch {
+    return [];
+  }
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return [];
+  return Object.keys(doc);
 }
 
 /* 字节大小(UTF-8;B/KB 是单位符号,非文案) */

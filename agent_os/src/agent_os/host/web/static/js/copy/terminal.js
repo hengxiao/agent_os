@@ -351,6 +351,8 @@ export const COPY = {
   "w.diff.ctx": "{n} unchanged (context)",
   "w.diff.nochange": "no differences",
   "w.md.empty": "empty doc",
+  "w.md.preview": "preview",
+  "w.md.source": "source",
   "w.bubble.you": "me",
   "w.bubble.comment": "note",
   "w.bubble.fail": "send failed, check network",

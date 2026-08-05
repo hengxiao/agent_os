@@ -354,16 +354,24 @@
 .wd-chart-wrap .wd-chart-bar { display: flex; gap: var(--s1); margin-bottom: var(--s1); }
 
 /* ── W5.2:W-table/W-kv/W-form/W-list 新形态补充(全契约 token)── */
-/* W-table:行首拖柄(平时 30% 透明,行 hover 全显,§3.3)+ 列头类型徽标(§2.3) */
+/* W-table:行首拖柄 class 已随 v2 DnD 退役移除(表单数组项拖序仍用 ⠿) */
 .wd-drag { color: var(--fg-2); cursor: grab; user-select: none; font-size: var(--text-2xs); opacity: 0.3; transition: opacity 120ms ease-out; }
-.wd-table tbody tr:hover .wd-drag { opacity: 1; }
-th .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(--s1); }
+.wd-arr-row:hover .wd-drag { opacity: 1; }
 /* W-kv:重复 key 行 --warn 8% 浅底警示(§3.4;警告态非硬拦) */
 .wd-kv-warn { background: color-mix(in srgb, var(--warn) 8%, transparent); border-radius: var(--r-sm); }
 /* W-form:错误字段红边(§2.5) */
 .wd-field-err > .input, .wd-field-err > select { border-color: var(--danger); }
 
 /* ── W5.3:W-tree/W-date/W-chart/W-log/W-diff/W-md/W-bubble 新形态补充(全契约 token)── */
+/* W6.6 W-tree(§3.7 v2 · 用户验收反馈:文件管理器左侧树紧凑化)——
+   行高 ≈26px、缩进 12px/级、chevron 10px;行内只留 图标 + 名称 + 计数胶囊 */
+.wd-tree .ns-row {
+  min-height: calc(var(--s6) + 2px);
+  padding: 0 var(--s1) 0 calc(var(--s1) + var(--ns-depth, 0) * var(--s3));
+}
+.wd-tree .ns-toggle { width: var(--s3); padding: 0; font-size: var(--text-2xs); }
+.wd-tree .ns-name { font-weight: 500; } /* 目录行 500(§3.7 v2) */
+.wd-tree .ns-row[data-wt-leaf] .ns-name { font-weight: 400; } /* 叶子 mono 常规 */
 /* W6.3 W-tree(§3.7):当前项左条+浅底、父链转正色、非命中调光、键盘焦点、横向滚动 */
 .wd-tree [role="tree"] { overflow-x: auto; } /* 深层横向滚动不截断缩进(§3.7) */
 .wd-tree .ns-row { white-space: nowrap; min-width: max-content; border-radius: var(--r-sm); }
@@ -432,6 +440,7 @@ th .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(-
   animation: wd-pop 140ms ease-out;
 }
 .wd-date-layer.up { top: auto; bottom: 100%; margin-top: 0; margin-bottom: var(--s1); }
+.wd-date-layer.right { left: auto; right: 0; } /* 右缘出视口 → 贴宿主右边(§3.8 v2) */
 /* W-log:kind 左侧色条(§2.10;--sig-* 信号色) */
 .wd-log-line { border-left: var(--stroke-strong) solid transparent; padding-left: var(--s1); }
 .wd-log-line[data-kind="error"], .wd-log-line[data-kind="run.error"] { border-left-color: var(--sig-budget); }
@@ -545,6 +554,24 @@ th .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(-
 .w-bubble-input .input { flex: 1; }
 .wd-badge-solid { background: var(--live); color: var(--bg-0); border-color: var(--live); font-weight: 500; }
 
+/* W6.6 W-md view source(§3.12 v2 · 用户裁决):segmented 条 + 源码态
+   (W-text readonly 同族:行号槽 + mono pre + 微标;复用编辑器共享件) */
+.wd-md-bar { display: flex; justify-content: flex-end; margin-bottom: var(--s1); }
+.wd-md-bar-side { margin-left: auto; display: inline-flex; align-items: center; gap: var(--s2); }
+.wd-md-copyall {
+  border: var(--stroke) solid var(--line); background: transparent; color: var(--fg-2);
+  border-radius: var(--r-conn); font-size: var(--text-xs); font-family: inherit;
+  cursor: pointer; padding: 0 var(--s2);
+}
+.wd-md-copyall:hover { color: var(--fg-0); border-color: var(--live); }
+.wd-md-src { border: var(--stroke) solid var(--line); border-radius: var(--r-md); background: var(--bg-1); }
+.wd-md-src .wd-code { background: var(--bg-2); } /* readonly 灰底(与 W-text readonly 同族) */
+.wd-md-src-pre {
+  margin: 0; padding: var(--s1) var(--s2);
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.6;
+  color: var(--fg-0); white-space: pre; overflow-x: auto;
+}
+
 /* ── W6.2:W-table/W-kv/W-form(docs/WIDGET-DESIGN.md §3.3-3.5;全契约 token)── */
 /* 面板头(三控件共用:title · 计数) */
 .wd-pane-head {
@@ -580,8 +607,6 @@ tr:hover .wd-row-x, .wd-kv-row:hover .wd-row-x, .wd-arr-row:hover .wd-row-x { op
   font-size: var(--text-xs); font-weight: 500; color: var(--fg-1); white-space: nowrap;
 }
 .wd-th-ico { color: var(--fg-2); font-size: var(--text-xs); margin-right: var(--s1); }
-.wd-th-act { opacity: 0; color: var(--fg-2); margin-left: var(--s1); transition: opacity 120ms ease-out; }
-.wd-table th:hover .wd-th-act { opacity: 1; } /* hover 列头显排序/⋯槽 */
 .wd-table td {
   height: calc(var(--s8) + var(--s2)); padding: 0 var(--s2);
   border-bottom: var(--stroke) solid var(--line);
@@ -590,15 +615,18 @@ tr:hover .wd-row-x, .wd-kv-row:hover .wd-row-x, .wd-arr-row:hover .wd-row-x { op
 .wd-table tbody tr:hover td { background: var(--bg-2); } /* §1.2:hover 只换底色 */
 .wd-table tr[data-selected="1"] td { background: color-mix(in srgb, var(--live) 8%, transparent); }
 .wd-table tr[data-selected="1"] td:first-child { box-shadow: inset var(--stroke-strong) 0 0 var(--live); }
-.wd-table tr.wd-dragging td { background: var(--bg-2); box-shadow: var(--shadow-pop); } /* 拖动浮起 */
-.wd-table tr.wd-drop-before td { box-shadow: inset 0 var(--stroke-strong) 0 var(--live); } /* 2px 指示线 */
-.wd-cell { display: block; cursor: text; min-height: 1em; }
+/* 单元格常驻编辑器(§3.3 v2,KV 式):平时隐形,focus 才显 */
 .wd-cell-in {
   width: 100%; height: var(--s8); padding: 0 var(--s2);
-  background: var(--bg-2); border: var(--stroke) solid var(--line); border-radius: var(--r-conn);
-  font-family: inherit; font-size: var(--text-sm);
+  background: transparent; border: var(--stroke) solid transparent; border-radius: var(--r-conn);
+  font-family: inherit; font-size: var(--text-sm); color: var(--fg-0);
 }
-.wd-table td select { height: var(--s8); background: var(--bg-2); border: var(--stroke) solid var(--line); border-radius: var(--r-conn); font-family: inherit; }
+.wd-cell-in:focus { background: var(--bg-2); border-color: var(--line); }
+.wd-cell-sel {
+  width: 100%; height: var(--s8); border: 0; background: transparent;
+  color: var(--fg-0); font-family: inherit; font-size: var(--text-sm);
+}
+.wd-cell-sel:focus { background: var(--bg-2); border-radius: var(--r-conn); }
 .wd-skel-row .wd-skeleton { display: inline-block; }
 
 /* W-kv(§3.4):KEY/VALUE 列头 + 40/60 两列 + 隐形输入框 + ⚠ tooltip */
@@ -627,8 +655,9 @@ tr:hover .wd-row-x, .wd-kv-row:hover .wd-row-x, .wd-arr-row:hover .wd-row-x { op
 }
 
 /* W-form(§3.5):两列网格 + label 上置 + 同族 32px 控件 + switch/chips/stepper */
-.wd-form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--s3); }
-.wd-form-grid .wd-nest, .wd-form-grid .wd-arr { grid-column: 1 / -1; }
+/* W-form(§3.5 v2 · 用户验收反馈:**单列为主**,Stripe 式整齐排版;
+   两列网格撤掉——字段高不齐显乱) */
+.wd-form-grid { display: grid; grid-template-columns: 1fr; gap: var(--s3); }
 .wd-form .lab-field { display: flex; flex-direction: column; gap: var(--s1); }
 .wd-form .lab-label { font-size: var(--text-xs); font-weight: 500; color: var(--fg-0); }
 .wd-help { display: block; color: var(--fg-2); font-size: var(--text-xs); }
@@ -684,6 +713,7 @@ tr:hover .wd-row-x, .wd-kv-row:hover .wd-row-x, .wd-arr-row:hover .wd-row-x { op
 .wd-progress-in { display: block; height: 100%; background: var(--live); border-radius: var(--r-sm); }
 /* W-table card:迷你列头/预览行网格对齐 */
 .wd-card-cols, .wd-card-row { display: grid; grid-template-columns: repeat(var(--cols, 1), 1fr); gap: var(--s2); align-items: center; }
+.wd-card-keys { display: flex; gap: var(--s1); flex-wrap: wrap; margin-top: var(--s1); } /* W-json card v2:顶层键名 chips */
 .wd-card-cols { color: var(--fg-2); font-size: var(--text-xs); font-weight: 500; margin-top: var(--s1); }
 .wd-card-row { font-size: var(--text-xs); margin-top: var(--s1); }
 .wd-card-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

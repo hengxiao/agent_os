@@ -68,11 +68,11 @@ export const SAMPLES = {
   "select-list": {
     mount: "mountSelectList",
     samples: [
-      { name: "单选典型", options: { items: [
-        { id: "a", label: "Alpha", hint: "第一项" },
-        { id: "b", label: "Beta", hint: "第二项" },
-        { id: "g", label: "Gamma" }] } },
-      { name: "多选", options: { multi: true, items: [
+      { name: "单选典型", options: { title: "mcp.tools", items: [
+        { id: "a", label: "net.http_fetch", hint: "v2.1 · 工具" },
+        { id: "b", label: "net.http_server", hint: "v1.4 · 工具" },
+        { id: "g", label: "data.http_export" }] } },
+      { name: "多选", options: { multi: true, title: "mcp.tools · 多选", items: [
         { id: "a", label: "Alpha" }, { id: "b", label: "Beta" }, { id: "g", label: "Gamma" }] } },
       { name: "空态", options: { items: [] } },
     ],
@@ -80,9 +80,9 @@ export const SAMPLES = {
   "ns-tree": {
     mount: "mountNsTreeWidget",
     samples: [
-      { name: "命名空间典型", options: { items: [
+      { name: "命名空间典型", options: { title: "skills", items: [
         { name: "weather.query" }, { name: "weather.forecast" }, { name: "ops.janitor" }] } },
-      { name: "深层折叠(过滤演自动展开)", options: { items: [
+      { name: "深层折叠(过滤演调光)", options: { title: "skills", items: [
         ...[...Array(8)].map((_, i) => ({ name: `top.a.x${i + 1}` })),
         { name: "top.b.y1" }] } },
       { name: "空态", options: { items: [] } },
@@ -93,7 +93,7 @@ export const SAMPLES = {
     samples: [
       { name: "单日", options: { mode: "date", value: "2026-08-04" } },
       { name: "datetime", options: { mode: "datetime", value: "2026-08-04T10:30" } },
-      { name: "range + 快捷项", options: { mode: "range", value: { start: "2026-08-01", end: "2026-08-04" } } },
+      { name: "range 双月 + 快捷项", options: { title: "travel.dates", mode: "range", value: { start: "2026-08-01", end: "2026-08-04" } } },
     ],
   },
   chart: {

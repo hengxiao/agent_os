@@ -204,6 +204,7 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 | W6.0 ✅ | 视觉基建(docs/WIDGET-DESIGN.md §1):--log-bg 契约 token(六主题)+ widgets.css 共享层(chip/badge/skeleton/empty/btn/动效工具类) | themes-contract + 结构断言过 |
 | W6.1 ✅ | W-text/W-json 按设计终稿重做(§3.1/§3.2):编辑器结构 + JSON 着色层 + 错误三件套 + 失焦校验 | 行为测试全绿 + 视觉结构断言过 |
 | W6.2 ✅ | W-table/W-kv/W-form 按设计终稿重做(§3.3-3.5):内联编辑/⚠ tooltip/switch/chips/stepper/操作行 | 行为测试全绿 + 视觉结构断言过 |
+| W6.3 ✅ | W-list/W-tree/W-date 按设计终稿重做(§3.6-3.8):命中高亮/调光过滤/双月弹层/纠序闪提示 | 行为测试全绿 + 视觉结构断言过 |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
@@ -408,6 +409,34 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 >   w.kv.dup/w.card.dup;退役 w.table.empty。
 > - **samples**:table/kv/form 典型样例补 title 与 description(演示面板头
 >   与帮助文字);其余不动。
+>
+> **W6.3 实现注**(2026-08-04;W-list/W-tree/W-date 按 §3.6-3.8 终稿重做):
+> - **W-list**:搜索框容器(🔍 + input + 「Esc 清空」提示,环在容器
+>   focus-within);命中子串 `<mark class="wd-hit">`(--live 文字色,先转义
+>   再包 mark);选中 = 2px 左条 + 8% 浅底 + 右侧 ✓;键焦 data-focus 与
+>   hover 同 --bg-2;Esc 清空过滤(新增);过滤空态 =「没有匹配『xx』的项」
+>   + 清除搜索钮;多选浮条「已选 N · 清除」(sticky 胶囊 + --shadow-pop,
+>   清除为新行为);card = 当前选中 + meta(hint · 共 N 项)+ 更换 →。
+> - **W-tree**:**过滤语义变更(设计批准)= 剪枝 → 调光**(命中高亮 +
+>   祖先链展开 + 非命中 50% 透明;共享 filterNsTree 不动,控件渲染面不再
+>   用它裁剪);ns-tree.js 只加可选 `nsAttrs` 行属性钩子(共享组件零行为
+>   变化,data-chain/data-dim/data-focus 经此上行);父链名称转正色;键盘
+>   ←→ 折叠展开 / ↑↓ 移动 / Enter 选中(state.focusKey + _visibleRows 与
+>   渲染同 walk 序);深层横向滚动(overflow-x + nowrap);card = 面包屑
+>   (段 / 分隔,末段转正色)+ N 叶子 + M 命名空间徽标 + 打开 →。
+> - **W-date**:📅 字段框(环在容器)+ 手输非法红边 + 行内 ⚠ 提示
+>   (state.invalid,值不丢);快捷 chips 选中态(_quickHit 与 card 徽标
+>   同源);**range 倒置输入/点选同律自动纠序 + 1.5s 闪提示**(设计批准
+>   的行为变更,w.date.inverted 退役,platform.test 断言随改);弹层
+>   --shadow-md + wd-pop 140ms + 下溢上翻(_flipLayer);**range 双月并排**
+>   (cursor 月 + 次月,真实历算;星期头;邻月日 35% 可点;is-range 连续
+>   色带整格贯通;端点实底 + 今天端点叠底点双编码);**点外收层**
+>   (document 委托,destroy 摘除);日格方向键走格(越界自动翻月),
+>   Enter = 原生钮选定;card 加 meta(mode · 共 N 天)。
+> - **copy**:六主题新增 16 键(w.list.esc/nomatch/clear/selcount/clearall/
+>   current/total/change、w.tree.current/ns、w.date.hint/invalid/fix/days/
+>   weekdays/monthtitle);退役 w.date.inverted。
+> - **samples**:list/tree/date 典型样例补 title;深层树样例改演示调光过滤。
 
 ## 4. 不做
 

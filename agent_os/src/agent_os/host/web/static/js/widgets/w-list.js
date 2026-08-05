@@ -27,15 +27,17 @@ export const LIST_EDITOR_DEF = registerWidgetDef({
   render: renderSelectList, // W5.2:render 面进 def(registry 校验形态)
 });
 
-/* 挂进宿主:items + multi(多选)+ selected(初始);filter 事件上行,
-   select/activate 事件上行(父组件映射到自己的动作,§3) */
+/* 挂进宿主:items + multi(多选)+ selected(初始)+ title(面板头,可选);
+   filter 事件上行,select/activate 事件上行(父组件映射到自己的动作,§3)。
+   W6.3(§3.6):Esc 清空过滤;过滤空态「清除搜索」;多选浮条「清除」;
+   命中子串高亮在渲染层(wd-hit,--live 文字色)。 */
 export function mountSelectList(
   host,
-  { items = [], multi = false, selected = null, path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}
+  { items = [], multi = false, selected = null, title = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}
 ) {
   const widget = createWidget(LIST_EDITOR_DEF, {
     path,
-    state: { items: [...items], selected: multi ? (selected ?? []) : selected, filter: "", focus: 0, multi },
+    state: { items: [...items], selected: multi ? (selected ?? []) : selected, filter: "", focus: 0, multi, title },
     onRegister,
     onUnregister,
   });
@@ -81,6 +83,13 @@ export function mountSelectList(
     bindCardOpen(host, widget); // card:宿主委托只挂 open(§1.4)
   } else {
   host.addEventListener("click", (e) => {
+    if (e.target.closest("[data-wl-clear]")) return widget.filter(""); // 清除搜索(§3.6 空态)
+    if (e.target.closest("[data-wl-clear-sel]")) {
+      // 多选浮条「清除」(§3.6)
+      widget.state.selected = [];
+      render();
+      return _changed();
+    }
     const item = e.target.closest("[data-wl-item]");
     if (item) {
       widget.state.focus = Math.max(
@@ -99,7 +108,9 @@ export function mountSelectList(
   });
   host.addEventListener("keydown", (e) => {
     const vis = visibleItems(widget.state);
-    if (e.key === "ArrowDown" && vis.length) {
+    if (e.key === "Escape" && widget.state.filter) {
+      widget.filter(""); // Esc 清空过滤(§3.6)
+    } else if (e.key === "ArrowDown" && vis.length) {
       widget.state.focus = Math.min(widget.state.focus + 1, vis.length - 1);
       renderPreserving();
     } else if (e.key === "ArrowUp" && vis.length) {

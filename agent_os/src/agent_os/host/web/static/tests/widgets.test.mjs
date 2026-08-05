@@ -642,9 +642,10 @@ const { mountFormEditor, validateValues, mountSelectList, mountNsTreeWidget,
   const w = mountSelectList(host, { items });
   w.on("select", (p) => events.push(p));
   assert.ok(host.innerHTML.includes('role="listbox"'), "role=listbox");
-  // 过滤(平列表子串)
+  // 过滤(平列表子串;§3.6:命中子串 --live 文字色高亮,mark 不打断阅读)
   w.filter("alp");
-  assert.ok(host.innerHTML.includes("Alpha") && !host.innerHTML.includes("Beta"), "过滤命中");
+  assert.ok(host.innerHTML.includes('<mark class="wd-hit">Alp</mark>ha') && !host.innerHTML.includes("Beta"),
+    "过滤命中 + 高亮(文字色非底色)");
   w.filter("");
   // 单选切换(再点取消)
   w.select("a");
@@ -691,10 +692,10 @@ const { mountFormEditor, validateValues, mountSelectList, mountNsTreeWidget,
     w.toggle("weather");
     assert.ok(html().includes("weather.query"), "再展开");
   }
-  // 过滤(ns-tree filterNsTree 语义:命中保留)
+  // 过滤(§3.7 设计终稿:命中高亮 + 祖先链展开 + **非命中 50% 调光,不剪枝**)
   w.filter("janitor");
-  assert.ok(html().includes("ops.janitor"), "过滤命中");
-  assert.ok(!html().includes("weather.query"), "过滤排他");
+  assert.ok(html().includes('<mark class="wd-hit">janitor</mark>'), "过滤命中高亮(wd-hit)");
+  assert.ok(html().includes("weather.query") && html().includes("wd-dim"), "非命中调光不剪枝(§3.7)");
   w.filter("");
   // 选中
   const leaf = new StubEl("div");
@@ -722,28 +723,35 @@ const { mountFormEditor, validateValues, mountSelectList, mountNsTreeWidget,
   assert.ok(rangeInverted({ start: "2026-08-10", end: "2026-08-01" }), "倒置检出");
   assert.ok(!rangeInverted({ start: "2026-08-01", end: "2026-08-10" }), "正序不警示");
   assert.ok(monthGridHtml(2026, 7).includes('data-day="2026-08-01"'), "月历网格");
-  // 控件:range 输入倒置警示 + 点选纠序 + ←→ 翻页
+  // 控件:range 倒置**自动纠序 + 闪提示**(§3.8 设计终稿批准的行为变更:
+  // 输入通道与点选同律纠序,不再只警示)+ 非法手输行内提示 + ←→ 翻页
   const host = doc.createElement("div");
   doc.body.appendChild(host);
   const w = mountDatePicker(host, { mode: "range" });
   w.set("start", "2026-08-10");
   w.set("end", "2026-08-01");
-  assert.ok(w.state.inverted, "输入倒置警示");
-  assert.ok(host.innerHTML.includes("起点晚于终点"), "警示上屏");
+  assert.deepEqual(w.state.value, { start: "2026-08-01", end: "2026-08-10" }, "输入倒置自动纠序(§3.8)");
+  assert.equal(w.state.notice, "fix", "纠序置闪提示标记");
+  assert.ok(host.innerHTML.includes("已自动调整顺序"), "纠序提示上屏(不静默改值)");
+  // 手输非法:红边 + 行内提示,值保留不丢
+  w.set("start", "not-a-date");
+  assert.ok(w.state.invalid, "非法手输标记(state.invalid)");
+  assert.ok(host.innerHTML.includes("is-invalid") && host.innerHTML.includes("无法识别"), "红边 + 行内提示(§3.8)");
+  w.set("start", "2026-08-01");
+  assert.equal(w.state.invalid, null, "修正即清");
   w.pick("2026-08-03");
   w.pick("2026-08-01");
   assert.deepEqual(w.state.value, { start: "2026-08-01", end: "2026-08-03" }, "点选自动纠序");
-  assert.ok(!w.state.inverted, "纠序后无警示");
-  const month0 = host.innerHTML.match(/wd-month-title">(\d+-\d+)</)?.[1];
+  const month0 = host.innerHTML.match(/data-ym="(\d+-\d+)"/)?.[1];
   host.trigger("keydown", { target: host, key: "ArrowRight" });
-  const month1 = host.innerHTML.match(/wd-month-title">(\d+-\d+)</)?.[1];
+  const month1 = host.innerHTML.match(/data-ym="(\d+-\d+)"/)?.[1];
   assert.notEqual(month1, month0, "→ 翻下一月(键盘可达)");
   host.trigger("keydown", { target: host, key: "ArrowLeft" });
   host.trigger("keydown", { target: host, key: "ArrowLeft" });
-  const month2 = host.innerHTML.match(/wd-month-title">(\d+-\d+)</)?.[1];
+  const month2 = host.innerHTML.match(/data-ym="(\d+-\d+)"/)?.[1];
   assert.notEqual(month2, month1, "← 翻上一月");
   w.quick("today");
-  assert.equal(w.state.inverted, false, "快捷项重置警示");
+  assert.equal(w.state.invalid, null, "快捷项清非法态");
 }
 
 /* ── W4:W-diff / W-md / W-log / W-chart ───────────────────────── */
@@ -1050,9 +1058,9 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
     ["select-list", renderSelectList,
       { items: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta<b>", hint: "第二项" }, { id: "g", label: "Gamma" }],
         selected: "b", filter: "", focus: 0, multi: false }, {},
-      (h) => h.includes("3 项") && h.includes("Beta&lt;b&gt;") && h.includes("第二项") &&
-        !h.includes("wd-list-filter") && !h.includes("Alpha"),
-      "选中项(名称+元信息)+ 总数;无过滤框;未选项不进卡;转义"],
+      (h) => h.includes("共 3 项") && h.includes("Beta&lt;b&gt;") && h.includes("第二项") &&
+        h.includes("更换") && !h.includes("wd-list-filter") && !h.includes("Alpha"),
+      "当前选中项(名称+元信息)+ 共 N 项 + 更换 →;无过滤框;未选项不进卡;转义"],
     ["select-list(多选)", renderSelectList,
       { items: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }, { id: "g", label: "Gamma" }],
         selected: ["a", "b", "g"], filter: "", focus: 0, multi: true }, {},
@@ -1060,8 +1068,9 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
     ["ns-tree", renderTreeWidget,
       { nodes: [{ name: "weather.query" }, { name: "weather.forecast" }, { name: "ops.janitor" }],
         expanded: [], selected: "weather.<query>", filter: "" }, {},
-      (h) => h.includes("weather.&lt;query&gt;") && h.includes("3 叶子") && !h.includes("wd-tree-filter"),
-      "当前路径 + 叶子计数;无过滤框;转义"],
+      (h) => h.includes("weather") && h.includes("&lt;query&gt;") && h.includes("3 叶子") &&
+        h.includes("命名空间") && h.includes(" / ") && !h.includes("wd-tree-filter"),
+      "面包屑当前路径(段间 /)+ 叶子/命名空间计数;无过滤框;转义"],
     ["date-picker(range)", renderDatePicker,
       { value: { start: "2026-08-01", end: "2026-08-04" }, mode: "range", inverted: false,
         open: true, cursor: { year: 2026, month: 7 } }, {},
@@ -1504,3 +1513,143 @@ console.log("widgets.test.mjs: W6.0/W6.1 design assertions passed");
 }
 
 console.log("widgets.test.mjs: W6.2 design assertions passed");
+
+/* ── W6.3:W-list/W-tree/W-date(docs/WIDGET-DESIGN.md §3.6/§3.7/§3.8)── */
+
+const { renderTreeWidget: _rtw63, renderDatePicker: _rdp63 } = await import("../js/widgets/index.js");
+
+{
+  // W-list 结构(§3.6):搜索框/命中文字色/选中 ✓/多选浮条/过滤空态
+  const items = [
+    { id: "a", label: "net.http_fetch", hint: "v2.1 · 工具" },
+    { id: "b", label: "net.http_server", hint: "v1.4 · 工具" },
+  ];
+  const hl = renderSelectList({ items, selected: "a", filter: "server", focus: 0, multi: false, title: "mcp.tools" });
+  assert.ok(hl.includes("wd-list-search") && hl.includes("🔍") && hl.includes("wd-list-esc"), "搜索框三件套(§3.6)");
+  assert.ok(hl.includes("wd-pane-head"), "面板头");
+  assert.ok(hl.includes('<mark class="wd-hit">server</mark>'), "命中子串 mark(文字色非底色)");
+  assert.ok(!hl.includes("net.http_fetch"), "过滤只留命中项");
+  const sel = renderSelectList({ items, selected: "a", filter: "", focus: 0, multi: false });
+  assert.ok(sel.includes("wd-list-check"), "选中行右侧 ✓(§3.6)");
+  const multi = renderSelectList({ items, selected: ["a", "b"], filter: "", focus: 0, multi: true });
+  assert.ok(multi.includes("wd-list-bar") && multi.includes("已选 2"), "多选浮条「已选 N · 清除」");
+  const no = renderSelectList({ items, selected: null, filter: "zzz", focus: 0, multi: false });
+  assert.ok(no.includes("没有匹配『zzz』的项") && no.includes("data-wl-clear"), "过滤空态 + 清除搜索钮(§3.6)");
+}
+
+{
+  // W-list 行为:Esc 清空 / 清除搜索钮 / 浮条清除
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountSelectList(host, { items: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }], multi: true });
+  w.filter("alp");
+  host.trigger("keydown", { target: host, key: "Escape" });
+  assert.equal(w.state.filter, "", "Esc 清空过滤(§3.6)");
+  w.select("a");
+  w.select("b");
+  assert.ok(host.innerHTML.includes("已选 2"), "浮条随选中出现");
+  const clr = new StubEl("button");
+  clr.closest = (sel) => (sel === "[data-wl-clear-sel]" ? clr : null);
+  host.trigger("click", { target: clr });
+  assert.deepEqual(w.state.selected, [], "浮条清除 → 清空选择");
+}
+
+{
+  // W-tree 结构(§3.7):计数胶囊/父链转正色/调光过滤/面包屑 card
+  const nodes = [{ name: "system.file.read" }, { name: "system.net.http_fetch" }, { name: "weather.query" }];
+  const ht = _rtw63({ nodes, expanded: ["system", "system.file", "system.net", "weather"],
+    selected: "system.net.http_fetch", filter: "", title: "skills" });
+  assert.ok(ht.includes("ns-count"), "目录右侧叶子数胶囊(§3.7)");
+  assert.ok(ht.includes('data-chain="1"'), "父链标记(data-chain → 名称转正色)");
+  assert.ok(ht.includes('data-current="1"'), "当前项标记");
+  const hf = _rtw63({ nodes, expanded: [], selected: null, filter: "http" });
+  assert.ok(hf.includes('<mark class="wd-hit">http</mark>'), "过滤命中叶子高亮");
+  assert.ok(hf.includes('data-dim="1"'), "非命中命名空间调光(data-dim)");
+  assert.ok(hf.includes("system.net.http_fetch"), "调光不剪枝(非命中叶子仍在,50% 透明走 CSS)");
+  const hc = _rtw63({ nodes, expanded: [], selected: "system.net.http_fetch", filter: "" }, { surface: "card" });
+  assert.ok(hc.includes("system") && hc.includes(" / ") && hc.includes("http_fetch"), "card 面包屑(§3.7)");
+  assert.ok(hc.includes("3 叶子") && hc.includes("命名空间"), "card 双计数徽标");
+}
+
+{
+  // W-tree 行为:键盘 ←→ 折叠展开 / ↑↓ 移动 / Enter 选中(§3.7)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountNsTreeWidget(host, { items: [{ name: "ops.janitor" }, { name: "weather.query" }, { name: "weather.forecast" }] });
+  host.trigger("keydown", { target: host, key: "ArrowDown" });
+  assert.equal(w.state.focusKey, "ns:ops", "↓ 聚焦首行(命名空间 ops)");
+  host.trigger("keydown", { target: host, key: "ArrowDown" });
+  assert.equal(w.state.focusKey, "leaf:ops.janitor", "↓ 移动到叶子");
+  host.trigger("keydown", { target: host, key: "Enter" });
+  assert.equal(w.state.selected, "ops.janitor", "Enter 选中焦点叶子");
+  host.trigger("keydown", { target: host, key: "ArrowLeft" });
+  assert.equal(w.state.focusKey, "ns:ops", "← 回父命名空间");
+  host.trigger("keydown", { target: host, key: "ArrowLeft" });
+  assert.ok(!w.state.expanded.includes("ops"), "← 折叠已展开命名空间");
+  host.trigger("keydown", { target: host, key: "ArrowRight" });
+  assert.ok(w.state.expanded.includes("ops"), "→ 展开折叠命名空间");
+}
+
+{
+  // W-date 结构(§3.8):双月/星期头/邻月日/色带/端点/chips 选中/提示
+  const s = { value: { start: "2026-08-01", end: "2026-08-04" }, mode: "range", inverted: false,
+    open: true, cursor: { year: 2026, month: 7 }, invalid: null, notice: "", title: "travel.dates" };
+  const h = _rdp63(s);
+  assert.ok(h.includes("wd-months two"), "range 双月并排(§3.8)");
+  assert.ok((h.match(/wd-monthblk/g) ?? []).length === 2, "双月块");
+  assert.ok(h.includes("data-ym=\"2026-08\"") && h.includes("data-ym=\"2026-09\""), "8 月 + 9 月");
+  assert.ok(h.includes("wd-week"), "星期头(11px 弱)");
+  assert.ok(h.includes("is-out"), "非当月日 35% 透明槽");
+  assert.ok(h.includes("is-range"), "区间连续色带槽");
+  assert.ok((h.match(/is-end/g) ?? []).length >= 2, "两端点实底");
+  assert.ok(h.includes("wd-date-ico") && h.includes("📅"), "输入框 📅 图标");
+  assert.ok(h.includes("wd-date-hint") && h.includes("ISO 8601"), "手输提示");
+  const wk = quickRange("week"); // 快捷命中锚定真实今天(不依赖环境日期)
+  const wkDate = parseIso(wk.start);
+  const hw = _rdp63({ ...s, value: { ...wk }, cursor: { year: wkDate.getFullYear(), month: wkDate.getMonth() } });
+  assert.ok(hw.includes('data-wd-quick="week" data-on="1"'), "快捷 chip 选中态(值命中本周)");
+  const single = _rdp63({ value: "2026-08-04", mode: "date", open: true, cursor: { year: 2026, month: 7 } });
+  assert.ok(!single.includes("wd-months two") && (single.match(/wd-monthblk/g) ?? []).length === 1, "单月单历");
+  const bad = _rdp63({ value: "", mode: "date", open: false, cursor: { year: 2026, month: 7 },
+    invalid: { which: "value", text: "not-a-date" } });
+  assert.ok(bad.includes("is-invalid") && bad.includes("无法识别"), "非法手输:红边 + 行内提示");
+  const fix = _rdp63({ ...s, notice: "fix" });
+  assert.ok(fix.includes("wd-date-fix") && fix.includes("已自动调整顺序"), "纠序闪提示上屏");
+  // card:meta 带共 N 天
+  const hc = _rdp63(s, { surface: "card" });
+  assert.ok(hc.includes("range · 共 4 天"), "card meta(range · 共 N 天)");
+  assert.ok(hc.includes("wd-card-all") && hc.includes(copy("w.card.go")), "card 打开入口");
+}
+
+{
+  // W-date 行为:点外收层 / 快捷 chip 选中 / 日格方向键翻月接管
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountDatePicker(host, { mode: "range", value: { ...quickRange("week") } });
+  assert.ok(host.innerHTML.includes('data-wd-quick="week" data-on="1"'), "mount 后 chip 选中态");
+  const outside = doc.createElement("div");
+  doc.body.appendChild(outside);
+  doc.trigger("click", { target: outside });
+  assert.equal(w.state.open, false, "点外收层(§3.8)");
+  w.destroy();
+  doc.trigger("click", { target: outside });
+  assert.equal(w.state.open, false, "destroy 后监听已摘(不重开)");
+  // 日格方向键:目标格不在当前层 → 翻月接管(stub 面无 data-day= 值区域,走翻月路径)
+  const host2 = doc.createElement("div");
+  doc.body.appendChild(host2);
+  const w2 = mountDatePicker(host2, { mode: "date", value: "2026-08-04" });
+  const m0 = w2.state.cursor.month;
+  const dayEl = new StubEl("button");
+  dayEl.dataset.day = "2026-08-31";
+  dayEl.closest = (sel) => (sel === "[data-day]" ? dayEl : null);
+  host2.trigger("keydown", { target: dayEl, key: "ArrowRight" });
+  assert.notEqual(w2.state.cursor.month, m0, "日格 → 越界自动翻月(§3.8 键盘走格)");
+}
+
+console.log("widgets.test.mjs: W6.3 design assertions passed");

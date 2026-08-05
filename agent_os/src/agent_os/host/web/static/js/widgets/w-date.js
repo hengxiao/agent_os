@@ -1,12 +1,16 @@
-/* W-date 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.8;W5.3 新形态:自渲染)。
+/* W-date 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.8;W5.3 新形态:自渲染;
+   W6.3 视觉按 docs/WIDGET-DESIGN.md §3.8)。
 
    state{value: iso | {start, end}, mode: "date"|"datetime"|"range",
-   inverted, open, cursor:{year, month}};
+   inverted, open, cursor:{year, month}, invalid:{which,text}|null, notice,
+   title};
    actions 全 local:set(键盘输入,即时校验 ISO)/prev/next(翻月)/pick(日历点选)/
    quick(今天/昨天/本周/上周 快捷项);
-   细节:输入与日历双通道、range 点选倒置自动纠序(输入通道给警示)、
-   翻页键盘可达(←→)、**Esc 收层**(open=false;输入聚焦/点选即 reopen)、
-   本地时区显示(不引入时区选择,§7 不做)。
+   细节:输入与日历双通道、**range 倒置自动纠序 + 闪提示**(§3.8 设计批准的
+   行为变更:输入通道原来只警示,现在与点选同律纠序 + 1.5s 提示)、
+   手输非法 → 红边 + 行内提示(state.invalid,值不丢)、翻页键盘可达(←→;
+   焦点在日上时方向键走格,Enter 选定)、**Esc 收层 + 点外收层**、
+   弹层贴近视口底自动上翻(_flipLayer)、本地时区显示(不引入时区选择,§7 不做)。
    铁律:本文件不拼 HTML(渲染全在 w-date.render.js);零 fetch;监听委托在 host。 */
 
 import { registerWidgetDef } from "./registry.js";
@@ -65,10 +69,11 @@ export function rangeInverted(value) {
   return value.start > value.end;
 }
 
-/* 挂进宿主:mode/date|datetime|range + 初始 value;quick 钮 + 翻月 + 点选 + 输入 */
+/* 挂进宿主:mode/date|datetime|range + 初始 value + title(面板头,可选);
+   quick 钮 + 翻月 + 点选 + 输入 */
 export function mountDatePicker(
   host,
-  { mode = "date", value = null, path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}
+  { mode = "date", value = null, title = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}
 ) {
   const initial = mode === "range" ? (value ?? { start: "", end: "" }) : (value ?? "");
   const base = parseIso(mode === "range" ? initial.start : initial, mode) ?? new Date();
@@ -78,25 +83,61 @@ export function mountDatePicker(
       mode,
       value: initial,
       inverted: false,
-      open: true, // 弹层默认开(§2.8;Esc 收层)
+      open: true, // 弹层默认开(§2.8;Esc/点外收层)
       cursor: { year: base.getFullYear(), month: base.getMonth() }, // 翻月游标:start/value 所在月,否则本月
+      invalid: null, // {which, text}——手输非法(§3.8 红边 + 行内提示,值不丢)
+      notice: "", // "fix" = 纠序闪提示(1.5s)
+      title,
     },
     onRegister,
     onUnregister,
   });
+  let _noticeTimer = null;
 
   const render = () => {
     host.innerHTML = renderDatePicker(widget.state, { surface });
+    _flipLayer(); // 弹层贴近视口底部时自动上翻(§3.8)
   };
   const _changed = () => widget.emit("change", { value: widget.state.value });
+
+  /* 弹层边缘翻转(§3.8):下方不够长就向上开(stub/无测量环境安全跳过) */
+  const _flipLayer = () => {
+    const layer = host.querySelector("[data-wd-layer]");
+    if (!layer?.getBoundingClientRect || typeof globalThis.innerHeight !== "number") return;
+    const r = layer.getBoundingClientRect();
+    const up = r.bottom > globalThis.innerHeight && r.top - r.height > 0;
+    layer.classList?.toggle("up", up);
+  };
+
+  /* 纠序闪提示(§3.8:自动纠序是可感知反馈,不静默改值) */
+  const _flashFix = () => {
+    widget.state.notice = "fix";
+    if (_noticeTimer) clearTimeout(_noticeTimer);
+    _noticeTimer = setTimeout(() => {
+      widget.state.notice = "";
+      render();
+    }, 1500);
+  };
+  /* range 倒置 → 交换 + 闪提示(输入/点选同律,§3.8) */
+  const _fixOrder = () => {
+    const val = widget.state.value;
+    if (val?.start && val?.end && val.start > val.end) {
+      widget.state.value = { start: val.end, end: val.start };
+      _flashFix();
+    }
+  };
 
   widget.set = (which, text) => {
     const d = parseIso(text, mode === "datetime" ? "datetime" : "date");
     if (mode === "range") {
       widget.state.value = { ...widget.state.value, [which]: text };
-      widget.state.inverted = rangeInverted(widget.state.value);
+      widget.state.invalid = !text || d ? null : { which, text }; // 非法:红边提示,值保留
+      if (!widget.state.invalid) _fixOrder(); // 倒置纠序 + 闪提示(§3.8)
     } else if (d || !text) {
       widget.state.value = text;
+      widget.state.invalid = null;
+    } else {
+      widget.state.invalid = { which: "value", text };
     }
     render();
     _changed();
@@ -110,14 +151,14 @@ export function mountDatePicker(
         v.end = "";
       } else {
         v.end = day;
-        if (v.end < v.start) [v.start, v.end] = [v.end, v.start]; // 点选自动纠正(输入通道才警示)
       }
       widget.state.value = v;
-      widget.state.inverted = rangeInverted(v);
+      _fixOrder(); // 点选纠序 + 闪提示(§3.8)
     } else {
       widget.state.value = day;
     }
-    widget.state.open = true; // 点选即开层(收层后点选语义保持)
+    widget.state.invalid = null;
+    widget.state.open = true; // 点选即开层(收层后的回归路径)
     render();
     _changed();
   };
@@ -125,7 +166,7 @@ export function mountDatePicker(
     const r = quickRange(which);
     if (r) {
       widget.state.value = mode === "range" ? r : r.start;
-      widget.state.inverted = false;
+      widget.state.invalid = null;
       render();
       _changed();
     }
@@ -171,6 +212,25 @@ export function mountDatePicker(
     }
   });
   host.addEventListener("keydown", (e) => {
+    // 焦点在日格上:方向键走格(§3.8 键盘全程;Enter = 原生钮点击选定)
+    const day = e.target.closest?.("[data-day]");
+    if (day && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
+      const d = parseIso(day.dataset.day);
+      if (!d) return;
+      const delta = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }[e.key];
+      const nd = new Date(d.getFullYear(), d.getMonth(), d.getDate() + delta);
+      const niso = _iso(nd);
+      const btn = host.querySelector(`[data-day="${niso}"]`);
+      if (btn) {
+        btn.focus?.(); // 目标格在当前弹层(双月覆盖邻月首尾)
+      } else {
+        if (niso < _iso(new Date(widget.state.cursor.year, widget.state.cursor.month, 1))) widget.prev();
+        else widget.next();
+        host.querySelector(`[data-day="${niso}"]`)?.focus?.();
+      }
+      return;
+    }
+    if (day) return; // 日格上的其他键不翻月
     if (e.key === "ArrowLeft") widget.prev(); // 翻页键盘可达(§2)
     if (e.key === "ArrowRight") widget.next();
     if (e.key === "Escape") {
@@ -179,6 +239,21 @@ export function mountDatePicker(
       render();
     }
   });
+  // 点外收层(§3.8;委托挂在 document,destroy 时摘除)
+  const _doc = host.ownerDocument ?? globalThis.document;
+  const _onDocClick = (e) => {
+    if (!widget.state.open) return;
+    if (e.target && host.contains?.(e.target)) return;
+    widget.state.open = false;
+    render();
+  };
+  _doc?.addEventListener?.("click", _onDocClick);
+  const _destroy = widget.destroy.bind(widget);
+  widget.destroy = () => {
+    if (_noticeTimer) clearTimeout(_noticeTimer);
+    _doc?.removeEventListener?.("click", _onDocClick); // 点外收层监听随 destroy 摘除
+    _destroy();
+  };
   }
 
   render();

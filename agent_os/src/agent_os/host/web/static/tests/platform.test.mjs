@@ -1349,7 +1349,8 @@ const assertClean = (html, who) => {
   endInput.value = "2026-08-01";
   rangeHost.trigger("input", { target: endInput });
   await tick();
-  assert.ok(rangeHost.innerHTML.includes("起点晚于终点"), "倒置警示上屏");
+  // §3.8 设计终稿:倒置自动纠序 + 闪提示(替代旧的「起点晚于终点」警示)
+  assert.ok(rangeHost.innerHTML.includes("已自动调整顺序"), "倒置自动纠序 + 提示上屏(§3.8)");
 
   /* ── W4:agent 消息 md 升级 + run tab 原始信号(W-log)─────────── */
 

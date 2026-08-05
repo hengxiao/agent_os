@@ -234,41 +234,66 @@
 .wd-form { display: grid; gap: var(--s2); }
 
 .wd-list-filter { width: 100%; margin-bottom: var(--s1); }
+/* W6.3 W-list(§3.6):搜索框(🔍 + Esc 提示)/命中文字色/选中左条+✓/多选浮条 */
+.wd-list-search {
+  display: flex; align-items: center; gap: var(--s2);
+  height: calc(var(--s8) + var(--s1)); padding: 0 var(--s2); margin-bottom: var(--s1);
+  background: var(--bg-2); border: var(--stroke) solid var(--line); border-radius: var(--r-conn);
+}
+.wd-list-search:focus-within { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: var(--focus-ring-offset); }
+.wd-list-ico { color: var(--fg-2); font-size: var(--text-xs); }
+.wd-list-search .wd-list-filter {
+  flex: 1; min-width: 0; border: 0; background: transparent; padding: 0;
+  color: var(--fg-0); font-size: var(--text-sm); font-family: inherit;
+}
+.wd-list-search .wd-list-filter:focus { outline: none; box-shadow: none; } /* 环在搜索框容器(§1.4) */
+.wd-list-esc { color: var(--fg-2); font-size: var(--text-xs); white-space: nowrap; }
+.wd-hit { background: transparent; color: var(--live); } /* 命中 = 文字色不是底色(§3.6/§3.7) */
+.wd-list-check { color: var(--live); margin-left: auto; }
+.wd-dim { color: var(--fg-2); }
+.wd-list .ns-row.wd-dim, .wd-tree .ns-row.wd-dim { opacity: 0.5; } /* 过滤非命中 50% 透明(§3.7) */
+.wd-list-bar {
+  position: sticky; bottom: var(--s2); margin: var(--s2) auto 0; width: max-content;
+  display: flex; align-items: center; gap: var(--s1);
+  background: var(--bg-2); border: var(--stroke) solid var(--line); border-radius: 999px;
+  padding: var(--s1) var(--s3); box-shadow: var(--shadow-pop); font-size: var(--text-xs);
+}
+.wd-list-clear { border: 0; background: transparent; color: var(--live); cursor: pointer; font-family: inherit; font-size: var(--text-xs); padding: 0; }
 .wd-list-item {
   display: flex; align-items: center; gap: var(--s2);
   padding: var(--s1) var(--s2); border-radius: var(--r-sm);
   font-size: var(--text-xs); cursor: pointer;
 }
 .wd-list-item:hover { background: var(--bg-2); }
-.wd-list-item[data-focus="1"] { outline: var(--stroke-strong) solid var(--live); outline-offset: -1px; }
-.wd-list-item[aria-selected="true"] { background: var(--bg-2); color: var(--fg-0); }
+.wd-list-item[data-focus="1"] { background: var(--bg-2); } /* 键焦与 hover 同视觉(§3.6) */
+.wd-list-item[aria-selected="true"] {
+  background: color-mix(in srgb, var(--live) 8%, transparent);
+  box-shadow: inset var(--stroke-strong) 0 0 var(--live);
+  color: var(--fg-0);
+}
 .wd-list-hint { color: var(--fg-2); font-size: var(--text-2xs); margin-left: auto; }
 .wd-empty { color: var(--fg-2); font-size: var(--text-xs); padding: var(--s2) 0; }
 
 .wd-tree-filter { width: 100%; margin-bottom: var(--s1); }
 
-.wd-date { display: grid; gap: var(--s2); max-width: 320px; }
-.wd-date-in { width: 140px; }
+.wd-date { display: grid; gap: var(--s2); max-width: 340px; }
 .wd-quick { display: flex; gap: var(--s1); }
-.wd-quick-btn, .wd-nav {
+.wd-nav {
   border: var(--stroke) solid var(--line); background: var(--bg-2); color: var(--fg-1);
-  border-radius: var(--r-sm); font-size: var(--text-2xs); font-family: inherit;
+  border-radius: var(--r-sm); font-size: var(--text-xs); font-family: inherit;
   cursor: pointer; padding: 0 var(--s2);
 }
-.wd-quick-btn:hover, .wd-nav:hover { border-color: var(--live); }
-.wd-quick-btn:focus-visible, .wd-nav:focus-visible, .wd-day:focus-visible { outline: var(--stroke-strong) solid var(--live); }
-.wd-month { display: flex; align-items: center; gap: var(--s2); font-size: var(--text-xs); }
-.wd-month-title { min-width: 64px; text-align: center; }
-.wd-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.wd-nav:hover { border-color: var(--live); }
+.wd-nav:focus-visible, .wd-day:focus-visible { outline: var(--stroke-strong) solid var(--live); }
+.wd-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
 .wd-day {
-  border: 0; background: transparent; color: var(--fg-1); font-size: var(--text-2xs);
-  font-family: inherit; text-align: center; padding: var(--s1) 0; cursor: pointer;
-  border-radius: var(--r-sm);
+  border: 0; background: transparent; color: var(--fg-1); font-size: var(--text-xs);
+  font-family: inherit; text-align: center; cursor: pointer;
+  width: calc(var(--s6) + var(--s1)); height: calc(var(--s6) + var(--s1)); /* 28×28(§3.8) */
+  border-radius: var(--r-conn);
 }
-.wd-day[data-empty="1"] { cursor: default; }
 .wd-day:hover { background: var(--bg-2); }
-.wd-day[data-today="1"] { outline: var(--stroke) solid var(--live); }
-.wd-day[data-selected="1"] { background: var(--bg-2); color: var(--fg-0); }
+.wd-day[data-today="1"] { outline: var(--stroke) solid var(--live); outline-offset: calc(var(--stroke) * -1); } /* 今天描边圈(非端点) */
 
 /* ── W4:W-diff / W-md / W-log / W-chart(全契约 token)── */
 .wd-mode, .wd-mini {
@@ -335,19 +360,76 @@ th .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(-
 .wd-kv-warn { background: color-mix(in srgb, var(--warn) 8%, transparent); border-radius: var(--r-sm); }
 /* W-form:错误字段红边(§2.5) */
 .wd-field-err > .input, .wd-field-err > select { border-color: var(--danger); }
-/* W-list:选中行左色条(§2.6;--live) */
-.wd-list-item[aria-selected="true"] { box-shadow: inset 3px 0 0 var(--live); }
 
 /* ── W5.3:W-tree/W-date/W-chart/W-log/W-diff/W-md/W-bubble 新形态补充(全契约 token)── */
-/* W-tree:当前项浅底(§2.7;classic 用 --bg-2,主题可在主题 css 覆盖) */
-.wd-tree .ns-row[data-current="1"] { background: var(--bg-2); border-radius: var(--r-sm); }
-/* W-date:日历弹层(§2.8) */
+/* W6.3 W-tree(§3.7):当前项左条+浅底、父链转正色、非命中调光、键盘焦点、横向滚动 */
+.wd-tree [role="tree"] { overflow-x: auto; } /* 深层横向滚动不截断缩进(§3.7) */
+.wd-tree .ns-row { white-space: nowrap; min-width: max-content; border-radius: var(--r-sm); }
+.wd-tree .ns-row:hover { background: var(--bg-2); }
+.wd-tree .ns-row[data-current="1"] {
+  background: color-mix(in srgb, var(--live) 8%, transparent);
+  box-shadow: inset var(--stroke-strong) 0 0 var(--live);
+  border-radius: var(--r-sm);
+}
+.wd-tree .ns-row[data-chain="1"] .ns-name { color: var(--fg-0); } /* 父链名称转正色 */
+.wd-tree .ns-row[data-dim="1"] { opacity: 0.5; } /* 过滤非命中 50% 透明 */
+.wd-tree .ns-row[data-focus="1"] { background: var(--bg-2); } /* 键焦与 hover 同视觉 */
+.wd-tree .ns-count {
+  border-radius: 999px; background: var(--bg-2); color: var(--fg-1);
+  font-size: var(--text-xs); padding: 0 var(--s1);
+}
+/* W6.3 W-date(§3.8):📅 输入框 / 快捷 chips / 弹层(双月/色带/端点/今
+   天双编码)/ 纠序闪提示 */
+.wd-date-inputs { display: flex; align-items: center; gap: var(--s2); }
+.wd-date-field {
+  display: inline-flex; align-items: center; gap: var(--s1);
+  height: var(--s8); padding: 0 var(--s2);
+  background: var(--bg-2); border: var(--stroke) solid var(--line); border-radius: var(--r-conn);
+}
+.wd-date-field:focus-within { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: var(--focus-ring-offset); }
+.wd-date-field.is-invalid { border-color: var(--danger); } /* 手输非法红边(§3.8) */
+.wd-date-field .wd-date-in {
+  border: 0; background: transparent; padding: 0; width: calc(var(--s8) * 4);
+  color: var(--fg-0); font-family: var(--font-mono); font-size: var(--text-sm);
+}
+.wd-date-field .wd-date-in:focus { outline: none; box-shadow: none; } /* 环在字段框容器 */
+.wd-date-ico { color: var(--fg-2); font-size: var(--text-xs); }
+.wd-date-arrow { color: var(--fg-2); }
+.wd-date .wd-errbar::before { content: "⚠ "; } /* 行内提示(§3.8) */
+.wd-quick { display: flex; gap: var(--s1); }
+.wd-quick .wd-chip { cursor: pointer; font-family: inherit; }
+.wd-quick .wd-chip[data-on="1"] {
+  color: var(--live); border-color: var(--live); font-weight: 500;
+  background: color-mix(in srgb, var(--live) 12%, transparent);
+}
+.wd-date-hint { color: var(--fg-2); font-size: var(--text-xs); }
+.wd-date-fix { color: var(--live); font-size: var(--text-xs); animation: wd-pop 140ms ease-out; }
+@keyframes wd-pop { from { opacity: 0; transform: translateY(-2px); } } /* 浮层入场 140ms(§1.3) */
+.wd-months { display: flex; gap: var(--s3); }
+.wd-months.two .wd-monthblk + .wd-monthblk { border-left: var(--stroke) solid var(--line); padding-left: var(--s3); }
+.wd-monthblk { min-width: calc(var(--s8) * 7); }
+.wd-month { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); font-size: var(--text-sm); font-weight: 500; }
+.wd-month-title { text-align: center; flex: 1; }
+.wd-nav-sp { width: var(--s6); }
+.wd-week { display: grid; grid-template-columns: repeat(7, 1fr); color: var(--fg-2); font-size: var(--text-xs); text-align: center; margin-top: var(--s1); }
+.wd-dcell { display: flex; align-items: center; justify-content: center; height: calc(var(--s6) + var(--s2)); }
+.wd-dcell.is-range { background: color-mix(in srgb, var(--live) 12%, transparent); } /* 区间连续带 */
+.wd-dcell.is-out .wd-day { opacity: 0.35; } /* 非当月 35% 透明 */
+.wd-day { position: relative; }
+.wd-day.is-end { background: var(--live); color: var(--bg-0); font-weight: 600; } /* 端点实底 */
+.wd-day.is-end[data-today="1"]::after {
+  content: ""; position: absolute; bottom: var(--s1); left: 50%; transform: translateX(-50%);
+  width: var(--s1); height: var(--s1); border-radius: 50%; background: var(--bg-0);
+} /* 端点=今天:实底上叠底点(双编码,§3.8) */
+/* W-date:日历弹层(§2.8;W6.3:--shadow-md 弹层影 + 140ms 入场 + 贴边上翻) */
 .wd-date { position: relative; }
 .wd-date-layer {
-  position: absolute; top: 100%; left: 0; z-index: 3;
+  position: absolute; top: 100%; left: 0; z-index: 3; margin-top: var(--s1);
   background: var(--bg-1); border: var(--stroke) solid var(--line); border-radius: var(--r-md);
-  padding: var(--s2); box-shadow: 0 2px 8px color-mix(in srgb, var(--fg-0) 12%, transparent);
+  padding: var(--s2); box-shadow: var(--shadow-md);
+  animation: wd-pop 140ms ease-out;
 }
+.wd-date-layer.up { top: auto; bottom: 100%; margin-top: 0; margin-bottom: var(--s1); }
 /* W-log:kind 左侧色条(§2.10;--sig-* 信号色) */
 .wd-log-line { border-left: var(--stroke-strong) solid transparent; padding-left: var(--s1); }
 .wd-log-line[data-kind="error"], .wd-log-line[data-kind="run.error"] { border-left-color: var(--sig-budget); }
@@ -509,7 +591,6 @@ tr:hover .wd-row-x, .wd-kv-row:hover .wd-row-x, .wd-arr-row:hover .wd-row-x { op
 .wd-card-row { font-size: var(--text-xs); margin-top: var(--s1); }
 .wd-card-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wd-card-row .wd-card-cell:first-child { color: var(--fg-0); }
-.wd-card-all { display: block; text-align: right; color: var(--live); }
 
 /* ── W5.6:双形态 card 面(docs/WIDGET-ARCH.md §1.4;全契约 token,组件零主题分支)── */
 /* 卡基座:整卡即 open 入口(role=button;卡内无任何编辑控件);
@@ -561,10 +642,13 @@ tr:hover .wd-row-x, .wd-kv-row:hover .wd-row-x, .wd-arr-row:hover .wd-row-x { op
 }
 .wd-card:hover .wd-card-go, .wd-card:focus-visible .wd-card-go { opacity: 1; }
 .wd-card-meta {
-  display: block; margin-top: var(--s1); padding-top: var(--s1);
+  display: flex; align-items: baseline; gap: var(--s2);
+  margin-top: var(--s1); padding-top: var(--s1);
   border-top: var(--stroke) solid var(--line);
   color: var(--fg-2); font-size: var(--text-xs);
 }
+.wd-card-meta-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wd-card-all { margin-left: auto; color: var(--live); }
 /* W-json card 错误态:整卡左边条 --danger(§3.2;内外阴影叠加以保留抬升) */
 .wd-card.is-err { box-shadow: inset var(--stroke-accent) 0 0 var(--danger), var(--shadow-sm); }
 .wd-card.is-err:hover { box-shadow: inset var(--stroke-accent) 0 0 var(--danger), var(--shadow-pop); }

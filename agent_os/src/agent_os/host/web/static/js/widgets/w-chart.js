@@ -10,7 +10,7 @@
 
 import { registerWidgetDef } from "./registry.js";
 import { bindCardOpen, createWidget } from "./widget.js";
-import { downsample, renderChart } from "./w-chart.render.js";
+import { chartTipHtml, downsample, renderChart } from "./w-chart.render.js";
 
 // 兼容面:纯函数迁至渲染面(W5.3),此处原样 re-export(测试与消费方在用)
 export { chartSvg, chartTableHtml, downsample, niceTicks } from "./w-chart.render.js";
@@ -31,11 +31,14 @@ export const CHART_DEF = registerWidgetDef({
   render: renderChart, // W5.3:render 面进 def(registry 校验形态)
 });
 
-/* 挂进宿主:series + type + label(aria 摘要);toggle 切"图表/表格"两视图 */
+/* 挂进宿主:series + type + label(aria 摘要)+ title(可选,缺省用 label);
+   toggle 切"图表/表格"两视图;legend 点击显隐。
+   W6.4(§3.9):抽稀留痕(state.trimmed → 右上弱提示);hover tooltip 槽
+   (mousemove → 最近 x 档位,贴点不贴鼠)。 */
 export function mountChart(host, { series = [], type = "line", label = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(CHART_DEF, {
     path,
-    state: { series: series.map((s) => ({ name: s.name ?? "", points: downsample(s.points) })), type, view: "chart", hidden: [] },
+    state: { series: _prep(series), type, view: "chart", hidden: [], trimmed: _trimNote(series) },
     onRegister,
     onUnregister,
   });
@@ -44,7 +47,8 @@ export function mountChart(host, { series = [], type = "line", label = "", path 
   };
 
   widget.set_series = (series) => {
-    widget.state.series = series.map((s) => ({ name: s.name ?? "", points: downsample(s.points) }));
+    widget.state.series = _prep(series);
+    widget.state.trimmed = _trimNote(series);
     render();
     widget.emit("change", { series: widget.state.series });
   };
@@ -68,9 +72,39 @@ export function mountChart(host, { series = [], type = "line", label = "", path 
     const s = e.target.closest("[data-chart-series]");
     if (s) return widget.toggle_series(s.dataset.chartSeries);
   });
+  // hover:垂直参考线 + tooltip 卡(§3.9;贴点不贴鼠——按最近 x 档位锚定)
+  host.addEventListener("mousemove", (e) => {
+    const tip = host.querySelector(".wd-chart-tip");
+    const svg = host.querySelector("svg.wd-chart");
+    if (!tip || !svg?.getBoundingClientRect || typeof e.clientX !== "number") return;
+    const visible = (widget.state.series ?? []).filter((s) => !(widget.state.hidden ?? []).includes(s.name));
+    const n = visible[0]?.points?.length ?? 0;
+    if (!n) return;
+    const r = svg.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - r.left - 34) / Math.max(1, r.width - 40)));
+    const idx = Math.round(frac * (n - 1));
+    tip.innerHTML = chartTipHtml(visible, idx);
+    tip.style.left = `${Math.min(90, Math.max(4, frac * 100))}%`;
+    tip.hidden = false;
+  });
+  host.addEventListener("mouseleave", () => {
+    const tip = host.querySelector(".wd-chart-tip");
+    if (tip) tip.hidden = true;
+  });
   }
 
   render();
   widget.register(label);
   return widget;
+}
+
+/* 入列预处理 + 抽稀留痕(§3.9:右上弱提示「已抽稀 12,000 → 500」) */
+function _prep(series) {
+  return (series ?? []).map((s) => ({ name: s.name ?? "", points: downsample(s.points) }));
+}
+
+/* 抽稀留痕(§3.9:右上弱提示「已抽稀 12,000 → 500」) */
+function _trimNote(series) {
+  const orig = Math.max(0, ...(series ?? []).map((s) => (s.points ?? []).length));
+  return orig > 500 ? String(orig).replace(/\B(?=(\d{3})+(?!\d))/g, ",") : "";
 }

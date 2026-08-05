@@ -21,6 +21,7 @@
   --fg-2: #4a8a56;   /* 弱化/占位 */
   /* Widget 层(W6.0):W-log 深色面板底(比 bg-0 更暗的终端绿黑) */
   --log-bg: #060b07;
+  --log-fg: #6fbf7f;
 
   /* 语义:run/frame 状态(状态永远"颜色 + 文字"双编码;无 emoji) */
   --ok:      #33ff66;   /* done / success */

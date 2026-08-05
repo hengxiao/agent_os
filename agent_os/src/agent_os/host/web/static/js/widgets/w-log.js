@@ -30,11 +30,17 @@ export const LOG_VIEWER_DEF = registerWidgetDef({
   render: renderLogViewer, // W5.3:render 面进 def(registry 校验形态)
 });
 
-/* 挂进宿主:lines 初始行 + maxLines(截断上限,缺省 500 保尾部) */
-export function mountLogViewer(host, { lines = [], maxLines = 500, path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
+/* 挂进宿主:lines 初始行 + maxLines(截断上限,缺省 500 保尾部)+ title(可选)。
+   W6.4(§3.10):级别 chips(state.level);截断留痕(state.truncated);
+   暂停时新行计数(state.pausedNew → 「已暂停 · N 行新日志 ↓」);
+   append 不在视野不拽滚动(follow 语义不变)。 */
+export function mountLogViewer(host, { lines = [], maxLines = 500, title = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(LOG_VIEWER_DEF, {
     path,
-    state: { lines: lines.map((l) => ({ kind: l.kind ?? "info", text: String(l.text ?? "") })), follow: true, filter: "" },
+    state: {
+      lines: lines.map((l) => ({ kind: l.kind ?? "info", text: String(l.text ?? ""), ...(l.ts ? { ts: l.ts } : {}) })),
+      follow: true, filter: "", level: "", truncated: false, pausedNew: 0, maxLines, title,
+    },
     onRegister,
     onUnregister,
   });
@@ -47,13 +53,16 @@ export function mountLogViewer(host, { lines = [], maxLines = 500, path = "", on
   };
 
   widget.append = (items) => {
-    const next = [...widget.state.lines, ...items.map((l) => ({ kind: l.kind ?? "info", text: String(l.text ?? "") }))];
+    const next = [...widget.state.lines, ...items.map((l) => ({ kind: l.kind ?? "info", text: String(l.text ?? ""), ...(l.ts ? { ts: l.ts } : {}) }))];
+    if (next.length > maxLines) widget.state.truncated = true; // 截断留痕(§3.10)
     widget.state.lines = next.length > maxLines ? next.slice(next.length - maxLines) : next; // 截断保尾部
+    if (!widget.state.follow) widget.state.pausedNew = (widget.state.pausedNew ?? 0) + items.length; // 暂停期新行计数
     render();
     widget.emit("change", { lines: widget.state.lines });
   };
   widget.toggle_follow = () => {
     widget.state.follow = !widget.state.follow;
+    if (widget.state.follow) widget.state.pausedNew = 0;
     render();
   };
   widget.filter = (text) => {
@@ -75,8 +84,15 @@ export function mountLogViewer(host, { lines = [], maxLines = 500, path = "", on
   });
   host.addEventListener("click", (e) => {
     if (e.target.closest("[data-wlog-copy]")) return widget.copy_all();
+    const lv = e.target.closest("[data-wlog-level]");
+    if (lv) {
+      widget.state.level = lv.dataset.wlogLevel ?? ""; // 级别 chip(§3.10)
+      return render();
+    }
+    if (e.target.closest("[data-wlog-follow]")) return widget.toggle_follow(); // 工具行 ⏸
     if (e.target.closest("[data-wlog-bottom]")) {
       widget.state.follow = true;
+      widget.state.pausedNew = 0;
       return render();
     }
   });

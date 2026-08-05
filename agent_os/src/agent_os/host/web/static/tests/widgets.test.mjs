@@ -519,7 +519,7 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
     "级联三级内容都在(span/全文/app)",
   );
   assert.equal(submissions[0].cascade.cascade[0].data.full_text, "全");
-  assert.ok(host.innerHTML.includes("pf-skel"), "busy 骨架");
+  assert.ok(host.innerHTML.includes("w-bubble-typing"), "busy typing 三点(§3.13)");
   // 回复渲染 + apply 只发事件(气泡不越权)
   b.receiveReply("建议:删第二句");
   assert.ok(host.innerHTML.includes("建议:删第二句"), "回复渲染");
@@ -790,9 +790,9 @@ const { diffCard } = await import("../../../web_platform/static/cards.js");
   doc.body.appendChild(host);
   const w = mountDiffViewer(host, { diff });
   assert.ok(host.innerHTML.includes('data-on="1"'), "split 默认激活");
-  // unified:same 折叠上下文(+2 行未变)
+  // unified:same 折叠上下文(§3.11:「[+] 展开 N 行」整宽可点)
   w.set_mode("unified");
-  assert.ok(host.innerHTML.includes("+2 行未变"), "unified 折叠上下文");
+  assert.ok(host.innerHTML.includes("[+] 展开 2 行"), "unified 折叠上下文");
   assert.ok(host.innerHTML.includes("wd-diff-old") && host.innerHTML.includes("wd-diff-new"), "新旧堆叠");
   // 展开折叠
   const foldBtn = new StubEl("button");
@@ -813,7 +813,7 @@ const { diffCard } = await import("../../../web_platform/static/cards.js");
   assert.ok(attr.includes("&lt;img"), "转义为文本可见(属性永远只是文本)");
   const evil = mdToHtml("[点我](javascript:alert(1))");
   assert.ok(!evil.includes('href="javascript:'), "javascript: 链接剥壳");
-  assert.ok(evil.includes("javascript:alert(1)"), "剥壳后原文可见(纯文本)");
+  assert.ok(!evil.includes("javascript:alert(1)"), "剥壳内容整块移除,不留残迹(§3.12 终稿)");
   const ok = mdToHtml("[文档](https://example.com/a) 和 [站内](/#/lab)");
   assert.ok(ok.includes('href="https://example.com/a"'), "https 链接白名单");
   assert.ok(ok.includes('href="/#/lab"'), "站内相对链接白名单");
@@ -866,9 +866,11 @@ const { diffCard } = await import("../../../web_platform/static/cards.js");
   w.on("copy", (p) => { copied = p.text; });
   assert.equal(w.copy_all(), copied, "copy_all 文本与事件一致");
   assert.ok(copied.includes("行10"), "复制含尾部行");
-  // 过滤
+  // 过滤(§3.10 设计终稿:未命中 40% 弱化,不剪枝)
   w.filter("错");
-  assert.ok(host.innerHTML.includes("错") && !host.innerHTML.includes("行9"), "过滤");
+  assert.ok(host.innerHTML.includes("错") && host.innerHTML.includes("wd-dim"), "过滤 = 未命中调光(wd-dim)");
+  assert.ok(host.innerHTML.includes("行9"), "未命中行仍在(弱化,不剪枝)");
+  w.filter("");
 }
 
 {
@@ -883,8 +885,10 @@ const { diffCard } = await import("../../../web_platform/static/cards.js");
   assert.ok(line.includes("<polyline"), "line 型");
   assert.ok(line.includes('role="img"'), "role=img");
   assert.ok(line.includes('aria-label="费用"'), "aria-label 摘要");
-  assert.ok(line.includes("2: 5"), "hover 读值(title)");
-  assert.ok(line.includes("wd-chart-grid"), "网格");
+  assert.ok(!line.includes("<circle"), "折线端点无圆点(§3.9;hover 读值改 tooltip 槽)");
+  assert.ok(line.includes("wd-ag-fill"), "首序列面积渐变(§3.9)");
+  assert.ok(line.includes("wd-chart-grid"), "网格(水平虚线)");
+  assert.ok(!line.includes("wd-chart-axis"), "无坐标轴线(§3.9)");
   const bar = chartSvg(series, { type: "bar" });
   assert.ok(bar.includes("<rect"), "bar 型");
   const spark = chartSvg(series, { type: "spark" });
@@ -944,7 +948,7 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
   assert.equal(renderChart(sChart, { label: "L" }), renderChart(sChart, { label: "L" }), "chart render 纯");
   const sBub = { anchor: { member: "m", path: "p" }, messages: [{ role: "assistant", text: "答" }], busy: false, draft: "" };
   assert.equal(renderBubble(sBub), renderBubble(sBub), "bubble render 纯");
-  assert.ok(renderBubble(sBub).includes("w-bubble-anchor"), "气泡卡锚点引用行");
+  assert.ok(renderBubble(sBub).includes("w-bubble-quote"), "气泡卡锚点引用块(§3.13)");
 }
 
 {
@@ -1083,9 +1087,9 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
       { series: [{ name: "cost", points: [{ x: 1, y: 2 }, { x: 2, y: 5 }, { x: 3, y: 3 }] },
           { name: "tok", points: [{ x: 1, y: 9 }] }], type: "line", view: "chart", hidden: [] },
       { label: "费用<x>" },
-      (h) => h.includes("wd-chart-mini") && h.includes("2 序列") && h.includes("wd-card-num") &&
+      (h) => h.includes("wd-chart-mini") && h.includes("wd-card-big") && h.includes("▼ 40.0%") &&
         h.includes("<polyline") && !h.includes("wd-chart-tick") && h.includes('aria-label="费用&lt;x&gt;"'),
-      "迷你图(无坐标轴文字)+ 最新值读数 + 图例压成计数;label 转义"],
+      "迷你图(无坐标轴文字)+ 最新值大读数 + 涨跌徽标(▼40%);label 转义"],
     ["log-viewer", renderLogViewer,
       { lines: [{ kind: "info", text: "首行" }, { kind: "warn", text: "二" }, { kind: "error", text: "三<b>" },
           { kind: "info", text: "四" }], follow: true, filter: "" }, {},
@@ -1096,9 +1100,10 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
       { left: { members: [{ member: "m", status: "changed", fields: [],
             prompt_diff: [{ kind: "del", text: "旧<b>" }, { kind: "same", text: "同" }, { kind: "add", text: "新" }] }] },
         mode: "split", expanded: [] }, {},
-      (h) => h.includes('data-kind="add">+1<') && h.includes('data-kind="del">-1<') &&
-        h.includes("- 旧&lt;b&gt;") && h.includes("+ 新") && !h.includes("同") && !h.includes("wd-mode"),
-      "+add/-del 计数徽标 + 首个 hunk 2 行预览(same 不进卡);无模式切换;转义"],
+      (h) => h.includes('data-kind="add">+1<') && h.includes('data-kind="del">−1<') &&
+        h.includes("- 旧&lt;b&gt;") && h.includes("+ 新") && !h.includes("同") && !h.includes("wd-mode") &&
+        h.includes("查看全部"),
+      "+add/−del 计数徽标 + 首个 hunk 2 行预览(same 不进卡)+ 查看全部 →;无模式切换;转义"],
     ["md-viewer", renderMarkdownViewer,
       { source: "# 标题<script>\n\n首段摘录。\n\n第二段不进卡\n\n```\ncode\n```" }, {},
       (h) => h.includes("标题&lt;script&gt;") && h.includes("首段摘录。") && !h.includes("第二段") &&
@@ -1653,3 +1658,174 @@ const { renderTreeWidget: _rtw63, renderDatePicker: _rdp63 } = await import("../
 }
 
 console.log("widgets.test.mjs: W6.3 design assertions passed");
+
+/* ── W6.4:W-chart/W-log/W-diff/W-md/W-bubble(docs/WIDGET-DESIGN.md §3.9-3.13)── */
+
+const { chartTipHtml, renderChart: _rc64, renderLogViewer: _rl64, renderDiffViewer: _rd64,
+  renderMarkdownViewer: _rm64, renderBubble: _rb64 } = await import("../js/widgets/index.js");
+
+{
+  // W-chart(§3.9):头部/图例色点/segmented/抽稀提示/tooltip 槽/全隐空态/card 涨跌
+  const s2 = { series: [
+      { name: "cost", points: [{ x: 1, y: 2 }, { x: 2, y: 5 }, { x: 3, y: 3 }] },
+      { name: "tokens", points: [{ x: 1, y: 10 }, { x: 2, y: 8 }, { x: 3, y: 12 }] }],
+    type: "line", view: "chart", hidden: ["tokens"], trimmed: "12,000" };
+  const h = _rc64(s2, { label: "每日花费" });
+  assert.ok(h.includes("wd-chart-head") && h.includes("wd-chart-title"), "头部标题 500");
+  assert.ok(h.includes("wd-legend") && h.includes("wd-dot"), "图例 = 色点 + 名");
+  assert.ok(h.includes('data-off="1"'), "隐藏序列 40% 透明槽");
+  assert.ok(h.includes("wd-seg") && h.includes("已抽稀 12,000 → 500"), "segmented + 抽稀弱提示");
+  assert.ok(h.includes("wd-chart-tip"), "tooltip 槽在");
+  const tip = chartTipHtml(s2.series, 1);
+  assert.ok(tip.includes("cost") && tip.includes(">5<"), "tooltip 内容(贴点档位的各序列读数)");
+  const allHidden = _rc64({ ...s2, hidden: ["cost", "tokens"] }, { label: "L" });
+  assert.ok(allHidden.includes("wd-empty"), "隐藏全部序列 → 空态(§3.9)");
+  const card = _rc64({ series: [s2.series[0]], type: "line", view: "chart", hidden: [] }, { label: "每日花费", surface: "card" });
+  assert.ok(card.includes("wd-card-big") && card.includes("wd-chart-mini"), "card:大读数 + 迷你折线");
+  assert.ok(card.includes("近 3 点 · 均值"), "card meta(近 N 点 · 均值)");
+  // mount:抽稀留痕进 state
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountChart(host, { series: [{ name: "s", points: [...Array(1200)].map((_, i) => ({ x: i, y: i })) }], label: "L" });
+  assert.equal(w.state.trimmed, "1,200", "抽稀留痕(state.trimmed)");
+  assert.ok(host.innerHTML.includes("已抽稀 1,200 → 500"), "抽稀提示上屏");
+}
+
+{
+  // W-log(§3.10):工具行/级别 chips/截断提示/ts/调光/浮囊/card err 徽标
+  const lines = [
+    { kind: "pre", text: "tool.call a()", ts: 1785800000 },
+    { kind: "post", text: "a → 200", ts: 1785800001 },
+    { kind: "err", text: "b timeout", ts: 1785800002 },
+  ];
+  const h = _rl64({ lines, follow: true, filter: "", level: "", truncated: true, pausedNew: 0, maxLines: 500, title: "run · stdout" });
+  assert.ok(h.includes("wd-log-search") && h.includes('data-wlog-level="err"'), "工具行:过滤框 + 级别 chips");
+  assert.ok(h.includes("已截断,仅保留最近 500 行"), "截断保尾弱提示(§3.10)");
+  assert.ok(h.includes("wd-log-ts"), "时间戳位(弱色)");
+  assert.ok(h.includes("wd-log-note"), "截断提示槽");
+  const hf = _rl64({ lines, follow: true, filter: "timeout", level: "", maxLines: 500 });
+  assert.ok((hf.match(/wd-dim/g) ?? []).length === 2, "过滤:未命中 2 行调光");
+  const hp = _rl64({ lines, follow: false, filter: "", level: "", pausedNew: 3, maxLines: 500 });
+  assert.ok(hp.includes("已暂停 · 3 行新日志"), "暂停 + 新行计数浮囊");
+  const hc = _rl64({ lines, follow: true, filter: "", maxLines: 500 }, { surface: "card" });
+  assert.ok(hc.includes("err ×1"), "card err 徽标(§3.10)");
+  assert.ok(hc.includes("跟随中 · 上限 500 行"), "card meta");
+}
+
+{
+  // W-log 行为:级别 chip / 暂停期新行计数 / 回底清零
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountLogViewer(host, { lines: [{ kind: "pre", text: "a" }], maxLines: 5 });
+  const chip = new StubEl("button");
+  chip.dataset.wlogLevel = "pre";
+  chip.closest = (sel) => (sel === "[data-wlog-level]" ? chip : null);
+  host.trigger("click", { target: chip });
+  assert.equal(w.state.level, "pre", "级别 chip 置 state.level");
+  w.state.follow = false;
+  w.append([{ kind: "info", text: "x" }, { kind: "info", text: "y" }]);
+  assert.equal(w.state.pausedNew, 2, "暂停期 append 计数(不拽滚动)");
+  const bottom = new StubEl("button");
+  bottom.closest = (sel) => (sel === "[data-wlog-bottom]" ? bottom : null);
+  host.trigger("click", { target: bottom });
+  assert.equal(w.state.pausedNew, 0, "回底清零");
+}
+
+{
+  // W-diff(§3.11):文件头徽标/segmented/tier 徽标/折叠文案/空态/card meta
+  const diff = { members: [{ member: "lab.travel", status: "changed", tier: "escalate",
+    fields: [], prompt_diff: [{ kind: "del", text: "旧" }, { kind: "same", text: "同1" }, { kind: "same", text: "同2" }, { kind: "add", text: "新" }] }] };
+  const h = _rd64({ left: diff, mode: "unified", expanded: [], title: "prompt diff" });
+  assert.ok(h.includes("wd-pane-head") && h.includes("prompt diff · unified"), "文件头(标题 · mode)");
+  assert.ok(h.includes('data-tone="ok">+1<') && h.includes('data-tone="danger">−1<'), "增删计数徽标");
+  assert.ok(h.includes("wd-seg"), "segmented 分屏|统一");
+  assert.ok(h.includes("▲ escalate"), "成员 tier 徽标(双编码)");
+  assert.ok(h.includes("[+] 展开 2 行"), "折叠上下文文案(copy 键)");
+  const empty = _rd64({ left: { members: [] }, mode: "split", expanded: [] });
+  assert.ok(empty.includes(copy("w.diff.nochange")), "无变更空态(§3.11/§1.5)");
+  const hc = _rd64({ left: diff, mode: "unified", expanded: [] }, { surface: "card" });
+  assert.ok(hc.includes("2 hunk · unified") && hc.includes("查看全部"), "card meta + 查看全部 →");
+}
+
+{
+  // W-md(§3.12):排印阶梯标签/引用块/剥壳整块移除/空态/复制反馈/card meta
+  const md = _rm64({ source: "# 标题\n\n> 引一句\n\n`code` 和 [x](javascript:alert(1))\n\n```\nlet a = 1;\n```", title: "trip.md" });
+  assert.ok(md.includes("<h4>") && md.includes("wd-pane-head"), "h1 视觉位 + 面板头");
+  assert.ok(md.includes("wd-md-quote"), "引用块(§3.12)");
+  assert.ok(!md.includes("javascript:alert"), "剥壳整块移除");
+  assert.ok(md.includes("data-md-copy=\"0\""), "代码块复制钮(hover 显形走 CSS)");
+  const empty = _rm64({ source: "" });
+  assert.ok(empty.includes(copy("w.md.empty")) && empty.includes("¶"), "空态(§1.5)");
+  const hc = _rm64({ source: "# 行程方案\n\n首段内容。", updated_at: Date.now() / 1000 - 600 }, { surface: "card" });
+  assert.ok(hc.includes("Markdown ·") && hc.includes("10 分钟前"), "card meta(大小 + 相对时间)");
+  // 复制反馈:⧉ → ✓(1s 复原)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  mountMarkdownViewer(host, { source: "```\ncode\n```" });
+  const btn = new StubEl("button");
+  btn.dataset.mdCopy = "0";
+  btn.closest = (sel) => (sel === "[data-md-copy]" ? btn : null);
+  host.trigger("click", { target: btn });
+  assert.equal(btn.textContent, "✓", "复制后 1s ✓ 反馈(§3.12)");
+}
+
+{
+  // W-bubble(§3.13):头部/引用块 L7/头像流/typing/发送禁用/失败重试/card 实心徽标
+  const s = { anchor: { member: "lab.travel", path: "plan.md#L7-L7", quote: "第三天行程摘录" },
+    messages: [{ role: "user", text: "预算偏高", ts: 1 }, { role: "assistant", text: "改景山", ts: 2 }],
+    busy: false, draft: "", unread: 2 };
+  const h = _rb64(s);
+  assert.ok(h.includes("w-bubble-head") && h.includes("批注 · lab.travel"), "头部(批注 · 锚点)");
+  assert.ok(h.includes("w-bubble-quote") && h.includes(">L7<"), "锚点引用块 + L7 徽标");
+  assert.ok(h.includes("w-bubble-av") && h.includes("w-bubble-meta"), "消息 = 图标圆 + 名称 + 相对时间");
+  assert.ok(h.includes('data-bubble-send="1" disabled'), "空输入发送禁用(§3.13)");
+  assert.ok(!h.includes("w-bubble-typing") && !h.includes("pf-skel"), "非 busy 无 typing");
+  const busy = _rb64({ ...s, busy: true, draft: "x" });
+  assert.ok(busy.includes("w-bubble-typing"), "busy → typing 三点");
+  const fail = _rb64({ ...s, error: "发送失败,检查网络" });
+  assert.ok(fail.includes("w-bubble-fail") && fail.includes("重试"), "失败行内红条 + 重试");
+  const hc = _rb64(s, { surface: "card" });
+  assert.ok(hc.includes("wd-badge-solid"), "card 未读实心徽标(§3.13)");
+}
+
+{
+  // W-bubble 行为:✕ 收起 / 重试不重复追加 / 发送禁用局部刷新
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const anchor = { member: "lab.d", path: "plan.md#L7-L7" };
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountBubble(host, { anchor, seedMessages: [] });
+  const submissions = [];
+  w.on("submit", (p) => submissions.push(p.text));
+  const input = new StubEl("input");
+  input.dataset.bubbleDraft = "";
+  input.parentNode = host;
+  input.value = "压到 600";
+  host.trigger("input", { target: input });
+  const send = host.querySelector("[data-bubble-send]");
+  assert.equal(send.disabled, false, "有草稿 → 发送解禁(局部刷新)");
+  host.trigger("keydown", { target: input, key: "Enter" });
+  assert.deepEqual(submissions, ["压到 600"], "Enter 发送");
+  w.notifyError();
+  assert.ok(host.innerHTML.includes("w-bubble-fail"), "失败红条上屏");
+  const retry = new StubEl("button");
+  retry.closest = (sel) => (sel === "[data-bubble-retry]" ? retry : null);
+  host.trigger("click", { target: retry });
+  assert.deepEqual(submissions, ["压到 600", "压到 600"], "重试重发同一文本");
+  assert.equal(w.state.messages.filter((m) => m.role === "user").length, 1, "重试不重复追加用户消息");
+  let closed = false;
+  w.on("close", () => { closed = true; });
+  const x = new StubEl("button");
+  x.closest = (sel) => (sel === "[data-bubble-x]" ? x : null);
+  host.trigger("click", { target: x });
+  assert.ok(closed, "✕ 收起 → close 事件");
+}
+
+console.log("widgets.test.mjs: W6.4 design assertions passed");

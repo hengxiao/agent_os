@@ -114,11 +114,11 @@ export const SAMPLES = {
   "log-viewer": {
     mount: "mountLogViewer",
     samples: [
-      { name: "kind 色条三类", options: { lines: [
-        { kind: "run.start", text: "run 开始" },
-        { kind: "warn", text: "告警行" },
-        { kind: "run.error", text: "错误行" },
-        { kind: "info", text: "普通行" }] } },
+      { name: "级别 chips + 时间戳", options: { title: "run · stdout", lines: [
+        { kind: "pre", text: 'tool.call weather.query({"city":"昆明"})', ts: 1785800000 },
+        { kind: "post", text: "weather.query → 200 OK · 84ms", ts: 1785800001 },
+        { kind: "err", text: "http_fetch timeout after 3000ms", ts: 1785800002 },
+        { kind: "info", text: "普通行", ts: 1785800003 }] } },
       { name: "截断保尾(maxLines=5)", options: { maxLines: 5, lines: [...Array(8)].map((_, i) => ({ kind: "info", text: `行${i + 1}` })) } },
       { name: "空态", options: { lines: [] } },
     ],
@@ -126,13 +126,13 @@ export const SAMPLES = {
   "diff-viewer": {
     mount: "mountDiffViewer",
     samples: [
-      { name: "split 双列", options: { diff: { members: [{
-        member: "lab.d", status: "changed",
+      { name: "split 双列", options: { title: "prompt diff", diff: { members: [{
+        member: "lab.d", status: "changed", tier: "escalate",
         fields: [{ kind: "changed", path: "description", old: "旧", new: "新" }],
         prompt_diff: [
           { kind: "del", text: "旧句" }, { kind: "add", text: "新句" }] }] } } },
-      { name: "unified 折叠上下文", options: { mode: "unified", diff: { members: [{
-        member: "lab.d", status: "changed",
+      { name: "unified 折叠上下文", options: { mode: "unified", title: "prompt diff", diff: { members: [{
+        member: "lab.d", status: "changed", tier: "reversible",
         fields: [],
         prompt_diff: [
           { kind: "del", text: "旧句" },
@@ -144,8 +144,8 @@ export const SAMPLES = {
   "md-viewer": {
     mount: "mountMarkdownViewer",
     samples: [
-      { name: "典型(全结构)", options: { source:
-        "# 标题\n\n- 甲\n- 乙\n\n```\nlet a = 1;\n```\n\n**粗** 和 `行内` 和 [链接](https://example.com)\n\n| a | b |\n|---|---|\n| 1 | 2 |" } },
+      { name: "典型(全结构)", options: { title: "trip_report.md", source:
+        "# 标题\n\n- 甲\n- 乙\n\n> 引用一句。\n\n```\nlet a = 1;\n```\n\n**粗** 和 `行内` 和 [链接](https://example.com)\n\n| a | b |\n|---|---|\n| 1 | 2 |" } },
       { name: "XSS 剥壳", options: { source: "<script>alert(1)</script>\n\n[点我](javascript:alert(1))" } },
       { name: "空态", options: { source: "" } },
     ],
@@ -154,9 +154,9 @@ export const SAMPLES = {
     mount: "mountBubble",
     samples: [
       { name: "典型(带种子消息)", options: {
-        anchor: { member: "lab.demo", path: "doc.md#L2-L2" },
-        seedMessages: [{ role: "user", text: "这段太绕" }, { role: "assistant", text: "建议拆开" }] } },
-      { name: "空(新批注)", options: { anchor: { member: "lab.demo", path: "doc.md#L5-L5" } } },
+        anchor: { member: "lab.demo", path: "plan.md#L7-L7", quote: "第三天行程:上午故宫,下午颐和园,预算 ¥720。" },
+        seedMessages: [{ role: "user", text: "这段太绕", ts: 1785800000 }, { role: "assistant", text: "建议拆开", ts: 1785803600 }] } },
+      { name: "空(新批注)", options: { anchor: { member: "lab.demo", path: "plan.md#L12-L12" } } },
     ],
   },
 };

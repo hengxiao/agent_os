@@ -9,6 +9,7 @@
    代码块 mono 卡片 + 复制钮(data-md-copy = 代码块序号,逻辑面按序取文)。 */
 
 import { copy } from "../themes.js";
+import { relTime } from "./w-text.render.js";
 
 /* 链接白名单:仅 http(s) 与站内相对;javascript:/data:/vbscript: 一律剥壳成纯文本 */
 function _safeHref(url) {
@@ -28,7 +29,7 @@ function _inline(text) {
     const href = _safeHref(url);
     return href
       ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`
-      : `${label}(${esc(url)})`; // 非法 scheme:剥壳成纯文本(不渲染成链接)
+      : ""; // 非法 scheme:**整块不渲染,不留残迹**(§3.12 设计终稿,替代剥壳留文)
   });
   return s;
 }
@@ -91,8 +92,15 @@ export function mdToHtml(md) {
     if (heading) {
       flushList();
       flushTable();
-      const level = heading[1].length + 3; // h4-h6(页面已有 h1-h3 语义层)
+      const level = heading[1].length + 3; // h4-h6(页面已有 h1-h3 语义层;视觉阶梯在 CSS)
       out.push(`<h${level}>${_inline(heading[2])}</h${level}>`);
+      continue;
+    }
+    const quote = /^>\s+(.*)$/.exec(trimmed); // 引用块(§3.12:左 3px 粗条 + 弱色)
+    if (quote) {
+      flushList();
+      flushTable();
+      out.push(`<blockquote class="wd-md-quote">${_inline(quote[1])}</blockquote>`);
       continue;
     }
     const item = /^[-*]\s+(.*)$/.exec(trimmed);
@@ -120,11 +128,18 @@ export function mdToHtml(md) {
   return out.join("");
 }
 
-/* state → html(纯);state 面:{source}
+/* state → html(纯);state 面:{source, title?}
    双形态(§1.4):surface="card" → 首个标题 + 首段摘录(2 行截断,CSS);
    无代码块复制钮(卡内不渲染代码块) */
 export function renderMarkdownViewer(state, { surface = "tab" } = {}) {
   if (surface === "card") return _mdCardHtml(state);
+  if (!String(state.source ?? "").trim()) {
+    return (
+      `<div class="wd-md" role="document">` +
+      `<div class="wd-empty-box"><span class="wd-empty-ico" aria-hidden="true">¶</span>` +
+      `<span class="wd-empty-guide">${esc(copy("w.md.empty"))}</span></div></div>`
+    );
+  }
   let idx = 0; // 局部计数(纯函数内,无副作用外泄)
   const body = mdToHtml(state.source ?? "").replace(/<pre class="mono wd-md-code">/g, () => {
     const tag =
@@ -133,7 +148,12 @@ export function renderMarkdownViewer(state, { surface = "tab" } = {}) {
     idx += 1;
     return tag;
   });
-  return `<div class="wd-md" role="document">${body}</div>`;
+  return (
+    `<div class="wd-md" role="document">` +
+    (state.title ? `<div class="wd-pane-head"><span class="wd-pane-title">${esc(state.title)} · md</span></div>` : "") +
+    body +
+    `</div>`
+  );
 }
 
 /* card 面(§1.4):首个标题 + 首段摘录(跳过代码块/列表/表格行,连续正文行
@@ -165,11 +185,22 @@ function _mdCardHtml(state) {
   return (
     `<div class="wd-card" data-surface="card" role="button" tabindex="0"` +
     ` aria-label="${esc(copy("w.card.open"))}">` +
-    (title ? `<span class="wd-card-title wd-card-line">${esc(title)}</span>` : "") +
+    (title ? `<span class="wd-md-cardtitle wd-card-line">${esc(title)}</span>` : "") +
     (excerpt.length ? `<span class="wd-card-excerpt">${esc(excerpt.join(" "))}</span>` : "") +
     (!title && !excerpt.length ? `<span class="wd-card-line">${esc(copy("w.card.empty"))}</span>` : "") +
+    `<span class="wd-card-meta"><span class="wd-card-meta-txt">${esc(_mdMeta(state))}</span>` +
+    `<span class="wd-card-all">${esc(copy("w.card.go"))}</span></span>` +
     `</div>`
   );
+}
+
+/* card meta:Markdown · 大小 · 相对时间(updated_at 缺省省略) */
+function _mdMeta(state) {
+  const src = String(state.source ?? "");
+  const n = new TextEncoder().encode(src).length;
+  const parts = ["Markdown", n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`];
+  if (state.updated_at) parts.push(relTime(state.updated_at));
+  return parts.join(" · ");
 }
 
 function esc(s) {

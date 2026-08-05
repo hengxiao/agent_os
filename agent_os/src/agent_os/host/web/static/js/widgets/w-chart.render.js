@@ -1,8 +1,15 @@
-/* W-chart 渲染面(docs/WIDGET-ARCH.md §1.1/§2.9;W5.3):
+/* W-chart 渲染面(docs/WIDGET-ARCH.md §1.1/§2.9;W5.3 自渲染;W6.4 按
+   docs/WIDGET-DESIGN.md §3.9 重做视觉):
    **纯函数**集合——无副作用、不写 state、不发事件、不调后端;
-   纯 SVG 直绘零依赖;颜色只消费契约 token(var(--live)/--perm-write 系)。
-   效果(§2.9):网格 + 刻度;line/bar/spark 三型;hover 读值点(title);
-   图例显隐钮;"表格视图"切换;空态"还没有数据";>500 点抽稀(逻辑面调用)。 */
+   纯 SVG 直绘零依赖;颜色只消费契约 token(--live/--sig-* 序列)。
+
+   tab(§3.9):头部 = 标题 500 + 图例(色点 + 名,点击显隐,隐藏 40% 透明)
+   + 右上 segmented「图表 | 表格」+ 抽稀弱提示;网格 = 水平虚线(≤5 条
+   nice ticks,无垂直线无轴);折线 2px 序列色,端点无圆点;首序列面积渐变
+   --live 10% → 0;hover 参考线 + tooltip 卡在逻辑面(贴点不贴鼠);
+   隐藏全部序列 → 空态(不是空白坐标系)。
+   card(§3.9):序列名 · 最新值 + 20px 600 mono 大读数 + 涨跌徽标(▲/▼
+   带百分比)+ 120×40 迷你折线(末端亮点)+ meta(近 N 点 · 均值)。 */
 
 import { copy } from "../themes.js";
 
@@ -15,6 +22,9 @@ export function downsample(points, max = 500) {
   out.push(points[points.length - 1]);
   return out;
 }
+
+/* 序列色板(§3.9:--live / --sig-* 系;图例色点与折线同序) */
+const PALETTE = ["var(--live)", "var(--sig-compress)", "var(--warn)", "var(--sig-llm)", "var(--sig-tool)", "var(--sig-sidecar)"];
 
 const _extent = (series) => {
   const xs = [];
@@ -55,8 +65,9 @@ export function chartTableHtml(series) {
   );
 }
 
-/* SVG 直绘(line = polyline + 网格;bar = 柱;spark = 无轴迷你) */
-export function chartSvg(series, { type = "line", width = 280, height = 80, label = "" } = {}) {
+/* SVG 直绘(§3.9:水平虚线网格无垂直线;折线 2px 无端点圆点;首序列面积
+   渐变;bar = 柱;spark = 无轴迷你)。渐变定义幂等(固定 id,同义重复无害)。 */
+export function chartSvg(series, { type = "line", width = 560, height = 240, label = "" } = {}) {
   const ext = _extent(series);
   if (!ext) {
     return `<div class="wd-empty">${esc(copy("w.chart.empty"))}</div>`;
@@ -84,7 +95,8 @@ export function chartSvg(series, { type = "line", width = 280, height = 80, labe
   const ih = height - padT - padB;
   const sx = (x) => padL + ((x - ext.xmin) / (ext.xmax - ext.xmin || 1)) * iw;
   const sy = (y) => padT + ih - ((y - ext.ymin) / (ext.ymax - ext.ymin || 1)) * ih;
-  const ticks = niceTicks(ext.ymin, ext.ymax);
+  let ticks = niceTicks(ext.ymin, ext.ymax);
+  while (ticks.length > 5) ticks = ticks.filter((_, i) => i % 2 === 0); // ≤5 条(§3.9)
   const grid = ticks
     .map(
       (t) =>
@@ -95,87 +107,132 @@ export function chartSvg(series, { type = "line", width = 280, height = 80, labe
   const xticks = niceTicks(ext.xmin, ext.xmax)
     .map((t) => `<text x="${sx(t)}" y="${height - 4}" class="wd-chart-tick">${esc(String(t))}</text>`)
     .join("");
-  const body =
-    type === "bar"
-      ? (series[0]?.points ?? [])
-          .map((p) => {
-            const bw = Math.max(2, iw / Math.max(1, (series[0]?.points ?? []).length) - 4);
-            const x = sx(Number(p.x)) - bw / 2;
-            const y = sy(Math.max(0, Number(p.y)));
-            return (
-              `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}"` +
-              ` height="${(sy(0) - y).toFixed(1)}" class="wd-chart-bar">` +
-              `<title>${esc(`${p.x}: ${p.y}`)}</title></rect>`
-            );
-          })
-          .join("")
-      : series
-          .map((s, i) => {
-            const pts = (s.points ?? []).map((p) => `${sx(Number(p.x)).toFixed(1)},${sy(Number(p.y)).toFixed(1)}`);
-            const color = i === 0 ? "var(--live)" : "var(--perm-write)";
-            const circles = (s.points ?? [])
-              .map(
-                (p) =>
-                  `<circle cx="${sx(Number(p.x)).toFixed(1)}" cy="${sy(Number(p.y)).toFixed(1)}" r="1.6"` +
-                  ` fill="${color}"><title>${esc(`${s.name ?? ""} ${p.x}: ${p.y}`)}</title></circle>`
-              )
-              .join("");
-            return (
-              `<polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-width="1.5"/>` + circles
-            );
-          })
-          .join("");
+  let body;
+  if (type === "bar") {
+    body = (series[0]?.points ?? [])
+      .map((p) => {
+        const bw = Math.max(2, iw / Math.max(1, (series[0]?.points ?? []).length) - 4);
+        const x = sx(Number(p.x)) - bw / 2;
+        const y = sy(Math.max(0, Number(p.y)));
+        return (
+          `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}"` +
+          ` height="${(sy(0) - y).toFixed(1)}" class="wd-chart-bar">` +
+          `<title>${esc(`${p.x}: ${p.y}`)}</title></rect>`
+        );
+      })
+      .join("");
+  } else {
+    const areaOf = (s) => {
+      const pts = s.points ?? [];
+      if (pts.length < 2) return "";
+      const line = pts.map((p) => `${sx(Number(p.x)).toFixed(1)},${sy(Number(p.y)).toFixed(1)}`);
+      const base = sy(ext.ymin);
+      return (
+        `<path d="M${sx(Number(pts[0].x)).toFixed(1)} ${base} L${line.join(" L")}` +
+        ` L${sx(Number(pts.at(-1).x)).toFixed(1)} ${base} Z" fill="url(#wd-ag-fill)"/>`
+      );
+    };
+    body =
+      `<defs><linearGradient id="wd-ag-fill" x1="0" y1="0" x2="0" y2="1">` +
+      `<stop offset="0" stop-color="var(--live)" stop-opacity="0.1"/>` +
+      `<stop offset="1" stop-color="var(--live)" stop-opacity="0"/></linearGradient></defs>` +
+      areaOf(series[0] ?? {}) + // 首序列面积渐变(§3.9)
+      series
+        .map((s, i) => {
+          const pts = (s.points ?? []).map((p) => `${sx(Number(p.x)).toFixed(1)},${sy(Number(p.y)).toFixed(1)}`);
+          return `<polyline points="${pts.join(" ")}" fill="none" stroke="${PALETTE[i % PALETTE.length]}" stroke-width="2"/>`;
+        })
+        .join("");
+  }
   return (
     `<svg class="wd-chart" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}"` +
     ` role="img" aria-label="${esc(label)}">` +
-    `<line x1="${padL}" y1="${padT}" x2="${padL}" y2="${height - padB}" class="wd-chart-axis"/>` +
-    `<line x1="${padL}" y1="${height - padB}" x2="${width - padR}" y2="${height - padB}" class="wd-chart-axis"/>` +
     grid + xticks + body +
     `</svg>`
   );
 }
 
-/* state → html(纯);state 面:{series, type, view, hidden:[names]};
-   label(aria 摘要)经 opts——挂载期常量,不进 state。
-   双形态(§1.4):surface="card" → 迷你图(去坐标轴文字,保留折线/柱形本体
-   与最新值点)+ 最新值读数 + 序列计数徽标(图例压成计数);无切换钮 */
+/* state → html(纯);state 面:{series, type, view, hidden, trimmed?};
+   label(aria 摘要)经 opts——挂载期常量,不进 state(W5.3 注) */
 export function renderChart(state, { label = "", surface = "tab" } = {}) {
   if (surface === "card") return _chartCardHtml(state, { label });
   const hidden = state.hidden ?? [];
-  const visible = (state.series ?? []).filter((s) => !hidden.includes(s.name));
+  const series = state.series ?? [];
+  const visible = series.filter((s) => !hidden.includes(s.name));
+  const view = state.view ?? "chart";
   return (
     `<div class="wd-chart-wrap">` +
-    `<div class="wd-chart-bar">` +
-    `<button class="wd-mini" data-chart-toggle>${esc(
-      copy(state.view === "chart" ? "w.chart.tableview" : "w.chart.chartview")
-    )}</button>` +
-    ((state.series ?? []).length > 1
-      ? (state.series ?? [])
+    `<div class="wd-chart-head">` +
+    `<span class="wd-chart-title">${esc(label)}</span>` +
+    (series.length > 1
+      ? series
           .map(
-            (s) =>
-              `<button class="wd-mini" data-chart-series="${esc(s.name)}"` +
-              `${hidden.includes(s.name) ? ' data-off="1"' : ""}>${esc(s.name)}</button>`
+            (s, i) =>
+              `<button class="wd-legend" data-chart-series="${esc(s.name)}"${hidden.includes(s.name) ? ' data-off="1"' : ""}>` +
+              `<span class="wd-dot" style="--c:${PALETTE[i % PALETTE.length]}" aria-hidden="true"></span>${esc(s.name)}</button>`
           )
           .join("")
       : "") +
-    `</div>` +
-    (state.view === "chart"
-      ? chartSvg(visible, { type: state.type, label })
+    `<span class="wd-chart-side">` +
+    (state.trimmed
+      ? `<span class="wd-chart-trim">${esc(copy("w.chart.trimmed").replace("{from}", state.trimmed).replace("{to}", "500"))}</span>`
+      : "") +
+    `<span class="wd-seg">` +
+    `<button class="wd-seg-btn" data-chart-toggle${view === "chart" ? ' data-on="1"' : ""}>${esc(copy("w.chart.chartview"))}</button>` +
+    `<button class="wd-seg-btn" data-chart-toggle${view === "table" ? ' data-on="1"' : ""}>${esc(copy("w.chart.tableview"))}</button>` +
+    `</span></span></div>` +
+    (view === "chart"
+      ? (visible.length ? chartSvg(visible, { type: state.type, label }) : `<div class="wd-empty">${esc(copy("w.chart.empty"))}</div>`) + // 隐藏全部 → 空态(§3.9)
+        `<div class="wd-chart-tip" hidden></div>` // hover tooltip 槽(逻辑面填,贴点不贴鼠)
       : chartTableHtml(visible)) +
     `</div>`
   );
 }
 
-/* card 迷你图(§1.4):无坐标轴文字/网格,保留折线/柱形本体与最新值点;
-   画布内缩 2px 防端点裁切 */
+/* card 面(§3.9):最新值大读数 + 涨跌徽标 + 120×40 迷你折线(末端亮点)+
+   meta(近 N 点 · 均值);图例压成…取消,序列数不再出徽标(终稿) */
+function _chartCardHtml(state, { label = "" } = {}) {
+  const hidden = state.hidden ?? [];
+  const visible = (state.series ?? []).filter((s) => !hidden.includes(s.name));
+  const first = visible[0];
+  const pts = first?.points ?? [];
+  const last = pts.at(-1);
+  const prev = pts.at(-2);
+  let trend = "";
+  if (last && prev && Number(prev.y) !== 0) {
+    const pct = ((Number(last.y) - Number(prev.y)) / Math.abs(Number(prev.y))) * 100;
+    const up = pct >= 0;
+    trend = `<span class="wd-badge" data-tone="${up ? "ok" : "danger"}">${up ? "▲" : "▼"} ${Math.abs(pct).toFixed(1)}%</span>`;
+  }
+  const mean = pts.length ? pts.reduce((n, p) => n + Number(p.y), 0) / pts.length : 0;
+  const meanTxt = Number.isInteger(mean) ? String(mean) : mean.toFixed(2);
+  return (
+    `<div class="wd-card" data-surface="card" role="button" tabindex="0"` +
+    ` aria-label="${esc(copy("w.card.open"))}">` +
+    `<span class="wd-card-dim">${esc(first?.name ?? label)} · ${esc(copy("w.chart.latest"))}</span>` +
+    `<span class="wd-card-head">` +
+    (last ? `<span class="wd-card-num wd-card-big">${esc(String(last.y))}</span>` + trend : "") +
+    `<span class="wd-card-go">${esc(copy("w.card.go"))}</span>` +
+    `</span>` +
+    (visible.length && _extent(visible)
+      ? _chartMiniSvg(visible, { type: state.type, label })
+      : `<div class="wd-empty">${esc(copy("w.chart.empty"))}</div>`) +
+    (pts.length
+      ? `<span class="wd-card-meta"><span class="wd-card-meta-txt">${esc(copy("w.chart.meta").replace("{n}", String(pts.length)).replace("{v}", meanTxt))}</span></span>`
+      : "") +
+    `</div>`
+  );
+}
+
+/* card 迷你折线/柱(§3.9):120×40,无轴无网格,末端亮点 */
 function _chartMiniSvg(series, { type = "line", label = "" } = {}) {
   const ext = _extent(series);
   if (!ext) return "";
-  const w = 220;
-  const h = 44;
+  const w = 120;
+  const h = 40;
   const span = (v, lo, hi) => (hi === lo ? 0.5 : (v - lo) / (hi - lo));
-  const sx = (i, n) => span(i, 0, Math.max(1, n - 1)) * (w - 4) + 2;
-  const sy = (y) => h - 2 - span(Number(y), ext.ymin, ext.ymax) * (h - 4);
+  const sx = (i, n) => span(i, 0, Math.max(1, n - 1)) * (w - 6) + 2;
+  const sy = (y) => h - 2 - span(Number(y), ext.ymin, ext.ymax) * (h - 6);
   let body;
   if (type === "bar") {
     const pts = series[0]?.points ?? [];
@@ -194,7 +251,7 @@ function _chartMiniSvg(series, { type = "line", label = "" } = {}) {
     body = series
       .map((s, i) => {
         const pts = s.points ?? [];
-        const color = i === 0 ? "var(--live)" : "var(--perm-write)";
+        const color = PALETTE[i % PALETTE.length];
         const line = pts.map((p, j) => `${sx(j, pts.length).toFixed(1)},${sy(p.y).toFixed(1)}`).join(" ");
         const last = pts[pts.length - 1];
         const dot = last
@@ -210,23 +267,19 @@ function _chartMiniSvg(series, { type = "line", label = "" } = {}) {
   );
 }
 
-/* card 面(§1.4):最新值读数(首个可见序列的末点 y)+ 序列计数徽标 + 迷你图;
-   空态与 tab 同文案 */
-function _chartCardHtml(state, { label = "" } = {}) {
-  const hidden = state.hidden ?? [];
-  const visible = (state.series ?? []).filter((s) => !hidden.includes(s.name));
-  const lastPt = (visible[0]?.points ?? []).at(-1);
+/* hover tooltip 内容(§3.9;逻辑面 mousemove 时填入 .wd-chart-tip 槽,贴点不贴鼠) */
+export function chartTipHtml(series, idx) {
+  const x = series?.[0]?.points?.[idx]?.x;
   return (
-    `<div class="wd-card" data-surface="card" role="button" tabindex="0"` +
-    ` aria-label="${esc(copy("w.card.open"))}">` +
-    `<span class="wd-card-head">` +
-    (lastPt ? `<span class="wd-card-num">${esc(String(lastPt.y))}</span>` : "") +
-    `<span class="wd-badge">${esc(copy("w.card.series").replace("{n}", String((state.series ?? []).length)))}</span>` +
-    `</span>` +
-    (visible.length && _extent(visible)
-      ? _chartMiniSvg(visible, { type: state.type, label })
-      : `<div class="wd-empty">${esc(copy("w.chart.empty"))}</div>`) +
-    `</div>`
+    `<div class="wd-chart-tip-t">${esc(String(x ?? ""))}</div>` +
+    (series ?? [])
+      .map((s, i) => {
+        const p = s.points?.[Math.min(idx, (s.points?.length ?? 1) - 1)];
+        return p
+          ? `<div class="wd-chart-tip-r"><span class="wd-dot" style="--c:${PALETTE[i % PALETTE.length]}"></span>${esc(s.name)} <b class="mono">${esc(String(p.y))}</b></div>`
+          : "";
+      })
+      .join("")
   );
 }
 

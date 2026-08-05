@@ -205,6 +205,7 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 | W6.1 ✅ | W-text/W-json 按设计终稿重做(§3.1/§3.2):编辑器结构 + JSON 着色层 + 错误三件套 + 失焦校验 | 行为测试全绿 + 视觉结构断言过 |
 | W6.2 ✅ | W-table/W-kv/W-form 按设计终稿重做(§3.3-3.5):内联编辑/⚠ tooltip/switch/chips/stepper/操作行 | 行为测试全绿 + 视觉结构断言过 |
 | W6.3 ✅ | W-list/W-tree/W-date 按设计终稿重做(§3.6-3.8):命中高亮/调光过滤/双月弹层/纠序闪提示 | 行为测试全绿 + 视觉结构断言过 |
+| W6.4 ✅ | W-chart/W-log/W-diff/W-md/W-bubble 按设计终稿重做(§3.9-3.13):tooltip/深色面板/双编码行/排印阶梯/气泡卡 | 行为测试全绿 + 视觉结构断言过 |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
@@ -437,6 +438,43 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 >   current/total/change、w.tree.current/ns、w.date.hint/invalid/fix/days/
 >   weekdays/monthtitle);退役 w.date.inverted。
 > - **samples**:list/tree/date 典型样例补 title;深层树样例改演示调光过滤。
+>
+> **W6.4 实现注**(2026-08-04;W-chart/W-log/W-diff/W-md/W-bubble,§3.9-3.13):
+> - **W-chart**:头部 = 标题 500 + 图例(色点 + 名,隐藏 40%)+ segmented
+>   「图表 | 表格」(.wd-seg 共享件)+ 抽稀留痕提示(state.trimmed,mount/
+>   set_series 比较原始长度);SVG 重画:水平虚线网格(≤5 条,无垂直线无轴)、
+>   折线 2px 无端点圆点、首序列面积渐变(固定 id 渐变定义,幂等)、序列色
+>   板 --live/--sig-*;hover tooltip 槽(chartTipHtml 纯函数,mousemove 按
+>   最近 x 档位锚定,贴点不贴鼠;stub 不可测,守卫降级);隐藏全部序列 →
+>   空态;card = 大读数(20px 600)+ 涨跌徽标(▲ok/▼danger 带百分比)+
+>   120×40 迷你折线(末端亮点)+ meta(近 N 点 · 均值)。
+> - **W-log**:深色面板 --log-bg + **新契约 token --log-fg**(亮主题的主 fg
+>   是深色,压暗面板上须亮色;六主题值实测 ≥4.5);工具行 = 过滤框 + 级别
+>   chips(all + 现有 kind)+ 复制 + ⏸ 暂停跟随;**过滤 = 调光不剪枝**
+>   (wd-dim 40%,设计批准的行为变更);截断留痕(state.truncated → 顶部
+>   弱提示);暂停期新行计数(state.pausedNew → 浮囊「已暂停 · N 行新日志
+>   ↓」);长行横滚不 wrap;moe/ink 的 kind 色字在主题 css 提亮映射
+>   ([data-theme] 覆盖的合法位,实测 5.5–8.9);card 加 err ×N 徽标与
+>   「跟随中 · 上限 N 行」meta。
+> - **W-diff**:文件头(路径 mono + 绿 +N / 红 −N 徽标 + segmented 分屏|
+>   统一);add/del 行 8% 浅底 + 2px 左条(双编码);折叠上下文「[+] 展开
+>   N 行」整宽可点(copy 键,旧硬编码退役);成员 tier 徽标(●reversible/
+>   ▲escalate);无变更空态;行号列/@@ hunk 头未落(diff 对象无行号元数据,
+>   不伪造,卡片 hunk 数按非 same 连续段近似);diffCard 逐字节同构保持。
+> - **W-md**:排印阶梯(h4=20/600+hairline、h5=16、h6=14);引用块 > 新增;
+>   **剥壳语义变更(设计批准):非法链接整块不渲染**(mdToHtml 白名单行为
+>   变化,断言随改);代码块 --log-bg 深底 + ⧉ hover 显 + 复制后 1s ✓;
+>   line-break: strict 避头尾;空态 ¶;card 加 meta(Markdown · 大小 ·
+>   相对时间)。
+> - **W-bubble**:切割线不动(浮出壳/箭头/段旁圆标仍在 doc-editor/platform
+>   .css);卡本体升级:头部(批注 · 锚点 + ✕ 收起)+ 锚点引用块(3px live
+>   条 + 2 行截断 + L# 徽标自 anchor.path 提取;anchor.quote 可选)+ 消息流
+>   (头像圆 + 名称 500 + relTime + 内容,不分左右)+ typing 三点(替代
+>   pf-skel,断言随改)+ 失败行内红条 + 重试(notifyError + lastText 重发
+>   不重复追加)+ 发送钮空输入禁用(局部刷新);card 未读实心徽标。
+> - **copy**:六主题新增 19 键(w.chart.trimmed/latest/meta、w.log.truncated/
+>   pause/follow2/paused/emptyhint/errn/following/capped、w.diff.fold/ctx/
+>   split/unified/nochange、w.md.empty、w.bubble.you/comment/fail/retry/close)。
 
 ## 4. 不做
 

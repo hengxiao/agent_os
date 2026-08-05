@@ -43,10 +43,11 @@ function _codeBlockAt(source, idx) {
   return blocks[idx] ?? "";
 }
 
-/* 挂进宿主:source(markdown 原文;state 可序列化)。
-   双形态(§1.4):surface="card" 时渲染摘要卡,宿主委托只挂 open(复制钮不进卡)。 */
-export function mountMarkdownViewer(host, { source = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
-  const widget = createWidget(MD_VIEWER_DEF, { path, state: { source }, onRegister, onUnregister });
+/* 挂进宿主:source(markdown 原文;state 可序列化)+ title(面板头,可选)。
+   双形态(§1.4):surface="card" 时渲染摘要卡,宿主委托只挂 open(复制钮不进卡)。
+   W6.4(§3.12):复制钮点击后 1s ✓ 成功反馈(局部,不重渲)。 */
+export function mountMarkdownViewer(host, { source = "", title = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
+  const widget = createWidget(MD_VIEWER_DEF, { path, state: { source, title }, onRegister, onUnregister });
   const render = () => {
     host.innerHTML = renderMarkdownViewer(widget.state, { surface });
   };
@@ -64,6 +65,11 @@ export function mountMarkdownViewer(host, { source = "", path = "", onRegister =
     const text = _codeBlockAt(widget.state.source, Number(btn.dataset.mdCopy));
     globalThis.navigator?.clipboard?.writeText?.(text); // 剪贴板(缺席环境降级为事件)
     widget.emit("copy", { text });
+    // 成功反馈(§3.12):⧉ → ✓,1s 后复原
+    btn.textContent = "✓";
+    setTimeout(() => {
+      btn.textContent = "⧉";
+    }, 1000);
   });
   }
   render();

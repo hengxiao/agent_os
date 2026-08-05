@@ -23,6 +23,7 @@
   --fg-2: #a98090;
   /* Widget 层(W6.0):W-log 深色面板底(亮主题的压暗映射,暖李色) */
   --log-bg: #2e1b22;
+  --log-fg: #f2d9e0;
 
   /* 语义色:pastel 色相锚点不变(绿=ok/黄=warn/红=danger/紫=aborted),
      live 改锚珊瑚粉(= moe 主色的文本态);明度逐个压到关键配对 ≥4.5:1 */
@@ -382,3 +383,14 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
 }
+
+/* W6.4:深色日志面板(--log-bg)的 kind 色字提亮——本主题主色板是深色系
+   (亮底设计),压暗面板上直接映射亮色,保证 ≥4.5:1(实测 6.9–8.9) */
+[data-theme="moe"] .wd-log-box .wd-log-line[data-kind="pre"] { color: #9db8f5; border-left-color: #9db8f5; }
+[data-theme="moe"] .wd-log-box .wd-log-line[data-kind="post"],
+[data-theme="moe"] .wd-log-box .wd-log-line[data-kind="run.start"],
+[data-theme="moe"] .wd-log-box .wd-log-line[data-kind="run.end"] { color: #6fd3a8; border-left-color: #6fd3a8; }
+[data-theme="moe"] .wd-log-box .wd-log-line[data-kind="err"],
+[data-theme="moe"] .wd-log-box .wd-log-line[data-kind="error"],
+[data-theme="moe"] .wd-log-box .wd-log-line[data-kind="run.error"] { color: #f28b95; border-left-color: #f28b95; }
+[data-theme="moe"] .wd-log-box .wd-log-line[data-kind="warn"] { color: #e0b45c; border-left-color: #e0b45c; }

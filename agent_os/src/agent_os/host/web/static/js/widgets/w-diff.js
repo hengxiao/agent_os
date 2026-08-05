@@ -25,11 +25,12 @@ export const DIFF_VIEWER_DEF = registerWidgetDef({
   render: renderDiffViewer, // W5.3:render 面进 def(registry 校验形态)
 });
 
-/* 挂进宿主:diff(与 cards/lab-iterate 同构的 diff 对象);set_mode 切换重渲 */
-export function mountDiffViewer(host, { diff, mode = "split", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
+/* 挂进宿主:diff(与 cards/lab-iterate 同构的 diff 对象)+ title(文件头,可选);
+   set_mode 切换重渲(不重取数据,瞬时) */
+export function mountDiffViewer(host, { diff, mode = "split", title = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(DIFF_VIEWER_DEF, {
     path,
-    state: { left: diff, right: null, mode, expanded: [] },
+    state: { left: diff, right: null, mode, expanded: [], title },
     onRegister,
     onUnregister,
   });

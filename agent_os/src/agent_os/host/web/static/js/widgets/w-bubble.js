@@ -8,6 +8,7 @@
 
    a11y:role=log(消息区)、role=dialog(气泡卡,Esc 关闭、Enter 发送)。 */
 
+import { copy } from "../themes.js";
 import { registerWidgetDef } from "./registry.js";
 import { bindCardOpen, createWidget } from "./widget.js";
 import { contextCascade } from "./cascade.js";
@@ -66,22 +67,20 @@ export function mountBubble(
     widget.emit("close", { anchor });
     widget.destroy();
   };
-  /* 父级回填回复(send 出海的结果;busy 骨架撤下) */
-  widget.receiveReply = (text) => {
-    widget.state.busy = false;
-    widget.state.messages = [...widget.state.messages, { role: "assistant", text, ts: Date.now() / 1000 }];
-    render();
-  };
   widget.apply_reply = (index) => {
     const m = widget.state.messages[index];
     if (m?.role === "assistant") widget.emit("apply", { anchor, text: m.text });
   };
 
-  function _submit() {
-    const text = widget.state.draft.trim();
+  function _submit(retry = false) {
+    const text = retry ? widget.state.lastText : widget.state.draft.trim();
     if (!text || widget.state.busy) return;
-    widget.state.draft = "";
-    widget.state.messages = [...widget.state.messages, { role: "user", text, ts: Date.now() / 1000 }];
+    if (!retry) {
+      widget.state.draft = "";
+      widget.state.messages = [...widget.state.messages, { role: "user", text, ts: Date.now() / 1000 }];
+    }
+    widget.state.lastText = text; // 重试锚(§3.13 失败行内红条 + 重试)
+    widget.state.error = null;
     widget.state.busy = true;
     render();
     // §16:cascade 本地组装(纯函数);出海 = 父组件订阅 submit 后的事
@@ -92,18 +91,39 @@ export function mountBubble(
     widget.emit("submit", { anchor, text, cascade });
   }
 
+  /* 父级回填回复(send 出海的结果;busy 骨架撤下,错误清) */
+  widget.receiveReply = (text) => {
+    widget.state.busy = false;
+    widget.state.error = null;
+    widget.state.messages = [...widget.state.messages, { role: "assistant", text, ts: Date.now() / 1000 }];
+    render();
+  };
+  /* 发送失败(§3.13):行内红条 + 重试(父级出海失败后回填) */
+  widget.notifyError = (msg = "") => {
+    widget.state.busy = false;
+    widget.state.error = msg || copy("w.bubble.fail");
+    render();
+  };
+
   if (surface === "card") {
     // card:宿主委托只挂 open(§1.4)——负载沿用本控件 open 事件语义({anchor})
     bindCardOpen(host, widget, { anchor });
   } else {
   host.addEventListener("input", (e) => {
-    if (e.target.closest("[data-bubble-draft]")) widget.state.draft = e.target.value;
+    if (e.target.closest("[data-bubble-draft]")) {
+      widget.state.draft = e.target.value;
+      // 发送钮空输入禁用(§3.13):局部刷新,不重渲
+      const send = host.querySelector("[data-bubble-send]");
+      if (send) send.disabled = !e.target.value.trim() || widget.state.busy;
+    }
   });
   host.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && e.target.closest("[data-bubble-draft]")) _submit();
+    if (e.key === "Enter" && !e.shiftKey && e.target.closest("[data-bubble-draft]")) _submit(); // Enter 发送,Shift+Enter 换行(§3.13)
     if (e.key === "Escape") widget.close(); // Esc 关(不产生提交)
   });
   host.addEventListener("click", (e) => {
+    if (e.target.closest("[data-bubble-x]")) return widget.close(); // ✕ 收起(§3.13)
+    if (e.target.closest("[data-bubble-retry]")) return _submit(true); // 失败重试
     if (e.target.closest("[data-bubble-send]")) return _submit();
     const apply = e.target.closest("[data-apply]");
     if (apply) widget.apply_reply(Number(apply.dataset.apply));

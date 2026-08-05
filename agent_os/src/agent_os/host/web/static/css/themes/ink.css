@@ -21,6 +21,7 @@
   --fg-2: #8a8578;
   /* Widget 层(W6.0):W-log 深色面板底(宣纸主题的墨块压暗) */
   --log-bg: #23211c;
+  --log-fg: #d8d2c2;
 
   /* 语义:run/frame 状态。朱砂 #c0392b 是全主题唯一强调色,只给
      warn(paused)/danger(failed) 与印章;其余状态=不同深浅墨色(均深,
@@ -246,3 +247,13 @@
     radial-gradient(ellipse 60% 45% at 88% -4%, rgb(43 43 43 / 0.04), transparent 70%),
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.17 0 0 0 0 0.16 0 0 0 0 0.13 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
 }
+
+/* W6.4:深色日志面板(--log-bg)的 kind 色字提亮(同 moe 裁决;实测 5.5–7.1) */
+[data-theme="ink"] .wd-log-box .wd-log-line[data-kind="pre"] { color: #93a8cc; border-left-color: #93a8cc; }
+[data-theme="ink"] .wd-log-box .wd-log-line[data-kind="post"],
+[data-theme="ink"] .wd-log-box .wd-log-line[data-kind="run.start"],
+[data-theme="ink"] .wd-log-box .wd-log-line[data-kind="run.end"] { color: #7fb98f; border-left-color: #7fb98f; }
+[data-theme="ink"] .wd-log-box .wd-log-line[data-kind="err"],
+[data-theme="ink"] .wd-log-box .wd-log-line[data-kind="error"],
+[data-theme="ink"] .wd-log-box .wd-log-line[data-kind="run.error"] { color: #e07a6a; border-left-color: #e07a6a; }
+[data-theme="ink"] .wd-log-box .wd-log-line[data-kind="warn"] { color: #d9a06a; border-left-color: #d9a06a; }

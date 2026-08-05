@@ -26,8 +26,8 @@ export const CONTRACT_TOKENS = [
   // 基底
   "--bg-0", "--bg-1", "--bg-2", "--bg-3", "--line", "--line-strong",
   "--fg-0", "--fg-1", "--fg-2",
-  // Widget 层(docs/WIDGET-DESIGN.md §1.2;W6.0):W-log 深色面板底
-  "--log-bg",
+  // Widget 层(docs/WIDGET-DESIGN.md §1.2;W6.0/W6.4):W-log 深色面板底 + 面板正文色
+  "--log-bg", "--log-fg",
   // 状态
   "--ok", "--warn", "--danger", "--aborted", "--live",
   // 焦点可见性(docs/WEB-A11Y.md §5.2):颜色须逐主题自定义并过 ≥3:1 对比度断言;

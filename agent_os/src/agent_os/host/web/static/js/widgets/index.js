@@ -37,5 +37,5 @@ export { renderMarkdownViewer } from "./w-md.render.js";
 export { LOG_VIEWER_DEF, mountLogViewer } from "./w-log.js";
 export { renderLogViewer } from "./w-log.render.js";
 export { CHART_DEF, mountChart, chartSvg, chartTableHtml, downsample, niceTicks } from "./w-chart.js";
-export { renderChart } from "./w-chart.render.js";
+export { renderChart, chartTipHtml } from "./w-chart.render.js";
 export { renderBubble } from "./w-bubble.render.js";

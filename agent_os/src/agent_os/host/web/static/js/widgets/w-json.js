@@ -1,16 +1,20 @@
-/* W-json 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.2;W5.1 新形态:自渲染)。
+/* W-json 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.2;W5.1 新形态:自渲染;
+   W6.1 视觉按 docs/WIDGET-DESIGN.md §3.2)。
 
    state = W-text 面 + {error:{line, message}|null, schema};
-   actions 全 local:set_value(即时 JSON 合法性校验)/format(一键美化,幂等)/
-   validate(按 schema,字段级→行级提示);失焦校验;
+   actions 全 local:set_value/format(一键美化,幂等;非法禁用)/validate
+   (按 schema,字段级→行级提示);**失焦才校验**(§3.2:输入中不闪红——
+   输入只刷着色层,校验在 focusout/validate/format 路径);
    细节:**行级错误定位**(parse 错误的 position → 行号;schema 不合按字段名
-   搜行——错在哪一行显示,不是只报 message)。
+   搜行——错在哪一行显示,不是只报 message)、括号匹配(matchBrace,
+   字符串掩码跳过串内括号)、错误三件套(行号槽红点 + 红波浪 + 底部错误条
+   点击跳转并闪行 1.5s)。
    铁律:本文件不拼 HTML(渲染全在 w-json.render.js);零 fetch;事件上行。 */
 
 import { copy } from "../themes.js";
 import { registerWidgetDef } from "./registry.js";
 import { _mountText } from "./w-text.js";
-import { renderJsonEditor } from "./w-json.render.js";
+import { jsonHighlightHtml, jsonOkText, renderJsonEditor } from "./w-json.render.js";
 
 export const JSON_EDITOR_DEF = registerWidgetDef({
   kind: "json-editor",
@@ -93,9 +97,53 @@ export function formatJson(text) {
   return JSON.stringify(JSON.parse(text), null, 2);
 }
 
+/* 字符串掩码(纯):mask[i]=1 表示第 i 字符在串内(含引号),括号匹配跳过 */
+function _stringMask(s) {
+  const mask = new Uint8Array(s.length);
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      mask[i] = 1;
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') {
+      mask[i] = 1;
+      inStr = true;
+    }
+  }
+  return mask;
+}
+
+/* 括号匹配(§3.2;纯):光标邻位(pos-1 或 pos)是 {}[] 时找配对,
+   返回 [i, j] 绝对下标;串内括号不算;找不到/不在括号旁 → null */
+export function matchBrace(text, pos) {
+  const s = String(text ?? "");
+  const mask = _stringMask(s);
+  let idx = -1;
+  if ("{}[]".includes(s[pos - 1] ?? "")) idx = pos - 1;
+  else if ("{}[]".includes(s[pos] ?? "")) idx = pos;
+  if (idx < 0 || mask[idx]) return null;
+  const open = "{[".includes(s[idx]);
+  const want = { "{": "}", "[": "]", "}": "{", "]": "[" }[s[idx]];
+  let depth = 0;
+  for (let i = idx; i >= 0 && i < s.length; i += open ? 1 : -1) {
+    if (mask[i]) continue;
+    if (s[i] === s[idx]) depth += 1;
+    else if (s[i] === want) {
+      depth -= 1;
+      if (depth === 0) return [idx, i];
+    }
+  }
+  return null;
+}
+
 /* 自渲染装配(§1.3;宿主给空挂点 + data-field 或显式 options)。
-   错误条/绿勾 = render 面;校验结果进出走局部 hidden/文本刷新(不重渲,
-   不打断输入);format 经 update 面(全量重渲 + 选区保留) */
+   校验面(§3.2):**失焦才校验**(输入只刷着色层,不闪红);check() 局部
+   刷新(不重渲):错误条/✓ 徽标/format 禁用/行号槽红点/红波浪;
+   format 经 update 面(全量重渲 + 选区保留) */
 export function mountJsonEditor(host, { schema = null, surface = "tab", ...opts } = {}) {
   const widget = _mountText(host, JSON_EDITOR_DEF, {
     ...opts,
@@ -105,50 +153,87 @@ export function mountJsonEditor(host, { schema = null, surface = "tab", ...opts 
   });
   const textarea = () => host.querySelector("textarea");
 
+  /* 着色层局部刷新(不重渲):内容着色 + 错误行红波浪 + 括号匹配浅底;
+     滚动对齐(textarea 驱动) */
+  const syncHl = () => {
+    const pre = host.querySelector(".wd-hl");
+    const ta = textarea();
+    if (!pre || !ta) return;
+    const text = typeof ta.value === "string" ? ta.value : widget.state.value;
+    pre.innerHTML =
+      jsonHighlightHtml(text, {
+        errorLine: widget.state.error?.line ?? 0,
+        matches: matchBrace(text, ta.selectionStart ?? 0) ?? [],
+      }) + "\n";
+    pre.scrollTop = ta.scrollTop ?? 0;
+    pre.scrollLeft = ta.scrollLeft ?? 0;
+  };
+
   const check = () => {
     const live = textarea()?.value; // 活元素优先(失焦校验时 input 可能没来过)
     if (typeof live === "string") widget.state.value = live;
     widget.state.error =
       jsonErrorAt(widget.state.value) ?? schemaErrorAt(widget.state.value, widget.state.schema);
-    // 局部刷新(不重渲):错误条显隐 + 行级文案;绿勾随错误进出
+    const err = widget.state.error;
+    // 局部刷新(不重渲):错误条显隐 + 行级文案 + 跳转提示;绿勾随错误进出
     const bar = host.querySelector(".wd-errbar");
     if (bar) {
-      bar.hidden = !widget.state.error;
-      bar.textContent = widget.state.error
-        ? `${copy("w.json.errline").replace("{line}", String(widget.state.error.line))}: ${widget.state.error.message}`
+      bar.hidden = !err;
+      bar.textContent = err
+        ? `${copy("w.json.errline").replace("{line}", String(err.line))}: ${err.message}`
         : "";
     }
+    const hint = host.querySelector(".wd-err-hint");
+    if (hint) hint.hidden = !err;
     const okMark = host.querySelector(".wd-json-ok");
-    if (okMark) okMark.hidden = Boolean(widget.state.error) || !widget.state.value.trim();
+    if (okMark) {
+      const valid = !err && widget.state.value.trim();
+      okMark.hidden = !valid;
+      if (valid) okMark.textContent = `✓ ${jsonOkText(widget.state.value)}`; // 键数随内容刷新
+    }
+    const fmt = host.querySelector(".wd-format");
+    if (fmt) {
+      fmt.disabled = Boolean(err); // 非法禁用(§3.2),title 给原因
+      fmt.title = err ? copy("w.json.fmt_dis") : "";
+    }
+    host.querySelector(".wd-json")?.classList?.toggle("is-err", Boolean(err)); // card 左边条
+    for (const gl of [...(host.querySelectorAll?.(".wd-gl") ?? [])]) {
+      gl.classList?.toggle("is-err", gl.dataset?.line === String(err?.line ?? 0)); // 行号槽红点
+    }
+    syncHl(); // 红波浪/括号/着色(局部,不重渲全文)
   };
 
   if (surface !== "card") {
     // card 形态:open 委托已由 _mountText 挂好,交互监听一律不挂(§1.4)
     host.addEventListener("input", (e) => {
-      if (e.target === textarea()) check(); // 即时校验(行级定位)
+      if (e.target === textarea()) syncHl(); // 输入只刷着色层;不校验(§3.2 输入中不闪红)
     });
     host.addEventListener("focusout", (e) => {
-      if (e.target === textarea()) check(); // 失焦校验(§2)
+      if (e.target === textarea()) check(); // 失焦才校验(§3.2)
+    });
+    host.addEventListener("keyup", (e) => {
+      if (e.target === textarea()) syncHl(); // 括号匹配跟手
     });
     // 委托在 host(重渲后子元素换新,直接挂子元素监听会死——W5.1 自渲染纪律)
     host.addEventListener("click", (e) => {
       if (e.target.closest?.("[data-wd-format]")) return _format();
       if (e.target.closest?.("[data-wd-errbar]") && widget.state.error) {
-        _jumpToLine(widget.state.error.line); // 错误条点击跳到错误行(§2.2)
+        return _jumpToLine(widget.state.error.line); // 错误条点击跳错误行 + 闪行(§2.2/§3.2)
       }
+      if (e.target === textarea()) syncHl();
     });
   }
 
   const _format = () => {
     const ta = textarea();
     if (!ta) return;
-    if (jsonErrorAt(ta.value)) return check(); // 不合法不美化(先修错,§2)
+    if (jsonErrorAt(ta.value)) return check(); // 不合法不美化(先修错,§2;钮同时禁用)
     widget.update({ value: formatJson(ta.value) }); // 重渲 + 选区保留(W5.1 update 面)
     textarea()?.dispatchEvent?.(new Event("input", { bubbles: true })); // 同步宿主表单模型(lab 的 data-field 委托)
     check();
   };
 
-  /* 错误条点击 → 光标跳到错误行行首(§2.2 交互) */
+  /* 错误条点击 → 光标跳到错误行行首 + 该行闪烁 1.5s(§3.2) */
   const _jumpToLine = (line) => {
     const ta = textarea();
     if (!ta) return;
@@ -157,6 +242,13 @@ export function mountJsonEditor(host, { schema = null, surface = "tab", ...opts 
     ta.focus?.();
     ta.selectionStart = pos;
     ta.selectionEnd = pos;
+    ta.scrollTop = Math.max(0, (line - 2) * 20); // 行高 20px(= --text-sm × 1.6)
+    // 闪行(着色层该行一次性脉冲;stub 面区域不解析 [data-line=N],守卫 null)
+    const row = host.querySelector(".wd-hl")?.querySelector?.(`[data-line="${line}"]`);
+    if (row?.classList) {
+      row.classList.add("wd-flash");
+      setTimeout(() => row.classList.remove("wd-flash"), 1500);
+    }
   };
 
   widget.validate = (schemaArg = widget.state.schema) => {

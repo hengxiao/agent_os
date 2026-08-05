@@ -14,6 +14,8 @@
   --fg-0: #e6ebf2;   /* 主文本 */
   --fg-1: #9aa7ba;   /* 次文本 */
   --fg-2: #5d6b82;   /* 弱化/占位 */
+  /* Widget 层(docs/WIDGET-DESIGN.md §1.2;W6.0):W-log 深色面板底(效果图值) */
+  --log-bg: #0c1018;
 
   /* 语义:run/frame 状态(状态永远"颜色 + 图标/文字"双编码) */
   --ok:      #3fb68b;   /* done / success */

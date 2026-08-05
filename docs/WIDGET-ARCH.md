@@ -201,6 +201,8 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 | W5.4 ✅ | 清扫:宿主手写桥接代码删除;架构测试记录更新(弯腰点 ①⑤ 关闭情况) | 无装饰器残留 |
 | W5.5 ✅ | 控件沙盒(widget.html 调试页 + 样例表 + URL 协议) | 沙盒测试过 |
 | W5.6 ✅ | 渲染层双形态:13 控件 render(state, {surface}) + card 摘要视图 + mount surface 选项 + open 事件 + 沙盒形态切换 | 双形态测试全绿(两 surface × 全样例 + card 断言) |
+| W6.0 ✅ | 视觉基建(docs/WIDGET-DESIGN.md §1):--log-bg 契约 token(六主题)+ widgets.css 共享层(chip/badge/skeleton/empty/btn/动效工具类) | themes-contract + 结构断言过 |
+| W6.1 ✅ | W-text/W-json 按设计终稿重做(§3.1/§3.2):编辑器结构 + JSON 着色层 + 错误三件套 + 失焦校验 | 行为测试全绿 + 视觉结构断言过 |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
@@ -329,6 +331,47 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 >   mount 面 update 在 card 工作、json check() 钩子两形态共用、bubble open
 >   负载语义);widget-sandbox.test.mjs 逐样例 × 逐声明 surface 挂载矩阵 +
 >   surface URL 解析/序列化 + widget.html smoke 两项。
+>
+> **W6.0 实现注**(2026-08-04,分支 debugger;视觉基建,基准 docs/WIDGET-DESIGN.md §1):
+> - **tokens**:`--log-bg` 进 tokens.css(效果图值 #0c1018)+ 六主题 css
+>   压暗映射(classic 同步同值,moe/ink 亮主题给深色面板值)+
+>   CONTRACT_TOKENS 收录(themes-contract 逐主题盯);阴影三级沿用既有
+>   --shadow-sm/pop/md(设计文档已注映射,不动);reduced-motion 全局降级
+>   沿用 tokens.css 既有基线(不重复 media query)。
+> - **共享层**(widgets.css 首部):.wd-chip/.wd-badge(四 tone:ok/warn/
+>   danger/live;W5.6 的 badge 定义并入)/.wd-focus-ring(组装策略常量)/
+>   .wd-skeleton(wd-shimmer 1200ms)/.wd-empty-box(图标位+引导+主操作槽)/
+>   .wd-btn-primary/.wd-btn-ghost/.wd-a-*(120–160ms ease-out 工具类)——
+>   全契约 token;「widgets.css 零硬编码色值」进 widgets.test 静态断言。
+>
+> **W6.1 实现注**(2026-08-04;W-text/W-json 按 §3.1/§3.2 终稿重做):
+> - **W-text 结构**:头部(field · lang + readonly 🔒)+ .wd-editor(行号槽
+>   逐行 .wd-gl + .wd-code > textarea + 微标胶囊);行高 20px(=--text-sm×1.6)
+>   三面同算式;mono 变体 wrap=off(行号/着色对齐前提);当前行 = .wd-curline
+>   浮槽(syncCursor 写 top)+ 行号转正色;微标胶囊 = dirty 圆点 + 计数 +
+>   hover 行列 tip(syncCursor 写,全部局部 DOM 写不重渲);焦点环:has
+>   (textarea:focus-visible) 上移到编辑区容器(textarea 自身环让位,无
+>   :has 浏览器回落默认环);dirty = 编辑区左缘 inset 2px --live。
+> - **W-text card**:标题行(图标位 + 名称 500 + dirty 圆点 + 「打开 →」
+>   hover 渐显)+ 前三行预览(末行 .wd-fade 0.35)+ meta 行(行数·字数·
+>   relTime(updated_at));卡 hover 抬升 --shadow-pop(§1.2:hover 不改边框,
+>   W5.6 的 border-color hover 随之退役)。
+> - **W-json**:语法着色 = pre.wd-hl 叠层 + 透明文字 textarea(caret-color
+>   --live/选区 18%/placeholder 保持;滚动 capture 委托同步);着色器
+>   jsonHighlightHtml 逐字符扫描(tolerant,未闭合串不炸;token 四色走契约);
+>   matchBrace 字符串掩码跳过串内括号,<mark class="wd-brace"> 浅底;
+>   错误三件套 = 行号槽红点(.wd-gl.is-err::before)+ 整行红波浪
+>   (.wd-hl-line.is-err wavy underline)+ 底部错误条(✕ + 行级文案 +
+>   「点击跳转 →」,点击跳行并闪行 1.5s wd-flash);✓ 绿徽标带键数
+>   (jsonKeyCount 递归);format ghost 40%/hover 显形,非法 disabled + title
+>   说明;**失焦才校验**(§3.2 设计批准的行为变更:输入只刷着色层不闪红,
+>   widgets.test.mjs 即时校验块改写,其余行为面零改动);结构槽位化
+>   (textEditorTabHtml slots:overlay/headSide/foot),render 仍纯、lab.js
+>   岛屿首渲零改动;card = 状态胶囊/错误行 + 首行预览 + meta(UTF-8 大小 ·
+>   键数 · 相对时间),错误态 .is-err 左边条 --danger。
+> - **copy**:六主题新增 w.card.go/w.text.ph/w.text.pos/w.json.okn/w.json.keys/
+>   w.json.jump/w.json.fmt_dis/w.time.now/min/hour/day;w.json.ok 退役(被
+>   okn 取代)。
 
 ## 4. 不做
 

@@ -224,10 +224,12 @@ function _jsonHost(doc, { field = "inputsText" } = {}) {
   assert.equal(sj.error, null, "render 不改 state");
   assert.ok(hj.includes("wd-format"), "format 钮在");
   assert.ok(hj.includes('data-wd-errbar="1" hidden'), "合法时错误条隐");
-  assert.ok(hj.includes("wd-json-ok") && !hj.includes('wd-json-ok" aria-hidden="true" hidden'), "合法绿勾显");
+  assert.ok(hj.includes("wd-json-ok") && !hj.includes('wd-json-ok" hidden'), "合法 ✓ 徽标显(W6.1 胶囊)");
   const hjErr = renderJsonEditor({ ...sj, error: { line: 2, message: "bad token" } });
   assert.ok(hjErr.includes("bad token") && hjErr.includes('data-wd-errbar="1">'), "有错误 → 错误条显");
-  assert.ok(hjErr.includes('wd-json-ok" aria-hidden="true" hidden'), "有错误 → 绿勾隐");
+  assert.ok(hjErr.includes('wd-json-ok" hidden'), "有错误 → ✓ 徽标隐");
+  assert.ok(hjErr.includes("wd-err-hint") && hjErr.includes("点击跳转"), "错误条带跳转提示(§3.2)");
+  assert.ok(hjErr.includes('wd-format" data-wd-format="1" disabled'), "非法 → format 禁用(§3.2)");
 }
 
 {
@@ -240,21 +242,27 @@ function _jsonHost(doc, { field = "inputsText" } = {}) {
   assert.ok(ta, "自渲染产出 textarea");
   assert.equal(w.kind, "json-editor", "kind 归位");
   assert.ok(bar().hidden, "合法初值无错误条");
-  // 交互:非法 JSON 即时校验 → 行级定位(错在哪一行,不是只报 message)
+  // §3.2:**失焦才校验**——输入中不闪红(着色层照常局部刷新)
   ta.value = '{\n  "a": bad\n}';
   host.trigger("input", { target: ta });
-  assert.ok(w.state.error, "即时校验出错");
+  assert.equal(w.state.error, null, "输入中不校验(不闪红,§3.2)");
+  assert.ok(bar().hidden, "输入中错误条不出");
+  host.trigger("focusout", { target: ta });
+  assert.ok(w.state.error, "失焦才校验(§3.2)");
   assert.ok(!bar().hidden && bar().textContent.includes("第 2 行"), "行级错误定位上错误条");
-  // 修复 → 错误恢复
+  assert.ok(host.querySelector(".wd-format").disabled, "非法 → format 禁用(§3.2)");
+  // 修复:输入中旧错误不刷新,失焦复验恢复
   ta.value = '{\n  "a": 1\n}';
   host.trigger("input", { target: ta });
-  assert.equal(w.state.error, null, "错误恢复");
+  assert.ok(w.state.error, "输入中旧错误不清(等失焦)");
+  host.trigger("focusout", { target: ta });
+  assert.equal(w.state.error, null, "失焦复验:错误恢复");
   assert.ok(bar().hidden, "错误条收起");
-  // 失焦校验(§2)
+  assert.ok(!host.querySelector(".wd-format").disabled, "恢复合法 → format 解禁");
+  // 错误条点击 → 跳到错误行(§2.2;光标 = 行首偏移)
   ta.value = "{bad";
   host.trigger("focusout", { target: ta });
   assert.ok(w.state.error, "失焦校验");
-  // 错误条点击 → 跳到错误行(§2.2;光标 = 行首偏移)
   const barEl = bar();
   barEl.closest = (sel) => (sel === "[data-wd-errbar]" ? barEl : null); // dom-stub:region 无 dataset
   host.trigger("click", { target: barEl });
@@ -994,9 +1002,10 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
   const cases = [
     ["text-editor", renderTextEditor,
       { value: "一<script>\n二\n三\n四", dirty: true, mono: true, rows: 4, field: "p", label: "p" }, {},
-      (h) => h.includes("wd-gutter") && h.includes("wd-micro") && h.includes("is-dirty") &&
+      (h) => h.includes("wd-card-name") && h.includes("wd-card-dot") && h.includes("wd-card-go") &&
+        h.includes("wd-card-meta") && h.includes("4 行") && h.includes("wd-fade") &&
         h.includes("一&lt;script&gt;") && !h.includes("四"),
-      "mono 行号槽 + 微标 + dirty 边条;前 3 行预览(第 4 行不进卡);值转义"],
+      "标题行(名称+dirty 点+打开→)+ 前 3 行预览(末行渐隐,第 4 行不进卡)+ meta 行;值转义"],
     ["json-editor", renderJsonEditor,
       { value: '{"a<": 1}', mono: true, rows: 6, field: "j", label: "j", error: null }, {},
       (h) => h.includes("wd-json-ok") && h.includes('{&quot;a&lt;&quot;: 1}') && !h.includes("wd-format"),
@@ -1158,3 +1167,129 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
 }
 
 console.log("widgets.test.mjs: W5.6 dual-surface assertions passed");
+
+/* ── W6.0/W6.1:设计终稿(docs/WIDGET-DESIGN.md §1/§3.1/§3.2)──────────
+   基建:--log-bg 六主题契约、widgets.css 共享层在位、零硬编码色值;
+   W-text/W-json 视觉结构(关键类名/数据属性)+ 着色/括号/键数纯函数。 */
+
+const { jsonHighlightHtml, jsonKeyCount, matchBrace, relTime } =
+  await import("../js/widgets/index.js");
+
+{
+  // W6.0 基建:--log-bg 进 tokens + 六主题 css + CONTRACT_TOKENS
+  const tokensCss = readFileSync(join(import.meta.dirname, "../css/tokens.css"), "utf-8");
+  assert.ok(tokensCss.includes("--log-bg: #0c1018"), "tokens.css 有 --log-bg(效果图值)");
+  for (const t of ["classic", "moe", "terminal", "blueprint", "ink", "pixel"]) {
+    const css = readFileSync(join(import.meta.dirname, `../css/themes/${t}.css`), "utf-8");
+    assert.match(css, /--log-bg:\s*#\w+/, `${t} 定义 --log-bg(压暗映射)`);
+  }
+  const { CONTRACT_TOKENS } = await import("../js/themes.js");
+  assert.ok(CONTRACT_TOKENS.includes("--log-bg"), "--log-bg 进契约清单(themes-contract 盯)");
+
+  // widgets.css:共享层在位 + 零硬编码色值(契约 token 红线进测试)
+  const wcss = readFileSync(join(import.meta.dirname, "../css/widgets.css"), "utf-8");
+  const noComments = wcss.replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.ok(!/#[0-9a-f]{3,8}\b/i.test(noComments), "widgets.css 零硬编码色值");
+  for (const sel of [".wd-chip", ".wd-badge", ".wd-focus-ring", ".wd-skeleton", ".wd-empty-box",
+    ".wd-btn-primary", ".wd-btn-ghost", ".wd-a-fade", ".wd-a-lift"]) {
+    assert.ok(wcss.includes(sel), `共享层 ${sel} 在位`);
+  }
+  assert.ok(wcss.includes("[data-tone=\"ok\"]") && wcss.includes("[data-tone=\"danger\"]"),
+    "badge/chip 四 tone 齐(warn/live/ok/danger)");
+  assert.ok(wcss.includes("@keyframes wd-shimmer"), "skeleton shimmer 动效");
+  assert.ok(tokensCss.includes("prefers-reduced-motion"), "reduced-motion 全局降级(tokens.css 基线)");
+}
+
+{
+  // W6.1 W-text tab 视觉结构(§3.1):头部/行号槽逐行/当前行槽/微标胶囊/只读锁/占位
+  const h = renderTextEditor({ value: "a\nb", dirty: true, mono: true, rows: 4,
+    field: "prompt", label: "prompt", lang: "markdown" });
+  assert.ok(h.includes("wd-text-head") && h.includes("prompt · markdown"), "头部 field · lang");
+  assert.ok(h.includes('class="wd-gl" data-line="1">1<') && h.includes('data-line="2">2<'), "行号槽逐行槽位");
+  assert.ok(h.includes("wd-curline"), "当前行高亮槽在(逻辑面定位)");
+  assert.ok(h.includes("wd-micro-box") && h.includes("wd-micro-dot") && h.includes("wd-micro-tip"),
+    "微标胶囊:dirty 圆点 + 行列 tip 槽");
+  assert.ok(!h.includes('wd-micro-dot" aria-hidden="true" hidden'), "dirty → 圆点显");
+  assert.ok(h.includes('wrap="off"'), "mono 不软换行(行号/着色对齐前提)");
+  assert.ok(h.includes(`placeholder="${copy("w.text.ph")}"`), "占位文案(copy 键)");
+  const clean = renderTextEditor({ value: "a", dirty: false, mono: true, field: "f", label: "f" });
+  assert.ok(clean.includes('wd-micro-dot" aria-hidden="true" hidden'), "无 dirty → 圆点隐");
+  const ro = renderTextEditor({ value: "a", readonly: true, mono: true, field: "f", label: "f" });
+  assert.ok(ro.includes("wd-lock") && ro.includes("🔒"), "readonly 锁图标(§3.1)");
+  assert.ok(ro.includes("is-readonly"), "readonly 类(无光标/无脏条走 CSS)");
+  const plain = renderTextEditor({ value: "a", mono: false, field: "f", label: "f" });
+  assert.ok(!plain.includes("wd-gutter") && !plain.includes("wd-curline"), "plain 无行号槽/当前行槽");
+  assert.ok(renderTextEditor({ value: "a", mono: true, field: "f<x>", label: "f<x>" }).includes("f&lt;x&gt; · "),
+    "头部 field 转义");
+}
+
+{
+  // W6.1 W-text card(§3.1):标题行/预览渐隐/meta 相对时间
+  const now = Date.now() / 1000;
+  const h = renderTextEditor({ value: "一\n二\n三\n四", mono: false, field: "prompt", label: "晚餐助手",
+    updated_at: now - 180 }, { surface: "card" });
+  assert.ok(h.includes("wd-doc-ico") && h.includes("wd-card-name"), "标题行:图标位 + 名称");
+  assert.ok(h.includes("晚餐助手"), "名称 = label");
+  assert.ok(h.includes("wd-card-go"), "「打开 →」槽(hover 渐显走 CSS)");
+  assert.ok(h.includes("wd-fade"), "预览末行渐隐");
+  assert.ok(h.includes("wd-card-meta") && h.includes("4 行") && h.includes("3 分钟前"), "meta:行数·字数·相对时间");
+  // relTime 纯函数:刚刚/分钟/小时/天
+  assert.equal(relTime(now - 10, now), copy("w.time.now"), "relTime 刚刚");
+  assert.equal(relTime(now - 300, now), copy("w.time.min").replace("{n}", "5"), "relTime 分钟");
+  assert.equal(relTime(now - 7200, now), copy("w.time.hour").replace("{n}", "2"), "relTime 小时");
+  assert.equal(relTime(now - 3 * 86400, now), copy("w.time.day").replace("{n}", "3"), "relTime 天");
+}
+
+{
+  // W6.1 W-json 着色/键数/括号纯函数(§3.2:着色仅渲染层,不进 state)
+  const hl = jsonHighlightHtml('{\n  "name": "bot<x>", "n": 80, "ok": true\n}');
+  assert.ok(hl.includes('wd-tk-key">&quot;name&quot;'), "key = --live 槽");
+  assert.ok(hl.includes('wd-tk-str">&quot;bot&lt;x&gt;&quot;'), "string = --ok 槽 + 转义");
+  assert.ok(hl.includes('wd-tk-num">80') && hl.includes('wd-tk-num">true'), "number/bool = --warn 槽");
+  assert.ok(hl.includes('wd-tk-pn">{'), "标点弱色槽");
+  assert.ok(hl.includes('wd-hl-line" data-line="1"'), "逐行槽(行号/波浪对齐面)");
+  const hlErr = jsonHighlightHtml("{\nbad\n}", { errorLine: 2 });
+  assert.ok(hlErr.includes('wd-hl-line is-err" data-line="2"'), "错误行红波浪槽");
+  const hlMatch = jsonHighlightHtml("{}", { matches: [0, 1] });
+  assert.equal((hlMatch.match(/wd-brace/g) ?? []).length, 2, "括号匹配浅底(mark 注入)");
+  assert.equal(jsonKeyCount('{"a":1,"b":{"c":2},"d":[1,2]}'), 4, "键数递归统计(嵌套计入)");
+  assert.equal(jsonKeyCount("{bad"), null, "非法 JSON 键数 → null");
+  assert.deepEqual(matchBrace('{"a":[1,2]}', 1), [0, 10], "前向配对");
+  assert.deepEqual(matchBrace('{"a":[1,2]}', 11), [10, 0], "后向配对(光标在闭括号后)");
+  assert.equal(matchBrace('{"a":"}"]}', 7), null, "串内括号不算");
+  assert.equal(matchBrace("abc", 1), null, "不在括号旁 → null");
+}
+
+{
+  // W6.1 W-json tab 结构:着色层/✓ 胶囊(带键数)/format 禁用/错误条行
+  const ok = renderJsonEditor({ value: '{"a": 1}', mono: true, field: "inputsText",
+    label: "inputsText", error: null });
+  assert.ok(ok.includes("<pre class=\"wd-hl\""), "着色层 overlay 在");
+  assert.ok(ok.includes("wd-json-ok") && ok.includes("✓ JSON 合法 · 1 键"), "✓ 绿徽标带键数(§3.2)");
+  assert.ok(ok.includes("wd-text-head") && ok.includes("inputsText · json"), "头部 field · lang");
+  const err = renderJsonEditor({ value: "{bad", mono: true, field: "f", label: "f",
+    error: { line: 1, message: "Unexpected end" } });
+  assert.ok(err.includes('wd-hl-line is-err" data-line="1"'), "错误行红波浪进首渲");
+  assert.ok(err.includes('wd-format" data-wd-format="1" disabled'), "非法 → format 禁用 + title 说明");
+  assert.ok(err.includes(copy("w.json.fmt_dis")), "禁用说明文案(copy 键)");
+  assert.ok(err.includes("wd-err-hint"), "跳转提示槽在");
+  // card:错误态左边条 + meta(大小 · 键数)
+  const cardErr = renderJsonEditor({ value: "{bad", field: "f", label: "f",
+    error: { line: 1, message: "x" } }, { surface: "card" });
+  assert.ok(cardErr.includes("is-err"), "card 错误态 .is-err(左边条 --danger)");
+  assert.ok(cardErr.includes("wd-card-meta") && cardErr.includes(" B"), "card meta 带大小");
+  const cardOk = renderJsonEditor({ value: '{"a": 1}', field: "f", label: "f" }, { surface: "card" });
+  assert.ok(cardOk.includes("✓ JSON 合法 · 1 键") && cardOk.includes("1 键"), "card 合法胶囊 + meta 键数");
+  // mount:check() 初值同步——format 禁用/着色层已填(局部刷新路径)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  host.dataset.field = "inputsText";
+  doc.body.appendChild(host);
+  mountJsonEditor(host, { value: "{bad" });
+  assert.ok(host.querySelector(".wd-format").disabled, "mount 初值非法 → format 禁用(check 局部刷新)");
+  assert.ok(host.querySelector(".wd-hl").innerHTML.includes("wd-tk-key") ||
+    host.querySelector(".wd-hl").innerHTML.includes("wd-tk-pn"), "mount 后着色层已填(syncHl)");
+}
+
+console.log("widgets.test.mjs: W6.0/W6.1 design assertions passed");

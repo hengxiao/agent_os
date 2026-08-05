@@ -6,14 +6,15 @@ export { registerWidgetDef, getWidgetDef, listWidgetKinds } from "./registry.js"
 export { createWidget, preserveSelection, bindCardOpen } from "./widget.js";
 export { registerContextProvider, contextCascade } from "./cascade.js";
 export { TEXT_EDITOR_DEF, mountTextEditor } from "./w-text.js";
-export { renderTextEditor, textEditorMicro } from "./w-text.render.js";
-export { renderJsonEditor } from "./w-json.render.js";
+export { renderTextEditor, textEditorMicro, relTime } from "./w-text.render.js";
+export { renderJsonEditor, jsonHighlightHtml, jsonKeyCount, jsonOkText } from "./w-json.render.js";
 export {
   JSON_EDITOR_DEF_KIND,
   locateJsonError,
   jsonErrorAt,
   schemaErrorAt,
   formatJson,
+  matchBrace,
   mountJsonEditor,
 } from "./w-json.js";
 export { TABLE_EDITOR_DEF, mountTableEditor } from "./w-table.js";

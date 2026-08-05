@@ -1,29 +1,201 @@
 /* Widget 库样式(docs/WIDGET-ARCH.md §1.2;W5.1 从 app.css 拆出)。
    全契约 token(不许硬编码色值);[data-theme] 覆盖只许出现在主题 css
-   (组件零分支红线);语义 class 由 render 纯函数产出。 */
+   (组件零分支红线);语义 class 由 render 纯函数产出。
+   W6(docs/WIDGET-DESIGN.md):共享层(chip/badge/skeleton/empty/btn/动效)
+   与 W-text/W-json 编辑器视觉按设计终稿重做。 */
 
-/* W5.1 自渲染基座:W-text/W-json 新形态(§2.1/§2.2) */
-.wd-text { position: relative; display: block; }
-.wd-text textarea { width: 100%; }
-.wd-text .wd-micro { position: absolute; right: var(--s2); bottom: var(--s2); }
-.wd-text.is-dirty { border-left: var(--stroke-strong) solid var(--live); padding-left: var(--s1); }
-.wd-text.is-readonly textarea { background: var(--bg-2); cursor: not-allowed; }
-.wd-gutter {
-  display: block; float: left; padding: var(--s1) var(--s2) 0 0;
-  font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--fg-2);
-  white-space: pre; text-align: right; user-select: none;
+/* ── W6.0 共享层(docs/WIDGET-DESIGN.md §1 设计语言;全契约 token,4px 网格)── */
+/* chip 胶囊(§1.1:徽标/chip 圆角 999;状态 tone 永远"色 + 文案"双编码) */
+.wd-chip {
+  display: inline-flex; align-items: center; gap: var(--s1);
+  border: var(--stroke) solid var(--line); border-radius: 999px;
+  padding: 0 var(--s2); background: var(--bg-1);
+  color: var(--fg-1); font-size: var(--text-xs);
 }
-.wd-json-ok { color: var(--ok); font-size: var(--text-xs); margin-left: var(--s1); }
+.wd-chip[data-tone="ok"] { color: var(--ok); border-color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.wd-chip[data-tone="warn"] { color: var(--warn); border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.wd-chip[data-tone="danger"] { color: var(--danger); border-color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.wd-chip[data-tone="live"] { color: var(--live); border-color: var(--live); background: color-mix(in srgb, var(--live) 12%, transparent); }
+/* badge 计数徽标(chip 的弱态孪生:纯计数不交互;data-kind 是 W-diff 双编码别名) */
+.wd-badge {
+  display: inline-block; border: var(--stroke) solid var(--line); border-radius: 999px;
+  padding: 0 var(--s1); color: var(--fg-2); font-size: var(--text-xs);
+}
+.wd-badge[data-tone="ok"], .wd-card .wd-badge[data-kind="add"] { color: var(--ok); border-color: var(--ok); }
+.wd-badge[data-tone="danger"], .wd-card .wd-badge[data-kind="del"] { color: var(--danger); border-color: var(--danger); }
+.wd-badge[data-tone="warn"] {
+  color: var(--warn); border-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+.wd-badge[data-tone="live"] { color: var(--live); border-color: var(--live); }
+/* 焦点环工具类(§1.4:2px 环 offset 1px——宽度/偏移是 tokens.css 策略常量,
+   --focus-ring 是逐主题契约色;此处只组装,不定义) */
+.wd-focus-ring:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+/* skeleton 骨牌(§1.5 loading;shimmer 1200ms 循环;reduced-motion 全局降级
+   已在 tokens.css 基线,组件不重复) */
+@keyframes wd-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+.wd-skeleton {
+  border-radius: var(--r-sm);
+  background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3) 50%, var(--bg-2) 75%);
+  background-size: 200% 100%;
+  animation: wd-shimmer 1200ms ease-in-out infinite;
+}
+/* 空态通例(§1.5:图标位 + 一句引导 + 一个主操作;.wd-empty 行内弱文案沿用) */
+.wd-empty-box { display: grid; justify-items: center; gap: var(--s2); padding: var(--s4) var(--s2); }
+.wd-empty-ico { font-size: var(--text-xl); color: var(--fg-2); }
+.wd-empty-guide { color: var(--fg-1); font-size: var(--text-sm); }
+/* 按钮(§1.1:输入/按钮圆角 6 = --r-conn) */
+.wd-btn-primary {
+  border: var(--stroke) solid var(--live); background: var(--live); color: var(--bg-0);
+  border-radius: var(--r-conn); padding: var(--s1) var(--s3);
+  font-size: var(--text-sm); font-weight: 500; font-family: inherit; cursor: pointer;
+}
+.wd-btn-primary:hover { filter: brightness(1.1); }
+.wd-btn-primary:disabled { opacity: 0.4; cursor: default; }
+.wd-btn-ghost {
+  border: var(--stroke) solid var(--line); background: transparent; color: var(--fg-1);
+  border-radius: var(--r-conn); padding: var(--s1) var(--s3);
+  font-size: var(--text-sm); font-family: inherit; cursor: pointer;
+}
+.wd-btn-ghost:hover { border-color: var(--live); color: var(--fg-0); }
+.wd-btn-ghost:disabled { opacity: 0.4; cursor: default; }
+/* 动效工具类(§1.3:全场 120–160ms ease-out;prefers-reduced-motion 全局关动效
+   见 tokens.css 末尾基线,此处不重复 media query) */
+.wd-a-fade { transition: opacity 120ms ease-out; }
+.wd-a-color { transition: color 120ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out; }
+.wd-a-lift { transition: box-shadow 140ms ease-out, transform 140ms ease-out; }
+.wd-a-pop { transition: transform 140ms ease-out, opacity 140ms ease-out; }
+
+/* ── W6.1 W-text/W-json 编辑器(docs/WIDGET-DESIGN.md §3.1/§3.2)──
+   结构:root(.wd-text) > 头(.wd-text-head)+ 编辑区(.wd-editor =
+   行号槽 .wd-gutter + 代码区 .wd-code[> pre.wd-hl 着色层 + textarea])。
+   行高算式:mono 12.5px(--text-sm)× 1.6 = 20px 行距,槽/pre/textarea 三面一致。 */
+.wd-text {
+  position: relative; display: block;
+  background: var(--bg-1); border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+}
+.wd-text-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
+  padding: var(--s1) var(--s2); border-bottom: var(--stroke) solid var(--line);
+  color: var(--fg-1); font-size: var(--text-sm); font-weight: 500;
+}
+.wd-head-side { display: flex; align-items: center; gap: var(--s2); }
+.wd-lock { color: var(--fg-2); font-size: var(--text-xs); }
+.wd-editor { position: relative; display: flex; }
+/* dirty:编辑区左缘 2px --live 竖条(替代粗色块;§3.1) */
+.wd-text.is-dirty .wd-editor { box-shadow: inset var(--stroke-strong) 0 0 var(--live); }
+.wd-text.is-readonly .wd-editor { box-shadow: none; } /* readonly 无脏条(§3.1 验收) */
+.wd-gutter {
+  flex: none; width: calc(var(--s8) + var(--s1)); overflow: hidden;
+  padding: var(--s1) 0; user-select: none;
+}
+.wd-gl {
+  display: block; position: relative; text-align: right; padding-right: var(--s2);
+  font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg-2);
+  height: calc(var(--text-sm) * 1.6); line-height: calc(var(--text-sm) * 1.6);
+}
+.wd-gl.is-current { color: var(--fg-0); } /* 当前行行号转正色 */
+/* W-json 出错行号槽红点(§3.2 错误三件套之一) */
+.wd-gl.is-err::before {
+  content: ""; position: absolute; left: var(--s1); top: 50%; transform: translateY(-50%);
+  width: var(--s1-5); height: var(--s1-5); border-radius: 50%; background: var(--danger);
+}
+.wd-code { position: relative; flex: 1; min-width: 0; }
+.wd-text textarea.input, .wd-text textarea {
+  display: block; width: 100%; position: relative; z-index: 1;
+  background: transparent; border: 0; border-radius: 0; box-shadow: none;
+  padding: var(--s1) var(--s2); margin: 0;
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.6;
+  color: var(--fg-0); caret-color: var(--live); /* 光标 --live(§3.1) */
+}
+.wd-text textarea:hover { border: 0; }
+.wd-text textarea:focus { border: 0; box-shadow: none; }
+.wd-text textarea::selection { background: color-mix(in srgb, var(--live) 18%, transparent); } /* 选区 18% */
+.wd-text textarea::placeholder { color: var(--fg-2); font-style: normal; } /* 占位常规字弱色 */
+.wd-text.is-readonly .wd-code { background: var(--bg-2); } /* readonly 灰底(§2.1) */
+.wd-text.is-readonly textarea { cursor: default; caret-color: transparent; } /* readonly 无光标 */
+/* 焦点环:整编辑区外圈(§3.1;环上移到容器,textarea 自身环让位——焦点可见性
+   由容器 outline 承接,:has 不支持的浏览器回落 textarea 默认环,双保险) */
+@supports (selector(:has(*))) {
+  .wd-text:has(textarea:focus-visible) .wd-editor {
+    outline: var(--focus-ring-width) solid var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+    border-radius: var(--r-sm);
+  }
+  .wd-text .wd-code textarea:focus-visible { outline: none; }
+}
+/* 当前行整行 --bg-2 高亮(W-text mono;位置由逻辑面 syncCursor 写 top) */
+.wd-curline {
+  position: absolute; left: 0; right: 0; z-index: 0;
+  height: calc(var(--text-sm) * 1.6); background: var(--bg-2); pointer-events: none;
+}
+/* W-json 着色层(pre 叠在透明文字 textarea 之下;滚动由逻辑面同步) */
+.wd-code .wd-hl {
+  position: absolute; inset: 0; z-index: 0; margin: 0; overflow: hidden;
+  padding: var(--s1) var(--s2); pointer-events: none;
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.6;
+  color: var(--fg-2); /* 标点/弱色默认 */
+  white-space: pre;
+}
+.wd-json .wd-code textarea { color: transparent; } /* 文字透给着色层,光标仍在 */
+.wd-hl-line { min-height: calc(var(--text-sm) * 1.6); }
+.wd-hl-line.is-current { background: var(--bg-2); }
+.wd-hl-line.is-err { text-decoration: underline wavy var(--danger); } /* 红波浪(三件套之二) */
+.wd-tk-key { color: var(--live); }
+.wd-tk-str { color: var(--ok); }
+.wd-tk-num { color: var(--warn); }
+.wd-tk-pn { color: var(--fg-2); }
+.wd-brace { background: color-mix(in srgb, var(--live) 12%, transparent); color: inherit; border-radius: var(--r-sm); }
+/* 跳转后闪行 1.5s(§3.2 验收;一次性脉冲,非交互动效,不受 200ms 限) */
+@keyframes wd-flash {
+  from { background: color-mix(in srgb, var(--danger) 30%, transparent); }
+  to { background: transparent; }
+}
+.wd-hl-line.wd-flash { animation: wd-flash 1.5s ease-out; }
+/* 合法 ✓ 绿徽标(胶囊;tab 头部右侧 + card 状态行共用) */
+.wd-json-ok {
+  display: inline-block; border-radius: 999px; padding: 0 var(--s2);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok); font-size: var(--text-xs); font-weight: 500;
+}
+/* 底部错误条(三件套之三):✕ 图标 + 行级文案 + 右侧跳转提示;点击跳转在逻辑面 */
+.wd-foot { display: none; }
+.wd-foot:has(> :not([hidden])) {
+  display: flex; align-items: baseline; gap: var(--s2);
+  border-top: var(--stroke) solid var(--line); padding: var(--s1) var(--s2);
+}
+.wd-json .wd-errbar::before { content: "✕ "; font-weight: 600; }
+.wd-err-hint { margin-left: auto; color: var(--fg-2); font-size: var(--text-xs); white-space: nowrap; }
+/* 右下微标胶囊(dirty 圆点 + 计数;hover 出行列 tip) */
+.wd-micro-box {
+  position: absolute; right: var(--s2); bottom: var(--s2); z-index: 2;
+  display: flex; align-items: center; gap: var(--s1);
+  background: var(--bg-2); border: var(--stroke) solid var(--line); border-radius: 999px;
+  padding: 0 var(--s2);
+}
+.wd-micro-dot { width: var(--s1-5); height: var(--s1-5); border-radius: 50%; background: var(--live); }
+.wd-micro-tip {
+  display: none; position: absolute; right: 0; bottom: 100%; margin-bottom: var(--s1);
+  background: var(--bg-2); border: var(--stroke) solid var(--line); border-radius: var(--r-conn);
+  padding: 0 var(--s2); box-shadow: var(--shadow-pop); white-space: nowrap;
+  color: var(--fg-0); font-size: var(--text-xs);
+}
+.wd-micro-box:hover .wd-micro-tip { display: block; }
 
 /* ── Widget 库(docs/WIDGETS.md;全契约 token,组件零主题分支)── */
 
-/* 微标(W-text 行数/字数) */
+/* 微标文本(胶囊内;11px 弱色,§3.1) */
 .wd-host { display: block; }
 .wd-micro {
   display: inline-block;
-  font-size: var(--text-2xs);
-  color: var(--fg-2);
-  margin-top: var(--s1);
+  font-size: var(--text-xs);
+  color: var(--fg-1);
 }
 
 /* W-json 行级错误条 */
@@ -33,22 +205,23 @@
   margin-top: var(--s1);
 }
 
-/* W-json format 钮 */
+/* W-json format 钮(ghost:平时 40% 透明,hover 显形,§3.2) */
 .wd-format {
   border: var(--stroke) solid var(--line);
-  background: var(--bg-2);
+  background: transparent;
   color: var(--fg-1);
-  border-radius: var(--r-sm);
-  font-size: var(--text-2xs);
+  border-radius: var(--r-conn);
+  font-size: var(--text-xs);
   font-family: inherit;
   cursor: pointer;
   padding: 0 var(--s2);
-  margin-top: var(--s1);
+  opacity: 0.4;
+  transition: opacity 120ms ease-out;
 }
-.wd-format:hover { border-color: var(--live); color: var(--fg-0); }
-.wd-format:focus-visible { outline: var(--stroke-strong) solid var(--live); }
+.wd-format:hover { opacity: 1; border-color: var(--live); color: var(--fg-0); }
+.wd-format:focus-visible { opacity: 1; outline: var(--focus-ring-width) solid var(--focus-ring); }
 .wd-format:active { background: var(--bg-3); }
-.wd-format:disabled { opacity: 0.5; cursor: default; }
+.wd-format:disabled { opacity: 0.25; cursor: default; }
 
 /* ── W3:W-form / W-list / W-tree / W-date(全契约 token)── */
 .wd-req { color: var(--danger); }
@@ -193,22 +366,30 @@ th .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(-
 .wd-md-copy:hover { color: var(--fg-0); border-color: var(--live); }
 
 /* ── W5.6:双形态 card 面(docs/WIDGET-ARCH.md §1.4;全契约 token,组件零主题分支)── */
-/* 卡基座:整卡即 open 入口(role=button;卡内无任何编辑控件) */
+/* 卡基座:整卡即 open 入口(role=button;卡内无任何编辑控件);
+   静态 --shadow-1(≈--shadow-sm),hover 抬升 --shadow-2(≈--shadow-pop)——
+   §1.2:hover 不改边框不改字色 */
 .wd-card {
   display: block; position: relative; cursor: pointer;
   border: var(--stroke) solid var(--line); border-radius: var(--r-md);
   background: var(--bg-1); padding: var(--s2);
-  color: var(--fg-1); font-size: var(--text-2xs);
+  color: var(--fg-1); font-size: var(--text-xs);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 140ms ease-out;
 }
-.wd-card:hover { border-color: var(--live); }
-.wd-card:focus-visible { outline: var(--stroke-strong) solid var(--live); }
-/* 卡内微标回流通档(tab 面 .wd-text .wd-micro 是绝对定位) */
+.wd-card:hover { box-shadow: var(--shadow-pop); }
+.wd-card:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+/* 卡内微标回流通档(tab 面 .wd-micro 在胶囊内) */
 .wd-card .wd-micro { position: static; }
 /* 摘要行:单行截断省略号(商业卡标准) */
 .wd-card-line {
   display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 1px 0;
 }
+.wd-fade { opacity: 0.35; } /* 预览末行渐隐(§3.1) */
 /* 摘录段:2 行截断(W-md card) */
 .wd-card-excerpt {
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -221,19 +402,25 @@ th .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(-
 .wd-card-num { color: var(--fg-0); font-family: var(--font-mono); font-size: var(--text-sm); }
 .wd-card-col { color: var(--fg-0); }
 .wd-card-col .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(--s1); }
-/* 计数/状态徽标(双编码:色调 + 文字/符号同在) */
-.wd-badge {
-  display: inline-block; border: var(--stroke) solid var(--line); border-radius: var(--r-sm);
-  padding: 0 var(--s1); color: var(--fg-2); font-size: var(--text-2xs);
+/* W6.1 card 件:名称(500)/ 文档图标位 / dirty 圆点 / 「打开 →」hover 渐显 /
+   底部 meta 行(行数·字数·相对时间) */
+.wd-card-name { color: var(--fg-0); font-size: var(--text-sm); font-weight: 500; }
+.wd-doc-ico {
+  flex: none; width: var(--s2); height: var(--s3);
+  border: var(--stroke) solid var(--fg-2); border-radius: var(--r-sm);
 }
-.wd-badge[data-tone="warn"] {
-  color: var(--warn); border-color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
+.wd-card-dot { flex: none; width: var(--s1-5); height: var(--s1-5); border-radius: 50%; background: var(--live); }
+.wd-card-go {
+  margin-left: auto; color: var(--live); font-size: var(--text-xs);
+  opacity: 0; transition: opacity 120ms ease-out;
 }
-.wd-badge[data-tone="live"] { color: var(--live); border-color: var(--live); }
-.wd-card .wd-badge[data-kind="add"] { color: var(--ok); border-color: var(--ok); }
-.wd-card .wd-badge[data-kind="del"] { color: var(--danger); border-color: var(--danger); }
-/* W-json card:✕ 前缀(CSS 面;文本通道 = errbar 行级文案,逻辑面 check() 直写 textContent) */
-.wd-card .wd-errbar::before { content: "✕ "; }
-.wd-card .wd-json-ok { margin-left: 0; }
+.wd-card:hover .wd-card-go, .wd-card:focus-visible .wd-card-go { opacity: 1; }
+.wd-card-meta {
+  display: block; margin-top: var(--s1); padding-top: var(--s1);
+  border-top: var(--stroke) solid var(--line);
+  color: var(--fg-2); font-size: var(--text-xs);
+}
+/* W-json card 错误态:整卡左边条 --danger(§3.2;内外阴影叠加以保留抬升) */
+.wd-card.is-err { box-shadow: inset var(--stroke-accent) 0 0 var(--danger), var(--shadow-sm); }
+.wd-card.is-err:hover { box-shadow: inset var(--stroke-accent) 0 0 var(--danger), var(--shadow-pop); }
 .wd-chart-mini { display: block; }

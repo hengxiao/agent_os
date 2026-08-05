@@ -101,6 +101,11 @@
   --shadow-pop: 0 4px 16px rgb(0 0 0 / 0.5);  /* Toast / Tooltip 浮层 */
   --overlay: rgb(0 0 0 / 0.55);               /* Modal 遮罩(§3.3 Modal) */
 
+  /* ── Widget 层(docs/WIDGET-DESIGN.md §1.2;W6.0)──────────────────
+     --log-bg:W-log 深色面板底(效果图 #0c1018;契约 token——六主题各自
+     压暗映射,主题 css 必须定义,themes-contract 盯完整性) */
+  --log-bg: #0c1018;
+
   /* ── P4 追加:Web 调试台(#/debug;classic 主题,不动既有 token。
         主题系统与 moe 主题规格见 docs/DEBUG-UI-THEMES.md / docs/DEBUG-UI-MOE.md)── */
   --debug-paused-bg: rgb(217 160 63 / 0.14); /* 暂停行底色(--warn 低透明铺底) */

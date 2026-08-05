@@ -6,11 +6,16 @@
    挂载流:destroy 旧实例 → 清空舞台 → 按样例 options mount →
    订阅 def.events 全部事件写 Events 面板;State 面板事件触发 + 500ms
    轮询刷新,「应用」走 widget.update()(无 update 的控件禁用并提示)。
-   纯函数(parseSandboxUrl/buildSandboxUrl)供单测;页面入口 = bootSandbox()。 */
+   纯函数(parseSandboxUrl/buildSandboxUrl)供单测;页面入口 = bootSandbox()。
+   构建号(报告 §6 流程项):BUILD 常量是缓存破坏与验收对版的单一来源——
+   widget.html 的 css/js 链接 ?v= 与本常量同步(改 widget 代码时一起改)。 */
 
 import { applyTheme, initTheme, listThemes } from "./themes.js";
 import * as widgets from "./widgets/index.js";
 import { SAMPLES } from "./widgets/samples.js";
+
+/* 构建号(缓存破坏 ?v= 与页角显示;改 widget 代码时与 widget.html 链接同步) */
+export const BUILD = "2026-08-05";
 
 /* URL 解析(纯函数):未知 kind → null(调用方回落);坏 options JSON →
    optionsError 标记(不崩页面);sample 非法 → 0。 */
@@ -64,6 +69,7 @@ export function bootSandbox() {
 
   const url = parseSandboxUrl(location.search, location.hash);
   const kinds = Object.keys(SAMPLES);
+  $("#sb-build").textContent = `build ${BUILD}`; // 页角构建号(报告 §6)
   const current = {
     kind: url.kind ?? kinds[0],
     sample: Math.min(url.sample, (SAMPLES[url.kind ?? kinds[0]].samples.length - 1)),

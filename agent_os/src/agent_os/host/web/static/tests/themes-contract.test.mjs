@@ -106,6 +106,15 @@ for (const theme of themes) {
       ratio >= 4.5,
       `[${theme.id}] ${fg}(${tokens[fg]}) vs ${bg}(${tokens[bg]}) = ${ratio.toFixed(2)}:1 < 4.5:1`);
   }
+  /* ══ 2b. 深面板配对(F1 验收:W-md 代码块/W-log 面板内文字 = --log-fg,
+     底色 = --log-bg,六主题必须 ≥4.5:1——亮主题主 fg 是深色,压暗面板
+     须用亮色正文 token)══ */
+  for (const [fg, bg] of [["--log-fg", "--log-bg"]]) {
+    const ratio = contrast(tokens[fg], tokens[bg]);
+    assert.ok(
+      ratio >= 4.5,
+      `[${theme.id}] ${fg}(${tokens[fg]}) vs ${bg}(${tokens[bg]}) = ${ratio.toFixed(2)}:1 < 4.5:1(F1 深面板)`);
+  }
   for (const [fg, bg] of DIM_PAIRS) {
     const ratio = contrast(tokens[fg], tokens[bg]);
     assert.ok(

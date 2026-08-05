@@ -206,6 +206,7 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 | W6.2 ✅ | W-table/W-kv/W-form 按设计终稿重做(§3.3-3.5):内联编辑/⚠ tooltip/switch/chips/stepper/操作行 | 行为测试全绿 + 视觉结构断言过 |
 | W6.3 ✅ | W-list/W-tree/W-date 按设计终稿重做(§3.6-3.8):命中高亮/调光过滤/双月弹层/纠序闪提示 | 行为测试全绿 + 视觉结构断言过 |
 | W6.4 ✅ | W-chart/W-log/W-diff/W-md/W-bubble 按设计终稿重做(§3.9-3.13):tooltip/深色面板/双编码行/排印阶梯/气泡卡 | 行为测试全绿 + 视觉结构断言过 |
+| W6.5 ✅ | 视觉验收报告发现项(F1-F7)+ 流程两项(构建号/文案契约) | 对比度实测断言 + 结构断言全绿 |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
@@ -475,6 +476,29 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 > - **copy**:六主题新增 19 键(w.chart.trimmed/latest/meta、w.log.truncated/
 >   pause/follow2/paused/emptyhint/errn/following/capped、w.diff.fold/ctx/
 >   split/unified/nochange、w.md.empty、w.bubble.you/comment/fail/retry/close)。
+>
+> **W6.5 实现注**(2026-08-05,分支 debugger;视觉验收报告发现项 F1-F7 + 流程两项):
+> - **F1(P0)**:W-md 代码块文字改 `--log-fg`(与 --log-bg 配对)——浅色
+>   主题(moe/ink)原实测 1.14:1,修后六主题 7.81–12.85;W-json 着色层
+>   同步复查:编辑区底是 --bg-1 非深底,key/str/num/标点四色六主题
+>   5.35–13.27 全过(fg-2 3.39–4.31 弱色档 ≥3);themes-contract 新增
+>   「深面板配对」断言(--log-fg vs --log-bg ≥4.5,逐主题)。
+> - **F2(P1)**:tier 徽标配齐三类并补 split 路径——●reversible(--ok)/
+>   ▲escalate(--warn)/■irreversible(--danger),split/unified 成员行
+>   同接(W6.4 只接了 unified);无 tier 不渲染(有断言)。
+> - **F3(P2)**:classic `w.json.format` =「格式化」(逐字 spec);moe
+>   「美美化」等主题语气不动(特性,见 DESIGN §5)。
+> - **F4(P2)**:W-form 帮助文字/错误行收进字段根元素——原 text 分支
+>   help/errbar 是 grid 直接子项(落右侧格),现每字段单一 grid 项,
+>   help 贴控件下、错误行在其下。
+> - **F5(P2)**:W-tree 叶子显示短名(末段),全名留 `title` tooltip 与
+>   `data-wt-leaf` 寻址;单层链折叠行不受影响。
+> - **F6(P2)**:`.wd-md a` 常显下划线。
+> - **F7(P2)**:W-md card 摘录剥壳——`>` 前缀、行内符号、链接取纯文本。
+> - **流程**:widget.html 全部 /static 链接带 `?v=<build>`(缓存破坏),
+>   页角构建号元素 + `widget-sandbox.js` 的 `BUILD` 常量(单一来源,
+>   手动同步,测试盯三方一致);WIDGET-DESIGN.md 新增 §5「主题文案契约」
+>   (功能文案随主题变是特性:classic 逐字对 spec,其它主题只验语义)。
 
 ## 4. 不做
 

@@ -33,14 +33,16 @@ function _fieldHtml(state, spec, fPath, label) {
   const help = spec?.description ? `<span class="wd-help">${esc(spec.description)}</span>` : "";
   const errCls = err ? " wd-field-err" : "";
   if (spec?.type === "boolean") {
-    // iOS 式 switch(§3.5):开 = --live 居右,关 = --bg-3 居左,120ms 滑动
+    // iOS 式 switch(§3.5):开 = --live 居右,关 = --bg-3 居左,120ms 滑动;
+    // help/错误行收在字段根内(F4:grid 每项一个字段,帮助文字贴控件下)
     return (
       `<label class="lab-field${errCls}">${labelHtml}` +
       `<button type="button" class="wd-switch" role="switch" aria-checked="${value ? "true" : "false"}"` +
       ` data-f="${esc(fPath)}" aria-label="${esc(label ?? fPath)}">` +
       `<span class="wd-switch-knob" aria-hidden="true"></span></button>` +
       help +
-      `</label>` + errHtml
+      errHtml +
+      `</label>`
     );
   }
   if (spec?.type === "enum" || spec?.enum) {
@@ -58,7 +60,8 @@ function _fieldHtml(state, spec, fPath, label) {
         .join("") +
       `</span>` +
       help +
-      `</div>` + errHtml
+      errHtml +
+      `</div>`
     );
   }
   if (spec?.type === "object") {
@@ -73,7 +76,8 @@ function _fieldHtml(state, spec, fPath, label) {
       `<fieldset class="wd-nest${errCls}"><legend>${esc(label ?? fPath)}</legend>` +
       help +
       inner +
-      `</fieldset>` + errHtml
+      errHtml +
+      `</fieldset>`
     );
   }
   if (spec?.type === "array") {
@@ -94,10 +98,10 @@ function _fieldHtml(state, spec, fPath, label) {
       })
       .join("");
     return (
-      `<div class="wd-arr${errCls}">${labelHtml}${rows}` +
+      `<div class="wd-arr${errCls}">${labelHtml}${rows}${help}` +
       `<button class="wd-add" data-f-add="${esc(fPath)}">+ ${esc(copy("w.form.additem"))}</button>` +
-      help +
-      `</div>` + errHtml
+      errHtml +
+      `</div>`
     );
   }
   if (spec?.type === "integer" || spec?.type === "number") {
@@ -110,13 +114,16 @@ function _fieldHtml(state, spec, fPath, label) {
       `<button type="button" class="wd-step" data-f-step="${esc(fPath)}:1" aria-label="+">+</button>` +
       `</span>` +
       help +
-      `</label>` + errHtml
+      errHtml +
+      `</label>`
     );
   }
   return (
     `<label class="lab-field${errCls}">${labelHtml}` +
-    `<input class="input" type="text" data-f="${esc(fPath)}" value="${esc(String(value ?? ""))}"></label>` +
-    help + errHtml
+    `<input class="input" type="text" data-f="${esc(fPath)}" value="${esc(String(value ?? ""))}">` +
+    help +
+    errHtml +
+    `</label>`
   );
 }
 

@@ -1829,3 +1829,77 @@ const { chartTipHtml, renderChart: _rc64, renderLogViewer: _rl64, renderDiffView
 }
 
 console.log("widgets.test.mjs: W6.4 design assertions passed");
+
+/* ── W6.5:视觉验收报告发现项(F1-F7)+ 流程两项 ─────────────────── */
+
+{
+  // F1:W-md 代码块文字 = --log-fg(与 --log-bg 配对;数值断言在
+  // themes-contract 的「深面板配对」——六主题 ≥4.5:1 已实测)
+  const wcss = readFileSync(join(import.meta.dirname, "../css/widgets.css"), "utf-8");
+  const codeRule = wcss.match(/\.wd-md-code\s*\{[^}]*\}/g)?.find((r) => r.includes("--log-bg"));
+  assert.ok(codeRule?.includes("var(--log-fg)"), "F1:代码块文字走 --log-fg");
+  // F1 同步检查:W-json 着色 token 亮/暗面都走契约(key=--live/str=--ok/
+  // num=--warn/标点 --fg-2,底是 --bg-1 非深底)——对比度由 themes-contract
+  // TEXT_PAIRS(ok/warn/live × bg-0..2 ≥4.5,fg-2 ≥3)覆盖,无硬编码色
+  for (const tk of ["wd-tk-key", "wd-tk-str", "wd-tk-num", "wd-tk-pn"]) {
+    assert.ok(wcss.includes(`.${tk}`), `F1 同步:着色类 ${tk} 在位(契约色)`);
+  }
+
+  // F2:tier 徽标三类接线(split/unified 成员行;无 tier 不渲染)
+  const mk = (tier) => ({ left: { members: [{ member: "m", status: "changed", tier,
+    fields: [], prompt_diff: [{ kind: "add", text: "新" }] }] }, mode: "split", expanded: [] });
+  assert.ok(renderDiffViewer(mk("reversible")).includes('wd-tier" data-tone="ok">● reversible'),
+    "F2:●reversible --ok(split)");
+  assert.ok(renderDiffViewer(mk("escalate")).includes('wd-tier" data-tone="warn">▲ escalate'),
+    "F2:▲escalate --warn(split)");
+  assert.ok(renderDiffViewer(mk("irreversible")).includes('wd-tier" data-tone="danger">■ irreversible'),
+    "F2:■irreversible --danger(split)");
+  const mkU = (tier) => ({ ...mk(tier), mode: "unified" });
+  assert.ok(renderDiffViewer(mkU("escalate")).includes("▲ escalate"), "F2:unified 成员行同接");
+  assert.ok(!renderDiffViewer({ left: { members: [{ member: "m", status: "changed", fields: [],
+    prompt_diff: [] }] }, mode: "split", expanded: [] }).includes("wd-tier"), "F2:无 tier → 无徽标");
+
+  // F3:classic format 文案逐字 = spec「格式化」;moe 语气是特性不动
+  assert.equal(copy("w.json.format"), "格式化", "F3:classic 逐字 spec");
+  const { COPY: moeCopy } = await import("../js/copy/moe.js");
+  assert.equal(moeCopy["w.json.format"], "美美化", "F3:moe 语气保留(特性)");
+
+  // F4:帮助文字/错误行收在字段根内(grid 每项一个字段,贴控件下)
+  const hf = renderFormEditor({ values: { city: "x" }, errors: { city: "错" },
+    schema: { required: ["city"], properties: { city: { type: "string", description: "帮助一句" } } } });
+  const fieldBlock = hf.match(/<label class="lab-field[^"]*wd-field-err">[\s\S]*?<\/label>/)?.[0] ?? "";
+  assert.ok(fieldBlock, "F4:字段根元素单一(grid 不串格)");
+  assert.ok(fieldBlock.indexOf("wd-help") > fieldBlock.indexOf("data-f=\"city\""), "F4:help 在控件之下");
+  assert.ok(fieldBlock.indexOf("wd-errbar") > fieldBlock.indexOf("wd-help"), "F4:错误行在 help 之下(同根内)");
+  assert.ok(!/wd-help<\/span><label/.test(hf), "F4:help 不外露为 grid 直接子项");
+
+  // F5:叶子显示短名(末段),全名留 title;单层链折叠行不受影响
+  const ht = renderTreeWidget({ nodes: [{ name: "system.net.http_fetch" }, { name: "weather.forecast" }],
+    expanded: ["system", "system.net", "weather"], selected: null, filter: "" });
+  assert.ok(ht.includes('title="weather.forecast">forecast<'), "F5:短名 forecast + title 全名");
+  assert.ok(ht.includes('title="system.net.http_fetch">http_fetch<'), "F5:短名 http_fetch + title 全名");
+  assert.ok(ht.includes('data-wt-leaf="weather.forecast"'), "F5:寻址仍全名(data-wt-leaf)");
+
+  // F6:链接常显下划线
+  assert.ok(/\.wd-md a \{[^}]*text-decoration: underline/.test(wcss), "F6:.wd-md a 常显下划线");
+
+  // F7:card 摘录剥壳(引用 >、行内符号、链接取纯文本)
+  const hc = renderMarkdownViewer({ source: "# t\n\n> **引用一句** 和 [链接](https://a.com) 混排\n\n第二段" },
+    { surface: "card" });
+  assert.ok(hc.includes("引用一句 和 链接 混排"), "F7:摘录纯文本(剥 >/符号/链接)");
+  assert.ok(!hc.includes("**") && !hc.includes("&gt;"), "F7:摘录不带原始标记");
+}
+
+{
+  // 流程项:沙盒构建号(BUILD 常量 = 链接 ?v= = 页角元素)
+  const html = readFileSync(new URL("../widget.html", import.meta.url), "utf8");
+  const { BUILD } = await import("../js/widget-sandbox.js");
+  assert.ok(html.includes('id="sb-build"'), "流程:页角构建号元素");
+  assert.ok(html.includes(`?v=${BUILD}`), "流程:css/js 链接带 ?v=BUILD(缓存破坏)");
+  const links = [...html.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]);
+  const staticLinks = links.filter((l) => l.startsWith("/static/"));
+  assert.ok(staticLinks.length > 0 && staticLinks.every((l) => l.includes(`?v=${BUILD}`)),
+    "流程:全部 /static 链接与 BUILD 同步(改代码一起改)");
+}
+
+console.log("widgets.test.mjs: W6.5 acceptance-fix assertions passed");

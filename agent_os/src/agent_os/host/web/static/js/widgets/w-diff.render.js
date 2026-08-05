@@ -26,6 +26,7 @@ function _splitMemberHtml(m) {
     .join("");
   return (
     `<div class="pf-dmember"><span class="mono">${esc(m.member)}</span>` +
+    _tierBadge(m) +
     `<span class="lab-pkg-status" data-status="${esc(m.status)}">${esc(m.status)}</span>` +
     fields + lines + `</div>`
   );
@@ -78,12 +79,13 @@ function _unifiedMemberHtml(m, expanded) {
   );
 }
 
-/* tier 徽标(§3.11:●reversible 绿 / ▲escalate 黄;双编码:符号 + 色 + 文案) */
+/* tier 徽标(§3.11/F2:●reversible --ok / ▲escalate --warn / ■irreversible
+   --danger;符号+色+文案三通道;split/unified 成员行都接) */
 function _tierBadge(m) {
   if (!m?.tier) return "";
-  const tone = m.tier === "reversible" ? "ok" : m.tier === "escalate" ? "warn" : "";
-  const glyph = m.tier === "reversible" ? "●" : m.tier === "escalate" ? "▲" : "·";
-  return `<span class="wd-badge"${tone ? ` data-tone="${tone}"` : ""}>${glyph} ${esc(m.tier)}</span>`;
+  const tone = m.tier === "reversible" ? "ok" : m.tier === "escalate" ? "warn" : m.tier === "irreversible" ? "danger" : "";
+  const glyph = m.tier === "reversible" ? "●" : m.tier === "escalate" ? "▲" : "■";
+  return `<span class="wd-badge wd-tier"${tone ? ` data-tone="${tone}"` : ""}>${glyph} ${esc(m.tier)}</span>`;
 }
 
 /* 增删计数 + hunk 数(非 same 连续段为 1 hunk;全成员合计;纯) */

@@ -318,6 +318,7 @@
 .wd-md ul { margin: var(--s1) 0; padding-left: var(--s4); }
 .wd-md-code {
   background: var(--log-bg); border-radius: var(--r-md); padding: var(--s2);
+  color: var(--log-fg); /* 深底代码块文字 = --log-fg(F1:与 --log-bg 配对,六主题 ≥4.5) */
   white-space: pre-wrap; word-break: break-word; font-size: var(--text-xs);
 }
 .wd-md-table { border-collapse: collapse; font-size: var(--text-xs); }
@@ -508,8 +509,7 @@ th .wd-type { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(-
 .wd-md-quote { border-left: var(--stroke-accent) solid var(--line-strong); color: var(--fg-2); margin: var(--s2) 0; padding: 0 var(--s2); }
 .wd-md ul { padding-left: calc(var(--s4) + var(--s1)); } /* 列表缩进 20px */
 .wd-md ul ::marker { color: var(--fg-2); }
-.wd-md a { color: var(--live); text-decoration: none; }
-.wd-md a:hover { text-decoration: underline; }
+.wd-md a { color: var(--live); text-decoration: underline; } /* 常显下划线(F6,spec SVG) */
 .wd-md-table th { background: var(--bg-2); }
 .wd-md-cardtitle { color: var(--fg-0); font-size: 15px; font-weight: 600; } /* §1.1 阶梯:15 标题 */
 /* W-bubble(§3.13):卡本体件(浮出壳/箭头/圆标在宿主 platform.css,不动) */

@@ -156,8 +156,8 @@ export function renderMarkdownViewer(state, { surface = "tab" } = {}) {
   );
 }
 
-/* card 面(§1.4):首个标题 + 首段摘录(跳过代码块/列表/表格行,连续正文行
-   合并为一段,2 行截断走 CSS .wd-card-excerpt);整体先转义,与 mdToHtml 同纪律 */
+/* card 面(§3.12):首个标题 + 首段摘录(跳过代码块/列表/表格行;
+   引用块取纯文本——剥 `>`/行内符号,不带着原始标记进卡,F7) */
 function _mdCardHtml(state) {
   const lines = String(state.source ?? "").split("\n");
   let title = "";
@@ -169,7 +169,7 @@ function _mdCardHtml(state) {
       continue;
     }
     if (inCode) continue;
-    const t = line.trim();
+    let t = line.trim();
     if (!t) {
       if (excerpt.length) break; // 首段结束
       continue;
@@ -179,8 +179,9 @@ function _mdCardHtml(state) {
       if (!title) title = h[2];
       continue;
     }
-    if (/^[-*]\s+\S/.test(t) || /^\|/.test(t)) continue; // 摘录取首段正文
-    excerpt.push(t);
+    if (/^[-*]\s+\S/.test(t) || /^\|/.test(t)) continue; // 摘录取首段正文(跳过列表/表格)
+    t = t.replace(/^>+\s*/, ""); // 引用块剥 > 取纯文本(F7)
+    excerpt.push(_plainText(t));
   }
   return (
     `<div class="wd-card" data-surface="card" role="button" tabindex="0"` +
@@ -192,6 +193,13 @@ function _mdCardHtml(state) {
     `<span class="wd-card-all">${esc(copy("w.card.go"))}</span></span>` +
     `</div>`
   );
+}
+
+/* 摘录纯文本化:剥行内标记(粗斜体/行内 code/链接取文本) */
+function _plainText(t) {
+  return String(t ?? "")
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, "$1")
+    .replace(/[*_`]+/g, "");
 }
 
 /* card meta:Markdown · 大小 · 相对时间(updated_at 缺省省略) */

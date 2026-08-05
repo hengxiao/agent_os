@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>控件沙盒 — Agent OS 开发工具</title>
-<link rel="stylesheet" href="/static/css/tokens.css">
-<link rel="stylesheet" href="/static/css/app.css">
-<link rel="stylesheet" href="/static/css/widgets.css">
-<link rel="stylesheet" href="/static/css/themes/classic.css">
-<link rel="stylesheet" href="/static/css/themes/moe.css">
-<link rel="stylesheet" href="/static/css/themes/terminal.css">
-<link rel="stylesheet" href="/static/css/themes/blueprint.css">
-<link rel="stylesheet" href="/static/css/themes/ink.css">
-<link rel="stylesheet" href="/static/css/themes/pixel.css">
+<link rel="stylesheet" href="/static/css/tokens.css?v=2026-08-05">
+<link rel="stylesheet" href="/static/css/app.css?v=2026-08-05">
+<link rel="stylesheet" href="/static/css/widgets.css?v=2026-08-05">
+<link rel="stylesheet" href="/static/css/themes/classic.css?v=2026-08-05">
+<link rel="stylesheet" href="/static/css/themes/moe.css?v=2026-08-05">
+<link rel="stylesheet" href="/static/css/themes/terminal.css?v=2026-08-05">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css?v=2026-08-05">
+<link rel="stylesheet" href="/static/css/themes/ink.css?v=2026-08-05">
+<link rel="stylesheet" href="/static/css/themes/pixel.css?v=2026-08-05">
 <style>
   /* 沙盒页布局(开发工具;全 token,不走产品 copy) */
   body { background: var(--bg-0); color: var(--fg-0); font-size: var(--text-xs); margin: 0; }
@@ -39,6 +39,7 @@
   }
   .sb-state { width: 100%; min-height: 160px; font-family: var(--font-mono); font-size: var(--text-2xs); }
   .sb-hint { color: var(--fg-2); font-size: var(--text-2xs); margin-left: var(--s2); }
+  .sb-build { margin-left: auto; color: var(--fg-2); font-size: var(--text-2xs); font-family: var(--font-mono); }
 </style>
 </head>
 <body data-route="widget-sandbox">
@@ -53,6 +54,7 @@
     </select></label>
     <button class="btn" id="sb-remount">重新挂载</button>
     <button class="btn" id="sb-share">复制分享链接</button>
+    <span class="sb-build" id="sb-build" title="构建号(js/widget-sandbox.js 的 BUILD,与本页链接 ?v= 同步)"></span>
   </div>
   <div class="sb-stage" id="sb-stage"></div>
   <div class="sb-panel">
@@ -70,7 +72,7 @@
     </div>
   </div>
   <script type="module">
-    import { bootSandbox } from "/static/js/widget-sandbox.js";
+    import { bootSandbox } from "/static/js/widget-sandbox.js?v=2026-08-05";
     // 面板 tab 切换(纯展示层;逻辑在 widget-sandbox.js)
     const evTab = document.querySelector("#sb-tab-events");
     const stTab = document.querySelector("#sb-tab-state");

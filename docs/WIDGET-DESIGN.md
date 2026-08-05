@@ -114,7 +114,10 @@
 >    滚动由逻辑面同步;token 四色(key=--live/string=--ok/number·bool=--warn/
 >    标点弱)全走契约;
 > 4. ✓ 徽标键数 = 递归 object 键统计(数组元素不计);非法/空 → 徽标隐;
-> 5. 括号匹配对向扫描经字符串掩码跳过串内括号,不做转义反向推断(编辑器级近似)。
+> 5. 括号匹配对向扫描经字符串掩码跳过串内括号,不做转义反向推断(编辑器级近似);
+> 6. ~~F3(验收报告)~~ **已修(2026-08-05)**:classic format 文案逐字对齐
+>    spec =「格式化」(原误「美化」;moe「美美化」等主题语气是特性,不动,
+>    见 §5 主题文案契约)。
 
 ### 3.3 W-table 表格编辑器 → [效果图](widgets/design/w-table.svg)
 
@@ -195,7 +198,10 @@
 >    (source_kind=form-arr-item,只收同数组行);
 > 3. 空 schema 的「粘贴 schema」主操作不落:widget 不出海、不读剪贴板,
 >    同 W6.1 W-text「让助手起草」裁决;图标 + 引导在;
-> 4. 帮助文字取自 `spec.description`(schema 既有面),无 description 不显。
+> 4. 帮助文字取自 `spec.description`(schema 既有面),无 description 不显;
+> 5. ~~F4(验收报告)~~ **已修(2026-08-05)**:帮助文字/错误行原先是
+>    grid 直接子项(text 分支 help/errbar 外露到右侧格),现全部收进字段
+>    根元素——grid 每项一个字段,help 贴控件下、错误行在其下(有断言)。
 
 ### 3.6 W-list 可选列表 → [效果图](widgets/design/w-list.svg)
 
@@ -250,7 +256,10 @@
 > 4. 键盘面:state.focusKey("ns:<full>"/"leaf:<name>")+ _visibleRows
 >    与渲染同 walk 序;Enter 选中焦点叶子;
 > 5. 深层横向滚动:`.wd-tree [role="tree"] { overflow-x: auto }` + 行
->    nowrap/min-content。
+>    nowrap/min-content;
+> 6. ~~F5(验收报告)~~ **已修(2026-08-05)**:叶子显示名改短名(末段,
+>    如 `forecast`),全名留 `title` tooltip 与 `data-wt-leaf` 寻址;单层链
+>    折叠行(system.file 一行)是特性不受影响(有断言)。
 
 ### 3.8 W-date 日期控件 → [效果图](widgets/design/w-date.svg)
 
@@ -369,7 +378,11 @@
 > 3. **行号列与 @@ hunk 头未落**:diff 对象(prompt_diff)不携带行号/hunk
 >    元数据,不伪造;卡片 meta 的 hunk 数按「非 same 连续段」近似;
 > 4. 无变更 → 空态(✓ + 没有差异);diffBodyHtml 与 cards.js diffCard 的
->    逐字节同构保持(diffCard 委托本渲染面,未动)。
+>    逐字节同构保持(diffCard 委托本渲染面,未动);
+> 5. ~~F2(验收报告)~~ **已修(2026-08-05)**:tier 徽标配齐三类——
+>    ●reversible(--ok)/▲escalate(--warn)/■irreversible(--danger),
+>    符号+色+文案三通道,**split/unified 成员行都接**(W6.4 只接了
+>    unified,属接线不全;有断言)。
 
 ### 3.12 W-md Markdown 查看器 → [效果图](widgets/design/w-md.svg)
 
@@ -399,6 +412,14 @@
 > 5. 排印阶梯:h4=20/600+hairline、h5=16、h6=14(语义标签沿用 h4-h6,
 >    视觉按阶梯);行内 code --bg-3;代码块 --log-bg 深底卡;引用块 > 新增
 >    (白名单子集,左 3px --line-strong + 弱色)。
+> 6. ~~F1(验收报告,P0)~~ **已修(2026-08-05)**:代码块文字改 --log-fg
+>    (与 --log-bg 配对)——浅色主题(moe/ink)原对比度实测 1.14:1,修后
+>    六主题 7.8–12.9(themes-contract「深面板配对」断言盯);W-json 着色
+>    token 同步复查:底是 --bg-1 非深底,key/str/num/标点四色六主题
+>    5.35–13.27 全过;
+> 7. ~~F6(验收报告)~~ **已修(2026-08-05)**:链接常显下划线(不止 hover);
+> 8. ~~F7(验收报告)~~ **已修(2026-08-05)**:card 摘录剥壳——引用块 `>`
+>    前缀、行内符号(`**`/`` ` ``)、链接取纯文本(有断言)。
 
 ### 3.13 W-bubble 聊天气泡 → [效果图](widgets/design/w-bubble.svg)
 
@@ -442,3 +463,21 @@
 3. 六主题各扫一遍(token 映射不破);
 4. 既有行为测试全绿 + 新增视觉断言(类名/结构)进测试库;
 5. 全部控件过完后,本文件标记为「已验收」,此后改动走变更记录。
+
+## 5. 主题文案契约(报告 §6 流程项;W6.5 登记)
+
+- **功能文案随主题变是特性,不是偏差**:同一 copy key 在六主题下允许
+  (也应该)有不同措辞与语气。已知差异面(验收前请先读本节,别误报):
+  - 基准字面量以 **classic 为准,与 spec 效果图逐字一致**(如 W-json
+    format =「格式化」;F3 前曾误用「美化」,已修);
+  - **moe 的语气是特性**(如「美美化」「美化了喵」),不修;
+  - **terminal/pixel 全英文/全大写**是主题风格(如 `format`/`FORMAT`),
+    不修;
+  - blueprint/ink 的文言缩译(如「整版」「整」)是主题风格,不修;
+- **验收纪律**:字面比对只对 classic 进行;其它主题只验**功能语义**
+  (同 key、同占位符 `{n}/{line}`、同事件),不验字面;
+- 新增 copy key 时六主题必须同步补全(themes-contract 的 COPY_KEYS
+  全覆盖断言盯),语气由各主题自定;
+- 沙盒(widget.html)是**开发工具**,不走主题 copy(文案平实中文),
+  其 css/js 链接带 `?v=<build>` 缓存破坏,构建号 =
+  `js/widget-sandbox.js` 的 `BUILD` 常量,改 widget 代码时一起改。

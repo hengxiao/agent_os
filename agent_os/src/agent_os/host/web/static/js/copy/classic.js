@@ -254,7 +254,7 @@ export const COPY = {
   "platform.win.min": "最小化",
   "platform.desktop.wallpaper": "壁纸",
   "w.text.count": "{lines} 行 · {chars} 字",
-  "w.json.format": "美化",
+  "w.json.format": "格式化",
   "w.json.errline": "第 {line} 行",
   "w.table.add": "添加行",
   "w.table.del": "删除行",

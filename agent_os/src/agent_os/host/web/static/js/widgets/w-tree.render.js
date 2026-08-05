@@ -57,10 +57,11 @@ export function renderTreeWidget(state, { leafHtml = null, surface = "tab" } = {
     ((leaf) => {
       const name = String(typeof leaf === "string" ? leaf : leaf?.name ?? "");
       const hit = q && name.toLowerCase().includes(q);
+      const short = name.split(".").at(-1) ?? name; // F5:叶子显示短名(末段),全名留 title
       return (
         `<div class="ns-row${q && !hit ? " wd-dim" : ""}" style="--ns-depth:1" data-wt-leaf="${esc(name)}"` +
         `${state.selected === name ? ' data-current="1"' : ""}${`leaf:${name}` === focusKey ? ' data-focus="1"' : ""}>` +
-        `<span class="ns-name mono">${_hitHtml(name, filter)}</span></div>`
+        `<span class="ns-name mono" title="${esc(name)}">${_hitHtml(short, filter)}</span></div>`
       );
     });
   const nsAttrs = (child) =>

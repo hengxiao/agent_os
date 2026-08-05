@@ -369,10 +369,11 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
   assert.equal(ht, renderTableEditor(st), "table render 纯(同 state 同 html)");
   assert.deepEqual(st.selected, ["r1"], "render 不改 state");
   assert.ok(ht.includes("⠿"), "行首拖柄(§2.3)");
-  assert.ok(ht.includes("wd-type"), "列头类型徽标");
+  assert.ok(ht.includes("wd-th-ico"), "列头类型语义图标(§3.3)");
   assert.ok(ht.includes("甲&lt;script&gt;"), "单元格值转义(XSS 不注入)");
   assert.ok(ht.includes('data-selected="1"'), "选中行标记");
-  assert.ok(renderTableEditor({ rows: [], selected: [], schema: { columns: [] } }).includes("wd-empty"), "空态");
+  assert.ok(renderTableEditor({ rows: [], selected: [], schema: { columns: [{ key: "name", type: "text", label: "名" }] } })
+    .includes("wd-skeleton"), "空态:表头 + 骨架行(§3.3)");
 
   const sk = { entries: [{ key: "a", value: "1" }, { key: "a", value: "2" }] };
   const hk = renderKvEditor(sk);
@@ -398,10 +399,21 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
   const w = mountTableEditor(host, { columns, rows: [{ name: "甲", n: 1 }], path: "/t/table" });
   w.on("change", (p) => changes.push(p.rows.length));
   const html = () => host.innerHTML;
-  assert.ok(html().includes("名 *"), "required 星标");
+  assert.ok(html().includes("wd-req"), "required 星标");
   assert.ok(html().includes('role="grid"'), "role=grid");
-  assert.ok(html().includes('type="checkbox"'), "boolean 列编辑器");
-  assert.ok(html().includes("<select"), "enum 列编辑器");
+  assert.ok(html().includes('type="checkbox"'), "boolean 列编辑器(始终交互)");
+  assert.ok(html().includes("wd-chip"), "enum 展示态 = chip(§3.3)");
+  // 单元格点击进内联编辑(§3.3):enum 出 select,text 出 32px input
+  const cellEl = new StubEl("span");
+  cellEl.dataset.cell = `${w.state.rows[0].id}:kind`;
+  cellEl.closest = (sel) => (sel === "[data-cell]" ? cellEl : null);
+  host.trigger("click", { target: cellEl });
+  assert.ok(html().includes("<select"), "enum 单元格点击出 select 编辑器(§3.3)");
+  const cellName = new StubEl("span");
+  cellName.dataset.cell = `${w.state.rows[0].id}:name`;
+  cellName.closest = (sel) => (sel === "[data-cell]" ? cellName : null);
+  host.trigger("click", { target: cellName });
+  assert.ok(html().includes("wd-cell-in"), "text 单元格点击出内联 input(§3.3)");
   // 增行(骨架按列型)
   w.add_row();
   assert.equal(w.state.rows.length, 2);
@@ -444,11 +456,12 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
   const dtBad = { types: ["application/x-agent-os-widget"], getData: () => JSON.stringify({ source: "/x", source_kind: "evil" }) };
   host.trigger("drop", { target: host, dataTransfer: dtBad, preventDefault: () => {} });
   assert.deepEqual(ids(), order1, "未知 kind 源被拒(不静默)");
-  // 空态
+  // 空态(§3.3:表头 + 骨架行 + 「添加第一行」主操作)
   const host2 = doc.createElement("div");
   doc.body.appendChild(host2);
   mountTableEditor(host2, { columns, rows: [] });
-  assert.ok(host2.innerHTML.includes("还没有行"), "空态文案");
+  assert.ok(host2.innerHTML.includes("添加第一行"), "空态主操作");
+  assert.ok(host2.innerHTML.includes("wd-skeleton"), "空态骨架行");
 }
 
 {
@@ -576,9 +589,9 @@ const { mountFormEditor, validateValues, mountSelectList, mountNsTreeWidget,
   const w = mountFormEditor(host, { schema });
   const html = () => host.innerHTML;
   assert.ok(html().includes("wd-req"), "required 星标");
-  assert.ok(html().includes('type="number"'), "integer/number 列型");
-  assert.ok(html().includes('type="checkbox"'), "boolean 列型");
-  assert.ok(html().includes("<select"), "enum 列型");
+  assert.ok(html().includes('type="number"'), "integer/number 列型(stepper)");
+  assert.ok(html().includes('role="switch"'), "boolean = switch(§3.5)");
+  assert.ok(html().includes("wd-chips"), "enum = chips 单选组(§3.5)");
   assert.ok(html().includes("<fieldset"), "嵌套 object 组");
   assert.deepEqual(w.values(), {
     city: "", n: 1, ratio: 1, ok: false, kind: "", addr: { zip: "" }, tags: [],
@@ -1021,9 +1034,9 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
         selected: [], schema: { columns: [
           { key: "name", type: "text", label: "名" }, { key: "n", type: "number", label: "数" },
           { key: "ok", type: "boolean", label: "好" }, { key: "kind", type: "enum", label: "类", options: ["a"] }] } }, {},
-      (h) => h.includes("+1") && h.includes("3 行") && h.includes("甲&lt;b&gt;") && h.includes("乙") &&
-        !h.includes("丙") && !h.includes("⠿") && h.includes("wd-type"),
-      "列摘要 4→3 溢出 +1;行数徽标;前 2 行只读(第 3 行不进卡);无拖柄;转义"],
+      (h) => h.includes("+1") && h.includes("3 行") && h.includes("wd-card-cols") && h.includes("甲&lt;b&gt;") &&
+        h.includes("乙") && !h.includes("丙") && !h.includes("⠿") && h.includes("查看全部"),
+      "列摘要 4→3 溢出 +1;行数徽标;前 2 行只读(第 3 行不进卡);无拖柄;查看全部 →;转义"],
     ["kv-editor", renderKvEditor,
       { entries: [{ key: "a", value: "1" }, { key: "a", value: "2" }, { key: "b<x>", value: "3" }, { key: "c", value: "4" }] }, {},
       (h) => h.includes("4 键值") && h.includes("重复") && h.includes("b&lt;x&gt;") &&
@@ -1032,8 +1045,8 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
     ["schema-form", renderFormEditor,
       { values: { city: "北京" }, errors: {}, schema: { required: ["city", "zip"],
           properties: { city: { type: "string" }, zip: { type: "string" }, note: { type: "string" } } } }, {},
-      (h) => h.includes("必填 1/2") && h.includes("缺 zip") && !h.includes("lab-field"),
-      "必填完成度 1/2 + 缺失必填名;无字段控件"],
+      (h) => h.includes("必填 1/2") && h.includes("wd-progress") && h.includes(">zip<") && !h.includes("lab-field"),
+      "必填完成度 1/2 + 进度条 + 缺失字段 chip;无字段控件"],
     ["select-list", renderSelectList,
       { items: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta<b>", hint: "第二项" }, { id: "g", label: "Gamma" }],
         selected: "b", filter: "", focus: 0, multi: false }, {},
@@ -1293,3 +1306,201 @@ const { jsonHighlightHtml, jsonKeyCount, matchBrace, relTime } =
 }
 
 console.log("widgets.test.mjs: W6.0/W6.1 design assertions passed");
+
+/* ── W6.2:W-table/W-kv/W-form(docs/WIDGET-DESIGN.md §3.3/§3.4/§3.5)────
+   视觉结构断言(类名/数据属性)+ 新行为(内联编辑/末行回车加行/switch/
+   chips/stepper/dirty 操作行/submit 校验聚焦/数组拖序)。 */
+
+{
+  // W-table tab 结构(§3.3):面板头计数/sticky 列头/类型图标/hover 槽/虚线添加
+  const cols = [
+    { key: "name", type: "text", label: "名称", required: true },
+    { key: "n", type: "number", label: "优先级" },
+    { key: "kind", type: "enum", label: "状态", options: ["待办", "进行中"] },
+    { key: "due", type: "date", label: "截止" },
+  ];
+  const ht = renderTableEditor({ rows: [{ id: "r1", cells: { name: "故宫门票", n: 1, kind: "进行中" } }],
+    selected: [], editing: "", title: "出行任务表", schema: { columns: cols } });
+  assert.ok(ht.includes("wd-pane-head") && ht.includes("出行任务表 · 1 行 × 4 列"), "面板头:title · N 行 × M 列");
+  assert.ok(ht.includes("wd-table-scroll"), "sticky 列头滚动容器");
+  assert.ok(ht.includes('wd-th-ico'), "类型语义图标槽");
+  assert.ok(ht.includes(">Aa<") && ht.includes(">#<") && ht.includes(">≡<") && ht.includes(">📅<"), "Aa/#/≡/📅 图标");
+  assert.ok(ht.includes("wd-th-act"), "hover 显排序/⋯槽");
+  assert.ok(ht.includes('class="wd-add" data-wd-add'), "整宽虚线添加行");
+  assert.ok(ht.includes("wd-chip wd-cell"), "enum 展示态 chip");
+  // 空态:表头 + 骨架行 + 主操作(§3.3/§1.5)
+  const he = renderTableEditor({ rows: [], selected: [], schema: { columns: cols }, title: "" });
+  assert.ok(he.includes("<thead") && he.includes("wd-skeleton") && he.includes("wd-btn-primary"),
+    "空态三件套(表头/骨架/主操作)");
+  assert.ok(he.includes(copy("w.table.addfirst")), "「添加第一行」copy 键");
+}
+
+{
+  // W-table 行为:editing 退出(focusout 离表/Enter);DnD 视觉反馈类
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountTableEditor(host, { columns: [{ key: "name", type: "text", label: "名" }], rows: [{ name: "甲" }], title: "T" });
+  const cell = new StubEl("span");
+  cell.dataset.cell = `${w.state.rows[0].id}:name`;
+  cell.closest = (sel) => (sel === "[data-cell]" ? cell : null);
+  host.trigger("click", { target: cell });
+  assert.equal(w.state.editing, `${w.state.rows[0].id}:name`, "点击进编辑");
+  const ed = new StubEl("input"); // 编辑态 input(region 无 dataset,合成驱动)
+  ed.closest = (sel) => (sel === "[data-cell]" ? ed : null);
+  host.trigger("keydown", { target: ed, key: "Enter" });
+  assert.equal(w.state.editing, "", "Enter 退出编辑(§3.3)");
+  // dragstart 浮起类(视觉反馈,§3.3)
+  const rowEl = new StubEl("tr");
+  rowEl.dataset.row = w.state.rows[0].id;
+  rowEl.closest = (sel) => (sel === "[data-row]" ? rowEl : null);
+  const dt = { types: ["application/x-agent-os-widget"], setData: () => {}, getData: () => "" };
+  host.trigger("dragstart", { target: rowEl, dataTransfer: dt });
+  assert.ok(rowEl.classList.contains("wd-dragging"), "拖动中行浮起类(wd-dragging)");
+  host.trigger("dragend", { target: rowEl });
+  assert.ok(true, "dragend 清理不炸");
+}
+
+{
+  // W-kv tab 结构(§3.4):列头/⚠ tooltip/虚线添加/空态
+  const hk = renderKvEditor({ entries: [{ key: "Accept", value: "a" }, { key: "Accept", value: "b" }], title: "headers" });
+  assert.ok(hk.includes("wd-kv-cols") && hk.includes(">KEY<") && hk.includes(">VALUE<"), "KEY/VALUE 列头");
+  assert.ok(hk.includes("wd-kv-warn-ico") && hk.includes(`data-tip="${copy("w.kv.dup")}"`), "⚠ + tooltip(§3.4)");
+  assert.ok((hk.match(/wd-kv-warn"/g) ?? []).length === 2, "重复 key 两行都警示");
+  assert.ok(hk.includes('class="wd-add" data-kv-add'), "虚线添加行");
+  const he = renderKvEditor({ entries: [] });
+  assert.ok(he.includes("wd-empty-ico") && he.includes(copy("w.kv.empty")) && he.includes(copy("w.kv.addfirst")),
+    "空态:图标 + 引导 + 主操作(§1.5)");
+  const hc = renderKvEditor({ entries: [{ key: "a", value: "1" }, { key: "a", value: "2" }] }, { surface: "card" });
+  assert.ok(hc.includes("⚠ 重复 ×1"), "card 警示徽标与 tab 同源(同 dupKeys)");
+  assert.ok(hc.includes("共 2 条 · 1 处重复"), "card meta 合计行");
+}
+
+{
+  // W-kv 行为:末行 value 回车自动加行(§3.4)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountKvEditor(host, { entries: [{ key: "a", value: "1" }] });
+  const val = new StubEl("input");
+  val.dataset.kvValue = "0"; // 末行
+  val.closest = (sel) => (sel === "[data-kv-value]" ? val : null);
+  host.trigger("keydown", { target: val, key: "Enter" });
+  assert.equal(w.state.entries.length, 2, "末行回车 → 自动加行");
+  const val2 = new StubEl("input");
+  val2.dataset.kvValue = "0"; // 加行后 0 不再是末行
+  val2.closest = (sel) => (sel === "[data-kv-value]" ? val2 : null);
+  host.trigger("keydown", { target: val2, key: "Enter" });
+  assert.equal(w.state.entries.length, 2, "非末行回车不加行");
+}
+
+{
+  // W-form tab 结构(§3.5):switch/chips/stepper/help/嵌套描述/操作行
+  const schema = {
+    type: "object", required: ["city"],
+    properties: {
+      city: { type: "string", description: "显示在列表标题" },
+      n: { type: "integer", minimum: 1, maximum: 10 },
+      ok: { type: "boolean" },
+      kind: { type: "string", enum: ["a", "b"] },
+      addr: { type: "object", description: "alertmanager 接收方", properties: { zip: { type: "string" } } },
+    },
+  };
+  const hf = renderFormEditor({ values: { city: "北京", n: 5, ok: true, kind: "b", addr: { zip: "" } },
+    errors: {}, schema, dirty: true, title: "告警规则" });
+  assert.ok(hf.includes("wd-pane-head") && hf.includes("告警规则 · form"), "面板头");
+  assert.ok(hf.includes('role="switch" aria-checked="true"'), "switch 开态(aria 双编码)");
+  assert.ok(hf.includes("wd-switch-knob"), "switch 拨钮");
+  assert.ok(hf.includes('role="radiogroup"') && hf.includes('data-on="1"'), "chips 单选组选中态");
+  assert.ok(hf.includes("wd-stepwrap") && hf.includes("wd-step"), "number stepper");
+  assert.ok(hf.includes("wd-help") && hf.includes("显示在列表标题"), "帮助文字 11px 弱色位");
+  assert.ok(hf.includes("alertmanager 接收方"), "嵌套组描述");
+  assert.ok(hf.includes("wd-form-foot") && hf.includes("data-f-submit"), "操作行:主操作在");
+  assert.ok(!hf.includes("data-f-reset=\"1\" disabled"), "dirty → reset 可用");
+  assert.ok(hf.includes("wd-form-dirty") && !hf.includes("wd-form-dirty\" hidden"), "dirty 提示显");
+  const hfClean = renderFormEditor({ values: {}, errors: {}, schema, dirty: false });
+  assert.ok(hfClean.includes('data-f-reset="1" disabled'), "干净 → reset 禁用(§3.5)");
+  // card:进度条 + chips + meta
+  const hc = renderFormEditor({ values: { city: "北京" }, errors: {}, schema, title: "告警规则" }, { surface: "card" });
+  assert.ok(hc.includes("wd-progress") && hc.includes("wd-progress-in"), "完成度进度条(§3.5)");
+  assert.ok(hc.includes("告警规则 · form") && hc.includes("schema · 5 字段 · 1 嵌套组"), "card 标题 + meta");
+}
+
+{
+  // W-form 行为:switch/chips/stepper/dirty 操作行/submit 聚焦/数组拖序
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const schema = {
+    type: "object", required: ["city"],
+    properties: {
+      city: { type: "string" }, n: { type: "integer", minimum: 1, maximum: 10 },
+      ok: { type: "boolean" }, kind: { type: "string", enum: ["a", "b"] },
+      tags: { type: "array", items: { type: "string" } },
+    },
+  };
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountFormEditor(host, { schema });
+  // switch 点击翻转(局部 aria,不重渲)
+  const sw = new StubEl("button");
+  sw.dataset.f = "ok";
+  sw.closest = (sel) => (sel === ".wd-switch" ? sw : null);
+  host.trigger("click", { target: sw });
+  assert.equal(w.values().ok, true, "switch 点击 → set_field 翻转");
+  assert.equal(sw.getAttribute("aria-checked"), "true", "aria-checked 局部翻转");
+  // chips 单选
+  const chip = new StubEl("button");
+  chip.dataset.fChip = "kind:b";
+  chip.closest = (sel) => (sel === "[data-f-chip]" ? chip : null);
+  host.trigger("click", { target: chip });
+  assert.equal(w.values().kind, "b", "chip 点击 → 单选");
+  // stepper:+ 步进;最小值钳制
+  const stepUp = new StubEl("button");
+  stepUp.dataset.fStep = "n:1";
+  stepUp.closest = (sel) => (sel === "[data-f-step]" ? stepUp : null);
+  host.trigger("click", { target: stepUp });
+  assert.equal(w.values().n, 2, "stepper + 步进");
+  const stepDown = new StubEl("button");
+  stepDown.dataset.fStep = "n:-1";
+  stepDown.closest = (sel) => (sel === "[data-f-step]" ? stepDown : null);
+  host.trigger("click", { target: stepDown });
+  host.trigger("click", { target: stepDown });
+  host.trigger("click", { target: stepDown });
+  assert.equal(w.values().n, 1, "stepper 钳 minimum(§3.5)");
+  // dirty → 操作行局部刷新(state 面;reset 钮 disabled 的 DOM 面在结构块断言)
+  assert.ok(w.state.dirty, "改动 → dirty");
+  // submit:非法 → 不发事件 + 错误行内;合法 → emit submit
+  const submissions = [];
+  w.on("submit", (p) => submissions.push(p));
+  const submitBtn = new StubEl("button");
+  submitBtn.closest = (sel) => (sel === "[data-f-submit]" ? submitBtn : null);
+  host.trigger("click", { target: submitBtn });
+  assert.equal(submissions.length, 0, "必填缺失 → submit 不发");
+  assert.ok(host.innerHTML.includes("wd-field-err"), "错误行内呈现(不弹窗)");
+  w.set_field("city", "北京");
+  host.trigger("click", { target: submitBtn });
+  assert.equal(submissions.length, 1, "校验通过 → submit 上行");
+  assert.equal(submissions[0].values.city, "北京", "submit 载荷 = values");
+  // 数组拖序(§3.5;§15 envelope)
+  w.set_field("tags", ["a", "b", "c"]);
+  w.validate(); // 触发一次 render(values 进串)
+  const src = new StubEl("div");
+  src.dataset.fArr = "tags";
+  src.dataset.idx = "0";
+  src.closest = (sel) => (sel === "[data-f-arr]" ? src : null);
+  const dt = { types: ["application/x-agent-os-widget"], setData(m, v) { this._v = v; }, getData() { return this._v; } };
+  host.trigger("dragstart", { target: src, dataTransfer: dt });
+  const tgt = new StubEl("div");
+  tgt.dataset.fArr = "tags";
+  tgt.dataset.idx = "2";
+  tgt.closest = (sel) => (sel === "[data-f-arr]" ? tgt : null);
+  host.trigger("drop", { target: tgt, dataTransfer: dt, preventDefault: () => {} });
+  assert.deepEqual(w.values().tags, ["b", "c", "a"], "数组项拖序重排");
+  // reset:回骨架 + dirty 清
+  w.reset();
+  assert.equal(w.state.dirty, false, "reset 清 dirty");
+}
+
+console.log("widgets.test.mjs: W6.2 design assertions passed");

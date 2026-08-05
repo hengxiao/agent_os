@@ -47,16 +47,22 @@ function _skeleton(col) {
   return "";
 }
 
-/* 挂进宿主:columns(列定义)+ rows(初始行;下行数据)+ path(§14 前缀)。
+/* 挂进宿主:columns(列定义)+ rows(初始行;下行数据)+ path(§14 前缀)
+   + title(面板头,可选)。
    返回 widget;父组件 on("change", ...) 收全部 mutation。
-   双形态(§1.4):surface="card" 时渲染摘要卡,宿主委托只挂 open。 */
-export function mountTableEditor(host, { columns, rows = [], path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
+   双形态(§1.4):surface="card" 时渲染摘要卡,宿主委托只挂 open。
+   W6.2(§3.3):单元格展示态点击进内联编辑(state.editing = "id:key",
+   blur/Enter/Esc 退出);DnD 全程视觉反馈(wd-dragging 浮起 +
+   wd-drop-before 2px --live 指示线)。 */
+export function mountTableEditor(host, { columns, rows = [], title = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(TABLE_EDITOR_DEF, {
     path,
     state: {
       schema: { columns },
       rows: rows.map((r) => _newRow(columns, r.cells ?? r)),
       selected: [],
+      title,
+      editing: "",
     },
     onRegister,
     onUnregister,
@@ -102,11 +108,28 @@ export function mountTableEditor(host, { columns, rows = [], path = "", onRegist
     if (e.target.closest("[data-wd-add]")) return widget.add_row();
     const x = e.target.closest("[data-row-x]");
     if (x) return widget.remove_row(x.dataset.rowX);
+    const cell = e.target.closest("[data-cell]");
+    if (cell && !/^(INPUT|SELECT)$/.test(cell.tagName ?? "")) {
+      // 展示态单元格 → 内联编辑(§3.3;boolean 是控件本体,不进编辑态)
+      widget.state.editing = cell.dataset.cell;
+      render();
+      const ed = host.querySelector(".wd-cell-in") ?? host.querySelector("select[data-cell]");
+      ed?.focus?.();
+      return;
+    }
     const tr = e.target.closest("[data-row]");
-    if (tr && !e.target.closest("[data-cell]")) {
+    if (tr && !cell) {
       widget.state.selected = [tr.dataset.row];
       render();
     }
+  });
+  // 内联编辑退出:焦点离开表格才收(表内转移交给 click 换槽,§3.3)
+  host.addEventListener("focusout", (e) => {
+    if (!widget.state.editing) return;
+    const next = e.relatedTarget;
+    if (next && host.contains?.(next)) return;
+    widget.state.editing = "";
+    render();
   });
   host.addEventListener("input", (e) => {
     const cell = e.target.closest("[data-cell]")?.dataset.cell;
@@ -120,8 +143,16 @@ export function mountTableEditor(host, { columns, rows = [], path = "", onRegist
     const [id, key] = cell.split(":");
     widget.set_cell(id, key, e.target.value);
   });
-  // Alt+↑/↓ 键盘移行(§2 a11y)
+  // Alt+↑/↓ 键盘移行(§2 a11y);编辑态 Enter/Esc 退出(§3.3)
   host.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === "Escape") && e.target.closest?.("[data-cell]")) {
+      if (widget.state.editing) {
+        widget.state.editing = "";
+        e.target.blur?.();
+        render();
+      }
+      return;
+    }
     if (!e.altKey) return;
     const tr = e.target.closest("[data-row]");
     if (!tr) return;
@@ -132,23 +163,36 @@ export function mountTableEditor(host, { columns, rows = [], path = "", onRegist
       widget.move_row(tr.dataset.row, rs[i + 2]?.id ?? "");
     }
   });
-  // 行 DnD(§15):envelope 产出 + accept 校验 + drop 重排
+  // 行 DnD(§15):envelope 产出 + accept 校验 + drop 重排;
+  // 视觉反馈(§3.3):拖动中 wd-dragging 浮起 + 目标 wd-drop-before 指示线
   host.addEventListener("dragstart", (e) => {
     const tr = e.target.closest("[data-row]");
     if (!tr) return;
+    tr.classList?.add("wd-dragging");
     e.dataTransfer?.setData(_DND_MIME, JSON.stringify({
       source: `${path}/row/${tr.dataset.row}`, source_kind: "table-row", position: {},
     }));
+  });
+  host.addEventListener("dragend", () => {
+    host.querySelector(".wd-dragging")?.classList?.remove("wd-dragging");
+    host.querySelector(".wd-drop-before")?.classList?.remove("wd-drop-before");
   });
   host.addEventListener("dragover", (e) => {
     if ([...(e.dataTransfer?.types ?? [])].includes(_DND_MIME)) {
       e.preventDefault();
       host.classList.add("pf-drop-ok");
+      host.querySelector(".wd-drop-before")?.classList?.remove("wd-drop-before");
+      e.target.closest?.("[data-row]")?.classList?.add("wd-drop-before");
     }
   });
-  host.addEventListener("dragleave", () => host.classList.remove("pf-drop-ok"));
+  host.addEventListener("dragleave", () => {
+    host.classList.remove("pf-drop-ok");
+    host.querySelector(".wd-drop-before")?.classList?.remove("wd-drop-before");
+  });
   host.addEventListener("drop", (e) => {
     host.classList.remove("pf-drop-ok");
+    host.querySelector(".wd-drop-before")?.classList?.remove("wd-drop-before");
+    host.querySelector(".wd-dragging")?.classList?.remove("wd-dragging");
     let env = null;
     try {
       env = JSON.parse(e.dataTransfer?.getData(_DND_MIME) ?? "null");

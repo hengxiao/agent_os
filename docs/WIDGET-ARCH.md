@@ -203,6 +203,7 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 | W5.6 ✅ | 渲染层双形态:13 控件 render(state, {surface}) + card 摘要视图 + mount surface 选项 + open 事件 + 沙盒形态切换 | 双形态测试全绿(两 surface × 全样例 + card 断言) |
 | W6.0 ✅ | 视觉基建(docs/WIDGET-DESIGN.md §1):--log-bg 契约 token(六主题)+ widgets.css 共享层(chip/badge/skeleton/empty/btn/动效工具类) | themes-contract + 结构断言过 |
 | W6.1 ✅ | W-text/W-json 按设计终稿重做(§3.1/§3.2):编辑器结构 + JSON 着色层 + 错误三件套 + 失焦校验 | 行为测试全绿 + 视觉结构断言过 |
+| W6.2 ✅ | W-table/W-kv/W-form 按设计终稿重做(§3.3-3.5):内联编辑/⚠ tooltip/switch/chips/stepper/操作行 | 行为测试全绿 + 视觉结构断言过 |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
@@ -372,6 +373,41 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 > - **copy**:六主题新增 w.card.go/w.text.ph/w.text.pos/w.json.okn/w.json.keys/
 >   w.json.jump/w.json.fmt_dis/w.time.now/min/hour/day;w.json.ok 退役(被
 >   okn 取代)。
+>
+> **W6.2 实现注**(2026-08-04;W-table/W-kv/W-form 按 §3.3-3.5 终稿重做):
+> - **W-table**:面板头(title · N 行 × M 列,mount 新增可选 title)+
+>   sticky 列头(类型语义图标 Aa/#/≡/📅/☑ + hover 显排序/⋯ 槽,纯视觉
+>   aria-hidden);行 40px,hover=--bg-2、选中=inset 2px --live + 8% 浅底
+>   (只改底色);拖柄 30%↔hover 全显;**单元格点击进内联编辑**
+>   (state.editing="id:key";展示态 = 文本/enum chip,编辑态 = 32px input
+>   或 select;boolean 始终 checkbox;focusout 离表才退出,Enter/Esc 同效;
+>   值仍走 set_cell 即时同步);行尾 ✕ hover 显;DnD 加 wd-dragging 浮起 +
+>   wd-drop-before 2px 指示线(envelope/accept 零改动);空态 = 表头 +
+>   骨架行 + 「添加第一行」主操作(w.table.empty 退役,w.table.addfirst/
+>   w.table.count 新增);card = 标题行 + 迷你列头网格(--cols 变量)≤3 列
+>   溢出 +N + 前 2 行 + 「查看全部 →」。
+> - **W-kv**:KEY/VALUE 列头(11px 600);输入框平时隐形、聚焦显形;重复
+>   key = 双行 warn 8% 浅底 + ⚠(data-tip + CSS ::after tooltip,零 JS);
+>   **末行 value 回车自动加行**(新行为,纯增量);空态 ∷ 图标 + 引导 +
+>   ghost 主操作;card 加 ⚠ 警示徽标与「共 N 条 · M 处重复」meta(与 tab
+>   同 dupKeys 同源)。
+> - **W-form**:label 上置 12px/500 + spec.description 帮助文字;**boolean
+>   改 switch**(role=switch,点击翻转 + aria 局部刷新;设计批准的行为变更,
+>   测试断言改写)、**enum 改 chips 单选组**(radiogroup,同上)、number
+>   加 **stepper**(钳 min/max,局部写回);嵌套 object 卡片化(标题+描述);
+>   数组项小卡 + 拖序(§15 envelope,source_kind=form-arr-item);**操作行
+>   落地**:dirty 跟踪(values ↔ 骨架深比较)+ reset ghost(dirty 才可用,
+>   局部刷新)+「有未保存改动」圆点 + submit 主操作(validate 通过 → emit
+>   submit(事件早声明、此前无 UI 触发面),不通过 → 滚动聚焦首个错误);
+>   card = 进度条(4px --live)+ 必填 x/y + 缺失 chips(≤2 溢出 +N)+
+>   schema meta;空 schema 走 .wd-empty-box(主操作不落,widget 不出海)。
+> - **CSS**:widgets.css 加 W6.2 节(.wd-pane-head/.wd-add/.wd-row-x 三件
+>   三控件共用 + 各控件专属),全 token;零硬编码色值断言持续绿。
+> - **copy**:六主题新增 w.table.count/addfirst、w.kv.count/total/dupn/empty/
+>   addfirst、w.card.viewall、w.form.save/reset/dirty/meta/empty;改值
+>   w.kv.dup/w.card.dup;退役 w.table.empty。
+> - **samples**:table/kv/form 典型样例补 title 与 description(演示面板头
+>   与帮助文字);其余不动。
 
 ## 4. 不做
 

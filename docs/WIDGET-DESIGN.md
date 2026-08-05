@@ -131,9 +131,20 @@
 + 底部「查看全部 →」。
 
 **验收清单**:
-- [ ] DnD 全程有视觉反馈(浮起 + 指示线);键盘 Alt+↑/↓ 等价;
-- [ ] 类型徽标图标与文字双编码;
+- [x] DnD 全程有视觉反馈(浮起 + 指示线);键盘 Alt+↑/↓ 等价;
+- [x] 类型徽标图标与文字双编码;
 - [ ] 行增删有 120ms 高度动画(reduced-motion 除外)。
+
+> W6.2 实现偏差(2026-08-04,沙盒对照确认):
+> 1. **行增删高度动画未落**(不打勾):自渲染全量重渲架构下没有 per-row
+>    FLIP 测量,入场动画会对所有行误触发;待有真实性能/体感诉求再引入;
+> 2. 列头排序 ↑/⋯ 槽是纯视觉(aria-hidden)——排序/菜单行为设计未定义,
+>    不臆造;
+> 3. enum 单元格 chip 是中性 tone:效果图的 进行中=live/已完成=ok 是
+>    值→语义映射,通用控件不臆造(消费方可经 data 属性/自定义列型扩展);
+> 4. 单元格编辑态切换:focusout 退出用 relatedTarget 判表内转移(连续点击
+>    相邻单元格一次到位);编辑中值仍走 set_cell 即时同步(不重渲);
+> 5. card 预览行不带状态色点(同 3 的语义映射问题),网格对齐 + 首列强调。
 
 ### 3.4 W-kv 键值编辑器 → [效果图](widgets/design/w-kv.svg)
 
@@ -147,9 +158,12 @@
 **card 效果要求**:「N 键值」徽标 +(有重复时)黄「重复 ×N」警示徽标 + 前 3 条 `key = value`(截断省略)。
 
 **验收清单**:
-- [ ] 重复警示随输入即时更新;
-- [ ] 序列化顺序 = 视觉顺序;
-- [ ] card 警示徽标与 tab 警示同源(同 state)。
+- [x] 重复警示随输入即时更新;
+- [x] 序列化顺序 = 视觉顺序;
+- [x] card 警示徽标与 tab 警示同源(同 state)。
+
+> W6.2 实现注:⚠ tooltip 用 `data-tip` + CSS ::after(attr)实现,零 JS;
+> 输入框平时隐形(border/底透明),聚焦显形(焦点环承接全局 :focus-visible)。
 
 ### 3.5 W-form schema 表单 → [效果图](widgets/design/w-form.svg)
 
@@ -165,9 +179,23 @@
 **card 效果要求**:必填完成度进度条(--live,4px 高)+「必填 x/y」+ 缺失字段名 chips(最多 2 个,溢出 +N)。
 
 **验收清单**:
-- [ ] 六类型控件视觉同族(同高 32px、同圆角、同焦点环);
-- [ ] 错误不弹窗,全部行内;
-- [ ] switch 有 120ms 滑动动画。
+- [x] 六类型控件视觉同族(同高 32px、同圆角、同焦点环);
+- [x] 错误不弹窗,全部行内;
+- [x] switch 有 120ms 滑动动画。
+
+> W6.2 实现偏差(2026-08-04):
+> 1. **行为变更(设计批准)**:boolean 由 checkbox 改 switch(role=switch,
+>    点击翻转,aria-checked 局部刷新)、enum 由 select 改 chips 单选组
+>    (radiogroup)——widgets.test.mjs 两处列型断言随之改写;number 加
+>    stepper(钳 min/max,局部写回不重渲);
+> 2. **新增行为**:dirty 跟踪(values ↔ 初始骨架深比较)驱动操作行
+>    (reset dirty 才可用 + 「有未保存改动」圆点);submit 钮 = validate →
+>    通过 emit submit / 不通过滚动聚焦首个错误(submit 事件早已声明,
+>    此前无 UI 触发面,零回退);数组项拖序走 §15 envelope
+>    (source_kind=form-arr-item,只收同数组行);
+> 3. 空 schema 的「粘贴 schema」主操作不落:widget 不出海、不读剪贴板,
+>    同 W6.1 W-text「让助手起草」裁决;图标 + 引导在;
+> 4. 帮助文字取自 `spec.description`(schema 既有面),无 description 不显。
 
 ### 3.6 W-list 可选列表 → [效果图](widgets/design/w-list.svg)
 

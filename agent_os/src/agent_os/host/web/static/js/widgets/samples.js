@@ -29,7 +29,7 @@ export const SAMPLES = {
   "table-editor": {
     mount: "mountTableEditor",
     samples: [
-      { name: "四列型典型", options: {
+      { name: "四列型典型", options: { title: "出行任务表",
         columns: [
           { key: "name", type: "text", label: "名", required: true },
           { key: "n", type: "number", label: "数" },
@@ -37,29 +37,29 @@ export const SAMPLES = {
           { key: "kind", type: "enum", label: "类", options: ["a", "b"] },
         ],
         rows: [{ name: "甲", n: 1, ok: true }, { name: "乙", n: 2, kind: "b" }] } },
-      { name: "空态", options: { columns: [{ key: "name", type: "text", label: "名" }], rows: [] } },
+      { name: "空态(骨架+主操作)", options: { columns: [{ key: "name", type: "text", label: "名" }], rows: [] } },
     ],
   },
   "kv-editor": {
     mount: "mountKvEditor",
     samples: [
-      { name: "典型", options: { entries: [{ key: "host", value: "127.0.0.1" }, { key: "port", value: "8391" }] } },
-      { name: "重复 key 警示", options: { entries: [{ key: "a", value: "1" }, { key: "a", value: "2" }] } },
+      { name: "典型", options: { title: "headers", entries: [{ key: "host", value: "127.0.0.1" }, { key: "port", value: "8391" }] } },
+      { name: "重复 key 警示", options: { title: "headers", entries: [{ key: "a", value: "1" }, { key: "a", value: "2" }] } },
       { name: "空态", options: { entries: [] } },
     ],
   },
   "schema-form": {
     mount: "mountFormEditor",
     samples: [
-      { name: "全类型典型", options: { schema: {
+      { name: "全类型典型", options: { title: "告警规则", schema: {
         type: "object",
         required: ["city"],
         properties: {
-          city: { type: "string" },
+          city: { type: "string", description: "显示在告警列表与通知标题" },
           n: { type: "integer", minimum: 1, maximum: 10 },
           ok: { type: "boolean" },
           kind: { type: "string", enum: ["a", "b"] },
-          addr: { type: "object", properties: { zip: { type: "string" } } },
+          addr: { type: "object", description: "alertmanager 接收方", properties: { zip: { type: "string" } } },
           tags: { type: "array", items: { type: "string" } },
         } } } },
       { name: "空 schema", options: { schema: {} } },

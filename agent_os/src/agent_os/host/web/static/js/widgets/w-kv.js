@@ -1,7 +1,9 @@
-/* W-kv 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.4;W5.2 新形态:自渲染)。
+/* W-kv 逻辑面(docs/WIDGET-ARCH.md §1.1/§2.4;W5.2 新形态:自渲染;
+   W6.2 视觉按 docs/WIDGET-DESIGN.md §3.4)。
 
-   state{entries: [{key, value}], allow_dup: bool};
-   actions 全 local:add/remove/set;**重复 key 即时警示**(警告态非硬拦);
+   state{entries: [{key, value}], allow_dup: bool, title?};
+   actions 全 local:add/remove/set;**重复 key 即时警示**(警告态非硬拦,
+   ⚠ + tooltip,随输入重渲即时更新);**末行 value 回车自动加行**(§3.4);
    序列化往返(entries ↔ object)。
    铁律:本文件不拼 HTML(渲染全在 w-kv.render.js);零 fetch;事件上行;
    监听一律委托在 host(重渲会换掉子元素)。 */
@@ -39,10 +41,10 @@ export function objectToEntries(obj) {
   return Object.entries(obj ?? {}).map(([key, value]) => ({ key, value }));
 }
 
-export function mountKvEditor(host, { entries = [], allow_dup = false, path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
+export function mountKvEditor(host, { entries = [], allow_dup = false, title = "", path = "", onRegister = null, onUnregister = null, surface = "tab" } = {}) {
   const widget = createWidget(KV_EDITOR_DEF, {
     path,
-    state: { entries: entries.map((e) => ({ ...e })), allow_dup },
+    state: { entries: entries.map((e) => ({ ...e })), allow_dup, title },
     onRegister,
     onUnregister,
   });
@@ -83,6 +85,16 @@ export function mountKvEditor(host, { entries = [], allow_dup = false, path = ""
     if (v) {
       Object.assign(widget.state.entries[Number(v.dataset.kvValue)] ?? {}, { value: e.target.value });
       _changed(); // value 变更不影响警示态,不重渲(焦点不丢)
+    }
+  });
+  // 末行 value 回车自动加行(§3.4;焦点落到新行 key)
+  host.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const v = e.target.closest?.("[data-kv-value]");
+    if (!v) return;
+    if (Number(v.dataset.kvValue) === widget.state.entries.length - 1) {
+      widget.add();
+      host.querySelector(`[data-kv-key="${widget.state.entries.length - 1}"]`)?.focus?.();
     }
   });
   }

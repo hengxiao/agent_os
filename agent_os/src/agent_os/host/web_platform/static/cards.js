@@ -90,10 +90,16 @@ function gateReportCard(card) {
    注:对话流里只显示人话摘要(summaryHtml),本函数同时充当 diff 详情层。 */
 /* diff 卡:字段新旧两列 + prompt 红绿行(Flow C 同构呈现)。
    W4 起本体渲染委托 W-diff 的 diffBodyHtml(split 模式,逐字节同语义);
-   对话流里只显示人话摘要(summaryHtml),本函数同时充当 diff 详情层。 */
+   W6.7 组装:外层包 .wd-diff 作用域——新版 add/del 行样式(8% 浅底 +
+   2px 左条双编码)与 tier 徽标(widgets.css)随之生效,platform.css 旧
+   .pf-dline[data-kind] 规则退役;对话流里只显示人话摘要(summaryHtml),
+   本函数同时充当 diff 详情层。 */
 export function diffCard(card) {
   const d = card.data ?? {};
-  return diffBodyHtml(d.diff, { mode: "split" }) || `<div class="pf-dim">${esc(copy("platform.no.changes"))}</div>`;
+  const body = diffBodyHtml(d.diff, { mode: "split" });
+  return body
+    ? `<div class="wd-diff">${body}</div>`
+    : `<div class="pf-dim">${esc(copy("platform.no.changes"))}</div>`;
 }
 
 /* publish 卡:成员 action 三态 + warnings 勾选门 */

@@ -13,7 +13,7 @@
    (位置/摘录/条数/未读)+ 改稿可视化(变化块 1.5s 高亮淡出 + "第 N 行"链接)。 */
 
 import { copy } from "/static/js/themes.js";
-import { mdToHtml, mountBubble } from "/static/js/widgets/index.js";
+import { mdToHtml, mountBubble, mountMarkdownViewer } from "/static/js/widgets/index.js";
 import { registerContextProvider } from "/static/js/widgets/cascade.js";
 
 // 长文档阈值(§2/§7 边界):>200KB 预览截断提示,不炸(展示面只读,无编辑器)
@@ -183,9 +183,10 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
       })),
     ];
     const bubble = mountBubble(bubbleHost, {
-      anchor: { member: doc.name, path: anchor }, // 引用行展示(成员 · 锚点)
+      // W6.7 组装:引用块透传锚段原文摘录(2 行截断在控件内);时间戳随种子
+      anchor: { member: doc.name, path: anchor, quote: blockTextOf(anchor) },
       triggerPath: `/doc/${doc.name}/${anchor}`,
-      seedMessages: (seedByAnchor[anchor] ?? []).map((m) => ({ role: m.role, text: m.text })),
+      seedMessages: (seedByAnchor[anchor] ?? []).map((m) => ({ role: m.role, text: m.text, ts: m.ts ?? m.at })),
     });
     bubble.on("close", () => unreg.forEach((fn) => fn())); // 注销随 destroy(§17.7-3)
     bubble.on("submit", async ({ anchor: a, text, cascade }) => {      // comment.send(§3 run+cascade):出海在父级(本组件)——专属端点
@@ -202,7 +203,8 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
         bubble.receiveReply(body.reply ?? "");
         renderBubbleBar(); // D4:新回复 → 未读增量刷新
       } catch (err) {
-        bubble.receiveReply(`(评论助手暂不可用: ${err.message ?? err})`);
+        // W6.7 组装:发送失败走控件失败态(行内红条 + 重试),不再伪造 assistant 回复
+        bubble.notifyError?.(err.message ?? String(err));
       }
     });
     bubble.on("apply", async ({ anchor: a }) => {
@@ -409,6 +411,38 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     renderBubbleBar();
   }
 
+  /* W6.7 view source(用户裁决:文档阅读器开放):宿主 segmented「预览 | 源码」
+     ——预览 = 块渲染 + 批注锚点(W5.4 切割线不动),源码 = W-md mount
+     (view:"source", bar:false,chrome 归宿主);源码态气泡卡挂起(bubbles
+     映射在,回预览由 renderPreview 的既有挂回逻辑复原)。 */
+  let _viewMode = "preview";
+  let _mdWidget = null;
+  const _vmSeg = (host.ownerDocument ?? globalThis.document).createElement("span");
+  _vmSeg.className = "wd-seg doc-viewseg";
+  _vmSeg.innerHTML =
+    `<button class="wd-seg-btn" data-vm="preview" data-on="1">${esc(copy("w.md.preview"))}</button>` +
+    `<button class="wd-seg-btn" data-vm="source" data-on="0">${esc(copy("w.md.source"))}</button>`;
+  host.querySelector(".doc-toolbar")?.appendChild?.(_vmSeg);
+  const setViewMode = (mode) => {
+    _viewMode = mode === "source" ? "source" : "preview";
+    for (const b of _vmSeg.querySelectorAll?.("[data-vm]") ?? []) {
+      b.dataset.on = b.dataset.vm === _viewMode ? "1" : "0";
+    }
+    if (_viewMode === "source") {
+      _mdWidget = mountMarkdownViewer(preview, {
+        source: currentText, title: doc?.name ?? "", view: "source", bar: false,
+      });
+    } else {
+      _mdWidget?.destroy?.();
+      _mdWidget = null;
+      renderPreview();
+    }
+  };
+  _vmSeg.addEventListener("click", (e) => {
+    const btn = e.target.closest?.("[data-vm]");
+    if (btn) setViewMode(btn.dataset.vm);
+  });
+
   // D5:右键(contextmenu)任意块 → 开 local 气泡(问问题/表达需求,不是主对话)
   preview.addEventListener("contextmenu", (e) => {
     e.preventDefault?.();
@@ -517,11 +551,12 @@ export function mountDocEditor(host, doc, { seedFlows = [], getTabInstance = nul
     }
     // D3:[评审] → review 流(批注集自动挂段)
     if (e.target.closest("[data-doc-review]")) return runReview();
-    // D3:批注列表点击 → 跳转开泡(UX 批:+ 高亮脉冲定位)
+    // D3:批注列表点击 → 跳转开泡(UX 批:+ 高亮脉冲定位;源码态先回预览)
     const barItem = e.target.closest("[data-bar-anchor]");
     if (barItem) {
       const entry = bubbles.get(barItem.dataset.barAnchor);
       if (entry) {
+        if (_viewMode === "source") setViewMode("preview");
         const block = [...preview.children].find((c) => c.dataset?.anchor === entry.anchor);
         if (block) {
           block.scrollIntoView?.();

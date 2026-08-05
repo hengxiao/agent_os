@@ -769,14 +769,12 @@ const { diffCard } = await import("../../../web_platform/static/cards.js");
       { kind: "add", text: "新句" },
     ],
     tests: { added: [], removed: [] } }] };
+  // 包装核对(W6.7 起 diffCard = .wd-diff 作用域 + diffBodyHtml 本体,逐字节)
   assert.equal(
-    diffBodyHtml(diff, { mode: "split" }),
-    diffCard({ data: { name: "lab.d", diff } }).replace(/<div class="pf-dim">.*$/, "") || diffBodyHtml(diff, { mode: "split" }),
-    "split 与 diffCard 同构(提取一致性)",
+    diffCard({ data: { name: "lab.d", diff } }),
+    `<div class="wd-diff">${diffBodyHtml(diff, { mode: "split" })}</div>`,
+    "diffCard = .wd-diff(diffBodyHtml(split)),逐字节(W6.7 包装形态)",
   );
-  // 直接逐字节对(diffCard 现在就是委托 diffBodyHtml)
-  assert.equal(diffCard({ data: { name: "lab.d", diff } }), diffBodyHtml(diff, { mode: "split" }),
-    "diffCard = diffBodyHtml(split),逐字节");
   assert.ok(diffBodyHtml(diff).includes('data-kind="changed"'), "字段两列(红绿语义)");
   assert.ok(diffBodyHtml(diff).includes('data-kind="add"'), "红绿行 add");
   assert.ok(diffBodyHtml(diff).includes('data-kind="del"'), "红绿行 del");
@@ -2021,3 +2019,34 @@ console.log("widgets.test.mjs: W6.5 acceptance-fix assertions passed");
 }
 
 console.log("widgets.test.mjs: W6.6 ruling assertions passed");
+
+/* ── W6.7:宿主重新组装(lab/usage/doc-editor/cards)──────────────── */
+
+{
+  // W-md bar:false 嵌入面(doc-editor 源码模式:chrome 归宿主)
+  const h = renderMarkdownViewer({ source: "# t\n\ntext", title: "doc", view: "source" }, { bar: false });
+  assert.ok(!h.includes("data-md-view") && !h.includes("data-md-copyall"), "bar:false → 无 segmented/全文钮");
+  assert.ok(h.includes("wd-md-src-pre"), "bar:false 仍有源码本体");
+  const h2 = renderMarkdownViewer({ source: "# t", view: "preview" }, { bar: false });
+  assert.ok(!h2.includes("data-md-view"), "bar:false 预览态同样省略");
+  // 图表宿主自适应(widgets.css:窄幅宿主等比缩)
+  const wcss = readFileSync(join(import.meta.dirname, "../css/widgets.css"), "utf-8");
+  assert.ok(/\.wd-chart \{[^}]*max-width: 100%/.test(wcss), "W-chart svg 宿主自适应(usage 面板)");
+}
+
+{
+  // cards.js diffCard:外包 .wd-diff 作用域;platform.css 旧冲突规则已退役
+  const cards = readFileSync(new URL("../../../web_platform/static/cards.js", import.meta.url), "utf8");
+  assert.ok(cards.includes('<div class="wd-diff">${body}</div>'), "diffCard 包 .wd-diff(新行样式+tier 生效)");
+  const pcss = readFileSync(new URL("../../../web_platform/static/platform.css", import.meta.url), "utf8");
+  assert.ok(!/\.pf-dline\[data-kind="add"\]/.test(pcss) && !/\.pf-dline\[data-kind="del"\]/.test(pcss),
+    "platform.css 旧 .pf-dline[data-kind] 冲突规则已删(视觉归 widget)");
+  // doc-editor 组装:气泡引用块透传/失败走控件失败态/view source 宿主开关
+  const ded = readFileSync(new URL("../../../web_platform/static/doc-editor.js", import.meta.url), "utf8");
+  assert.ok(ded.includes("quote: blockTextOf(anchor)"), "bubble anchor.quote 透传锚段摘录(§3.13 锚点块)");
+  assert.ok(ded.includes("notifyError"), "发送失败走控件失败态(行内红条 + 重试)");
+  assert.ok(ded.includes("setViewMode") && ded.includes("mountMarkdownViewer") && ded.includes("bar: false"),
+    "view source 宿主开关 = W-md mount(view:source, bar:false)");
+}
+
+console.log("widgets.test.mjs: W6.7 assembly assertions passed");

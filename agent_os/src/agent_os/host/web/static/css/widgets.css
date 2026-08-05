@@ -475,6 +475,7 @@
 .wd-chart-tip-r { display: flex; align-items: center; gap: var(--s1); color: var(--fg-1); }
 .wd-chart-tip-r b { margin-left: auto; padding-left: var(--s3); color: var(--fg-0); }
 .wd-chart-grid { stroke: var(--line); stroke-width: 0.5; stroke-dasharray: 2 5; } /* 水平虚线,无垂直线(§3.9) */
+.wd-chart { max-width: 100%; height: auto; } /* 宿主窄幅时等比缩(viewBox;W6.7 usage 面板) */
 .wd-chart-tick { fill: var(--fg-2); font-size: var(--text-xs); }
 .wd-card-big { font-size: var(--text-xl); font-weight: 600; } /* card 大读数(§3.9:20px 600 mono) */
 /* W-log(§3.10):深色面板 + 时间戳弱 + 工具行 + 截断提示 + 浮囊 */

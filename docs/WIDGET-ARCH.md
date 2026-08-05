@@ -208,6 +208,7 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 | W6.4 ✅ | W-chart/W-log/W-diff/W-md/W-bubble 按设计终稿重做(§3.9-3.13):tooltip/深色面板/双编码行/排印阶梯/气泡卡 | 行为测试全绿 + 视觉结构断言过 |
 | W6.5 ✅ | 视觉验收报告发现项(F1-F7)+ 流程两项(构建号/文案契约) | 对比度实测断言 + 结构断言全绿 |
 | W6.6 ✅ | 六条设计裁决(用户验收反馈 v2):json card/表格简化/表单单列/树紧凑/日期可用性/md view source | 裁决断言全绿;DESIGN v2 + 效果图重生成 |
+| W6.7 ✅ | 宿主重新组装:既有 UI 主动「用新」(lab/usage/doc-editor/cards/launch/browse) | 29 前端全绿 + pytest 961 过 + 三页 200 |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);
@@ -540,6 +541,51 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 >   静态效果图无差异),函数未动仅重跑。
 > - **BUILD**:2026-08-05 → 2026-08-05.2(widget-sandbox.js + widget.html
 >   全部 ?v= 同步;测试盯三方一致)。
+>
+> **W6.7 实现注**(2026-08-05,分支 debugger;宿主重新组装——W6 渲染重做后
+>   的主动「用新」,准则:能复用 widget 渲染的宿主不自己拼,冲突删宿主):
+> - **① lab.js(W-text/W-json/W-list 岛屿)= 核对通过,零改动**:新 chrome
+>   (面板头 field · lang/微标胶囊/错误三件套/着色层)在 `.lab-field` 列内
+>   协调;app.css 无 `.lab-editor textarea` 级旧样式可清(查过);岛屿装配
+>   (内联首渲 + mount 幂等 + data-field 委托表单模型)与新结构兼容
+>   (textarea 本体与 data-field 保持)。
+> - **② usage-panel.js(W-chart)= 核对通过 + 一处 widget 侧修正**:新版
+>   头部(标题/segmented「图表|表格」;单序列无图例项)与 `<details>` 面板
+>   布局天然衔接,`.us-chart` 容器本无样式可冲突;**改**:`widgets.css` 加
+>   `.wd-chart { max-width: 100%; height: auto }`(viewBox 等比缩,窄幅宿主
+>   不溢出)。**card 形态不进摘要位**:details summary 是 details 折叠的
+>   点击区,内嵌 role=button 的卡会与折叠交互打架(事件双触发),记为
+>   不采用的裁决。
+> - **③ web_platform(cards/details/doc-editor)**:
+>   - **diff 卡**:`cards.js diffCard` 外包 `.wd-diff` 作用域——新版 add/del
+>     行样式(8% 浅底 + 2px 左条双编码)与 **tier 徽标**(F2 接的三类)随之
+>     在平台对话卡生效;**删 platform.css 冲突旧规则**(`.pf-dline[data-kind=
+>     "add"/"del"]` 的 16% 底 + line-through;判定:宿主旧样式 vs 新 widget
+>     样式,删宿主)。逐字节断言更新为包装形态。`.pf-dmember`/`.pf-twocol`
+>     保留(字段两列视觉,不在 widget 作用域)。
+>   - **doc-editor**(bubble 切割线不动):anchor 透传 `quote: blockTextOf
+>     (anchor)`(新锚点引用块 = 锚段原文 2 行截断 + L# 徽标,path 自带);
+>     seedMessages 透传 ts(相对时间);发送失败改走控件失败态
+>     `bubble.notifyError`(行内红条 + 重试,重试重发同一文本——替换原伪造
+>     assistant 回复;无测试依赖旧文案,apply 失败路径保持原样);
+>     **view source 开放**:宿主 segmented「预览 | 源码」插进 .doc-toolbar,
+>     预览 = 块渲染 + 批注锚点(原状),源码 = `mountMarkdownViewer(preview,
+>     {source, title, view:"source", bar:false})`——**widget 侧新增 bar
+>     选项**(render/mount 透传,chrome 归宿主时省略 segmented/全文钮);
+>     批注列表点击在源码态先切回预览再定位(bubbles 映射在,挂回走
+>     renderPreview 既有逻辑)。
+>   - **log 卡(原始信号)/ launch 表单**:核对通过——W-log 深色面板进
+>     details 原始信号 details 区无样式冲突;W-form W6.6 单列化在 launch
+>     对话框(data-launch-form)观感即设计终稿,无宿主样式可清。
+> - **⑤ browse 时间窗(W-date)/ skills 树**:date 装配点(mountDatePicker
+>   mode:"range")**自动受益** W6.6 三条根因修复(逐字丢焦点/点外误收层/
+>   右缘翻转)——platform.test 的倒置→纠序断言持续绿;**skills 树**用的
+>   是共享 `ns-tree.js` 组件(browse-tree.js),不是 W-tree 控件,不在本次
+>   组装面(注:W6.3 给组件加的 nsAttrs 钩子其渲染路径未启用,零影响)。
+> - **⑥ 对话卡统一 card**:diffCard 本就是 widget 渲染(diffBodyHtml),
+>   核对+包装见③;其它对话卡(pack/publish/escalation 等)是 app 领域卡,
+>   非 widget surface,不换。
+> - **BUILD**:2026-08-05.2 → 2026-08-05.3(w-md.js/render.js 又动,三方一致)。
 
 ## 4. 不做
 

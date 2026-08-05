@@ -206,7 +206,8 @@
 .pf-gate[data-status="warn"] .pf-gate-dot { background: var(--perm-write); }
 .pf-gate[data-status="fail"] .pf-gate-dot { background: var(--danger); }
 
-/* diff 卡(与 Flow C 同构的红绿呈现) */
+/* diff 卡(与 Flow C 同构的红绿呈现;W6.7:add/del 行样式归 widgets.css
+   .wd-diff 作用域规则——8% 浅底 + 2px 左条双编码,本文件旧规则退役) */
 .pf-dmember { display: flex; flex-direction: column; gap: var(--s1); }
 .pf-twocol {
   display: grid;
@@ -231,12 +232,6 @@
   font-size: var(--text-xs);
   padding: var(--s1) var(--s2);
   white-space: pre-wrap;
-}
-.pf-dline[data-kind="add"] { background: color-mix(in srgb, var(--perm-read) 16%, transparent); border-radius: var(--r-sm); }
-.pf-dline[data-kind="del"] {
-  background: color-mix(in srgb, var(--danger) 16%, transparent);
-  border-radius: var(--r-sm);
-  text-decoration: line-through;
 }
 
 /* publish 卡(成员三态 + ack 勾选门) */

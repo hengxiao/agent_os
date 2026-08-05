@@ -128,8 +128,10 @@ export function mdToHtml(md) {
   return out.join("");
 }
 
-/* state → html(纯);state 面:{source, title?, view?("preview"|"source")} */
-export function renderMarkdownViewer(state, { surface = "tab" } = {}) {
+/* state → html(纯);state 面:{source, title?, view?("preview"|"source")};
+   opts.bar(缺省 true)——false 时省略 segmented/全文复制条(宿主自管
+   chrome 的嵌入面,如 doc-editor 源码模式;W6.7) */
+export function renderMarkdownViewer(state, { surface = "tab", bar = true } = {}) {
   if (surface === "card") return _mdCardHtml(state);
   const view = state.view ?? "preview";
   if (!String(state.source ?? "").trim() && view === "preview") {
@@ -149,9 +151,13 @@ export function renderMarkdownViewer(state, { surface = "tab" } = {}) {
     `<button type="button" class="wd-md-copyall" data-md-copyall="1" title="${esc(copy("w.md.copy"))}"` +
     ` aria-label="${esc(copy("w.md.copy"))}">⧉</button>` +
     `</span>`;
-  const bar = state.title ? `<div class="wd-pane-head">${barInner}</div>` : `<div class="wd-md-bar">${barInner}</div>`;
+  const barHtml = bar
+    ? state.title
+      ? `<div class="wd-pane-head">${barInner}</div>`
+      : `<div class="wd-md-bar">${barInner}</div>`
+    : "";
   if (view === "source") {
-    return `<div class="wd-md" role="document">${bar}${_mdSourceHtml(state)}</div>`;
+    return `<div class="wd-md" role="document">${barHtml}${_mdSourceHtml(state)}</div>`;
   }
   let idx = 0; // 局部计数(纯函数内,无副作用外泄)
   const body = mdToHtml(state.source ?? "").replace(/<pre class="mono wd-md-code">/g, () => {
@@ -161,7 +167,7 @@ export function renderMarkdownViewer(state, { surface = "tab" } = {}) {
     idx += 1;
     return tag;
   });
-  return `<div class="wd-md" role="document">${bar}${body}</div>`;
+  return `<div class="wd-md" role="document">${barHtml}${body}</div>`;
 }
 
 /* 源码态(§3.12 v2 · 用户裁决):W-text readonly 同族视觉——行号槽 +

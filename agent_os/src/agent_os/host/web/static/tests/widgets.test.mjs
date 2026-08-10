@@ -2041,12 +2041,17 @@ console.log("widgets.test.mjs: W6.6 ruling assertions passed");
   const pcss = readFileSync(new URL("../../../web_platform/static/platform.css", import.meta.url), "utf8");
   assert.ok(!/\.pf-dline\[data-kind="add"\]/.test(pcss) && !/\.pf-dline\[data-kind="del"\]/.test(pcss),
     "platform.css 旧 .pf-dline[data-kind] 冲突规则已删(视觉归 widget)");
-  // doc-editor 组装:气泡引用块透传/失败走控件失败态/view source 宿主开关
+  // doc-editor 组装:气泡引用块透传/失败走控件失败态/C3 compound 化
   const ded = readFileSync(new URL("../../../web_platform/static/doc-editor.js", import.meta.url), "utf8");
   assert.ok(ded.includes("quote: blockTextOf(anchor)"), "bubble anchor.quote 透传锚段摘录(§3.13 锚点块)");
   assert.ok(ded.includes("notifyError"), "发送失败走控件失败态(行内红条 + 重试)");
-  assert.ok(ded.includes("setViewMode") && ded.includes("mountMarkdownViewer") && ded.includes("bar: false"),
-    "view source 宿主开关 = W-md mount(view:source, bar:false)");
+  assert.ok(ded.includes("createCompound") && ded.includes('kind: "doc-editor"'), "C3:doc-editor = compound(docs/COMPOUND-WIDGET.md §9)");
+  assert.ok(ded.includes('allow: ["chat-bubble"]'), "C3:段落批注 = 动态 chat-bubble 子件(白名单)");
+  assert.ok(ded.includes("child_context") && ded.includes("paragraph: blockTextOf(anchor)"),
+    "C3:child_context 注入锚段/全文(cascade widget 级,§7-2)");
+  assert.ok(ded.includes("link_view"), "C3:bubble view 经 §5 link_view 挂进宿主壳");
+  assert.ok(ded.includes('id: "doc", kind: "md-viewer"') && ded.includes("bar: false"),
+    "C3:文档主体 = 预定义 md-viewer 子件(view source 保持,bar:false 宿主 chrome)");
 }
 
-console.log("widgets.test.mjs: W6.7 assembly assertions passed");
+console.log("widgets.test.mjs: W6.7/C3 assembly assertions passed");

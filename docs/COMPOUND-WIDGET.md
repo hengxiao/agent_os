@@ -108,7 +108,7 @@ cascade 协议(`cascade.js`)不变:provider 按 path 注册;reparent 时按新 p
 |---|---|---|
 | C1 ✅ | `compound.js` 基座:createCompound、slots/动态生灭/attach/detach/move、多 view 扇出、事件闸门、context 改写、reparent 广播;协议测试 | 四能力(预定义/动态/转移/hard link)各有测试 |
 | C2 ✅ | playground 演示件(`web/static/compound.html` 新页):双栏 compound,可从列表加件、左右互移、同一实例左 card 右 tab | 目检可走通四能力 |
-| C3 | doc-editor 迁为 compound(md-viewer + 动态 bubble 子件) | 既有行为测试不破 |
+| C3 ✅ | doc-editor 迁为 compound(md-viewer + 动态 bubble 子件) | 既有行为测试不破 |
 | C4 | desktop widget 落地,platform 壳迁移 | 另行设计 |
 
 > **C1/C2 实现注**(2026-08-05,分支 debugger):
@@ -176,3 +176,42 @@ cascade 协议(`cascade.js`)不变:provider 按 path 注册;reparent 时按新 p
 > 另:UI 测试架构落地于 `web/static/tests-ui/`(Playwright + 项目内隔离
 > Chromium;`./run.sh`),test_compound 四能力与 test_sandbox 全控件矩阵
 > 在真实浏览器全绿——此后 compound 层改动以两套都绿为交付门槛。
+
+## 12. 实现注(C3 doc-editor 迁移,2026-08-11)
+
+> 第一个产品级 compound:`web_platform/static/doc-editor.js` 重写为
+> `createCompound`(kind `doc-editor`),对外 API 与 fetch 路径零变化。
+>
+> - **def 结构**:预定义 slot `doc` = md-viewer(文档主体;state.options
+>   均给 `view:"source"` + `bar:false`,chrome 归宿主);dynamic.allow =
+>   `["chat-bubble"]`(段落批注,生灭随右键/锚点钮/评审);`layout(state)`
+>   纯函数——`view:"preview"` 出 D5 同构段落块 chrome(doc-para/锚点钮/
+>   changed/guide),`"source"` 出 `<div data-slot="doc">` 占位(§3-3 占位
+>   进出不动子 instance)。def 按挂载实例注册(同名 kind 覆盖;旧实例持旧
+>   闭包)——layout/child_context 需要 mount 级 currentText 闭包。
+> - **管控三通道全用**(§7):`child_context` 给每个 bubble 注入
+>   `{anchor, paragraph, full_text}`(widget 级 fragment;app 级 provider
+>   照原注册);`on_child_event` 吞 open、放行 submit/apply/close →
+>   `child_event` 监听接管(comment.send/apply 出海仍父级);可见性管控 =
+>   close 后宿主摘壳。
+> - **切割线不动**(W5.4):浮出定位壳/未读游标/批注栏仍宿主职责——
+>   bubble 的 view 经 §5 `link_view` 挂进宿主壳内(视图不限 slot 内),
+>   **不进 layout 占位**;批注栏读子 state 的未读条数,layout 读不到(§7
+>   layout 只能读 slotRefs 元信息);seen 游标进 compound state(可序列化,
+>   localStorage 备份照原)。
+> - **基座两处修补**(tests-ui 抓出,stub 测不出):
+>   1) `_slotEl` 退化路径收窄——`[data-slot]` 无值 fallback 仅供 stub
+>      区域提取,命中元素必须本身不带值;否则动态子件(slot id = 锚点串,
+>      永无占位)在真实 DOM 会错挂进别的 slot 占位(bubble 挤进 doc 占位);
+>   2) `childInst.views = rec.views` 仅限 leaf 子件——compound 子有自身
+>      父视图账(mount_view 记),覆盖会两账混一,fanout 撞上无 live 的
+>      父视图记录(TypeError)。
+> - **child_event 负载形态**:`{child: rec.id(字符串), event, payload}`
+>   ——handler 取锚须 `typeof child === "string" ? child : ...`,不能
+>   `child.state`(静默哑火)。
+> - **测试**:stub compound.test.mjs 追加 C3 块(children_snapshot/
+>   link_view 挂壳/child_context 信封/close 可见性/source slot 进出),
+>   widgets.test.mjs 的 W6.7 doc-editor 断言改写为 compound 形态,30 文件
+>   全绿;tests-ui 新增 test_doceditor.py(真实 Chromium:对话发卡 →
+>   开文档 → 右键开泡 → 发消息 → 收起 → 批注跳转 → view source 往返),
+>   三套(compound/doceditor/sandbox)全绿;BUILD 2026-08-11.2 三方同步。

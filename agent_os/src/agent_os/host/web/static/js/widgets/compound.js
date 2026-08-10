@@ -154,6 +154,10 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
     childInst.path = rec.path; // §1:寻址 = owner.path + 子段(身份即路径)
     childInst._compoundOwner = inst; // ownership 唯一(§1)
     childInst._compoundId = id;
+    // §5 视图计数/取 view.live 的公开面(C3 需要:宿主调 mount 期方法)——
+    // 仅 leaf 子件:compound 子有自身父视图账(inst.views,mount_view 记),
+    // 覆盖会两账混一(fanout 撞上无 live 的父视图记录,真实浏览器 TypeError)
+    if (!childInst._compound) childInst.views = rec.views;
     childInst.link_view = (host, opts = {}) => _linkView(rec, host, opts); // hard link 入口(§5;与 compound 自身 mount_view 严格分离)
     children.set(id, rec);
     _registerChild(rec);
@@ -163,9 +167,15 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
   };
 
   /* slot 元素查找:真实 DOM 恒走精确选择器;`[data-slot]`(无值)退化
-     仅供无属性区域提取的环境(单 slot 场景;协议面不受影响) */
-  const _slotEl = (view, id) =>
-    view.host.querySelector(`[data-slot="${id}"]`) ?? view.host.querySelector("[data-slot]") ?? null;
+     仅供无属性区域提取的环境(单 slot 场景;协议面不受影响)——退化命中
+     的元素必须本身不带值(stub 虚拟区域无属性),真实 DOM 里带值占位是
+     别的 slot,不能错挂(C3:动态子件 slot id 无占位时经退化撞上 doc 占位) */
+  const _slotEl = (view, id) => {
+    const exact = view.host.querySelector(`[data-slot="${id}"]`);
+    if (exact) return exact;
+    const bare = view.host.querySelector("[data-slot]");
+    return bare && !bare.getAttribute?.("data-slot") ? bare : null;
+  };
 
   /* 父视图装配(§3):layout 落 chrome,子 view 进 data-slot 占位;
      重渲 = 旧 view detach + 新 view attach(canonical/state 不动) */
@@ -226,6 +236,8 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
     childInst._compoundOwner = inst;
     childInst._compoundId = id;
     childInst.path = rec.path; // §6:path 重算(身份不变)
+    // §5 公开面同 _spawn:仅 leaf 子件;重挂(move)时重指新 rec.views,防陈旧别名
+    if (!childInst._compound) childInst.views = rec.views;
     childInst.link_view = (host, opts = {}) => _linkView(rec, host, opts); // hard link 入口(§5;同 _spawn 的分离纪律)
     children.set(id, rec);
     _registerChild(rec); // §6-2:新 path 注册 + provider 按新 path 重注册

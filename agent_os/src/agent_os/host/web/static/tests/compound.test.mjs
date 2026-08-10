@@ -12,7 +12,7 @@ await register("./platform-loader.mjs", import.meta.url);
 
 const { makeDocument, StubEl } = await import("./dom-stub.mjs");
 const {
-  registerWidgetDef, createCompound, contextCascade, mountTextEditor, mountLogViewer,
+  registerWidgetDef, getWidgetDef, createCompound, contextCascade, mountTextEditor, mountLogViewer,
 } = await import("../js/widgets/index.js");
 
 /* 测试 compound:单 slot 布局(dom-stub 区域提取按 [data-slot] 无值命中;
@@ -274,3 +274,89 @@ console.log("compound.test.mjs: all assertions passed");
 }
 
 console.log("compound.test.mjs: C2 playground smoke assertions passed");
+
+{
+  // C3:doc-editor = 产品级 compound(docs/COMPOUND-WIDGET.md §9;协议在真实场景)
+  const { mountDocEditor } = await import("../../../web_platform/static/doc-editor.js");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (String(url).endsWith("/comment")) {
+      return { ok: true, json: async () => ({ reply: "建议:删第二句", edits: [{ replace_text: "改过的第二段" }] }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+  const host = doc.createElement("div");
+  host.innerHTML =
+    `<div class="doc-toolbar"></div><div data-doc-preview="1"></div><div data-doc-chat-log="1"></div>` +
+    `<input data-doc-chat-input="1"><span data-doc-chars="1"></span><span data-doc-dirty="1"></span><div data-doc-bubblebar="1"></div>`;
+  doc.body.appendChild(host);
+  const ed = mountDocEditor(host, { name: "demo.test", text: "# 标题\n首段内容\n\n次段内容", chat: [] },
+    { seedFlows: [{ anchor: "doc.md#L2-L2", messages: [{ role: "user", text: "旧批注", ts: 1 }] }] });
+
+  // 结构:预定义 doc 子件(md-viewer)在 children_snapshot;kind 注册在表
+  const snap = ed.compound.children_snapshot();
+  assert.deepEqual(snap.map((s) => s.id), ["doc"], "预定义 slot doc(md-viewer 文档主体)");
+  assert.equal(snap[0].path, "/doc/demo.test/doc", "子件 path = owner.path + 子段(§1)");
+  assert.ok(getWidgetDef("doc-editor")?.compound, "doc-editor 注册进 registry(compound 形态)");
+
+  // 段落开泡 = add_child(chat-bubble);view 经 link_view 挂进宿主壳(§5)
+  const anchorBtn = new StubEl("button");
+  anchorBtn.dataset.anchorBtn = "1";
+  const paraBlock = new StubEl("div");
+  paraBlock.dataset.anchor = "doc.md#L2-L2";
+  anchorBtn.closest = (sel) =>
+    sel === "[data-anchor-btn]" ? anchorBtn : sel === "[data-anchor]" ? paraBlock : null;
+  paraBlock.parentNode = host.querySelector("[data-doc-preview]");
+  host.querySelector("[data-doc-preview]").trigger("click", { target: anchorBtn });
+  const snap2 = ed.compound.children_snapshot();
+  assert.equal(snap2.length, 2, "开泡后子件 +1(动态生灭)");
+  assert.equal(snap2[1].kind, "chat-bubble", "批注子件 kind");
+  assert.equal(snap2[1].path, "/doc/demo.test/doc.md#L2-L2", "批注 path 与信封寻址一致");
+  const entry = ed.bubbles.get("doc.md#L2-L2");
+  assert.ok(entry.body.innerHTML.includes("w-bubble"), "气泡卡挂进壳(link_view)");
+  assert.ok(entry.body.innerHTML.includes("旧批注"), "种子消息进 canonical state");
+
+  // child_context(§7-2):submit 信封 widget 级带锚段/全文/文档态
+  const input3 = new StubEl("input");
+  input3.dataset.bubbleDraft = "";
+  input3.parentNode = entry.body;
+  input3.value = "这段太绕";
+  entry.body.trigger("input", { target: input3 });
+  entry.body.trigger("keydown", { target: input3, key: "Enter" });
+  await new Promise((r) => setTimeout(r, 30));
+  const commentPost = calls.find((c) => String(c.url).endsWith("/comment"));
+  assert.ok(commentPost, "submit → child_event → comment.send 出海(§7-1 闸门放行)");
+  const env = JSON.parse(commentPost.options.body);
+  assert.equal(env.cascade[0].scope, "widget", "widget 级 fragment 在近端");
+  assert.ok(env.cascade[0].data.paragraph.includes("首段内容"), "child_context 注入锚段原文(L2 段)");
+  assert.ok(env.cascade[0].data.full_text.includes("次段内容"), "child_context 注入全文");
+  assert.equal(env.cascade[1].data.name, "demo.test", "app 级文档态(宿主注册)");
+
+  // 可见性管控(§7-3):控件内 ✕ → close → 壳藏起 + 段旁标记;seen 前进
+  const xBtn = new StubEl("button");
+  xBtn.dataset.bubbleX = "1";
+  xBtn.closest = (sel) => (sel === "[data-bubble-x]" ? xBtn : null);
+  xBtn.parentNode = entry.body;
+  entry.body.trigger("click", { target: xBtn });
+  assert.equal(entry.el.hidden, true, "close 后壳藏起(可见性管控)");
+  assert.equal(entry.marker.hidden, false, "段旁标记显出");
+
+  // view source:state.view 驱动 layout;doc slot 进出(§3-3)
+  assert.ok(!host.querySelector("[data-doc-preview]").innerHTML.includes('data-slot="doc"'),
+    "preview 态无 doc slot(块 chrome)");
+  const srcBtn = new StubEl("button");
+  srcBtn.dataset.vm = "source";
+  srcBtn.closest = (sel) => (sel === "[data-vm]" ? srcBtn : null);
+  const seg = [...(host.querySelector(".doc-toolbar")?.children ?? [])].find((c) =>
+    c.classList?.contains("doc-viewseg")
+  );
+  seg.trigger("click", { target: srcBtn });
+  const pv = host.querySelector("[data-doc-preview]").innerHTML;
+  assert.ok(pv.includes('data-slot="doc"'), "source 态 doc slot 出现(layout 按 state.view 切换)");
+  assert.equal(ed.compound.state.view, "source", "模式进 compound state(可序列化)");
+}
+
+console.log("compound.test.mjs: C3 doc-editor compound assertions passed");

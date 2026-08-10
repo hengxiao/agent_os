@@ -35,6 +35,7 @@ export const DATE_EDITOR_DEF = registerWidgetDef({
   aria: { role: "group", keys: ["ArrowLeft", "ArrowRight", "Escape"] },
   surfaces: ["card", "tab"],
   render: renderDatePicker, // W5.3:render 面进 def(registry 校验形态)
+  mount: mountDatePicker,
 });
 
 /* ISO 校验:date = YYYY-MM-DD;datetime = 允许 T hh:mm(:ss);非法 → null */

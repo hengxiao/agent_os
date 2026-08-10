@@ -23,6 +23,7 @@ export const DIFF_VIEWER_DEF = registerWidgetDef({
   aria: { role: "group", keys: [] },
   surfaces: ["card", "tab"],
   render: renderDiffViewer, // W5.3:render 面进 def(registry 校验形态)
+  mount: mountDiffViewer,
 });
 
 /* 挂进宿主:diff(与 cards/lab-iterate 同构的 diff 对象)+ title(文件头,可选);

@@ -21,6 +21,7 @@ export const MD_VIEWER_DEF = registerWidgetDef({
   aria: { role: "document", keys: [] },
   surfaces: ["card", "tab"],
   render: renderMarkdownViewer, // W5.3:render 面进 def(registry 校验形态)
+  mount: mountMarkdownViewer,
 });
 
 /* 取第 i 个代码块文本(与 mdToHtml 的围栏解析同律:行首 ``` 开/合) */

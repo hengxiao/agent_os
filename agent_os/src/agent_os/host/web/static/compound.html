@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="classic">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compound Playground — Agent OS 开发工具</title>
+<link rel="stylesheet" href="/static/css/tokens.css?v=2026-08-05.4">
+<link rel="stylesheet" href="/static/css/app.css?v=2026-08-05.4">
+<link rel="stylesheet" href="/static/css/widgets.css?v=2026-08-05.4">
+<link rel="stylesheet" href="/static/css/themes/classic.css?v=2026-08-05.4">
+<link rel="stylesheet" href="/static/css/themes/moe.css?v=2026-08-05.4">
+<link rel="stylesheet" href="/static/css/themes/terminal.css?v=2026-08-05.4">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css?v=2026-08-05.4">
+<link rel="stylesheet" href="/static/css/themes/ink.css?v=2026-08-05.4">
+<link rel="stylesheet" href="/static/css/themes/pixel.css?v=2026-08-05.4">
+<style>
+  /* playground 布局(开发工具;全 token,不走产品 copy) */
+  body { background: var(--bg-0); color: var(--fg-0); font-size: var(--text-xs); margin: 0; }
+  .pg-top {
+    display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+    padding: var(--s2) var(--s3); border-bottom: var(--stroke) solid var(--line);
+    background: var(--bg-1);
+  }
+  .pg-top label { color: var(--fg-2); font-size: var(--text-2xs); }
+  .pg-build { margin-left: auto; color: var(--fg-2); font-size: var(--text-2xs); font-family: var(--font-mono); }
+  .pg-info {
+    margin: var(--s3) var(--s3) 0; padding: var(--s2) var(--s3);
+    border: var(--stroke) solid var(--line); border-radius: var(--r-md); background: var(--bg-1);
+    color: var(--fg-1); font-size: var(--text-xs); line-height: 1.7;
+  }
+  .pg-info b { color: var(--fg-0); }
+  .pg-info code { color: var(--live); }
+  .pg-cols { display: grid; grid-template-columns: 380px 1fr; gap: var(--s3); padding: var(--s3); align-items: start; }
+  .pg-col {
+    border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+    background: var(--bg-1); padding: var(--s2);
+  }
+  .pg-h { margin: 0 0 var(--s2); font-size: var(--text-xs); color: var(--fg-1); font-weight: 500; }
+  .pg-dim { color: var(--fg-2); font-weight: 400; font-size: var(--text-2xs); }
+  .pg-item {
+    border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+    margin-bottom: var(--s2); background: var(--bg-0);
+  }
+  .pg-item-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
+    padding: var(--s1) var(--s2); border-bottom: var(--stroke) solid var(--line);
+  }
+  .pg-kind { color: var(--fg-2); font-size: var(--text-2xs); }
+  .pg-acts { display: flex; gap: var(--s1); }
+  .pg-acts .btn { padding: 0 var(--s2); font-size: var(--text-2xs); }
+  .pg-item > [data-slot] { display: block; padding: var(--s1); }
+  .pg-empty { color: var(--fg-2); font-size: var(--text-xs); padding: var(--s4) var(--s2); text-align: center; }
+  .pg-links { margin-top: var(--s3); border-top: var(--stroke) solid var(--line); padding-top: var(--s2); }
+  .pg-link-item {
+    border: var(--stroke) dashed var(--line-strong); border-radius: var(--r-md);
+    margin-top: var(--s2); padding: var(--s2); background: var(--bg-0);
+  }
+  .pg-link-cap { color: var(--live); font-size: var(--text-2xs); margin-bottom: var(--s1); }
+  .pg-events-wrap { margin: 0 var(--s3) var(--s3); }
+  .pg-events {
+    border: var(--stroke) solid var(--line); border-radius: var(--r-sm);
+    background: var(--bg-1); padding: var(--s2); min-height: 60px;
+    font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--fg-1); white-space: pre-wrap;
+  }
+  #pg-gate { color: var(--fg-2); font-size: var(--text-2xs); margin-top: var(--s1); }
+</style>
+</head>
+<body data-route="compound-playground">
+  <div class="pg-top">
+    <b>Compound Playground</b>
+    <label>加件 kind <select class="input" id="pg-kind"></select></label>
+    <button class="btn" id="pg-add">加到左栏(动态生灭)</button>
+    <span class="pg-build" id="pg-build"></span>
+  </div>
+  <div class="pg-info">
+    <b>本页演示 Compound Widget 四能力(docs/COMPOUND-WIDGET.md)</b><br>
+    ① <b>预定义 slots</b>:左右两栏本身是根 compound(pg-root)的两个预定义子件(compound 套 compound);<br>
+    ② <b>动态生灭</b>:顶栏选 kind「加到左栏」= <code>add_child</code>(白名单 + max 闸);每卡 ✕ = <code>remove_child(destroy)</code>;<br>
+    ③ <b>跨父转移(reparent)</b>:卡上 →/← = <code>move_child</code>——state 不动、path 重算(见下方 reparent 广播)、新 owner 的 provider 按新 path 重注册;<br>
+    ④ <b>hard link 多视图</b>:卡上「⧉ 链接」= 同一 instance 在右区开 tab 第二 view(<code>child.mount_view</code>)——改右 tab,左卡同步变(update 扇出);再点断开。页面全程用 <code>createCompound</code> 实现。
+  </div>
+  <div id="pg-root"></div>
+  <div class="pg-events-wrap">
+    <div class="pg-events" id="pg-events" role="log" aria-label="reparent 广播记录"></div>
+    <div id="pg-gate"></div>
+  </div>
+  <script type="module">
+    import { bootPlayground } from "/static/js/compound-playground.js?v=2026-08-05.4";
+    bootPlayground();
+  </script>
+</body>
+</html>

@@ -27,7 +27,8 @@ export const TREE_EDITOR_DEF = registerWidgetDef({
   events: ["select", "change", "open"], // open = card 形态整卡点击(§1.4)
   aria: { role: "tree", keys: ["ArrowLeft", "ArrowRight"] },
   surfaces: ["card", "tab"],
-  render: renderTreeWidget, // W5.3:render 面进 def(registry 校验形态)
+  render: renderTreeWidget, // W5.3:render 进 def(registry 校验形态)
+  mount: mountNsTreeWidget,
 });
 
 const _nameOf = (item) => String(typeof item === "string" ? item : item?.name ?? "");

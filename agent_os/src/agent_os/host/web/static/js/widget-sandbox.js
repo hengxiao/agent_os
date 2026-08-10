@@ -15,7 +15,7 @@ import * as widgets from "./widgets/index.js";
 import { SAMPLES } from "./widgets/samples.js";
 
 /* 构建号(缓存破坏 ?v= 与页角显示;改 widget 代码时与 widget.html 链接同步) */
-export const BUILD = "2026-08-05.3";
+export const BUILD = "2026-08-05.4";
 
 /* URL 解析(纯函数):未知 kind → null(调用方回落);坏 options JSON →
    optionsError 标记(不崩页面);sample 非法 → 0。 */

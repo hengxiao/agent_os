@@ -31,6 +31,7 @@ export const FORM_EDITOR_DEF = registerWidgetDef({
   aria: { role: "form", keys: ["Enter"] },
   surfaces: ["card", "tab"],
   render: renderFormEditor, // W5.2:render 面进 def(registry 校验形态)
+  mount: mountFormEditor,
 });
 
 const _DND_MIME = "application/x-agent-os-widget";

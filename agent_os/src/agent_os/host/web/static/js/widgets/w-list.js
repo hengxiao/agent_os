@@ -25,6 +25,7 @@ export const LIST_EDITOR_DEF = registerWidgetDef({
   aria: { role: "listbox", keys: ["ArrowUp", "ArrowDown", "Enter"] },
   surfaces: ["card", "tab"],
   render: renderSelectList, // W5.2:render 面进 def(registry 校验形态)
+  mount: mountSelectList,
 });
 
 /* 挂进宿主:items + multi(多选)+ selected(初始)+ title(面板头,可选);

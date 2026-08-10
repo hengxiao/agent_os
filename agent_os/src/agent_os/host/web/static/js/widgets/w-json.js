@@ -30,6 +30,7 @@ export const JSON_EDITOR_DEF = registerWidgetDef({
   aria: { role: "textbox-multiline", keys: ["Escape"] },
   surfaces: ["card", "tab"],
   render: renderJsonEditor, // W5.1:render 面进 def(registry 校验形态)
+  mount: mountJsonEditor,
 });
 
 export const JSON_EDITOR_DEF_KIND = "json-editor";

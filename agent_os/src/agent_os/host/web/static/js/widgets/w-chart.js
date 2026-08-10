@@ -29,6 +29,7 @@ export const CHART_DEF = registerWidgetDef({
   aria: { role: "img", keys: [] },
   surfaces: ["card", "tab"],
   render: renderChart, // W5.3:render 面进 def(registry 校验形态)
+  mount: mountChart,
 });
 
 /* 挂进宿主:series + type + label(aria 摘要)+ title(可选,缺省用 label);

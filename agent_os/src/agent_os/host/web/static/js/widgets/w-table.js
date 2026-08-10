@@ -32,6 +32,7 @@ export const TABLE_EDITOR_DEF = registerWidgetDef({
   aria: { role: "grid", keys: ["ArrowUp", "ArrowDown"] },
   surfaces: ["card", "tab"],
   render: renderTableEditor, // W5.2:render 面进 def(registry 校验形态)
+  mount: mountTableEditor,
 });
 
 let _rowSeq = 0;

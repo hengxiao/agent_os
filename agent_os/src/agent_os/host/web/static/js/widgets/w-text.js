@@ -32,6 +32,7 @@ export const TEXT_EDITOR_DEF = registerWidgetDef({
   aria: { role: "textbox-multiline", keys: ["Escape"] },
   surfaces: ["card", "tab"],
   render: renderTextEditor, // W5.1:render 面进 def(registry 校验形态)
+  mount: mountTextEditor, // C1:mount 面进 def(compound 视图装配;函数声明提升,def 字面量期可用)
 });
 
 /* 自渲染装配(§1.3;宿主给空挂点 + data-field/data-variant/data-rows 或显式

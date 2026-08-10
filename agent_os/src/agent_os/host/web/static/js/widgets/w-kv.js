@@ -28,6 +28,7 @@ export const KV_EDITOR_DEF = registerWidgetDef({
   aria: { role: "group", keys: [] },
   surfaces: ["card", "tab"],
   render: renderKvEditor, // W5.2:render 面进 def(registry 校验形态)
+  mount: mountKvEditor,
 });
 
 /* 序列化往返(重复 key 时后者覆盖——与 JSON object 语义一致,警示已提前给) */

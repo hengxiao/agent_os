@@ -28,6 +28,7 @@ export const LOG_VIEWER_DEF = registerWidgetDef({
   aria: { role: "log", keys: [] },
   surfaces: ["card", "tab"],
   render: renderLogViewer, // W5.3:render 面进 def(registry 校验形态)
+  mount: mountLogViewer,
 });
 
 /* 挂进宿主:lines 初始行 + maxLines(截断上限,缺省 500 保尾部)+ title(可选)。

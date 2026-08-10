@@ -106,10 +106,49 @@ cascade 协议(`cascade.js`)不变:provider 按 path 注册;reparent 时按新 p
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| C1 | `compound.js` 基座:createCompound、slots/动态生灭/attach/detach/move、多 view 扇出、事件闸门、context 改写、reparent 广播;协议测试 | 四能力(预定义/动态/转移/hard link)各有测试 |
-| C2 | playground 演示件(沙盒新页或沙盒内模式):双栏 compound,可从列表加件、左右互移、同一实例左 card 右 tab | 目检可走通四能力 |
+| C1 ✅ | `compound.js` 基座:createCompound、slots/动态生灭/attach/detach/move、多 view 扇出、事件闸门、context 改写、reparent 广播;协议测试 | 四能力(预定义/动态/转移/hard link)各有测试 |
+| C2 ✅ | playground 演示件(`web/static/compound.html` 新页):双栏 compound,可从列表加件、左右互移、同一实例左 card 右 tab | 目检可走通四能力 |
 | C3 | doc-editor 迁为 compound(md-viewer + 动态 bubble 子件) | 既有行为测试不破 |
 | C4 | desktop widget 落地,platform 壳迁移 | 另行设计 |
+
+> **C1/C2 实现注**(2026-08-05,分支 debugger):
+> - **C1 基座**(`js/widgets/compound.js`):`createCompound(def, opts)` 全协议——
+>   预定义 slots 随实例创建;`add_child`(dynamic.allow 白名单 + max 闸)/
+>   `attach_existing`(ownership 唯一校验 + 祖先链防环,§10)/
+>   `remove_child({destroy})`(destroy:false = detach,实例可被别家 attach)/
+>   `move_child`(remove+attach 事务包装,attach 失败回滚挂回原 owner)/
+>   `child(id)`/`children()`/`children_snapshot()`(可序列化);
+>   多 view(§5)= view{host, surface, live},live 是该 kind mount 全装的**视图
+>   实例**,接线 = state 引用同一化(live.state = canonical.state)+ emit 转发
+>   (live.emit = canonical.emit)——事件只有一份、先入 `on_child_event` 闸门
+>   (false 吞 / true 上行 / {payload} 改写),统一包 `child_event` 上行;
+>   渲染协议(§3):layout 纯函数只放 `<div data-slot>`(不内联),父 innerHTML
+>   后子 view 进占位,结构变化触发父 relayout → 子 view detach→attach 同帧重挂
+>   (canonical/state 不动);`child_context` 在 compound 注册的 cascade provider
+>   里改写(§7-2);reparent:path 重算(canonical.path 也随)+ onUnregister/
+>   onRegister 链 + provider 按新 path 重注册 + 全树 `reparent` 事件
+>   ({child, from, to},新旧 owner 各发)。
+> - **接线与生命周期两条裁决**(实现期实测,记录备查):
+>   1) view 挂载不给 path(挂成 "")——mount 内 widget.register 的注册/注销会
+>      把 view detach 误伤成 cascade provider 摘除,§5 hidden 语义(末 view
+>      detach 后 state/context 照旧)要求 provider 生命周期归 compound 统一;
+>   2) 接线后首渲对齐——mount 用自己的 options 先渲,swap 到 canonical state
+>      后补一次 update({})/render 重渲。
+> - **registry 增量**(§2):`def.compound.layout/on_child_event/child_context`
+>   形态校验 + `def.mount` 函数校验;slots/dynamic.allow 的 kind ⊆ 注册表 =
+>   惰性校验(mount/add 期);13 个 def 挂 `mount` 字段(函数声明提升,def
+>   字面量期可用);`move_child(id, newOwner, {slot, surface?})` 的 surface
+>   为文档 {slot} 的扩展项(card↔tab 演示需要,已注)。
+> - **C2 playground**(`web/static/compound.html` + `js/compound-playground.js`):
+>   pg-root 的左右栏 = pg-stack/pg-stage 两个 compound(compound 套 compound,
+>   栈 def 的 mount 用「本页单实例」闭包桥),加件/互移/✕/⧉链接全部走公开
+>   API;链接区把 id 的第二 view 以 tab 挂入(与左卡同 instance,update 扇出
+>   可目检);reparent 广播与 child_event 上屏;BUILD 三方同步(2026-08-05.4)。
+> - **测试**:tests/compound.test.mjs(新文件;七块 + C2 冒烟)——预定义渲染
+>   + layout 不内联、动态生灭(白名单/max/detach 活/destroy 静默)、move 全链
+>   (path/context/state/广播/回滚)、hard link(双 view 同 state 引用、扇出
+>   同步、事件一份、detach hidden)、闸门三态、context 改写、防环;dom-stub
+>   面断言走 slot 区域串([data-slot] 无值区域提取)。
 
 ## 10. 不做清单
 

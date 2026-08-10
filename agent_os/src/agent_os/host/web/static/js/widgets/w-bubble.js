@@ -29,6 +29,7 @@ export const BUBBLE_DEF = registerWidgetDef({
   aria: { role: "dialog", keys: ["Enter", "Escape"] },
   surfaces: ["card", "tab"],
   render: renderBubble, // W5.3:render 面进 def(registry 校验形态)
+  mount: mountBubble,
 });
 
 /* 挂进宿主:anchor(§14 语义锚:成员/字段/可选 span)+ cascadeProviders(各级 fragment

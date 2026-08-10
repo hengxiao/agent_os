@@ -61,6 +61,23 @@ export function registerWidgetDef(def) {
   if (def.render !== undefined && typeof def.render !== "function") {
     throw new Error(`widget ${kind}: render 必须是纯函数(state→html;W5.1)`);
   }
+  // C1(docs/COMPOUND-WIDGET.md §2):mount 面(compound 视图装配;
+  // 给了必须是函数)与 compound 增量形态校验
+  if (def.mount !== undefined && typeof def.mount !== "function") {
+    throw new Error(`widget ${kind}: mount 必须是函数(host,{...options}→实例;C1)`);
+  }
+  if (def.compound !== undefined) {
+    if (typeof def.compound.layout !== "function") {
+      throw new Error(`widget ${kind}: compound.layout 必须是纯函数(§2/§3-1)`);
+    }
+    if (def.compound.on_child_event !== undefined && typeof def.compound.on_child_event !== "function") {
+      throw new Error(`widget ${kind}: compound.on_child_event 必须是函数(§7-1)`);
+    }
+    if (def.compound.child_context !== undefined && typeof def.compound.child_context !== "function") {
+      throw new Error(`widget ${kind}: compound.child_context 必须是函数(§7-2)`);
+    }
+    // slots/dynamic.allow 的 kind ⊆ 注册表 = 惰性校验(COMPOUND-WIDGET §2,mount/add 期)
+  }
   _defs.set(kind, def);
   return def;
 }

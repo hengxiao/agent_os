@@ -33,7 +33,10 @@ def run(t):
         link = pg.locator(f'[data-detail-kind="doc"][data-detail-ref="{DOC}"]').first
     t.check("doc_list 卡可见 demo.test", link.count() > 0, f"count={link.count()}")
     link.click()
-    pg.wait_for_timeout(800)
+    # 等挂载完成而非定长:viewseg 由 mountDocEditor 挂进工具栏(挂载完成标记),
+    # fresh 会话首拉 bubbles 较慢,800ms 定长会抢在监听绑定前右键(C4.1 抓出)
+    pg.wait_for_selector(".doc-viewseg", timeout=8000)
+    pg.wait_for_timeout(300)
     preview = pg.locator('[data-doc-preview="1"]').first
     t.check("doc tab 打开(预览区在)", preview.count() > 0, f"count={preview.count()}")
     t.check("段落块渲染(doc-para + 锚点)", preview.locator(".doc-para[data-anchor]").count() >= 2,

@@ -993,6 +993,11 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     def index() -> FileResponse:
         return FileResponse(static_dir / "index.html")
 
+    # C4.1(docs/DESKTOP-WIDGET.md §6):desktop widget 验证页,与旧壳并存(旧壳 C4.4 退役)
+    @app.get("/desktop.html", include_in_schema=False)
+    def desktop() -> FileResponse:
+        return FileResponse(static_dir / "desktop.html")
+
     return app
 
 

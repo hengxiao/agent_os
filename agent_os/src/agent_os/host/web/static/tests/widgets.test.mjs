@@ -1003,10 +1003,12 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
    mount 面(update 在 card 形态工作、check() 局部刷新钩子两种形态共用)。 */
 
 {
-  // 协议面:13 控件 def 全声明 card+tab,且都声明 open 事件(card 唯一交互)
-  // (本文件前文注册过 t-probe 等探针——无 render 面,不计入产品控件面)
+  // 协议面:自渲染 def 全声明 card+tab,且都声明 open 事件(card 唯一交互)
+  // (本文件前文注册过 t-probe 等探针——无 render 面,不计入产品控件面;
+  //  C4.1:supervisor-inbox 系统件薄壳计入(双形态/open 齐备),desktop 是
+  //  compound 根无 render 面(layout 即渲染),自然不入本集)
   const defs = listWidgetKinds().map((k) => getWidgetDef(k)).filter((d) => typeof d.render === "function");
-  assert.equal(defs.length, 13, "13 种自渲染控件");
+  assert.equal(defs.length, 14, "14 种自渲染件(13 控件 + supervisor-inbox)");
   for (const def of defs) {
     assert.deepEqual([...(def.surfaces ?? [])].sort(), ["card", "tab"], `${def.kind} 双 surface 声明`);
     assert.ok(def.events.includes("open"), `${def.kind} 声明 open 事件(card 整卡点击)`);

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="classic">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desktop Widget — Agent OS(C4.1 验证页,与旧壳并存)</title>
+<link rel="stylesheet" href="/static/css/tokens.css?v=2026-08-11.3">
+<link rel="stylesheet" href="/static/css/app.css?v=2026-08-11.3">
+<link rel="stylesheet" href="/static/css/widgets.css?v=2026-08-11.3">
+<link rel="stylesheet" href="/static/css/themes/classic.css?v=2026-08-11.3">
+<link rel="stylesheet" href="/static/css/themes/moe.css?v=2026-08-11.3">
+<link rel="stylesheet" href="/static/css/themes/terminal.css?v=2026-08-11.3">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css?v=2026-08-11.3">
+<link rel="stylesheet" href="/static/css/themes/ink.css?v=2026-08-11.3">
+<link rel="stylesheet" href="/static/css/themes/pixel.css?v=2026-08-11.3">
+<style>
+  /* desktop chrome(全 token,platform 视觉同族;C4.4 产品化时归位 shared css) */
+  body { background: var(--bg-0); color: var(--fg-0); font-size: var(--text-xs); margin: 0; }
+  .dt-top {
+    display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+    padding: var(--s2) var(--s3); border-bottom: var(--stroke) solid var(--line);
+    background: var(--bg-1);
+  }
+  .dt-top label { color: var(--fg-2); font-size: var(--text-2xs); }
+  .dt-build { margin-left: auto; color: var(--fg-2); font-size: var(--text-2xs); font-family: var(--font-mono); }
+  .dt-info {
+    margin: var(--s2) var(--s3) 0; padding: var(--s1) var(--s3);
+    border: var(--stroke) solid var(--line); border-radius: var(--r-md); background: var(--bg-1);
+    color: var(--fg-2); font-size: var(--text-2xs); line-height: 1.6;
+  }
+  .dt-info b { color: var(--fg-1); }
+  .dt-info code { color: var(--live); }
+  /* 根:主区 + 底部任务栏(恒在) */
+  .dt-root { display: flex; flex-direction: column; height: calc(100vh - 108px); }
+  /* 分支一:桌面(壁纸 + 图标栅格) */
+  .dt-desk {
+    flex: 1; padding: var(--s4);
+    background:
+      radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--live) 7%, transparent), transparent 60%),
+      var(--bg-0);
+  }
+  .dt-icons { display: flex; gap: var(--s4); flex-wrap: wrap; }
+  .dt-icon {
+    display: flex; flex-direction: column; align-items: center; gap: var(--s1);
+    width: 84px; padding: var(--s3) var(--s2); border: var(--stroke) solid transparent;
+    border-radius: var(--r-md); background: transparent; color: var(--fg-1);
+    cursor: pointer; position: relative; font-size: var(--text-2xs);
+  }
+  .dt-icon:hover { background: var(--bg-1); border-color: var(--line); }
+  .dt-icon .dt-glyph {
+    width: 40px; height: 40px; border-radius: var(--r-md);
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-1); border: var(--stroke) solid var(--line);
+    font-size: var(--text-lg); color: var(--fg-0);
+  }
+  /* 分支二:单窗(最大化 + 标题栏) */
+  .dt-win { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .dt-titlebar {
+    display: flex; align-items: center; gap: var(--s2);
+    padding: var(--s1) var(--s3); border-bottom: var(--stroke) solid var(--line);
+    background: var(--bg-1);
+  }
+  .dt-titlebar .dt-glyph {
+    width: 20px; height: 20px; border-radius: var(--r-sm);
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-0); border: var(--stroke) solid var(--line); font-size: var(--text-2xs);
+  }
+  .dt-title { font-weight: 500; }
+  .dt-spacer { flex: 1; }
+  .dt-btn {
+    border: var(--stroke) solid var(--line); background: var(--bg-0); color: var(--fg-1);
+    border-radius: var(--r-sm); cursor: pointer; padding: 0 var(--s2); font-size: var(--text-2xs);
+  }
+  .dt-btn:hover { border-color: var(--line-strong); }
+  .dt-win-body { flex: 1; overflow: auto; padding: var(--s3); }
+  .dt-win-body > [data-slot] { display: block; height: 100%; }
+  /* 分支三:任务栏(恒在底部) */
+  .dt-taskbar {
+    display: flex; align-items: stretch; gap: var(--s2);
+    border-top: var(--stroke) solid var(--line); background: var(--bg-1);
+    padding: var(--s1) var(--s2); min-height: 40px;
+  }
+  .dt-tasks { display: flex; gap: var(--s1); flex: 1; align-items: center; overflow-x: auto; }
+  .dt-task {
+    display: flex; align-items: center; gap: var(--s1);
+    border: var(--stroke) solid var(--line); border-radius: var(--r-sm);
+    padding: var(--s1) var(--s2); background: var(--bg-0); cursor: pointer;
+    user-select: none; position: relative; font-size: var(--text-2xs); color: var(--fg-1);
+  }
+  .dt-task[data-active="1"] { border-color: var(--live); color: var(--fg-0); }
+  .dt-task .dt-glyph {
+    width: 18px; height: 18px; border-radius: var(--r-sm);
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-1); border: var(--stroke) solid var(--line);
+  }
+  .dt-x {
+    border: none; background: transparent; color: var(--fg-2); cursor: pointer;
+    padding: 0 2px; border-radius: var(--r-sm); font-size: var(--text-2xs);
+  }
+  .dt-x:hover { color: var(--fg-0); }
+  .dt-x.dt-arm { color: var(--sig-err, #d33); font-weight: 700; }
+  /* badge 徽标(§4 补丁:闸门记账 → slotRefs.badge) */
+  .dt-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    background: var(--live); color: var(--bg-0);
+    font-size: var(--text-2xs); font-weight: 600; line-height: 1;
+  }
+  .dt-icon .dt-badge { position: absolute; top: 2px; right: 8px; }
+  /* 托盘:inbox 系统件 */
+  .dt-tray { display: flex; align-items: center; }
+  .dt-tray-inbox { position: relative; display: flex; align-items: center; }
+  .dt-tray-inbox > .dt-badge { position: absolute; top: -6px; right: -6px; }
+  .w-inbox { display: flex; align-items: center; gap: var(--s1); padding: var(--s1) var(--s2); }
+  .w-inbox-head { display: flex; align-items: center; gap: var(--s1); color: var(--fg-1); }
+  .w-inbox-n { font-family: var(--font-mono); color: var(--fg-0); }
+  .w-inbox-item, .w-inbox-more { display: none; } /* 托盘薄壳只显计数;清单面 C4.2 */
+  /* 演示 app 薄壳 */
+  .w-app { display: flex; flex-direction: column; gap: var(--s2); height: 100%; }
+  .w-app-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: var(--s1); }
+  .w-app-msg {
+    border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+    padding: var(--s1) var(--s2); background: var(--bg-1); max-width: 70%;
+  }
+  .w-app-line { padding: var(--s1) var(--s2); border-bottom: var(--stroke) solid var(--line); font-family: var(--font-mono); }
+  .w-app-line[data-kind="err"] { color: var(--sig-err, #d33); }
+  .dt-events-wrap { margin: 0 var(--s3) var(--s2); }
+  .dt-events {
+    border: var(--stroke) solid var(--line); border-radius: var(--r-sm);
+    background: var(--bg-1); padding: var(--s1) var(--s2); min-height: 20px;
+    font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--fg-2); white-space: pre-wrap;
+  }
+</style>
+</head>
+<body data-route="desktop-widget">
+  <div class="dt-top">
+    <b>Desktop Widget</b>
+    <label>打开 app <select class="input" id="dt-kind"></select></label>
+    <button class="btn" id="dt-open">打开(add_child + activate)</button>
+    <button class="btn" id="dt-escalate">模拟升权 +1(inbox badge)</button>
+    <span class="dt-build" id="dt-build"></span>
+  </div>
+  <div class="dt-info">
+    <b>C4.1 验证页(docs/DESKTOP-WIDGET.md):desktop = 根 compound,与旧壳(/platform/)并存</b>——
+    桌面图标/单窗/任务栏三分支全由 <code>layout(state, slotRefs)</code> 产出;
+    最小化 = hidden 语义(重开内容逐字在);关闭 = <code>remove_child</code>(✕ 点两次);
+    任务栏拖拽重排持久于 <code>state.taskbar_order</code>;
+    badge = 闸门记账(§7 补丁,非偷读子 state)。
+  </div>
+  <div id="dt-root"></div>
+  <div class="dt-events-wrap">
+    <div class="dt-events" id="dt-events" role="log" aria-label="desktop 事件记录"></div>
+  </div>
+  <script type="module">
+    import { bootDesktop } from "./static/desktop-page.js?v=2026-08-11.3";
+    bootDesktop();
+  </script>
+</body>
+</html>

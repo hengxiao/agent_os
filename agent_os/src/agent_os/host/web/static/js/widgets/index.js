@@ -40,3 +40,7 @@ export { renderLogViewer } from "./w-log.render.js";
 export { CHART_DEF, mountChart, chartSvg, chartTableHtml, downsample, niceTicks } from "./w-chart.js";
 export { renderChart, chartTipHtml } from "./w-chart.render.js";
 export { renderBubble } from "./w-bubble.render.js";
+export {
+  DESKTOP_DEF, SUPERVISOR_INBOX_DEF, mountSupervisorInbox,
+  renderDesktopLayout, renderSupervisorInbox, orderedIds,
+} from "./w-desktop.js"; // C4.1:desktop 根 + 系统件薄壳(docs/DESKTOP-WIDGET.md)

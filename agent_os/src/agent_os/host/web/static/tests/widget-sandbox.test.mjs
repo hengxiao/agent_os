@@ -22,7 +22,8 @@ const { parseSandboxUrl, buildSandboxUrl } = await import("../js/widget-sandbox.
 
 {
   // 覆盖:listWidgetKinds() 全 13 种,样例表无缺漏(多一个少一个都报)
-  const kinds = widgets.listWidgetKinds();
+  // C4.1:desktop(compound 根)/supervisor-inbox(系统件薄壳)非沙盒样例件,排除
+  const kinds = widgets.listWidgetKinds().filter((k) => !["desktop", "supervisor-inbox"].includes(k));
   assert.equal(kinds.length, 13, "13 种控件");
   assert.deepEqual(Object.keys(SAMPLES).sort(), kinds.sort(), "样例表与注册表一一对应");
   for (const k of kinds) {

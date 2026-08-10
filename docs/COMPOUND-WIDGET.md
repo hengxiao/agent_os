@@ -92,6 +92,15 @@ inst.mount_view(host2, {surface: "tab"});   // 视图 B:完整 —— 同一 ins
 
 cascade 协议(`cascade.js`)不变:provider 按 path 注册;reparent 时按新 path 重注册(§6)。
 
+**badge 补丁(C4.1 增补;为 DESKTOP-WIDGET §4 任务栏立)**:§3-4 规定父 layout
+只读 slotRefs 元信息、读不到子 state——但任务栏/图标需要每子的未读徽标。
+补丁 = slotRefs 增加 `badge` 元信息,数据源**不是**父偷读子 state,而是父在
+事件闸门(通道 1)里的记账:子 emit 的负载经闸门放行后,若带 `badge` 字段
+(number → 记;`0`/`null` → 摘),基座写入父 `state.badges[childId]`
+(可序列化),值变化触发父 relayout;吞掉的事件不记账;子件离树
+(remove/move)时其账清讫。即:**badge 是父对子事件的记账**,闸门本来就是
+父的合法信息面,§7 的管控语义不变。
+
 ## 8. Desktop widget(根)
 
 `kind: "desktop"` 的 compound:

@@ -212,6 +212,7 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 | C1 ✅ | Compound Widget 基座(docs/COMPOUND-WIDGET.md):createCompound 全协议 + registry 增量 + def.mount 面 | compound.test.mjs 协议七块全绿 |
 | C2 ✅ | Compound playground(compound.html 新页,createCompound 自实现) | 冒烟断言 + curl 200 |
 | C3 ✅ | doc-editor 迁为 compound(首个产品级;md-viewer 预定义 slot + chat-bubble 动态子件;基座两修补见 COMPOUND-WIDGET §12) | stub 30 全绿 + tests-ui 三套全绿 |
+| C4.1 ✅ | desktop 根落地首步(docs/DESKTOP-WIDGET.md):badge 协议补丁 + desktop def + /platform/desktop.html 与旧壳并存 | stub 31 全绿 + tests-ui 四套全绿(114 项) |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);

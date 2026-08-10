@@ -360,3 +360,96 @@ console.log("compound.test.mjs: C2 playground smoke assertions passed");
 }
 
 console.log("compound.test.mjs: C3 doc-editor compound assertions passed");
+
+{
+  // C4.1 badge 协议补丁(docs/COMPOUND-WIDGET §7 增补;DESKTOP-WIDGET §4):
+  // 闸门放行的负载带 badge 字段 → 父记 state.badges[childId];slotRefs 附
+  // badge;值变 → 父 relayout;0/null 摘徽;吞掉的事件不记账;state 可序列化。
+  const doc = makeDocument();
+  globalThis.document = doc;
+  let lastRefs = null;
+  let layoutCalls = 0;
+  const def = registerWidgetDef({
+    kind: `t-badge-compound-${Math.random().toString(36).slice(2, 8)}`,
+    v: 1,
+    state_schema: { type: "object" },
+    state_defaults: {},
+    actions: [],
+    events: ["change"],
+    aria: { role: "group" },
+    surfaces: ["tab"],
+    compound: {
+      dynamic: { allow: ["log-viewer"], max: 3 },
+      layout: (state, slotRefs) => {
+        layoutCalls += 1;
+        lastRefs = slotRefs;
+        return (
+          `<div class="tb">` +
+          Object.entries(slotRefs)
+            .map(([id, r]) => `<span data-tb="${id}">${r.badge ? `<i class="bdg">${r.badge}</i>` : ""}</span>`)
+            .join("") +
+          `</div>`
+        );
+      },
+    },
+  });
+  const c = createCompound(def, { path: "/root/tb" });
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  c.mount_view(host);
+  const kid = c.add_child("log-viewer", { state: { lines: [] } });
+  const kidId = kid._compoundId;
+  const callsAfterAdd = layoutCalls;
+
+  // ① 放行负载带 badge:number → 记账 + slotRefs.badge + 父 relayout
+  kid.emit("change", { lines: [], badge: 3 });
+  assert.equal(c.state.badges[kidId], 3, "badge 记账进父 state.badges(闸门信息面)");
+  assert.equal(lastRefs[kidId].badge, 3, "slotRefs 附 badge 元信息(layout 合规读面)");
+  assert.ok(layoutCalls > callsAfterAdd, "badge 变 → 父 relayout(任务栏重渲)");
+  assert.ok(host.innerHTML.includes("<i class=\"bdg\">3</i>"), "chrome 徽标随 relayout 上屏");
+
+  // ② 同值不重复 relayout;变值再记
+  const calls2 = layoutCalls;
+  kid.emit("change", { lines: [], badge: 3 });
+  assert.equal(layoutCalls, calls2, "badge 同值不 relayout(记账幂等)");
+  kid.emit("change", { lines: [], badge: 5 });
+  assert.equal(c.state.badges[kidId], 5, "badge 变值覆盖");
+
+  // ③ 无 badge 字段的负载不记账;0 摘徽
+  kid.emit("change", { lines: [] });
+  assert.equal(c.state.badges[kidId], 5, "无 badge 字段不动账");
+  kid.emit("change", { lines: [], badge: 0 });
+  assert.ok(!(kidId in c.state.badges), "badge:0 = 清零摘徽");
+  assert.equal(lastRefs[kidId].badge, null, "摘徽后 slotRefs.badge 回落 null");
+
+  // ④ 闸门吞掉的事件不记账(false 决策优先于记账)
+  const def2 = registerWidgetDef({
+    kind: `t-badge-gate-${Math.random().toString(36).slice(2, 8)}`,
+    v: 1,
+    state_schema: { type: "object" },
+    state_defaults: {},
+    actions: [],
+    events: ["change"],
+    aria: { role: "group" },
+    surfaces: ["tab"],
+    compound: {
+      dynamic: { allow: ["log-viewer"], max: 3 },
+      layout: (s, r) => `<div></div>`,
+      on_child_event: (child, event, payload) => (payload?.keep ? true : false),
+    },
+  });
+  const c2 = createCompound(def2, { path: "/root/tg" });
+  const kid2 = c2.add_child("log-viewer", { state: { lines: [] } });
+  kid2.emit("change", { badge: 9 });
+  assert.ok(!("badge" in (c2.state.badges ?? {})), "吞掉的事件不记账(§7-1 决策优先)");
+  kid2.emit("change", { badge: 9, keep: true });
+  assert.equal(c2.state.badges[kid2._compoundId], 9, "放行后正常记账");
+
+  // ⑤ state.badges 可序列化(JSON 往返;协议铁律)
+  const round = JSON.parse(JSON.stringify(c.state));
+  assert.equal(round.badges[kidId] ?? null, null, "state JSON 往返(摘徽后无残留)");
+  c.state.badges[kidId] = 7;
+  assert.equal(JSON.parse(JSON.stringify(c.state)).badges[kidId], 7, "state.badges JSON 往返");
+}
+
+console.log("compound.test.mjs: C4.1 badge patch assertions passed");

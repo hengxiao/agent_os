@@ -84,7 +84,7 @@ bubble)顺延 `/root/<app-id>/<bubble-id>`。全树寻址自此唯一。
 
 | 步 | 内容 | 验收 |
 |---|---|---|
-| C4.1 | desktop def + layout 三分支 + 任务栏(badge 补丁);**与旧壳并存**:新页 `/platform/desktop.html` 先跑通 | tests-ui:开 app/最小化/重开 state 不动/关闭/重排 |
+| C4.1 ✅ | desktop def + layout 三分支 + 任务栏(badge 补丁);**与旧壳并存**:新页 `/platform/desktop.html` 先跑通 | tests-ui:开 app/最小化/重开 state 不动/关闭/重排 |
 | C4.2 | conversation app 与 doc-editor 进白名单(薄壳/直进) | 既有行为测试 + 新 UI 测试 |
 | C4.3 | 其余 apps(skills/runs/tools/lab/debug)薄壳化 | 同上 |
 | C4.4 | platform index 切换到 desktop 根,旧壳退役 | 全量回归 + 旧壳代码删除 |
@@ -106,3 +106,41 @@ bubble)顺延 `/root/<app-id>/<bubble-id>`。全树寻址自此唯一。
 - 不做多桌面/workspace 切换(协议兼容,需求到了再开);
 - 不做跨 app 的 state 总线(app 间通信只许经 skill/后端,不许 desktop 开后门);
 - 旧壳(app.js)在 C4.4 之前不删(并存期双轨验收)。
+
+## 9. 实现注(C4.1,2026-08-11)
+
+> - **badge 协议补丁**(COMPOUND-WIDGET §7 增补条文;`js/widgets/compound.js`):
+>   闸门放行的负载带 `badge` 字段(number 记 / 0·null 摘)→ 基座记
+>   `state.badges[childId]`(可序列化)+ 值变 relayout;slotRefs 附 `badge`;
+>   吞掉不记账;`remove_child` 清讫离树子件的账。同值幂等(不重复 relayout)。
+> - **desktop def**(`js/widgets/w-desktop.js`):`DESKTOP_DEF`(kind `desktop`,
+>   surfaces `["tab"]`,events `activate/close`,dynamic.allow = §2 白名单,
+>   预定义 slot `inbox`)+ `SUPERVISOR_INBOX_DEF`(薄壳:card/tab 双形态,
+>   pending 由宿主适配层喂;badge = pending 数,真实升权流 C4.2 接管)。
+>   layout = `renderDesktopLayout` 纯函数,三分支按 §3;图标/标题取子 def 的
+>   `aria.label`(首字 glyph,与 platform tab 同源惯例);inbox 系统件渲染在
+>   托盘位,不进任务行/图标。
+> - **新页** `/platform/desktop.html`(+ `desktop-page.js` 驱动 + app.py 同型
+>   路由):行为层全 local——activate = `state.active` + relayout;最小化 =
+>   激活位清空(子 view 摘下,§5 hidden,重开内容逐字在);关闭 = 两段确认
+>   ✕ → `remove_child`;重排 = 任务行 pointer 拖拽(8px 阈值,落点中线判前后)
+>   → `state.taskbar_order` + relayout;演示子件 = `conversation`/`runs-explorer`
+>   占位薄壳(可输入状态面;真实 app 迁移 C4.2/4.3);inbox badge 由「模拟升权」
+>   钮演示;`window.__desktop` 调试钩。
+> - **与设计的偏差**(C4.1 从简,均留 C4.2+):
+>   ① `child_context`(§2 设计有)未挂——def 无 state 面,注入只能是静态值,
+>     用户/主题上下文 C4.4 接管 app.js 时落;
+>   ② 桌面启动面 = 页顶「打开」钮(发起面对话化在 C4.4);桌面图标 =
+>     已开子件(§3-1 原义),种子两个最小化 app 供首屏;
+>   ③ inbox 空态不新立 copy 键(托盘只显计数,清单面 C4.2);
+>   ④ 关闭确认 = 两段点击(2.5s arm),非模态(测试可驱动)。
+> - **tests-ui 抓出两处**:拖拽收尾的 click 吞没旗标须下一拍清零(否则误吞
+>   后续真实点击);test_doceditor 开文档等待从 800ms 定长改等挂载完成标记
+>   `.doc-viewseg`(fresh 会话首拉 bubbles 较慢,与本次改动无关的既有隐患)。
+> - **测试**:stub `desktop-widget.test.mjs`(def 结构/layout 三分支纯函数/集成:
+>   预定义 inbox、白名单闸、hidden 语义 canonical 逐字、badge 记账、
+>   taskbar_order 持久、remove 后全新 instance、activate/close 事件)+
+>   `compound.test.mjs` badge 补丁块;31 文件全绿(旧壳 M5 桌面测试
+>   desktop.test.mjs 并存不回退)。tests-ui `test_desktop.py`
+>   30 项;四套(compound/desktop/doceditor/sandbox)114 项全绿,三跑稳定;
+>   BUILD 2026-08-11.3 三方同步(desktop.html 直接按 .3 立)。

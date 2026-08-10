@@ -13,6 +13,9 @@
    - 管控三通道(§7):on_child_event 闸门(false 吞/true 上行/{payload} 改写)
      统一包成 compound 的 child_event 事件上行;child_context 在 cascade
      provider 注册面改写;surface/可见性由 slotRefs 与 mount_view 的 surface 定;
+   - badge 记账(§7 补丁,C4.1):闸门放行的负载带 badge 字段(number → 记,
+     0/null → 摘)时,父记 state.badges[childId] 并 relayout;slotRefs 附
+     badge 元信息——父对子事件的记账(layout 读不到子 state 的合规信息面);
    - reparent(§6):path 重算 + onUnregister/onRegister 链 + cascade provider
      按新 path 重注册(随 child_context 一起迁)+ 全树 reparent 事件
      ({child, from, to})+ 同帧 detach→attach;
@@ -67,16 +70,34 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
   };
 
   /* 事件闸门(§7-1):子 emit 先入闸门,再决定吞/上行/改写上行;
-     通过后扇出该子全部 view(同 state 两面孔,W5.6 的实例化) */
+     通过后扇出该子全部 view(同 state 两面孔,W5.6 的实例化)。
+     badge 记账(§7 badge 补丁,C4.1):放行负载带 badge 字段(number/
+     null/0)→ 记父 state.badges[childId](父对子事件的记账,不是偷读子
+     state;可序列化),值变 → 父 relayout(slotRefs.badge 进 layout) */
   const _wireGate = (rec) => {
     for (const ev of rec.inst.def.events ?? []) {
       rec.inst.on(ev, (payload) => {
         const decision = cx.on_child_event ? cx.on_child_event(rec.inst, ev, payload) : true;
-        if (decision === false) return; // 吞掉
+        if (decision === false) return; // 吞掉(吞掉的事件不记账)
         const out =
           decision && typeof decision === "object" && "payload" in decision ? decision.payload : payload;
+        let badgeDirty = false;
+        if (out && typeof out === "object" && "badge" in out) {
+          const badges = (inst.state.badges ??= {});
+          const b = out.badge;
+          if (b == null || b === 0) {
+            if (rec.id in badges) {
+              delete badges[rec.id]; // 0/null = 清零摘徽
+              badgeDirty = true;
+            }
+          } else if (badges[rec.id] !== b) {
+            badges[rec.id] = b;
+            badgeDirty = true;
+          }
+        }
         inst.emit("child_event", { child: rec.id, event: ev, payload: out });
         _fanout(rec); // update 扇出:各 view 按自己 surface 重渲(§5)
+        if (badgeDirty) _relayout(); // badge 变 → 父 chrome 重渲(任务栏读 slotRefs.badge)
       });
     }
   };
@@ -178,11 +199,16 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
   };
 
   /* 父视图装配(§3):layout 落 chrome,子 view 进 data-slot 占位;
-     重渲 = 旧 view detach + 新 view attach(canonical/state 不动) */
+     重渲 = 旧 view detach + 新 view attach(canonical/state 不动)。
+     slotRefs 元信息(§3-4 + §7 badge 补丁):path/kind/surface + badge
+     (闸门记账的未读徽标;layout 读不到子 state,badge 是父的账) */
   const _relayout = () => {
     for (const view of inst.views) {
       const slotRefs = Object.fromEntries(
-        [...children.values()].map((r) => [r.slot, { path: r.path, kind: r.kind, surface: r.surface }])
+        [...children.values()].map((r) => [
+          r.slot,
+          { path: r.path, kind: r.kind, surface: r.surface, badge: inst.state.badges?.[r.id] ?? null },
+        ])
       );
       view.host.innerHTML = cx.layout(inst.state, slotRefs); // §3-1:子 HTML 不内联
       for (const rec of children.values()) {
@@ -250,6 +276,9 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
     const rec = children.get(id);
     if (!rec) throw new Error(`compound: 无子件 ${id}`);
     for (const v of [...rec.views]) v.detach(); // view 先迁出(§6-1)
+    if (inst.state.badges && id in inst.state.badges) {
+      delete inst.state.badges[id]; // badge 账随子件离树清讫(不留幽灵徽标;move 后新 owner 另立账)
+    }
     _unregisterChild(rec); // 旧 path 注销(provider + onUnregister)
     children.delete(id);
     rec.inst._compoundOwner = null;

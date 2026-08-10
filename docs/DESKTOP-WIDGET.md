@@ -85,7 +85,7 @@ bubble)顺延 `/root/<app-id>/<bubble-id>`。全树寻址自此唯一。
 | 步 | 内容 | 验收 |
 |---|---|---|
 | C4.1 ✅ | desktop def + layout 三分支 + 任务栏(badge 补丁);**与旧壳并存**:新页 `/platform/desktop.html` 先跑通 | tests-ui:开 app/最小化/重开 state 不动/关闭/重排 |
-| C4.2 | conversation app 与 doc-editor 进白名单(薄壳/直进) | 既有行为测试 + 新 UI 测试 |
+| C4.2 ✅ | conversation app 与 doc-editor 进白名单(薄壳/直进) | 既有行为测试 + 新 UI 测试 |
 | C4.3 | 其余 apps(skills/runs/tools/lab/debug)薄壳化 | 同上 |
 | C4.4 | platform index 切换到 desktop 根,旧壳退役 | 全量回归 + 旧壳代码删除 |
 
@@ -144,3 +144,48 @@ bubble)顺延 `/root/<app-id>/<bubble-id>`。全树寻址自此唯一。
 >   desktop.test.mjs 并存不回退)。tests-ui `test_desktop.py`
 >   30 项;四套(compound/desktop/doceditor/sandbox)114 项全绿,三跑稳定;
 >   BUILD 2026-08-11.3 三方同步(desktop.html 直接按 .3 立)。
+
+## 10. 实现注(C4.2,2026-08-11)
+
+> - **conversation 薄壳**(`web_platform/static/conversation-app.js`,新):
+>   `CONVERSATION_DEF` = compound(layout 纯函数 `renderConversation`:消息流 +
+>   busy 骨架 + composer,卡面复用 cards.js `renderCardSurface`,零新渲染套);
+>   `createConversation({load, onOpenDoc})` 工厂 = **实例级适配层**(会话装载/
+>   发送/卡动作/升权作答/轮询汇聚一份,随实例生灭——不随 view);`mount_view`
+>   重包 = layout 首渲 + 按 view 绑委托;消息增量只刷 log 区(draft 在
+>   canonical,增量不重排 layout,输入不丢焦点)。行为契约与 app.js 同端点
+>   (sessions/messages/cards·action/decisions answer/decisions|runs present),
+>   orchestrator 意图/卡片/SSE·轮询照旧。load:`latest`(旧壳同语义,无则新建)
+>   /`new`(顶栏「+ 新对话」= 新会话新实例)。占位 conversation 退役。
+> - **doc-editor 直进**(§5-2;`doc-editor.js` 改造,旧壳 stub+UI 双绿在先):
+>   `mountDocEditor` 拆为 `createDocEditor`(工厂:实例/def/compound/闭包一次)
+>   + 兼容壳;`mount_view` 重包 = **自包含**(无骨架先落 docTabHtml 骨架)
+>   + 按 view 绑定(`wireView`:viewseg/contextmenu/锚点钮/主对话/host 委托,
+>   card 面只渲染不绑批注交互)+ 交互面 `cur` 收编全部宿主耦合(bubble 壳/
+>   工具条/批注栏归属);`inst.relayout` 覆写带壳挂回(desktop 扇出经
+>   live.update 也不掉壳)。打开路径:对话流 doc 卡「打开详情」→ 驱动
+>   `openDocWindow`(fetch doc+bubbles → 工厂 → `_compoundId = 文档名` →
+>   `attach_existing(slot=文档名)` → activate;同名聚焦不重复)。
+> - **hard link 真实用例**:窗口区 tab 面 = 完整编辑器(交互面),对话流
+>   doc 卡下挂同一 instance 的 card 面活视图(`link_view(surface:"card")` =
+>   纯预览骨架,内容同源,relayout 扇出两面同步);log 重渲 wiping 后按
+>   `isConnected` 摘旧 view 重挂(驱动 `_hangLiveDocCards`,conversation 的
+>   onLogRendered 钩 + activate 后补挂)。
+> - **inbox 真实化**:`/platform/api/decisions` 读面 + SSE decision.new 扇入
+>   (断线回落 5s 轮询,同 app.js),pending 行(skill·tier 人话/reason_hint,
+>   与 escalation 卡同语料)进 state,emit change {badge: pending 数} 记账;
+>   托盘整卡 open → 回对话(决策在对话处理,同旧托盘)。C4.1 模拟升权退役。
+> - **与设计的偏差**(C4.2 边界,留 C4.3+):
+>   ① doc 写动作(snapshot/rewind/export/apply)走平台 app 实例管道,desktop
+>     窗口 `getTabInstance: () => null` 暂惰(comment.send/chat/review 专属
+>     端点正常);② detail 链接只接 doc,其余 kind(gate/pack/run...)未接;
+>   ③ 会话切换下拉未迁(一会话一实例);④ 卡 DnD 未迁;⑤ conversation 未读
+>     badge 未做(最小化期新消息徽标——需 owner 侧可见性判定,inbox 已示范
+>     badge 通道);⑥ runs-explorer 仍占位。
+> - **测试**:stub 新增 `conversation-app.test.mjs`(def 结构/layout 纯函数/
+>   装载/发送契约/open-doc 上行/升权作答/轮询/序列化,fetch 全 stub);
+>   32 文件全绿。tests-ui `test_desktop.py` 重写(34 项:真实对话出卡 →
+>   doc 窗口完整编辑器 → 活卡同源 → 最小化重开消息+草稿逐字 → 重排 →
+>   +新对话两段关闭 → doc 窗口右键开泡 → inbox 真实 pending 对照);
+>   四套 118 项全绿(两跑);BUILD 2026-08-11.4 三方同步(desktop.html 加挂
+>   platform.css:pfs-卡面/doc-editor chrome 样式同源)。

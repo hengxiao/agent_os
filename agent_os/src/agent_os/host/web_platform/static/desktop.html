@@ -3,16 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Desktop Widget — Agent OS(C4.1 验证页,与旧壳并存)</title>
-<link rel="stylesheet" href="/static/css/tokens.css?v=2026-08-11.3">
-<link rel="stylesheet" href="/static/css/app.css?v=2026-08-11.3">
-<link rel="stylesheet" href="/static/css/widgets.css?v=2026-08-11.3">
-<link rel="stylesheet" href="/static/css/themes/classic.css?v=2026-08-11.3">
-<link rel="stylesheet" href="/static/css/themes/moe.css?v=2026-08-11.3">
-<link rel="stylesheet" href="/static/css/themes/terminal.css?v=2026-08-11.3">
-<link rel="stylesheet" href="/static/css/themes/blueprint.css?v=2026-08-11.3">
-<link rel="stylesheet" href="/static/css/themes/ink.css?v=2026-08-11.3">
-<link rel="stylesheet" href="/static/css/themes/pixel.css?v=2026-08-11.3">
+<title>Desktop Widget — Agent OS(C4.2 验证页,与旧壳并存)</title>
+<link rel="stylesheet" href="/static/css/tokens.css?v=2026-08-11.4">
+<link rel="stylesheet" href="/static/css/app.css?v=2026-08-11.4">
+<link rel="stylesheet" href="/static/css/widgets.css?v=2026-08-11.4">
+<link rel="stylesheet" href="/static/css/themes/classic.css?v=2026-08-11.4">
+<link rel="stylesheet" href="/static/css/themes/moe.css?v=2026-08-11.4">
+<link rel="stylesheet" href="/static/css/themes/terminal.css?v=2026-08-11.4">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css?v=2026-08-11.4">
+<link rel="stylesheet" href="/static/css/themes/ink.css?v=2026-08-11.4">
+<link rel="stylesheet" href="/static/css/themes/pixel.css?v=2026-08-11.4">
+<link rel="stylesheet" href="./static/platform.css?v=2026-08-11.4">
 <style>
   /* desktop chrome(全 token,platform 视觉同族;C4.4 产品化时归位 shared css) */
   body { background: var(--bg-0); color: var(--fg-0); font-size: var(--text-xs); margin: 0; }
@@ -114,14 +115,22 @@
   .w-inbox { display: flex; align-items: center; gap: var(--s1); padding: var(--s1) var(--s2); }
   .w-inbox-head { display: flex; align-items: center; gap: var(--s1); color: var(--fg-1); }
   .w-inbox-n { font-family: var(--font-mono); color: var(--fg-0); }
-  .w-inbox-item, .w-inbox-more { display: none; } /* 托盘薄壳只显计数;清单面 C4.2 */
-  /* 演示 app 薄壳 */
-  .w-app { display: flex; flex-direction: column; gap: var(--s2); height: 100%; }
-  .w-app-log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: var(--s1); }
-  .w-app-msg {
-    border: var(--stroke) solid var(--line); border-radius: var(--r-md);
-    padding: var(--s1) var(--s2); background: var(--bg-1); max-width: 70%;
+  .w-inbox-item, .w-inbox-more { display: none; } /* 托盘薄壳只显计数;清单面 C4.2+ */
+  /* conversation 薄壳(C4.2):log 区 + composer(pf-* 复用 platform.css) */
+  .cv-root { display: flex; flex-direction: column; height: 100%; }
+  .cv-log { flex: 1; overflow: auto; padding: var(--s2); }
+  .cv-composer {
+    display: flex; gap: var(--s2); align-items: flex-end;
+    border-top: var(--stroke) solid var(--line); padding: var(--s2);
   }
+  .cv-composer textarea { flex: 1; resize: vertical; }
+  /* doc 活卡(§5 hard link):对话流 doc 卡下的 card 面活视图(同一 instance) */
+  .cv-doc-live {
+    margin-top: var(--s1); border-top: var(--stroke) dashed var(--line);
+    max-height: 300px; overflow: auto; padding-top: var(--s1);
+  }
+  /* 演示 app 薄壳(runs-explorer 占位) */
+  .w-app { display: flex; flex-direction: column; gap: var(--s2); height: 100%; }
   .w-app-line { padding: var(--s1) var(--s2); border-bottom: var(--stroke) solid var(--line); font-family: var(--font-mono); }
   .w-app-line[data-kind="err"] { color: var(--sig-err, #d33); }
   .dt-events-wrap { margin: 0 var(--s3) var(--s2); }
@@ -135,24 +144,24 @@
 <body data-route="desktop-widget">
   <div class="dt-top">
     <b>Desktop Widget</b>
-    <label>打开 app <select class="input" id="dt-kind"></select></label>
-    <button class="btn" id="dt-open">打开(add_child + activate)</button>
-    <button class="btn" id="dt-escalate">模拟升权 +1(inbox badge)</button>
+    <button class="btn" id="dt-newconv">+ 新对话(add_child conversation)</button>
+    <button class="btn" id="dt-open">打开运行(占位 app)</button>
     <span class="dt-build" id="dt-build"></span>
   </div>
   <div class="dt-info">
-    <b>C4.1 验证页(docs/DESKTOP-WIDGET.md):desktop = 根 compound,与旧壳(/platform/)并存</b>——
-    桌面图标/单窗/任务栏三分支全由 <code>layout(state, slotRefs)</code> 产出;
-    最小化 = hidden 语义(重开内容逐字在);关闭 = <code>remove_child</code>(✕ 点两次);
-    任务栏拖拽重排持久于 <code>state.taskbar_order</code>;
-    badge = 闸门记账(§7 补丁,非偷读子 state)。
+    <b>C4.2 验证页(docs/DESKTOP-WIDGET.md §5):真实 app 进 desktop,与旧壳(/platform/)并存</b>——
+    <b>conversation</b> = 薄壳真实对话(orchestrator/卡片/SSE 照旧,同端点);
+    对话流文档卡「打开详情」→ <b>doc-editor</b> 经 <code>attach_existing</code> 进窗口区,
+    卡下挂同一 instance 的 card 面活视图(<b>hard link 真实用例</b>);
+    <b>inbox</b> 接真实 /api/decisions(badge = pending 数);
+    最小化 = hidden 语义(重开逐字在);关闭 = 两段 ✕;任务栏拖拽重排持久于 state。
   </div>
   <div id="dt-root"></div>
   <div class="dt-events-wrap">
     <div class="dt-events" id="dt-events" role="log" aria-label="desktop 事件记录"></div>
   </div>
   <script type="module">
-    import { bootDesktop } from "./static/desktop-page.js?v=2026-08-11.3";
+    import { bootDesktop } from "./static/desktop-page.js?v=2026-08-11.4";
     bootDesktop();
   </script>
 </body>

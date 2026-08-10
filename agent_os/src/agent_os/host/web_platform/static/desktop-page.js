@@ -1,4 +1,4 @@
-/* Desktop page 驱动(docs/DESKTOP-WIDGET.md §6 C4.1;开发验证页,与旧壳并存)。
+/* Desktop page 驱动(docs/DESKTOP-WIDGET.md §6;C4.2:真实 app 接入)。
 
    职责(compound 语义对照 §1):
    - createCompound(DESKTOP_DEF, path "/root") + mount_view——窗口/任务栏/
@@ -6,66 +6,27 @@
    - 行为层 = local UI 操作:activate/minimize/close/reorder 直改 state +
      relayout(红线:action 三态不进 widget;desktop 的 activate/close 事件
      由本适配层代发);
-   - 演示子件 = 薄壳占位 app(conversation/runs-explorer;真实 app 迁移是
-     C4.2/C4.3);inbox 系统件由本层喂 pending + emit badge(真实升权流
-     C4.2 接管)。 */
+   - app 接入(§5 两种来源):
+     conversation = 薄壳真实 app(conversation-app.js 工厂,一会话一实例;
+       顶栏「+ 新对话」= 新会话新实例);
+     doc-editor 直进(§5-2):对话流文档卡「打开详情」→ 工厂建实例 →
+       attach_existing 进窗口区(同名聚焦不重复);窗口区 tab 面 = 完整编辑器,
+       对话流 doc 卡 = card 面活视图(link_view 重挂,hard link 同一实例);
+     runs-explorer 仍是占位(C4.3 换);
+   - inbox 真实化:/platform/api/decisions 轮询 + SSE decision.new 扇入,
+     pending 行进 state,badge = pending 数(§7 补丁;C4.1 模拟升权退役);
+   - SSE 单源(/platform/api/stream):decision.new/run.finished 扇给各
+     conversation 实例的轮询汇聚 + inbox 刷新;断线回落 5s 轮询(同 app.js)。 */
 
 import { initTheme } from "/static/js/themes.js";
 import { BUILD } from "/static/js/widget-sandbox.js";
 import {
   createCompound, createWidget, registerWidgetDef, orderedIds, DESKTOP_DEF,
 } from "/static/js/widgets/index.js";
+import { createConversation } from "./conversation-app.js";
+import { createDocEditor } from "./doc-editor.js";
 
-/* ── 占位 app(C4.1 演示子件;薄壳:一个可输入的状态面,证明 hidden 语义)── */
-
-function _renderConv(state) {
-  return (
-    `<div class="w-app" data-app="conversation">` +
-    `<div class="w-app-log" data-conv-log="1">` +
-    (state.log ?? [])
-      .map((m) => `<div class="w-app-msg" data-role="${esc(m.role)}">${esc(m.text)}</div>`)
-      .join("") +
-    `</div>` +
-    `<input class="input" data-conv-draft="1" value="${esc(state.draft ?? "")}" ` +
-    `placeholder="说点什么,Enter 发送(最小化重开不丢)">` +
-    `</div>`
-  );
-}
-
-function mountConversation(host, { path = "" } = {}) {
-  const widget = createWidget(CONVERSATION_DEF, { path });
-  const render = () => {
-    host.innerHTML = _renderConv(widget.state);
-  };
-  widget.update = () => render();
-  host.addEventListener("input", (e) => {
-    if (e.target.closest("[data-conv-draft]")) widget.state.draft = e.target.value;
-  });
-  host.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" || !e.target.closest("[data-conv-draft]")) return;
-    e.preventDefault?.();
-    const text = String(widget.state.draft ?? "").trim();
-    if (!text) return;
-    widget.state.log = [...(widget.state.log ?? []), { role: "user", text }];
-    widget.state.draft = "";
-    render();
-    widget.emit("change", { lines: widget.state.log.length });
-  });
-  render();
-  return widget;
-}
-
-const CONVERSATION_DEF = registerWidgetDef({
-  kind: "conversation",
-  v: 1,
-  state_schema: { type: "object" },
-  state_defaults: { log: [], draft: "" },
-  actions: [],
-  events: ["change"],
-  aria: { role: "application", label: "对话" },
-  surfaces: ["tab"],
-  mount: mountConversation,
-});
+/* ── 占位 app(runs-explorer;C4.3 换真实件)────────────────────────── */
 
 function _renderRuns(state) {
   const rows = (state.runs ?? []).filter((r) => !state.filter || r.name.includes(state.filter));
@@ -118,11 +79,6 @@ const RUNS_EXPLORER_DEF = registerWidgetDef({
   mount: mountRunsExplorer,
 });
 
-const APPS = [
-  { kind: "conversation", label: "对话" },
-  { kind: "runs-explorer", label: "运行" },
-];
-
 /* ── 启动 ────────────────────────────────────────────────────────── */
 
 export function bootDesktop() {
@@ -141,17 +97,20 @@ export function bootDesktop() {
     $("#dt-events").textContent = log.slice(0, 6).join("\n");
   };
 
-  /* 行为层(local;§3/§4):activate = state.active + relayout;最小化 =
-     激活位清空(子 view 摘下,§5 hidden:instance/state/context 照旧) */
+  /* ── 行为层(C4.1 不动;local;§3/§4)── */
   const activate = (id) => {
     if (id && !inst.child(id)) return;
     inst.state.active = id ?? null;
     inst.relayout();
     inst.emit("activate", { id: id ?? null });
+    _hangLiveDocCards(); // 挂接重出后活卡按连接态补挂(log 未重渲也得回来)
     _log(`activate ${id ?? "(桌面)"}`);
   };
 
-  /* 关闭 = remove_child(destroy);两段确认(再点一次执行) */
+  const openDocs = new Map(); // 文档名 → {inst, ed, liveView, liveHost}(hard link 账)
+  const convs = new Map(); // id → conversation api(SSE/轮询扇入面;close 清)
+  let convSeq = 0; // 新对话 id 序号(唯一,不看集合大小)
+
   let armed = null;
   let armedTimer = null;
   const close = (id, btn) => {
@@ -170,12 +129,18 @@ export function bootDesktop() {
     inst.state.taskbar_order = (inst.state.taskbar_order ?? []).filter((x) => x !== id);
     inst.state.icon_order = (inst.state.icon_order ?? []).filter((x) => x !== id);
     if (inst.state.active === id) inst.state.active = null;
+    // doc 窗口:活卡 view 摘下,hard link 账清(C4.2)
+    const docRec = openDocs.get(id);
+    if (docRec) {
+      docRec.liveView?.detach?.();
+      openDocs.delete(id);
+    }
+    convs.delete(id); // conversation 关闭 → 轮询扇入面清(实例已 destroy)
     inst.remove_child(id, { destroy: true }); // 内部 relayout(§4)
     inst.emit("close", { id });
     _log(`close ${id}`);
   };
 
-  /* 重排 = taskbar_order state 变更 → relayout(持久于 state,可序列化) */
   const reorder = (dragId, targetId, before) => {
     const ids = orderedIds(
       inst.children_snapshot().map((s) => s.id).filter((id) => id !== "inbox"),
@@ -189,10 +154,111 @@ export function bootDesktop() {
     _log(`reorder ${ids.join(" → ")}`);
   };
 
-  const openApp = (kind) => {
-    if (inst.child(kind)) return activate(kind); // 已开 = 聚焦(同 id 不再生)
-    inst.add_child(kind, { slot: kind }); // id = kind(演示期唯一实例)
-    activate(kind);
+  /* ── doc-editor 直进(§5-2):对话流文档卡「打开详情」→ 窗口区 ── */
+  async function openDocWindow(name) {
+    if (!name) return;
+    if (inst.child(name)) {
+      activate(name); // 同名聚焦(同一 instance,不重复开)
+      return;
+    }
+    try {
+      const res = await fetch(`/platform/api/docs/${encodeURIComponent(name)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const doc = await res.json();
+      let bubbles = [];
+      try {
+        bubbles = await (await fetch(`/platform/api/docs/${encodeURIComponent(name)}/bubbles`)).json();
+      } catch {
+        bubbles = []; // 气泡面故障不挡编辑器(同 app.js 降级)
+      }
+      const ed = createDocEditor(doc, {
+        seedFlows: bubbles,
+        getTabInstance: () => null, // 写动作平台管道 C4.3 接(见 §9 偏差注)
+        reload: async () => {
+          const fresh = await (await fetch(`/platform/api/docs/${encodeURIComponent(name)}`)).json();
+          ed.api.setText(fresh.text ?? "");
+        },
+      });
+      ed.compound._compoundId = name; // 身份即文档名(attach 后 id = slot = 文档名)
+      inst.attach_existing(ed.compound, { slot: name, surface: "tab" });
+      openDocs.set(name, { inst: ed.compound, ed, liveView: null, liveHost: null });
+      activate(name);
+      _hangLiveDocCards(); // 对话流 doc 卡 → card 面活视图(hard link)
+      _log(`open-doc ${name}`);
+    } catch (err) {
+      _log(`open-doc ${name} 失败:${err.message ?? err}`);
+    }
+  }
+
+  /* doc 活卡重挂(hard link §5):对话流里的文档卡,已开窗口的挂上同一
+     instance 的 card 面活视图;log 重渲 wiping 后按连接态补挂。 */
+  function _hangLiveDocCards() {
+    const root = $("#dt-root");
+    if (!root) return;
+    for (const [name, rec] of openDocs) {
+      if (rec.liveHost && !rec.liveHost.isConnected) {
+        rec.liveView?.detach?.(); // 旧 host 已被 log 重渲摘掉,view 同步清
+        rec.liveView = null;
+        rec.liveHost = null;
+      }
+      if (rec.liveView) continue;
+      const link = root.querySelector(`[data-detail-kind="doc"][data-detail-ref="${name}"]`);
+      const card = link?.closest(".pf-card");
+      if (!card) continue;
+      const live = document.createElement("div");
+      live.className = "cv-doc-live";
+      card.appendChild(live);
+      rec.liveView = rec.inst.link_view(live, { surface: "card" }); // card 面 = 内容预览(§5)
+      rec.liveHost = live;
+    }
+  }
+
+  /* ── conversation 接入(§5-1;薄壳真实 app)── */
+  async function openConversation(load) {
+    const conv = await createConversation({ load, onOpenDoc: openDocWindow });
+    conv.inst._compoundId = load === "new" ? `conv-${++convSeq}` : "conversation";
+    conv.api.onLogRendered = _hangLiveDocCards;
+    convs.set(conv.inst._compoundId, conv.api);
+    inst.attach_existing(conv.inst, { surface: "tab" });
+    return conv;
+  }
+
+  /* ── inbox 真实化(C4.2):/api/decisions 读面;badge = pending 数 ── */
+  const inbox = inst.child("inbox");
+  async function refreshInbox() {
+    try {
+      const rows = await (await fetch("/platform/api/decisions")).json();
+      inbox.state.pending = (rows ?? []).map((r) => ({ id: r.question_id, ...r }));
+      inbox.emit("change", { badge: inbox.state.pending.length }); // §7 补丁:闸门记账
+    } catch {
+      /* 读面故障不挡桌面(fail-safe,同 app.js 决策轮询静默) */
+    }
+  }
+
+  /* ── SSE 单源(同 app.js):扇入 inbox 刷新 + 各 conversation 轮询汇聚 ── */
+  let pollTimer = null;
+  const _fanPoll = () => {
+    refreshInbox();
+    for (const c of convs.values()) c.poll();
+  };
+  const _startPoll = () => {
+    if (pollTimer) return;
+    pollTimer = setInterval(_fanPoll, 5000);
+    pollTimer.unref?.();
+  };
+  const connectStream = () => {
+    if (typeof EventSource === "undefined") return _startPoll();
+    try {
+      const es = new EventSource("/platform/api/stream");
+      es.addEventListener("decision.new", _fanPoll);
+      es.addEventListener("run.finished", _fanPoll);
+      es.onerror = () => {
+        es.close();
+        _startPoll(); // 断线回落轮询(不双轨)
+      };
+    } catch {
+      _startPoll();
+    }
   };
 
   /* 事件委托(chrome 全部 data-desk-*;layout 重渲不伤) */
@@ -209,7 +275,7 @@ export function bootDesktop() {
     if (open) activate(open.dataset.deskOpen || open.dataset.deskTask);
   });
 
-  /* 任务栏拖拽重排(pointer 阈值 8px;落点过中线判前后) */
+  /* 任务栏拖拽重排(C4.1 不动) */
   let drag = null;
   host.addEventListener("pointerdown", (e) => {
     const row = e.target.closest("[data-desk-task]");
@@ -223,10 +289,9 @@ export function bootDesktop() {
     if (!drag) return;
     const d = drag;
     drag = null;
-    if (!d.on) return; // 小位移 = 点击(走 click 激活)
+    if (!d.on) return;
     suppressClick = true;
-    // 拖拽收尾若派生 click(同任务序列 mouseup→click)须吞;下一拍清零,
-    // 否则未派生 click 时旗标滞留会误吞后续真实点击(tests-ui 抓出)
+    // 拖拽收尾若派生 click(同任务序列)须吞;下一拍清零防误吞后续真实点击
     setTimeout(() => { suppressClick = false; }, 0);
     const over = e.target.closest("[data-desk-task]");
     if (!over || over.dataset.deskTask === d.id) return;
@@ -234,35 +299,34 @@ export function bootDesktop() {
     reorder(d.id, over.dataset.deskTask, e.clientX < r.x + r.width / 2);
   });
 
-  /* 发起面(演示):顶栏选 app 打开;已开 = 聚焦 */
-  const sel = $("#dt-kind");
-  sel.innerHTML = APPS.map((a) => `<option value="${a.kind}">${a.label}</option>`).join("");
-  $("#dt-open").addEventListener("click", () => openApp(sel.value));
-
-  /* inbox 系统件:薄壳喂 pending;badge = pending 数(§7 补丁,闸门记账);
-     「模拟升权」推一条并记 badge——升权到达有徽标(§7 验收) */
-  const inbox = inst.child("inbox");
-  inbox.state.pending = [
-    { id: "d-1", text: "批准发布 weather.query v3" },
-    { id: "d-2", text: "确认删除草稿 notes.old" },
-  ];
-  inbox.emit("change", { badge: inbox.state.pending.length });
-  $("#dt-escalate").addEventListener("click", () => {
-    const n = inbox.state.pending.length + 1;
-    inbox.state.pending = [...inbox.state.pending, { id: `d-${n}`, text: `升权请求 #${n}(演示)` }];
-    inbox.emit("change", { badge: inbox.state.pending.length });
+  /* 发起面:顶栏「+ 新对话」(新会话新实例)/占位 app 打开 */
+  $("#dt-newconv").addEventListener("click", async () => {
+    const conv = await openConversation("new");
+    activate(conv.inst._compoundId);
+  });
+  $("#dt-open").addEventListener("click", () => {
+    if (inst.child("runs-explorer")) return activate("runs-explorer");
+    inst.add_child("runs-explorer", { slot: "runs-explorer" });
+    activate("runs-explorer");
   });
 
+  /* desktop 事件面:inbox 整卡 open → 回对话(决策在对话里处理,同旧托盘) */
   inst.on("child_event", (p) => {
-    if (p.payload && typeof p.payload === "object" && "badge" in p.payload) {
-      _log(`badge ${p.child} = ${p.payload.badge}`);
+    if (p.child === "inbox" && p.event === "open") {
+      const convId = inst.child("conversation") ? "conversation" : null;
+      if (convId) activate(convId);
     }
   });
 
-  /* 种子:两个演示 app 以最小化态进桌面(图标栅格 + 任务栏行) */
-  inst.add_child("conversation", { slot: "conversation" });
-  inst.add_child("runs-explorer", { slot: "runs-explorer" });
-  _log("desktop boot /root");
+  /* 种子(异步;会话/决策读面):boot conversation(最新会话)+ 占位运行 +
+     inbox 真实 pending + SSE 单源 */
+  (async () => {
+    await openConversation("latest");
+    inst.add_child("runs-explorer", { slot: "runs-explorer" });
+    await refreshInbox();
+    connectStream();
+    _log("desktop boot /root");
+  })().catch((err) => _log(`boot 失败:${err.message ?? err}`));
 }
 
 function esc(s) {

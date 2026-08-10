@@ -18,7 +18,9 @@ import { copy } from "../themes.js";
 
 /* ── supervisor-inbox(系统件薄壳,C4.1)────────────────────────────── */
 
-/* 渲染(纯):card = ✉ + 待办数 + 最近 3 条;tab = 全量清单。 */
+/* 渲染(纯;C4.2 接真实 decisions 行):card = ✉ + 待办数 + 最近 3 条;
+   tab = 全量清单。行 = skill · tier 人话 + reason_hint(与 escalation 卡
+   同语料;旧 {text} 种子形态兼容)。 */
 export function renderSupervisorInbox(state, { surface = "card" } = {}) {
   const items = state.pending ?? [];
   const n = items.length;
@@ -29,11 +31,17 @@ export function renderSupervisorInbox(state, { surface = "card" } = {}) {
   const shown = surface === "card" ? items.slice(0, 3) : items;
   const body = shown.length
     ? shown
-        .map(
-          (p) =>
-            `<div class="w-inbox-item" data-inbox-item="${esc(p.id ?? "")}">` +
-            `<span class="w-inbox-text">${esc(p.text ?? p.summary ?? "")}</span></div>`
-        )
+        .map((p) => {
+          const lead = p.skill
+            ? `${esc(p.skill)} · ${esc(p.tier_human ?? p.tier ?? "")}`
+            : esc(p.text ?? p.summary ?? "");
+          return (
+            `<div class="w-inbox-item" data-inbox-item="${esc(p.id ?? p.question_id ?? "")}">` +
+            `<span class="w-inbox-text">${lead}</span>` +
+            (p.reason_hint ? `<span class="w-inbox-hint">${esc(p.reason_hint)}</span>` : "") +
+            `</div>`
+          );
+        })
         .join("") +
       (surface === "card" && n > 3
         ? `<div class="w-inbox-more">… +${n - 3}</div>`
@@ -78,10 +86,11 @@ export function orderedIds(ids, order) {
   return [...o, ...ids.filter((id) => !o.includes(id))];
 }
 
-/* 子件标题/图标位(纯):aria.label 为标题,首字为 glyph(与 platform 壳
-   tab 同源惯例);图标 = 图标位非 card 面缩略(DESKTOP-WIDGET §3-1 允许)。 */
-function _meta(kind) {
-  const label = String(getWidgetDef(kind)?.aria?.label ?? kind ?? "?");
+/* 子件标题/图标位(纯):aria.label 为标题,缺省回落 slot id(C4.2:doc 子件
+   id = 文档名,题名即文档);首字为 glyph(与 platform 壳 tab 同源惯例);
+   图标 = 图标位非 card 面缩略(DESKTOP-WIDGET §3-1 允许)。 */
+function _meta(kind, id) {
+  const label = String(getWidgetDef(kind)?.aria?.label ?? id ?? kind ?? "?");
   return { label, glyph: label.trim().charAt(0) || "?" };
 }
 
@@ -102,7 +111,7 @@ export function renderDesktopLayout(state, slotRefs) {
   const taskbarRows = taskIds
     .map((id) => {
       const r = slotRefs[id];
-      const m = _meta(r.kind);
+      const m = _meta(r.kind, id);
       return (
         `<div class="dt-task" role="button" tabindex="0" data-desk-task="${esc(id)}" ` +
         `data-active="${active === id ? "1" : "0"}" aria-label="${esc(m.label)}">` +
@@ -127,7 +136,7 @@ export function renderDesktopLayout(state, slotRefs) {
   let main;
   if (active) {
     const r = slotRefs[active];
-    const m = _meta(r.kind);
+    const m = _meta(r.kind, active);
     main =
       `<div class="dt-win">` +
       `<div class="dt-titlebar">` +
@@ -144,7 +153,7 @@ export function renderDesktopLayout(state, slotRefs) {
     const icons = iconIds
       .map((id) => {
         const r = slotRefs[id];
-        const m = _meta(r.kind);
+        const m = _meta(r.kind, id);
         return (
           `<button class="dt-icon" data-desk-open="${esc(id)}" aria-label="打开 ${esc(m.label)}">` +
           `<span class="dt-glyph" aria-hidden="true">${esc(m.glyph)}</span>` +

@@ -23,3 +23,10 @@ secrets.env
 # Web/CLI 宿主的 run 产物与遥测(每次运行生成,不入库)
 instance/runs/
 instance/traces/
+
+# tests-ui 运行环境(项目内隔离,重建见 tests-ui/README.md)
+agent_os/src/agent_os/host/web/static/tests-ui/.venv-ui/
+agent_os/src/agent_os/host/web/static/tests-ui/.browsers/
+agent_os/src/agent_os/host/web/static/tests-ui/.syslibs/
+agent_os/src/agent_os/host/web/static/tests-ui/.rpms/
+agent_os/src/agent_os/host/web/static/tests-ui/__pycache__/

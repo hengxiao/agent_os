@@ -81,21 +81,37 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
     }
   };
 
-  /* view 装配(§5):kind mount 全装 → 接线(state 引用同一化 + emit 转发)。
+  /* view 装配(§5):分两类——
+     compound 子件:用实例自己的「父视图挂载」inst.mount_view(渲染它的
+       layout+子树;此名与 hard link 入口 **link_view** 严格分离——
+       早期版本把 link 入口也覆写成 mount_view,compound 子的 def.mount
+       桥一旦回call实例 mount_view 就无限递归,真实浏览器 RangeError);
+     leaf 子件:childDef.mount 全装 → 接线(state 引用同一化 + emit 转发)。
      view 挂载不给 path(挂成 ""):cascade provider 生命周期归 compound 统一
      (mount 内 widget.register 的注册/注销会把 view detach 误伤成 provider
      摘除——§5 hidden 语义:最后一个 view detach 时 instance 的 state/context 照旧) */
   const _linkView = (rec, host, { surface = rec.surface } = {}) => {
-    const childDef = getWidgetDef(rec.kind);
-    if (typeof childDef?.mount !== "function") {
-      throw new Error(`compound: kind ${rec.kind} 无 mount 面(C1 def.mount)`);
+    let live;
+    if (rec.inst._compound) {
+      const pv = rec.inst.mount_view(host, { surface });
+      live = {
+        state: rec.inst.state,
+        emit: rec.inst.emit.bind(rec.inst),
+        update: () => rec.inst.relayout?.(),
+        destroy: () => pv.detach(),
+      };
+    } else {
+      const childDef = getWidgetDef(rec.kind);
+      if (typeof childDef?.mount !== "function") {
+        throw new Error(`compound: kind ${rec.kind} 无 mount 面(C1 def.mount)`);
+      }
+      live = childDef.mount(host, { ...rec.mountOpts, surface, path: "" });
+      live.state = rec.inst.state; // 同 instance(§5):state 引用同一化
+      live.emit = rec.inst.emit.bind(rec.inst); // 事件统一走 canonical(闸门/listeners 一份)
+      // 状态同一化后首渲对齐(mount 用自己的 options 先渲过一遍,canonical state 才是事实源)
+      if (typeof live.update === "function") live.update({});
+      else host.innerHTML = childDef.render(rec.inst.state, { surface });
     }
-    const live = childDef.mount(host, { ...rec.mountOpts, surface, path: "" });
-    live.state = rec.inst.state; // 同 instance(§5):state 引用同一化
-    live.emit = rec.inst.emit.bind(rec.inst); // 事件统一走 canonical(闸门/listeners 一份)
-    // 状态同一化后首渲对齐(mount 用自己的 options 先渲过一遍,canonical state 才是事实源)
-    if (typeof live.update === "function") live.update({});
-    else host.innerHTML = childDef.render(rec.inst.state, { surface });
     const view = { host, surface, live };
     view.detach = () => {
       live.destroy?.();
@@ -114,12 +130,16 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
     }
   };
 
-  /* canonical 子实例创建(createWidget;register 由 compound 统一做) */
+  /* canonical 子实例创建(register 由 compound 统一做);kind 带 compound
+     字段时递归 createCompound——否则预定义的 compound 子件会是「僵尸」
+     (有 def 无 compound API,真实浏览器首崩的第二个根因) */
   const _spawn = (id, kind, { state: childState = {}, surface = "tab", slot = null, options = {} } = {}) => {
     const childDef = getWidgetDef(kind);
     if (!childDef) throw new Error(`compound: 未知 kind ${kind}(注册表惰性校验,§2)`);
     if (children.has(id)) throw new Error(`compound: 子件 id 重复 ${id}`);
-    const childInst = createWidget(childDef, { state: childState });
+    const childInst = childDef.compound
+      ? createCompound(childDef, { state: childState })
+      : createWidget(childDef, { state: childState });
     const rec = {
       id,
       kind,
@@ -134,7 +154,7 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
     childInst.path = rec.path; // §1:寻址 = owner.path + 子段(身份即路径)
     childInst._compoundOwner = inst; // ownership 唯一(§1)
     childInst._compoundId = id;
-    childInst.mount_view = (host, opts = {}) => _linkView(rec, host, opts); // hard link 入口(§5)
+    childInst.link_view = (host, opts = {}) => _linkView(rec, host, opts); // hard link 入口(§5;与 compound 自身 mount_view 严格分离)
     children.set(id, rec);
     _registerChild(rec);
     _wireGate(rec);
@@ -206,7 +226,7 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
     childInst._compoundOwner = inst;
     childInst._compoundId = id;
     childInst.path = rec.path; // §6:path 重算(身份不变)
-    childInst.mount_view = (host, opts = {}) => _linkView(rec, host, opts);
+    childInst.link_view = (host, opts = {}) => _linkView(rec, host, opts); // hard link 入口(§5;同 _spawn 的分离纪律)
     children.set(id, rec);
     _registerChild(rec); // §6-2:新 path 注册 + provider 按新 path 重注册
     _wireGate(rec);
@@ -253,6 +273,7 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
 
   /* 父自身的视图(compound 也是 widget;§3 渲染协议入口) */
   inst.views = [];
+  inst.relayout = () => _relayout(); // compound 子件的 update 面(_linkView 用)
   inst.mount_view = (host, { surface = "tab" } = {}) => {
     const view = { host, surface };
     view.detach = () => {

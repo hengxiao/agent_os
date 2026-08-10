@@ -160,11 +160,11 @@ const _slotHost = (c, id) => _rec(c, id)?.views?.[0]?.host ?? null;
   doc.body.appendChild(tabHost);
   c.mount_view(slotHost); // slot 内 = card 面
   const ed = c.child("ed");
-  const tabView = ed.mount_view(tabHost, { surface: "tab" }); // hard link:同 instance 的 tab 视图
+  const tabView = ed.link_view(tabHost, { surface: "tab" }); // hard link:同 instance 的 tab 视图
   assert.ok(_slotHost(c, "ed")?.innerHTML.includes('data-surface="card"'), "左 = card 面");
   assert.ok(tabHost.innerHTML.includes("<textarea"), "右 = tab 面(完整编辑器)");
   assert.equal(ed.state, tabView.live.state, "state 引用同一化(同 instance,§5)");
-  assert.equal(ed.mount_view.length ?? 0, ed.mount_view.length, "API 在");
+  assert.equal(typeof ed.link_view, "function", "hard link 入口在(§5,与 mount_view 分离)");
   // 右 tab 输入 → canonical emit → 扇出:左 card 同步变
   const ta = tabHost.querySelector("textarea");
   ta.value = "右侧改过的文本";
@@ -195,7 +195,7 @@ const _slotHost = (c, id) => _rec(c, id)?.views?.[0]?.host ?? null;
   c.child("ed").state.value = "x";
   const h1 = doc.createElement("div");
   doc.body.appendChild(h1);
-  const v1 = c.child("ed").mount_view(h1, { surface: "tab" });
+  const v1 = c.child("ed").link_view(h1, { surface: "tab" });
   const ta1 = h1.querySelector("textarea");
   ta1.value = "y";
   h1.trigger("input", { target: ta1 });
@@ -207,7 +207,7 @@ const _slotHost = (c, id) => _rec(c, id)?.views?.[0]?.host ?? null;
   c.on("child_event", (p) => log.push(p));
   const h2 = doc.createElement("div");
   doc.body.appendChild(h2);
-  c.child("ed").mount_view(h2, { surface: "tab" });
+  c.child("ed").link_view(h2, { surface: "tab" });
   const ta2 = h2.querySelector("textarea");
   ta2.value = "z";
   h2.trigger("input", { target: ta2 });
@@ -220,7 +220,7 @@ const _slotHost = (c, id) => _rec(c, id)?.views?.[0]?.host ?? null;
   c.on("child_event", (p) => log.push(p));
   const h3 = doc.createElement("div");
   doc.body.appendChild(h3);
-  c.child("ed").mount_view(h3, { surface: "tab" });
+  c.child("ed").link_view(h3, { surface: "tab" });
   const ta3 = h3.querySelector("textarea");
   ta3.value = "raw";
   h3.trigger("input", { target: ta3 });

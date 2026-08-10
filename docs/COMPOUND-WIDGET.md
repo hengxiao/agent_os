@@ -157,3 +157,22 @@ cascade 协议(`cascade.js`)不变:provider 按 path 注册;reparent 时按新 p
 - 不做 layout 内联子 HTML(§3-1);
 - 不做环(ownership 是树,attach 前查祖先链防环);
 - 不发明第二套寻址(path 协议沿用 APP-MODEL §14)。
+
+## 11. 实现注(C1.1 真实浏览器修复,2026-08-11)
+
+> 由 tests-ui(真实 Chromium)抓出、stub 测不出的两个基座 bug:
+>
+> 1. **mount_view 名撞 = 无限递归**(RangeError,页面零渲染):hard link 入口
+>    曾覆写实例的 `mount_view`,而 compound 子件的「父视图挂载」也叫
+>    `mount_view`——def.mount 桥一回 call 就成死循环。协议修正:hard link
+>    入口独立命名 **`link_view(host, {surface})`**;`mount_view` 只保留
+>    「compound 渲染自己的 layout+子树」一义。§5 的 `inst.mount_view`
+>    字样均按 `link_view` 理解。
+> 2. **僵尸子件**:`_spawn` 曾对 compound kind 也 createWidget,子件有 def
+>    无 compound API。修正:kind 带 compound 字段时递归 `createCompound`;
+>    compound 子件的 view 装配走实例自身 `mount_view`(不再需要 def.mount 桥),
+>    其 update 面 = 新增 `inst.relayout()`。
+>
+> 另:UI 测试架构落地于 `web/static/tests-ui/`(Playwright + 项目内隔离
+> Chromium;`./run.sh`),test_compound 四能力与 test_sandbox 全控件矩阵
+> 在真实浏览器全绿——此后 compound 层改动以两套都绿为交付门槛。

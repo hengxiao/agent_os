@@ -40,21 +40,6 @@ const KINDS = [
 const KIND_MAP = Object.fromEntries(KINDS.map((k) => [k.kind, k]));
 const ALLOW = KINDS.map((k) => k.kind);
 
-/* compound 子件 = compound 时的视图装配桥(def.mount 需要 (host)→live 形态;
-   本页每 def 单实例,闭包取实例即 canonical,state 天然同一) */
-function _compoundMount(getInst) {
-  return (host, { surface = "tab" } = {}) => {
-    const c = getInst();
-    const view = c.mount_view(host, { surface });
-    return {
-      state: c.state,
-      emit: c.emit.bind(c),
-      destroy: () => view.detach(),
-      update: () => {}, // 结构变化自驱 relayout(stack/stage 的 add/remove/move 会自动重挂)
-    };
-  };
-}
-
 /* 栈/台通用 def 工厂(layout 带每卡操作条;操作经 playground 宿主委托) */
 function _stackDef(kind, side) {
   const acts =
@@ -99,13 +84,11 @@ export function bootPlayground() {
   initTheme();
   $("#pg-build").textContent = `build ${BUILD}`;
 
-  // 根 compound:两栏是 stack/stage 两个 compound 子件(compound 套 compound)
-  let _stackInst = null;
-  let _stageInst = null;
+  // 根 compound:两栏是 stack/stage 两个 compound 子件(compound 套 compound)。
+  // 预定义 slots 直接生成真 compound 实例(C1 修复后 _spawn 递归 createCompound),
+  // 不再需要手工 createCompound + attach_existing(那会产生僵尸/重复子件)。
   const stackDef = _stackDef("pg-stack", "left");
   const stageDef = _stackDef("pg-stage", "right");
-  stackDef.mount = _compoundMount(() => _stackInst);
-  stageDef.mount = _compoundMount(() => _stageInst);
   const rootDef = registerWidgetDef({
     kind: "pg-root",
     v: 1,
@@ -130,10 +113,8 @@ export function bootPlayground() {
   });
 
   const root = createCompound(rootDef, { path: "/pg" });
-  _stackInst = createCompound(stackDef, { path: "/pg/left" });
-  _stageInst = createCompound(stageDef, { path: "/pg/right" });
-  root.attach_existing(_stackInst, { slot: "stack", surface: "card" });
-  root.attach_existing(_stageInst, { slot: "stage", surface: "tab" });
+  const _stackInst = root.child("stack");
+  const _stageInst = root.child("stage");
 
   // 选件下拉
   const kindSel = $("#pg-kind");
@@ -162,7 +143,7 @@ export function bootPlayground() {
     wrap.appendChild(cap);
     wrap.appendChild(vhost);
     $("#pg-linkzone").appendChild(wrap);
-    links.set(id, { view: child.mount_view(vhost, { surface: "tab" }), wrap });
+    links.set(id, { view: child.link_view(vhost, { surface: "tab" }), wrap });
   };
 
   /* 加件 / 互移 / 移除 / 链接(事件委托在 #pg-root,layout 重渲不伤) */

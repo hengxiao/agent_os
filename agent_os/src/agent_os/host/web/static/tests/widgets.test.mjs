@@ -1007,9 +1007,9 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
   // (本文件前文注册过 t-probe 等探针——无 render 面,不计入产品控件面;
   //  C4.1:supervisor-inbox 系统件薄壳计入(双形态/open 齐备),desktop 是
   //  compound 根无 render 面(layout 即渲染),自然不入本集;
-  //  widget-libs 试点 2:text-editor-cm 计入(render 面 = 降级/首渲 chrome))
+  //  widget-libs 试点 2/3:text-editor-cm/md-viewer-mi 计入(render 面 = 降级/chrome+mi 纯渲染))
   const defs = listWidgetKinds().map((k) => getWidgetDef(k)).filter((d) => typeof d.render === "function");
-  assert.equal(defs.length, 15, "15 种自渲染件(13 控件 + supervisor-inbox + text-editor-cm)");
+  assert.equal(defs.length, 16, "16 种自渲染件(13 控件 + supervisor-inbox + 两对照件)");
   for (const def of defs) {
     assert.deepEqual([...(def.surfaces ?? [])].sort(), ["card", "tab"], `${def.kind} 双 surface 声明`);
     assert.ok(def.events.includes("open"), `${def.kind} 声明 open 事件(card 整卡点击)`);
@@ -2324,3 +2324,74 @@ console.log("widgets.test.mjs: W-bubble v3 assertions passed");
 function doc2ok(doc, host2) { doc.body.appendChild(host2); }
 
 console.log("widgets.test.mjs: text-editor-cm assertions passed");
+
+/* ── md-viewer-mi(widget-libs 试点 3:markdown-it 对照件)──
+   markdown-it 纯 JS 无 DOM 依赖,stub 直接跑渲染断言;白名单/安全逐条对照
+   手写 mdToHtml(W6.4 裁决不破);行为(mount/copy/view 切换)断 stub 行为面 */
+
+{
+  const { renderMarkdownViewerMi, mdToHtmlMi, miSanitizeSource, MD_VIEWER_MI_DEF, mountMarkdownViewerMi } =
+    await import("../js/widgets/index.js");
+  const src =
+    "# 标题\n\n- 甲\n- 乙\n\n> 引用一句。\n\n```\nlet a = 1;\n```\n\n**粗** 和 `行内` 和 [链接](https://example.com)\n\n| a | b |\n|---|---|\n| 1 | 2 |";
+  const h = mdToHtmlMi(src);
+  assert.ok(h.includes("<h4>标题</h4>"), "标题阶梯 h1→h4(同手写裁决)");
+  assert.ok(h.includes("<ul>") && h.includes("<li>甲</li>"), "列表结构");
+  assert.ok(h.includes('class="wd-md-quote"'), "引用块同族 class");
+  assert.ok(h.includes("wd-md-table") && h.includes("<th>a</th>"), "表格结构 + 族 class");
+  assert.ok(h.includes('<code class="mono">行内</code>'), "行内 code 同族");
+  assert.ok(h.includes("<b>") || h.includes("<strong>粗</strong>"), "粗体在(markdown-it strong)");
+  assert.ok(h.includes('data-md-copy="0"'), "代码块复制钮注入(渲染序)");
+  assert.ok(h.includes('target="_blank" rel="noopener noreferrer"'), "链接 target/rel 补强");
+
+  // 白名单/安全逐条(W6.4 不破):
+  // 1) 原始 HTML 注入:html:false → script 转义不进 DOM
+  const xss = mdToHtmlMi('<script>alert(1)</script>');
+  assert.ok(!xss.includes("<script"), "原始 HTML 注入转义(html:false)");
+  // 2) javascript: 链接整块移除(预扫;不留残迹)
+  const bad = mdToHtmlMi("[点我](javascript:alert(1))");
+  assert.ok(!bad.includes("javascript:") && !bad.includes("点我"), "javascript: 整块移除(W6.4 裁决)");
+  // 3) data:/vbscript: 同规则;https 与站内相对放行
+  assert.ok(!mdToHtmlMi("[x](data:text/html;base64,abc)").includes("data:"), "data: 移除");
+  assert.ok(miSanitizeSource("[x](/docs/a)").includes("/docs/a"), "站内相对放行");
+  assert.ok(miSanitizeSource("[x](https://a.com)").includes("https://a.com"), "https 放行");
+  // 4) 图片:markdown-it 产 <img>;src 白名单由 validateLink 管(默认拦 javascript:)
+  const img = mdToHtmlMi("![alt](https://a.com/x.png)");
+  assert.ok(img.includes("<img"), "图片放行(http)");
+  const imgBad = mdToHtmlMi("![alt](javascript:alert(1))");
+  assert.ok(!imgBad.includes('src="javascript:'), "图片 javascript: src 不渲染(validateLink)");
+
+  // 事件面/def:与 W-md 同(copy/open;无 actions)
+  assert.deepEqual(MD_VIEWER_MI_DEF.events, ["copy", "open"], "events 同 W-md");
+  assert.equal(MD_VIEWER_MI_DEF.actions.length, 0, "纯查看器无 actions");
+
+  // mount 行为(stub):view 切换 + copy 事件 + copy 文本取 DOM code
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountMarkdownViewerMi(host, { source: src, title: "t.md" });
+  assert.ok(host.innerHTML.includes("wd-md"), "preview 首渲");
+  const copies = [];
+  w.on("copy", (p) => copies.push(p.text));
+  const btn = new StubEl("button");
+  btn.dataset.mdCopy = "0";
+  btn.closest = (sel) => (sel === "[data-md-copy]" ? btn : null);
+  host.trigger("click", { target: btn });
+  assert.equal(copies.length, 1, "copy 事件上行(stub 无 DOM 解析,文本断 tests-ui)");
+  assert.ok(host.innerHTML.includes("let a = 1;"), "代码块原文在渲染面");
+  const seg = new StubEl("button");
+  seg.dataset.mdView = "source";
+  seg.closest = (sel) => (sel === "[data-md-view]" ? seg : null);
+  host.trigger("click", { target: seg });
+  assert.ok(host.innerHTML.includes("wd-md-src-pre"), "view source 切换(复用 W-md 同构面)");
+  assert.equal(w.state.view, "source", "view 进 state(可序列化)");
+
+  // card 面复用(引擎无关)
+  const host2 = doc.createElement("div");
+  doc.body.appendChild(host2);
+  mountMarkdownViewerMi(host2, { source: src, title: "t.md", surface: "card" });
+  assert.ok(host2.innerHTML.includes("wd-card") && host2.innerHTML.includes("标题"), "card 面复用 W-md");
+}
+
+console.log("widgets.test.mjs: md-viewer-mi assertions passed");

@@ -160,6 +160,16 @@ export const SAMPLES = {
       { name: "空态", options: { source: "" } },
     ],
   },
+  // widget-libs 试点 3:markdown-it 对照件——样例与 md-viewer 同参数(并排对比)
+  "md-viewer-mi": {
+    mount: "mountMarkdownViewerMi",
+    samples: [
+      { name: "典型(全结构)", options: { title: "trip_report.md", source:
+        "# 标题\n\n- 甲\n- 乙\n\n> 引用一句。\n\n```\nlet a = 1;\n```\n\n**粗** 和 `行内` 和 [链接](https://example.com)\n\n| a | b |\n|---|---|\n| 1 | 2 |" } },
+      { name: "XSS 剥壳", options: { source: "<script>alert(1)</script>\n\n[点我](javascript:alert(1))" } },
+      { name: "空态", options: { source: "" } },
+    ],
+  },
   "chat-bubble": {
     mount: "mountBubble",
     samples: [

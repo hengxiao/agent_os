@@ -35,6 +35,7 @@ export { renderDatePicker } from "./w-date.render.js";
 export { DIFF_VIEWER_DEF, mountDiffViewer, diffBodyHtml } from "./w-diff.js";
 export { renderDiffViewer } from "./w-diff.render.js";
 export { MD_VIEWER_DEF, mountMarkdownViewer, mdToHtml, looksMarkdown } from "./w-md.js";
+export { MD_VIEWER_MI_DEF, mountMarkdownViewerMi, renderMarkdownViewerMi, mdToHtmlMi, miSanitizeSource } from "./w-md-mi.js"; // widget-libs 试点 3
 export { renderMarkdownViewer } from "./w-md.render.js";
 export { LOG_VIEWER_DEF, mountLogViewer } from "./w-log.js";
 export { renderLogViewer } from "./w-log.render.js";

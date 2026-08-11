@@ -181,7 +181,7 @@ export function mountTextEditorCm(host, { value = "", field = "", mono = true, r
   } else if (!_degraded(host)) {
     // 真 DOM:异步建 CM6(vendor 按需装载;widget 立即可用,就绪后接管编辑面)
     (async () => {
-      const { EditorView, basicSetup } = await import("/static/vendor/codemirror/codemirror.mjs");
+      const { EditorView, basicSetup } = await import("../../vendor/codemirror/codemirror.mjs");
       if (widget._destroyed) return; // 装载期间被拆
       const dark = _DARK_BY_THEME[currentThemeId()] ?? true;
       const cmHost = host.querySelector("[data-cm-host]");

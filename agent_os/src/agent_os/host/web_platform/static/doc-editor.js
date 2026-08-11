@@ -33,6 +33,8 @@ import { copy } from "/static/js/themes.js";
 import { createCompound, mdToHtml, registerWidgetDef } from "/static/js/widgets/index.js";
 import { registerContextProvider } from "/static/js/widgets/cascade.js";
 import { bubbleNewFrom } from "/static/js/widgets/w-bubble.render.js";
+// widget-libs 试点:vendored Floating UI(docs/WIDGET-ARCH.md vendor 集成原则)
+import { computePosition, offset, flip, shift, size, arrow, autoUpdate } from "/static/vendor/floating-ui/floating-ui.dom.mjs";
 import { docTabHtml } from "./details.js";
 
 // 长文档阈值(§2/§7 边界):>200KB 预览截断提示,不炸(展示面只读,无编辑器)
@@ -257,34 +259,63 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     return Math.max(0, assistant - Math.min(_seenGet(entry.anchor), assistant));
   }
 
-  /* 气泡壳高度算法(v2 · 宿主壳几何;§3.13 v2 B;v3 按 point 块内偏移):
-     开泡/滚动/resize 时按锚点与视口空间精算——首选下方展开,spaceBelow < 240
-     且上方更大 → 翻转向上(doc-bubble-up,top↔bottom 随翻);maxHeight =
-     clamp(200px, 45vh, 可用−16px)。stub/无布局环境静默(切割线:壳几何归宿主)。 */
+  /* 气泡壳定位(widget-libs 试点:vendored Floating UI 替换手写几何)——
+     computePosition(虚拟参考点(锚点块内偏移),壳,{placement:"bottom-start",
+     middleware:[offset(8), flip(), shift({padding:16}), size(上限), arrow]});
+     v3 行为契约不变:原位开泡/翻转/maxHeight clamp(200px, 45vh, 可用−16)/
+     标记原位。stub/无布局环境静默(切割线:壳几何归宿主,卡面 render 不动)。 */
   function _fitBubble(entry) {
     const block = [...(cur?.preview.children ?? [])].find((c) => c.dataset?.anchor === entry.blockAnchor);
-    const rect = block?.getBoundingClientRect?.();
-    if (!rect) return;
-    const pointY = rect.top + (entry.offTop ?? 24); // 锚点(点击点/选区)的视口纵位
-    const vh = globalThis.innerHeight ?? 900;
-    const spaceBelow = vh - pointY - 16;
-    const spaceAbove = pointY - 16;
-    const up = spaceBelow < 240 && spaceAbove > spaceBelow;
-    const avail = Math.max(0, (up ? spaceAbove : spaceBelow) - 16);
-    const maxH = Math.round(Math.max(200, Math.min(vh * 0.45, avail)));
-    entry.el.style.maxHeight = `${maxH}px`;
-    entry.el.classList.toggle("doc-bubble-up", up);
-    if (entry.offTop != null) {
-      if (up) {
-        entry.el.style.top = "auto";
-        entry.el.style.bottom = `${Math.round(Math.max(4, rect.height - entry.offTop + 16))}px`;
-      } else {
-        entry.el.style.bottom = "auto";
-        entry.el.style.top = `${Math.round(entry.offTop)}px`;
-      }
+    if (!block?.getBoundingClientRect) return;
+    if (!entry._refEl) {
+      // 虚拟参考点:块内偏移(点击点/选区);rect 每次现取——滚动随行(v3 原位语义)
+      entry._refEl = {
+        getBoundingClientRect: () => {
+          const r = block.getBoundingClientRect();
+          const x = r.left + (entry.offLeft ?? r.width - 8);
+          const y = r.top + (entry.offTop ?? 24);
+          return { x, y, top: y, left: x, right: x, bottom: y, width: 0, height: 0 };
+        },
+      };
     }
+    computePosition(entry._refEl, entry.el, {
+      placement: "bottom-start",
+      strategy: "absolute", // 壳挂在锚点块内(offsetParent = 块)
+      middleware: [
+        offset(8),
+        flip(), // 空间不足 → 翻转向上(顶替手写 spaceBelow/spaceAbove 比较)
+        shift({ padding: 16 }),
+        size({
+          padding: 16,
+          apply({ availableHeight }) {
+            const vh = globalThis.innerHeight ?? 900;
+            const maxH = Math.round(Math.max(200, Math.min(vh * 0.45, availableHeight - 16)));
+            entry.el.style.maxHeight = `${maxH}px`; // v2/v3 契约:clamp(200, 45vh, 可用−16)
+          },
+        }),
+        ...(entry.arrowEl ? [arrow({ element: entry.arrowEl, padding: 6 })] : []),
+      ],
+    }).then(({ x, y, placement, middlewareData }) => {
+      Object.assign(entry.el.style, {
+        left: `${Math.round(x)}px`, top: `${Math.round(y)}px`, right: "auto", bottom: "auto",
+      });
+      entry.el.classList.toggle("doc-bubble-up", placement.startsWith("top")); // 语义类(测试面)
+      if (entry.arrowEl) {
+        const side = placement.split("-")[0];
+        const staticSide = { top: "bottom", right: "left", bottom: "top", left: "right" }[side];
+        const ax = middlewareData.arrow?.x;
+        const ay = middlewareData.arrow?.y;
+        entry.arrowEl.dataset.side = side; // 方向样式(CSS 按边旋转)
+        Object.assign(entry.arrowEl.style, {
+          left: ax != null ? `${Math.round(ax)}px` : "",
+          top: ay != null ? `${Math.round(ay)}px` : "",
+          right: "", bottom: "",
+          [staticSide]: "-5px",
+        });
+      }
+    });
   }
-  const _refitBubbles = () => {
+  const _refitBubbles = () => { // 手工重算面(重挂/调试用;滚动/resize 由 autoUpdate 接管)
     for (const entry of bubbles.values()) {
       if (!entry.el.hidden) _fitBubble(entry);
     }
@@ -371,29 +402,39 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     const blockAnchor = blockEl?.dataset?.anchor ?? anchor;
     const parent = [...cur.preview.children].find((c) => c.dataset?.anchor === blockAnchor) ?? blockEl ?? cur.preview;
     parent.appendChild(wrap);
+    // Floating UI arrow:真元素(顶替手写 ::before;定位由 arrow middleware 给)
+    const arrowEl = (cur.host.ownerDocument ?? globalThis.document).createElement("div");
+    arrowEl.className = "doc-bubble-arrow";
+    wrap.appendChild(arrowEl);
     const marker = (cur.host.ownerDocument ?? globalThis.document).createElement("button");
     marker.className = "doc-bubble-marker";
     marker.dataset.bubbleMarker = "1";
     marker.dataset.anchor = anchor;
     marker.hidden = true;
     parent.appendChild(marker);
-    // v3 原位:point(右键点)给壳/标记的块内偏移;无 point = 旧语义(块顶 1.5em)
+    // v3 原位:point(右键点)给虚拟参考点的块内偏移(间隙由 offset(8) 中间件给);
+    // 无 point = 旧语义(参考点落块右上);标记留在原位附近(行尾)
     let offTop = null;
     let offLeft = null;
     const bRect = parent.getBoundingClientRect?.();
     if (point && bRect) {
-      offTop = Math.max(4, point.y - bRect.top + 8);
+      offTop = Math.max(4, point.y - bRect.top);
       offLeft = Math.max(8, Math.min(point.x - bRect.left, Math.max(8, bRect.width - 48)));
-      wrap.style.right = "auto";
-      wrap.style.left = `${Math.round(offLeft)}px`;
-      wrap.style.top = `${Math.round(offTop)}px`;
-      marker.style.top = `${Math.round(Math.max(0, offTop - 22))}px`; // 标记留在原位附近(行尾)
+      marker.style.top = `${Math.round(Math.max(0, offTop - 14))}px`;
     }
     // §5:view 挂进壳(link_view;hard link 视图,挂载点不限 slot 内)
     const view = bubbleInst.link_view(body, { surface: "tab" });
-    const entry = { inst: bubbleInst, view, el: wrap, body, marker, anchor, blockAnchor, offTop, offLeft, severity: "" };
+    const entry = { inst: bubbleInst, view, el: wrap, body, marker, anchor, blockAnchor, offTop, offLeft, arrowEl, unfit: null, severity: "" };
     bubbles.set(anchor, entry);
-    _fitBubble(entry); // v2/v3:开泡即精算几何(宿主壳)
+    _fitBubble(entry); // 开泡即定位(Floating UI;widget-libs 试点)
+    // autoUpdate(开泡期间:文档滚动/窗口 resize/布局位移自动重算——
+    // 顶替手工 scroll/resize 监听;隐藏不重算,删除/销毁时摘。
+    // stub/无 window 环境静默(vendored 库触摸 window))
+    if (typeof window !== "undefined" && parent.getBoundingClientRect) {
+      entry.unfit = autoUpdate(entry._refEl ?? parent, entry.el, () => {
+        if (!entry.el.hidden) _fitBubble(entry);
+      });
+    }
     // D4:打开即记"已读"(seen 游标 = 当前 assistant 数)
     _seenSet(anchor, bubbleInst.state.messages.filter((m) => m.role === "assistant").length);
     view.live.focus?.();
@@ -435,6 +476,7 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
   /* v3:批注删除(控件 delete action → 闸门放行 → 此面):壳/标记摘除,
      compound remove_child(destroy),后端端点删持久化(失败不挡 UI,读面是事实源) */
   async function _deleteBubble(entry, anchor) {
+    entry.unfit?.(); // autoUpdate 摘除(widget-libs)
     entry.el.remove?.();
     entry.marker?.remove?.();
     bubbles.delete(anchor);
@@ -834,14 +876,9 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     /* host 委托(重挂载幂等):委托只挂一次,永远转给最新实例(否则 N 次挂载 =
        N 个委托,导出菜单被切 N 次:偶数次 = 没切的幽灵 bug,D1-D4 旧码已潜伏) */
     viewHost.__docEditorClick = onHostClick; // 最新实例(重挂载覆盖)
-    viewHost.__docEditorScroll = _refitBubbles; // v2 滚动重算同纪律(转给最新实例)
     if (!viewHost.__docEditorBound) {
       viewHost.__docEditorBound = true;
       viewHost.addEventListener("click", (e) => viewHost.__docEditorClick?.(e));
-      // v2:文档滚动 → 气泡壳几何重算(跟随锚段;壳随块滚,重算翻转/上限)
-      viewHost.addEventListener("scroll", (e) => {
-        if (e.target.closest?.("[data-doc-preview]")) viewHost.__docEditorScroll?.();
-      }, true);
     }
   }
 
@@ -868,11 +905,12 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     return { host: viewHost, detach: () => view.detach() };
   };
 
-  /* v2:窗口 resize → 气泡壳几何重算;实例销毁即摘除(防监听泄漏) */
-  globalThis.addEventListener?.("resize", _refitBubbles);
+  /* v2:窗口 resize → 气泡壳几何重算;实例销毁即摘除(防监听泄漏)——
+     widget-libs 起:autoUpdate 接管滚动/resize(_refitBubbles 留作重挂面);
+     destroy 时逐泡摘 autoUpdate */
   const _baseDestroy = inst.destroy.bind(inst);
   inst.destroy = () => {
-    globalThis.removeEventListener?.("resize", _refitBubbles);
+    for (const entry of bubbles.values()) entry.unfit?.();
     _baseDestroy();
   };
 

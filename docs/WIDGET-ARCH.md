@@ -601,6 +601,27 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 - 不改 widget 协议面(def/state/事件/寻址不动——只把渲染拿进控件);
 - 不改六主题契约结构(token/copy/组件零分支沿用)。
 
+## 4.5 vendor 库集成原则(widget-libs 试点沉淀,2026-08-12)
+
+第三方库走 **vendored ESM**,不进打包链(零 bundler 架构不破)。首个试点 =
+Floating UI(doc-editor 气泡定位,`_fitBubble` 手写几何 → computePosition +
+flip/shift/size/arrow 中间件 + autoUpdate)。原则:
+
+1. **落位**:`web/static/vendor/<name>/`(JS + **LICENSE** + 版本注;core
+   依赖的裸 specifier **改写为相对路径**,如 `./floating-ui.core.mjs`——
+   浏览器无解析表,裸名不可达);
+2. **页面引用**:绝对路径 `/static/vendor/<name>/x.mjs?v=<BUILD>`(缓存破坏与
+   产品页同款);node stub 测试经 `tests/platform-loader.mjs` 映射(已扩
+   `/static/vendor/` 前缀);
+3. **token/样式层归我们**:vendor 库只算几何/逻辑,视觉一律走契约 token
+   (库不带样式侵入;我们的 chrome 不动它的主题面);
+4. **widget 铁律不破**:库只在宿主/控件**逻辑面**调用(不出海、render 仍纯);
+   无 window/document 的环境(stub)必须静默降级——调用点先探
+   `typeof window !== "undefined"` / `getBoundingClientRect` 存在性;
+5. **每个 vendor 库要有「存在性 + 关键导出」的真实浏览器断言**(tests-ui
+   `test_vendor.py`:可导入 + computePosition 实测返回坐标);行为断言
+   照旧由两套测试钉住(vendor 替换不许行为回退)。
+
 ## 5. 沙盒(单控件调试页;W5.5)
 
 `web/static/widget.html`(经 `/static/widget.html` 访问,服务端零改动)——

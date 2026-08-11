@@ -30,3 +30,6 @@ agent_os/src/agent_os/host/web/static/tests-ui/.browsers/
 agent_os/src/agent_os/host/web/static/tests-ui/.syslibs/
 agent_os/src/agent_os/host/web/static/tests-ui/.rpms/
 agent_os/src/agent_os/host/web/static/tests-ui/__pycache__/
+
+# UI 测试截图产物
+agent_os/src/agent_os/host/web/static/tests-ui/.shots/

@@ -21,10 +21,11 @@ const { SAMPLES } = await import("../js/widgets/samples.js");
 const { parseSandboxUrl, buildSandboxUrl } = await import("../js/widget-sandbox.js");
 
 {
-  // 覆盖:listWidgetKinds() 全 13 种,样例表无缺漏(多一个少一个都报)
+  // 覆盖:listWidgetKinds() 全 14 种,样例表无缺漏(多一个少一个都报)
   // C4.1:desktop(compound 根)/supervisor-inbox(系统件薄壳)非沙盒样例件,排除
+  // widget-libs 试点 2:text-editor-cm(CM6 对照实验件)计入(有样例,并排对比)
   const kinds = widgets.listWidgetKinds().filter((k) => !["desktop", "supervisor-inbox"].includes(k));
-  assert.equal(kinds.length, 13, "13 种控件");
+  assert.equal(kinds.length, 14, "14 种控件(13 + text-editor-cm 对照件)");
   assert.deepEqual(Object.keys(SAMPLES).sort(), kinds.sort(), "样例表与注册表一一对应");
   for (const k of kinds) {
     assert.ok(SAMPLES[k].samples.length >= 2, `${k} 至少两个样例(空态/典型/边界)`);

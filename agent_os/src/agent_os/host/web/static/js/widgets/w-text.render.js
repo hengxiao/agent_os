@@ -85,8 +85,9 @@ export function textEditorTabHtml(state, slots = {}) {
 }
 
 /* card 面(§3.1):标题行(图标 + 名称 + dirty 点 + 「打开 →」)+ 前三行预览
-   (末行渐隐 .wd-fade)+ meta 行(行数·字数·相对时间);整卡 = open 入口 */
-function _textCardHtml(state) {
+   (末行渐隐 .wd-fade)+ meta 行(行数·字数·相对时间);整卡 = open 入口。
+   导出复用:text-editor-cm(widget-libs 对照实验)的 card 面直接用它,别复制。 */
+export function _textCardHtml(state) {
   const mono = Boolean(state.mono);
   const value = String(state.value ?? "");
   const lines = value ? value.split("\n") : [];

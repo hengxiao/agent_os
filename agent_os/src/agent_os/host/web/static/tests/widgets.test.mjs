@@ -1006,9 +1006,10 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
   // 协议面:自渲染 def 全声明 card+tab,且都声明 open 事件(card 唯一交互)
   // (本文件前文注册过 t-probe 等探针——无 render 面,不计入产品控件面;
   //  C4.1:supervisor-inbox 系统件薄壳计入(双形态/open 齐备),desktop 是
-  //  compound 根无 render 面(layout 即渲染),自然不入本集)
+  //  compound 根无 render 面(layout 即渲染),自然不入本集;
+  //  widget-libs 试点 2:text-editor-cm 计入(render 面 = 降级/首渲 chrome))
   const defs = listWidgetKinds().map((k) => getWidgetDef(k)).filter((d) => typeof d.render === "function");
-  assert.equal(defs.length, 14, "14 种自渲染件(13 控件 + supervisor-inbox)");
+  assert.equal(defs.length, 15, "15 种自渲染件(13 控件 + supervisor-inbox + text-editor-cm)");
   for (const def of defs) {
     assert.deepEqual([...(def.surfaces ?? [])].sort(), ["card", "tab"], `${def.kind} 双 surface 声明`);
     assert.ok(def.events.includes("open"), `${def.kind} 声明 open 事件(card 整卡点击)`);
@@ -2283,3 +2284,43 @@ console.log("widgets.test.mjs: W-bubble v2 assertions passed");
 }
 
 console.log("widgets.test.mjs: W-bubble v3 assertions passed");
+
+/* ── text-editor-cm(widget-libs 试点 2:CM6 对照件)──
+   stub 降级面(§4.5 原则 4:无 window/测量面 → 只产 chrome 不建 CM6);
+   结构/行为断 stub 侧,真实 CM6 行为断 tests-ui。 */
+
+{
+  const { TEXT_EDITOR_CM_DEF, mountTextEditorCm } = await import("../js/widgets/index.js");
+  // def 结构:与 W-text 同 events/actions 面
+  assert.deepEqual(TEXT_EDITOR_CM_DEF.events, ["change", "commit", "revert", "open"], "events 同 W-text");
+  for (const a of ["set_value", "commit", "revert"]) {
+    assert.ok(TEXT_EDITOR_CM_DEF.actions.some((x) => x.id === a), `action ${a} 在`);
+  }
+  assert.equal(TEXT_EDITOR_CM_DEF.state_defaults.mono, true, "CM 件缺省 mono(代码编辑面)");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountTextEditorCm(host, { value: "甲\n乙", field: "f", label: "f", rows: 4 });
+  assert.ok(host.innerHTML.includes("wd-cm"), "chrome 产出(降级面)");
+  assert.ok(!host.innerHTML.includes("cm-content") && !host.innerHTML.includes('class="cm-editor'), "stub 不建 CM6(降级)");
+  assert.ok(host.querySelector("[data-cm-host]"), "CM6 宿主槽在(真 DOM 面挂载点)");
+  w.update({ value: "丙\n丁\n戊" });
+  assert.equal(w.state.value, "丙\n丁\n戊", "update 合 state(降级纯渲)");
+  assert.ok(host.innerHTML.includes("3 行") || host.querySelector(".wd-micro"), "微标随更新");
+  const evs = [];
+  w.on("commit", (p) => evs.push(p.value));
+  w.update({ value: "改" });
+  w.commit();
+  assert.equal(w.state.baseline, "改", "commit 锚点进 state");
+  assert.deepEqual(evs, ["改"], "commit 事件上行");
+  // card 面:复用 _textCardHtml(不建 CM6)
+  const host2 = doc.createElement("div");
+  doc2ok(doc, host2);
+  const w2 = mountTextEditorCm(host2, { value: "卡面内容", field: "f2", label: "f2", surface: "card" });
+  assert.ok(host2.innerHTML.includes("wd-card") && host2.innerHTML.includes("卡面内容"), "card 面复用(内容在)");
+  assert.ok(!host2.innerHTML.includes("cm-content"), "card 面不建 CM6(省资源)");
+}
+function doc2ok(doc, host2) { doc.body.appendChild(host2); }
+
+console.log("widgets.test.mjs: text-editor-cm assertions passed");

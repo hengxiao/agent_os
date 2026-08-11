@@ -178,7 +178,9 @@
   display: flex; align-items: center; gap: var(--s1);
   background: var(--bg-2); border: var(--stroke) solid var(--line); border-radius: 999px;
   padding: 0 var(--s2);
+  pointer-events: none; /* 只读徽标不吃点击(短行内容中心被盖,CM6 对照测试抓出) */
 }
+.wd-micro-tip { pointer-events: auto; } /* hover 面仍可读 */
 .wd-micro-dot { width: var(--s1-5); height: var(--s1-5); border-radius: 50%; background: var(--live); }
 .wd-micro-tip {
   display: none; position: absolute; right: 0; bottom: 100%; margin-bottom: var(--s1);

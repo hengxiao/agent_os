@@ -15,6 +15,16 @@ export const SAMPLES = {
       { name: "readonly 灰底", options: { value: "只读内容", field: "ro", label: "ro", readonly: true } },
     ],
   },
+  // widget-libs 试点 2:CM6 对照件——样例与 text-editor 同参数(并排对比用)
+  "text-editor-cm": {
+    mount: "mountTextEditorCm",
+    samples: [
+      { name: "plain 典型", options: { value: "第一行\n第二行", field: "prompt", label: "prompt", rows: 4, updated_at: Date.now() / 1000 - 180 } },
+      { name: "mono 行号槽", options: { value: "# 标题\n\n- 甲\n- 乙", field: "body", label: "body", mono: true, rows: 8, lang: "markdown" } },
+      { name: "空态", options: { value: "", field: "empty", label: "empty" } },
+      { name: "readonly 灰底", options: { value: "只读内容", field: "ro", label: "ro", readonly: true } },
+    ],
+  },
   "json-editor": {
     mount: "mountJsonEditor",
     samples: [

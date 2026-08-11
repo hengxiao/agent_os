@@ -7,7 +7,8 @@ export { createWidget, preserveSelection, bindCardOpen } from "./widget.js";
 export { registerContextProvider, contextCascade } from "./cascade.js";
 export { createCompound } from "./compound.js"; // C1:compound 基座(docs/COMPOUND-WIDGET.md)
 export { TEXT_EDITOR_DEF, mountTextEditor } from "./w-text.js";
-export { renderTextEditor, textEditorMicro, relTime } from "./w-text.render.js";
+export { TEXT_EDITOR_CM_DEF, mountTextEditorCm } from "./w-text-cm.js"; // widget-libs 试点 2:CM6 对照实验件
+export { renderTextEditor, textEditorMicro, relTime, _textCardHtml } from "./w-text.render.js";
 export { renderJsonEditor, jsonHighlightHtml, jsonKeyCount, jsonOkText } from "./w-json.render.js";
 export {
   JSON_EDITOR_DEF_KIND,

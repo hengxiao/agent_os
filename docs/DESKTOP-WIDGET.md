@@ -86,7 +86,7 @@ bubble)顺延 `/root/<app-id>/<bubble-id>`。全树寻址自此唯一。
 |---|---|---|
 | C4.1 ✅ | desktop def + layout 三分支 + 任务栏(badge 补丁);**与旧壳并存**:新页 `/platform/desktop.html` 先跑通 | tests-ui:开 app/最小化/重开 state 不动/关闭/重排 |
 | C4.2 ✅ | conversation app 与 doc-editor 进白名单(薄壳/直进) | 既有行为测试 + 新 UI 测试 |
-| C4.3 | 其余 apps(skills/runs/tools/lab/debug)薄壳化 | 同上 |
+| C4.3 ✅ | 其余 apps(skills/runs/tools/lab/debug)薄壳化 | 同上 |
 | C4.4 | platform index 切换到 desktop 根,旧壳退役 | 全量回归 + 旧壳代码删除 |
 
 ## 7. 验收清单(C4 全量)
@@ -189,3 +189,52 @@ bubble)顺延 `/root/<app-id>/<bubble-id>`。全树寻址自此唯一。
 >   +新对话两段关闭 → doc 窗口右键开泡 → inbox 真实 pending 对照);
 >   四套 118 项全绿(两跑);BUILD 2026-08-11.4 三方同步(desktop.html 加挂
 >   platform.css:pfs-卡面/doc-editor chrome 样式同源)。
+
+## 11. 实现注(C4.3,2026-08-12)
+
+> - **五 explorer 薄壳**(`web_platform/static/explorer-apps.js`,新;占位
+>   runs-explorer 退役):
+>   - skills/tools/lab = legacy ES module **原样包装**(openX/closeX 一行不改):
+>     薄壳 compound + 工厂;`mount_view` 重包——摘 view 时子树挪**保活囊**
+>     (DOM 移动不销毁,`children[0]`+splice 逐子搬移,监听/模块单件态随元素
+>     存活),重挂原树接回(逐字级 hidden);显式 destroy 才 close 模块;
+>   - debug-console 同形但**重挂 = 重开**(dh.main 运行时引用宿主元素,保活
+>     会写空树;数据在服务端/localStorage,重开即还原);
+>   - runs-explorer = app.js runs 装配迁正自装(`/api/runs` + W-date 时间窗 +
+>     行内 run 链接 + 深链;state(range/locate/rows)全 canonical,重挂从
+>     state 重渲;locate 命中行提首——slice(8) 截断不漏高亮)。
+>   - `locate(ref)` 定位面:未开 = 首挂带名打开;已开可见 = 关模块重开带名
+>     (导航语义;lab 未保存 dirty 在跨草稿定位时不保,记此 caveat);
+>     debug-console 无定位面(激活即定位)。
+> - **detail 链接全 kind 路由**:conversation wireView 统一 emit
+>   `open-detail {kind, ref}`(取代 open-doc;doc_create 同口)+ 驱动
+>   `_DETAIL_ROUTE` 映射:doc→窗口区,run→runs,pack/decompose/publish→skills,
+>   tool→tools,gate/diff/draft→lab,debug→debug-console;esc 不接(对话内处理)。
+>   路由口有两条:conversation 内(wireView 回调)+ conversation 外(#dt-root
+>   委托,跳过 [data-cv-log] 防双路由)——runs 行内链接走后一条。
+> - **卡 DnD**(APP-MODEL §15 不变):`#dt-root` dragstart 产 envelope
+>   {source, source_kind, ref}`.dt-tasks` 收 drop → `_CARD_ROUTE` 同旧映射
+>   进路由;**整卡无 ref 的卡(如浏览表卡)拖了不路由**(行级 ref 在行链接上,
+>   与 app.js 卡面拖开详情同语义);tests-ui 用「为什么挂」摘要卡(整卡 ref)验。
+> - **conversation 未读 badge**(COMPOUND-WIDGET §7 增补「可见性条件」):
+>   conversation 的 change 带 `arrived`(本轮 agent 新消息数;send/poll 两路);
+>   驱动把 `DESKTOP_DEF.compound.on_child_event` 赋为带闭包的闸门——
+>   **可见性在父不在子**:激活子改写 `badge:null` 摘徽(不记),最小化子累计
+>   `unseen` 记 `badge:n`;`activate()` 清该子 unseen + state.badges。
+> - **会话切换裁决**:**保持「一会话一实例」(app 即会话),会话切换不做进
+>   窗口;发起面加会话列表**(既有会话 → 按 id 开 conversation 窗,同会话
+>   去重聚焦)。理由:desktop 心智里窗 = app 实例,conversation 的实例身份
+>   即会话(path `/conv/<sid>`、state.session);窗内切换会话 = 实例身份
+>   中途换绑,既糊寻址又造两个会话切换面(旧壳 sessionSel + 窗内下拉);
+>   「开会话」语义 = 发起(与开文档同构),不是窗口模式切换。
+> - **与设计的偏差**(本期):① lab 跨草稿 locate 不保未保存 dirty(导航语义,
+>   模块级 dirty 无跨草稿暂存面);② debug-console 无 ref 定位面(激活即定位);
+>   ③ 浏览表卡整卡拖不路由(无整卡 ref);④ doc 写动作暂惰照旧(C4.4);
+>   ⑤ conversation 窗题名统一「对话」(aria.label 静态;区分靠任务栏 title,
+>   per-instance 题名需 slotRefs 加 meta,C4.4 评估)。
+> - **测试**:stub 新增 `explorer-apps.test.mjs`(五 def 注册面/runs layout
+>   纯+range+locate/fetch 装载/包装器机制探针——保活囊 hidden/destroy close
+>   /locate 三分支,fake open/close 断账)+ `conversation-app.test.mjs` ④ 改
+>   open-detail 全 kind;33 文件全绿。tests-ui `test_desktop.py` 扩为 55 项
+>   (badge 三态/run 链接 locate/DnD/四 legacy 开·保活·关/会话去重/重排/
+>   C4.2 链不回退);五套 135 项全绿(两跑);BUILD 2026-08-11.5 三方同步。

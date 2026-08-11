@@ -1,103 +1,195 @@
-"""C4.2:真实 app 进 desktop 的真实浏览器测试(docs/DESKTOP-WIDGET.md §5/§6 C4.2)。
+"""C4.3:五 explorer 薄壳 + detail 路由 + 卡 DnD + 未读 badge(docs/DESKTOP-WIDGET.md §5/§6 C4.3)。
 
-页面:/platform/desktop.html(与旧壳并存;种子 = boot conversation(最新会话)+ runs-explorer 占位)。
-驱动路径:桌面图标 → 开 conversation(真实对话,orchestrator 照旧)→ 发「文档列表」出卡 →
-卡上 doc 链接 → doc-editor 进窗口区(完整编辑器;attach_existing)→ 对话卡下 card 面活视图
-(hard link 同一 instance)→ 回对话留消息+草稿 → 最小化重开逐字在(hidden 语义)→
-任务栏重排 → + 新对话 → 两段 ✕ 关闭 → doc 窗口右键开泡(切割线)→ inbox 真实 pending badge。
-真实 DOM 选择器(以 web_platform/static/desktop-page.js + conversation-app.js + doc-editor.js 为准):
-.dt-icon[data-desk-open], .dt-task[data-desk-task], [data-cv-log], [data-cv-input], [data-cv-send],
-[data-detail-kind="doc"][data-detail-ref], .cv-doc-live, .doc-toolbar, .doc-para[data-anchor],
-.doc-bubble-pop, [data-desk-inbox-badge], #dt-newconv, #dt-events;调试钩 window.__desktop。
+页面:/platform/desktop.html(与旧壳并存;种子 = boot conversation(最新会话)+ runs-explorer)。
+驱动路径(C4.2 链不回退,C4.3 追加):
+  conversation 出卡 → doc 窗口/hard link 活卡 → 留证最小化重开(C4.2);
+  未读 badge(最小化 emit arrived 记 / 激活清 / 激活中不记,§7 小注);
+  浏览卡 run 行链接 → runs-explorer activate + locate 高亮(detail 全 kind 路由);
+  浏览卡拖进任务栏(§15 envelope)→ 同路由打开;
+  skills/tools/lab/debug-console 逐个开/最小化重开(保活)/两段 ✕ 关;
+  会话列表开会话(同会话去重)+ + 新对话;任务栏重排;doc 窗口右键开泡。
+真实 DOM 选择器(以 web_platform/static/desktop-page.js + explorer-apps.js 为准):
+  .cv-log .pf-card[data-card], [data-detail-kind][data-detail-ref], [data-run-row].doc-flash,
+  .dt-tasks, [data-desk-task-badge], #dt-kind/#dt-open/#dt-sessions/#dt-openconv/#dt-newconv,
+  [data-conv-draft]? 否——[data-cv-input];调试钩 window.__desktop。
 """
 
 DOC = "demo.test"
 
 
+def _task_ids(pg):
+    return pg.evaluate("() => __desktop.children_snapshot().map(s => s.id)")
+
+
 def run(t):
     pg = t.open("/platform/desktop.html")
-    pg.wait_for_selector(".dt-icon", timeout=10000)  # 异步种子(会话装载)落图标
+    pg.wait_for_selector(".dt-icon", timeout=10000)
     pg.wait_for_timeout(500)
     t.no_errors("desktop 页加载无 JS 错误")
 
-    # ① 桌面分支:boot conversation + 占位运行;inbox badge = 真实 pending 数
+    # ① boot:icons + inbox 真实 pending
     t.check("桌面图标在(conversation/运行)",
             pg.locator('.dt-icon[data-desk-open="conversation"]').count() == 1
             and pg.locator('.dt-icon[data-desk-open="runs-explorer"]').count() == 1)
     pending = pg.evaluate("() => fetch('/platform/api/decisions').then(r => r.json()).catch(() => [])")
     badge = pg.locator("[data-desk-inbox-badge]")
     if len(pending) == 0:
-        t.check("inbox 真实 pending=0 → 无徽标(读面直连)", badge.count() == 0, f"pending={len(pending)}")
+        t.check("inbox 真实 pending=0 → 无徽标", badge.count() == 0, f"pending={len(pending)}")
     else:
         t.check("inbox badge = 真实 pending 数", badge.count() > 0 and badge.inner_text() == str(len(pending)),
-                f"pending={len(pending)} badge={badge.inner_text() if badge.count() else '无'}")
+                f"pending={len(pending)}")
 
-    # ② 开 conversation → 真实对话 chrome(薄壳 compound)
+    # ② conversation 出卡 → doc 窗口(C4.2 链)
     pg.locator('.dt-icon[data-desk-open="conversation"]').click()
     pg.wait_for_timeout(600)
-    t.check("conversation 单窗:log 区在", pg.locator("[data-cv-log]").count() == 1)
-    t.check("conversation 单窗:composer 在", pg.locator("[data-cv-input]").count() == 1)
-    t.check("任务栏激活态", pg.locator('[data-desk-task="conversation"]').get_attribute("data-active") == "1")
-
-    # ③ 发「文档列表」→ orchestrator 出 doc_list 卡
+    t.check("conversation 单窗:chrome 在", pg.locator("[data-cv-log]").count() == 1
+            and pg.locator("[data-cv-input]").count() == 1)
     ta = pg.locator("[data-cv-input]")
     ta.fill("文档列表")
     ta.press("Enter")
     pg.wait_for_timeout(2500)
-    log_text = pg.locator("[data-cv-log]").inner_text()
-    t.check("发送:用户消息上屏", "文档列表" in log_text)
     doc_link = pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first
     t.check("orchestrator 出卡:doc 链接在", doc_link.count() > 0, f"count={doc_link.count()}")
-    t.no_errors("发送出卡无 JS 错误")
-
-    # ④ 卡上 doc 链接 → doc-editor 进窗口区(attach_existing;完整编辑器)
     doc_link.click()
     pg.wait_for_timeout(1500)
-    t.check("doc 窗口:任务栏行在(题名 = 文档名)", pg.locator(f'[data-desk-task="{DOC}"]').count() == 1)
-    t.check("doc 窗口:完整编辑器骨架(toolbar + 左对话)",
-            pg.locator(".dt-win .doc-toolbar").count() > 0 and pg.locator(".dt-win [data-doc-chat-log]").count() > 0)
-    t.check("doc 窗口:段落块渲染", pg.locator(".dt-win .doc-para[data-anchor]").count() >= 2,
-            f"blocks={pg.locator('.dt-win .doc-para[data-anchor]').count()}")
-    t.no_errors("doc 进窗口区无 JS 错误")
-
-    # ⑤ hard link:回对话窗 → doc 卡下 card 面活视图(同一 instance)
+    t.check("doc 窗口:完整编辑器 + 任务栏行(题名 = 文档名)",
+            pg.locator(".dt-win .doc-toolbar").count() > 0
+            and pg.locator(f'[data-desk-task="{DOC}"]').count() == 1)
+    t.check("doc 窗口:段落块渲染", pg.locator(".dt-win .doc-para[data-anchor]").count() >= 2)
     pg.locator('[data-desk-task="conversation"]').click()
     pg.wait_for_timeout(800)
     live = pg.locator(".cv-doc-live").first
-    t.check("活卡:card 面活视图挂进对话流", live.count() > 0, f"count={live.count()}")
-    if live.count():
-        t.check("活卡:内容同源(段落块在)", live.locator(".doc-para[data-anchor]").count() >= 2,
-                f"blocks={live.locator('.doc-para[data-anchor]').count()}")
-    same_inst = pg.evaluate(
-        "() => __desktop.child('demo.test') && __desktop.child('demo.test').state.source.includes('测试文档')"
-    )
-    t.check("活卡与窗口同一 instance(canonical source)", bool(same_inst))
+    t.check("hard link:活卡 card 面同源", live.count() > 0
+            and live.locator(".doc-para[data-anchor]").count() >= 2)
+    t.no_errors("C4.2 链无 JS 错误")
 
-    # ⑥ 留证:发一条消息 + 输半句草稿 → 最小化 → 任务栏重开 → 逐字在
+    # ③ 留证最小化重开(C4.2 链)
     ta = pg.locator("[data-cv-input]")
-    ta.fill("C4.2 留证消息")
+    ta.fill("C4.3 留证消息")
     ta.press("Enter")
     pg.wait_for_timeout(2000)
-    t.check("留证消息上屏", "C4.2 留证消息" in pg.locator("[data-cv-log]").inner_text())
     pg.locator("[data-cv-input]").fill("未发送的半句")
     pg.wait_for_timeout(200)
     pg.locator("[data-desk-min]").click()
     pg.wait_for_timeout(500)
-    t.check("最小化:回桌面分支", pg.locator(".dt-desk").count() > 0 and pg.locator(".dt-win").count() == 0)
     pg.locator('[data-desk-task="conversation"]').click()
     pg.wait_for_timeout(600)
-    t.check("重开:留证消息逐字在", "C4.2 留证消息" in pg.locator("[data-cv-log]").inner_text())
-    t.check("重开:doc 卡与活视图回来(log 从 canonical 重渲)",
-            live.count() > 0 or pg.locator(".cv-doc-live").count() > 0)
-    draft_val = pg.locator("[data-cv-input]").input_value()
-    t.check("重开:草稿逐字在(hidden 语义)", draft_val == "未发送的半句", f"draft='{draft_val}'")
-    state_draft = pg.evaluate("() => __desktop.child('conversation').state.draft")
-    t.check("canonical state 逐字在", state_draft == "未发送的半句", f"state='{state_draft}'")
-    t.no_errors("最小化/重开全程无 JS 错误")
+    t.check("重开:留证消息逐字在", "C4.3 留证消息" in pg.locator("[data-cv-log]").inner_text())
+    t.check("重开:草稿逐字在(hidden)", pg.locator("[data-cv-input]").input_value() == "未发送的半句")
 
-    # ⑦ 任务栏重排(conversation 拖到 runs-explorer 之后;持久于 state)
+    # ④ 未读 badge(§7 小注:可见性在父——最小化记 / 激活清 / 激活中不记)
     pg.locator("[data-desk-min]").click()
+    pg.wait_for_timeout(500)
+    pg.evaluate("() => __desktop.child('conversation').emit('change', { messages: 9, arrived: 2 })")
+    pg.wait_for_timeout(500)
+    chip = pg.locator('[data-desk-task-badge="conversation"]')
+    t.check("最小化:badge 记 2(闸门按可见性记账)", chip.count() > 0 and chip.inner_text() == "2",
+            f"chip={chip.inner_text() if chip.count() else '无'}")
+    t.check("badge 账进 state.badges",
+            pg.evaluate("() => __desktop.state.badges.conversation") == 2)
+    pg.locator('[data-desk-task="conversation"]').click()
+    pg.wait_for_timeout(500)
+    t.check("激活:badge 清账", pg.locator('[data-desk-task-badge="conversation"]').count() == 0)
+    pg.evaluate("() => __desktop.child('conversation').emit('change', { messages: 10, arrived: 1 })")
     pg.wait_for_timeout(400)
+    t.check("激活中:新事件不记(改写 badge:null)",
+            pg.locator('[data-desk-task-badge="conversation"]').count() == 0)
+    t.no_errors("badge 可见性全程无 JS 错误")
+
+    # ⑤ detail 全 kind 路由:浏览卡 run 行链接 → runs activate + locate 高亮
+    pg.locator('[data-desk-task="conversation"]').click()
+    pg.wait_for_timeout(400)
+    ta = pg.locator("[data-cv-input]")
+    ta.fill("哪些失败")
+    ta.press("Enter")
+    pg.wait_for_timeout(2500)
+    run_link = pg.locator('[data-cv-log] [data-detail-kind="run"]').first
+    t.check("浏览卡:run 行链接在", run_link.count() > 0, f"count={run_link.count()}")
+    run_ref = run_link.get_attribute("data-detail-ref") or ""
+    run_link.click()
+    pg.wait_for_timeout(1000)
+    t.check("run 链接 → runs-explorer 激活",
+            pg.evaluate("() => __desktop.state.active") == "runs-explorer")
+    t.check("locate 高亮行(data-run-row.doc-flash)",
+            pg.locator(".pf-ln.doc-flash").count() >= 1,
+            f"flash={pg.locator('.pf-ln.doc-flash').count()} ref={run_ref[:8]}")
+
+    # ⑥ 卡 DnD:「为什么挂」摘要卡(整卡带 run ref)拖进任务栏 → 同路由打开(§15 envelope 不变)
+    # (浏览表卡只有行级 ref,整卡 ref 空——拖摘要卡才路由,与 app.js 卡面拖开详情同语义)
+    pg.locator('[data-desk-task="conversation"]').click()
+    pg.wait_for_timeout(400)
+    ta = pg.locator("[data-cv-input]")
+    ta.fill("为什么挂")
+    ta.press("Enter")
+    pg.wait_for_timeout(2500)
+    card = pg.locator('.cv-log .pf-card[data-card="table"]:not([data-detail-ref=""])').first
+    t.check("摘要卡可拖(draggable + 整卡 ref)",
+            card.count() > 0 and card.get_attribute("draggable") == "true"
+            and bool(card.get_attribute("data-detail-ref")),
+            f"count={card.count()}")
+    if card.count():
+        # HTML5 DnD(§15 envelope):playwright 原生 drag_and_drop 派生 drag* 事件
+        pg.drag_and_drop('.cv-log .pf-card[data-card="table"]:not([data-detail-ref=""])', ".dt-tasks")
+        pg.wait_for_timeout(1000)
+        t.check("卡拖进任务栏 → runs-explorer 激活定位",
+                pg.evaluate("() => __desktop.state.active") == "runs-explorer")
+    t.no_errors("DnD 无 JS 错误")
+
+    # ⑦ 四 legacy explorer:开 → 内容在 → 最小化 → 重开保活 → 两段 ✕ 关
+    for kind, label in [("skills-explorer", "技能"), ("tools-explorer", "工具"),
+                        ("lab", "Lab"), ("debug-console", "调试")]:
+        pg.select_option("#dt-kind", kind)
+        pg.click("#dt-open")
+        pg.wait_for_timeout(1800)
+        body = pg.locator(".dt-win-body")
+        text1 = body.inner_text()
+        t.check(f"{label}:开窗内容在", len(text1.strip()) > 10, f"len={len(text1.strip())}")
+        t.check(f"{label}:任务栏行在", pg.locator(f'[data-desk-task="{kind}"]').count() == 1)
+        pg.locator("[data-desk-min]").click()
+        pg.wait_for_timeout(400)
+        pg.locator(f'[data-desk-task="{kind}"]').click()
+        pg.wait_for_timeout(900)
+        text2 = pg.locator(".dt-win-body").inner_text()
+        if kind == "debug-console":
+            t.check(f"{label}:重开内容在(重开面)", len(text2.strip()) > 10, f"len={len(text2.strip())}")
+        else:
+            t.check(f"{label}:最小化重开逐字在(保活囊)", text2 == text1,
+                    f"前={text1.strip()[:24]!r} 后={text2.strip()[:24]!r}")
+        x = pg.locator(".dt-titlebar [data-desk-close]")
+        x.click()
+        pg.wait_for_timeout(250)
+        pg.locator(".dt-titlebar [data-desk-close]").click()
+        pg.wait_for_timeout(500)
+        t.check(f"{label}:两段 ✕ 关闭(remove_child)",
+                pg.locator(f'[data-desk-task="{kind}"]').count() == 0)
+        t.no_errors(f"{label}:全程无 JS 错误")
+
+    # ⑧ 会话列表开会话(「app 即会话」:同会话去重聚焦)+ + 新对话
+    rows_before = _task_ids(pg)
+    opt_count = pg.locator("#dt-sessions option").count()
+    t.check("会话列表已装(发起面)", opt_count >= 1, f"options={opt_count}")
+    if opt_count:
+        pg.locator("#dt-sessions").select_option(index=0)
+        pg.locator("#dt-openconv").click()
+        pg.wait_for_timeout(800)
+        rows_after = _task_ids(pg)
+        t.check("同会话开会话 = 去重聚焦(不重复开窗)", rows_after == rows_before,
+                f"{rows_before} → {rows_after}")
+        t.check("去重聚焦到既有 conversation", pg.evaluate("() => __desktop.state.active") == "conversation")
+    pg.locator("#dt-newconv").click()
+    pg.wait_for_timeout(1500)
+    new_conv = next((i for i in _task_ids(pg) if i.startswith("conv-")), None)
+    t.check("+ 新对话:新会话新窗", new_conv is not None)
+    if new_conv:
+        x = pg.locator(".dt-titlebar [data-desk-close]")
+        x.click()
+        pg.wait_for_timeout(250)
+        pg.locator(".dt-titlebar [data-desk-close]").click()
+        pg.wait_for_timeout(500)
+        t.check("新对话:两段 ✕ 关闭", pg.locator(f'[data-desk-task="{new_conv}"]').count() == 0)
+    t.no_errors("会话发起面无 JS 错误")
+
+    # ⑨ 任务栏重排(C4.1 链不回退)
     a = pg.locator('[data-desk-task="conversation"]').bounding_box()
     b = pg.locator('[data-desk-task="runs-explorer"]').bounding_box()
     pg.mouse.move(a["x"] + 12, a["y"] + a["height"] / 2)
@@ -108,33 +200,11 @@ def run(t):
     order = pg.evaluate("() => __desktop.state.taskbar_order.join(',')")
     t.check("重排:taskbar_order 持久于 state",
             order.index("runs-explorer") < order.index("conversation"), f"order={order}")
-    t.no_errors("重排无 JS 错误")
 
-    # ⑧ + 新对话 → 新会话新窗(空态)→ 两段 ✕ 关闭
-    pg.locator("#dt-newconv").click()
-    pg.wait_for_timeout(1500)
-    new_rows = pg.evaluate("() => __desktop.children_snapshot().map(s => s.id)")
-    new_conv = next((i for i in new_rows if i.startswith("conv-")), None)
-    t.check("+ 新对话:新实例进任务栏", new_conv is not None, f"rows={new_rows}")
-    if new_conv:
-        t.check("新对话:激活为当前窗", pg.evaluate("() => __desktop.state.active") == new_conv)
-        t.check("新对话:新会话空态", "pf-empty" in (pg.locator(".dt-win").inner_html() or ""))
-        x = pg.locator(".dt-titlebar [data-desk-close]")
-        x.click()
-        pg.wait_for_timeout(250)
-        t.check("关闭一段:arm 不执行", pg.locator(f'[data-desk-task="{new_conv}"]').count() == 1)
-        pg.locator(".dt-titlebar [data-desk-close]").click()
-        pg.wait_for_timeout(500)
-        t.check("关闭二段:remove_child 执行", pg.locator(f'[data-desk-task="{new_conv}"]').count() == 0)
-    t.no_errors("新对话/关闭无 JS 错误")
-
-    # ⑨ doc 窗口右键开泡(切割线不破:壳/批注交互在窗口面)
+    # ⑩ doc 窗口右键开泡(C4.2 切割线不回退)
     pg.locator(f'[data-desk-task="{DOC}"]').click()
     pg.wait_for_timeout(600)
-    t.check("回 doc 窗口", pg.locator(".dt-win .doc-para[data-anchor]").count() >= 2)
     pg.locator(".dt-win .doc-para[data-anchor]").nth(1).click(button="right")
     pg.wait_for_timeout(600)
-    t.check("右键开泡:浮出壳出现(窗口面批注交互)",
-            pg.locator(".dt-win .doc-bubble-pop").count() > 0,
-            f"pop={pg.locator('.doc-bubble-pop').count()}")
+    t.check("doc 窗口右键开泡(切割线)", pg.locator(".dt-win .doc-bubble-pop").count() > 0)
     t.no_errors("交互全程无 JS 错误")

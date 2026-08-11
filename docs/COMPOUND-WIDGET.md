@@ -101,6 +101,13 @@ cascade 协议(`cascade.js`)不变:provider 按 path 注册;reparent 时按新 p
 (remove/move)时其账清讫。即:**badge 是父对子事件的记账**,闸门本来就是
 父的合法信息面,§7 的管控语义不变。
 
+**记账的可见性条件(C4.3 增补)**:badge 记的是父判定对该子**当前不可见**
+的事件量(未读语义)——可见性在父不在子:子不知道也不该知道自己是否
+可见;激活子的新事件不积未读。实现面 = 父在 `on_child_event` 闸门按自身
+状态(如 desktop 的 `state.active`)改写放行负载的 `badge` 字段
+(`{payload}` 改写形:激活 → `badge:null` 摘徽,最小化 → 累计值),
+基座照账;激活/聚焦该子时父清账(删 `state.badges[childId]` 后 relayout)。
+
 ## 8. Desktop widget(根)
 
 `kind: "desktop"` 的 compound:

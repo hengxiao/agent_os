@@ -214,6 +214,7 @@ registry 的 `surfaces ⊆ {card, tab}` 校验从 W1 就预留了)。**card = �
 | C3 ✅ | doc-editor 迁为 compound(首个产品级;md-viewer 预定义 slot + chat-bubble 动态子件;基座两修补见 COMPOUND-WIDGET §12) | stub 30 全绿 + tests-ui 三套全绿 |
 | C4.1 ✅ | desktop 根落地首步(docs/DESKTOP-WIDGET.md):badge 协议补丁 + desktop def + /platform/desktop.html 与旧壳并存 | stub 31 全绿 + tests-ui 四套全绿(114 项) |
 | C4.2 ✅ | conversation 薄壳 + doc-editor 直进(hard link 活卡)+ inbox 真实化(docs/DESKTOP-WIDGET.md §10) | stub 32 全绿 + tests-ui 四套全绿(118 项) |
+| C4.3 ✅ | 五 explorer 薄壳 + detail 全 kind 路由 + 卡 DnD + conversation 未读 badge(可见性条件)(docs/DESKTOP-WIDGET.md §11) | stub 33 全绿 + tests-ui 五套全绿(135 项) |
 
 > **W5.1 实现注**(2026-08-04,分支 debugger):
 > - **基座**:`registry.js` 加 render 面校验(声明了 render 必须是函数);

@@ -37,7 +37,7 @@ function stubFetch(routes) {
   // ① def 结构(§5-1):注册面/compound/events/aria
   assert.equal(getWidgetDef("conversation"), CONVERSATION_DEF, "conversation 注册进 registry");
   assert.equal(typeof CONVERSATION_DEF.compound?.layout, "function", "薄壳 compound:layout 在 def");
-  for (const ev of ["change", "open-doc"]) {
+  for (const ev of ["change", "open-detail"]) {
     assert.ok(CONVERSATION_DEF.events.includes(ev), `events 含 ${ev}`);
   }
   assert.equal(CONVERSATION_DEF.aria.label, "对话", "aria.label(任务栏题名)");
@@ -118,7 +118,8 @@ function stubFetch(routes) {
 }
 
 {
-  // ④ open-doc 上行(§5-2):文档卡点击 → 回调 + open-doc 事件;doc_create 新建路径
+  // ④ open-detail 上行(C4.3 全 kind):详情卡点击 → 回调 + open-detail 事件;
+  // doc_create 新建路径走 doc 路由
   const doc = makeDocument();
   globalThis.document = doc;
   stubFetch({
@@ -126,27 +127,28 @@ function stubFetch(routes) {
     "GET /platform/api/sessions/s1": { messages: [{ role: "agent", text: "索引", cards: [DOC_CARD] }] },
   });
   const opened = [];
-  const { inst } = await createConversation({ load: "latest", onOpenDoc: (name) => opened.push(name) });
+  const { inst } = await createConversation({ load: "latest", onOpenDetail: (kind, ref) => opened.push([kind, ref]) });
   const host = doc.createElement("div");
   doc.body.appendChild(host);
   inst.mount_view(host);
   const emitted = [];
-  inst.on("open-doc", (p) => emitted.push(p.ref));
+  inst.on("open-detail", (p) => emitted.push([p.kind, p.ref]));
   const link = new StubEl("button");
   link.dataset.detailKind = "doc";
   link.dataset.detailRef = "demo.test";
   link.parentNode = host;
   host.trigger("click", { target: link });
-  assert.deepEqual(opened, ["demo.test"], "onOpenDoc 回调(desktop 窗口区路径)");
-  assert.deepEqual(emitted, ["demo.test"], "open-doc 事件上行(§5-2)");
+  assert.deepEqual(opened, [["doc", "demo.test"]], "onOpenDetail 回调(desktop 路由)");
+  assert.deepEqual(emitted, [["doc", "demo.test"]], "open-detail 事件上行");
 
-  // 非 doc 的 detail kind:C4.2 不接(不上行不回调)
+  // C4.3:非 doc 的 detail kind 同样上行(run/skill/lab/debug 由驱动路由定位)
   const other = new StubEl("button");
-  other.dataset.detailKind = "gate";
-  other.dataset.detailRef = "x";
+  other.dataset.detailKind = "run";
+  other.dataset.detailRef = "r-9";
   other.parentNode = host;
   host.trigger("click", { target: other });
-  assert.equal(opened.length, 1, "非 doc detail kind 不上行(C4.3 边界)");
+  assert.deepEqual(opened.at(-1), ["run", "r-9"], "非 doc detail kind 上行(C4.3 全 kind)");
+  assert.deepEqual(emitted.at(-1), ["run", "r-9"], "open-detail 事件全 kind");
 }
 
 {

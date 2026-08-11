@@ -96,8 +96,9 @@ export const CONVERSATION_DEF = registerWidgetDef({
   state_schema: { type: "object" },
   state_defaults: { session: null, messages: [], busy: false, draft: "" },
   actions: [],
-  // open-doc:对话流文档卡「打开详情」上行(desktop 拉 doc-editor 进窗口区,§5-2)
-  events: ["change", "open-doc"],
+  // open-detail:对话流详情卡「打开详情」上行(desktop 按 kind 路由:
+  // doc 进窗口区,run/skill/lab/debug 进对应 explorer 并定位,§5-2/C4.3)
+  events: ["change", "open-detail"],
   aria: { role: "application", label: "对话" },
   surfaces: ["tab"],
   compound: {
@@ -108,9 +109,10 @@ export const CONVERSATION_DEF = registerWidgetDef({
 
 /* ── 实例工厂(适配层;每实例一份,与 view 生灭无关)────────────────── */
 
-/* load: "latest" = 最新会话(旧壳同语义,无则新建);"new" = 强制新会话。
-   onOpenDoc(name):文档卡「打开详情」回调(desktop 驱动注入窗口区路径)。 */
-export async function createConversation({ load = "latest", onOpenDoc = null } = {}) {
+/* load: "latest" = 最新会话(旧壳同语义,无则新建);"new" = 强制新会话;
+   {session} = 指定会话(C4.3 发起面会话列表;一会话一实例,「app 即会话」)。
+   onOpenDetail(kind, ref):详情卡「打开详情」回调(desktop 驱动注入路由)。 */
+export async function createConversation({ load = "latest", onOpenDetail = null } = {}) {
   const inst = createCompound(CONVERSATION_DEF, {
     path: "/conv",
     state: { session: null, messages: [], busy: false, draft: "" },
@@ -121,6 +123,11 @@ export async function createConversation({ load = "latest", onOpenDoc = null } =
     const s = await (await fetch("/platform/api/sessions", { method: "POST" })).json();
     inst.state.session = { id: s.id, title: s.title ?? "" };
     inst.state.messages = [];
+  } else if (load && typeof load === "object" && load.session) {
+    // C4.3 发起面会话列表:按 id 开会话(一会话一实例,窗随会话)
+    const s = await (await fetch(`/platform/api/sessions/${load.session}`)).json();
+    inst.state.session = { id: s.id ?? load.session, title: s.title ?? "" };
+    inst.state.messages = s.messages ?? [];
   } else {
     const sessions = await (await fetch("/platform/api/sessions")).json();
     if (sessions.length) {
@@ -187,13 +194,13 @@ export async function createConversation({ load = "latest", onOpenDoc = null } =
         viewHost.querySelector("[data-cv-input]")?.focus?.();
         return;
       }
-      // 文档卡/文档列表卡「打开详情」→ 窗口区(§5-2;其余 detail kind C4.3)
+      // 详情卡「打开详情」→ 驱动路由(C4.3 全 kind:doc 进窗口区,其余进 explorer 定位)
       const link = e.target.closest("[data-detail-kind]");
       if (link) {
-        if (link.dataset.detailKind === "doc") {
-          onOpenDoc?.(link.dataset.detailRef);
-          inst.emit("open-doc", { ref: link.dataset.detailRef });
-        }
+        const kind = link.dataset.detailKind ?? "";
+        const ref = link.dataset.detailRef ?? "";
+        onOpenDetail?.(kind, ref);
+        inst.emit("open-detail", { kind, ref });
         return;
       }
       // D4 对话卡片:doc_list 卡「新建文档」→ 唯一名起稿 → 开窗口(同 app.js)
@@ -213,8 +220,8 @@ export async function createConversation({ load = "latest", onOpenDoc = null } =
             }
             break;
           }
-          onOpenDoc?.(name);
-          inst.emit("open-doc", { ref: name });
+          onOpenDetail?.("doc", name);
+          inst.emit("open-detail", { kind: "doc", ref: name });
         })();
       }
       const decision = e.target.closest("[data-decision]");
@@ -253,7 +260,8 @@ export async function createConversation({ load = "latest", onOpenDoc = null } =
       inst.state.busy = false;
       _renderLogs();
     }
-    inst.emit("change", { messages: inst.state.messages.length });
+    // arrived = 本轮 agent 新消息数(未读 badge 的闸门记账原料,C4.3 §7 小注)
+    inst.emit("change", { messages: inst.state.messages.length, arrived: 1 });
   }
 
   /* 卡面动作(同 app.js cardAction:新管道 app instance 优先,旧管道过渡) */
@@ -363,6 +371,7 @@ export async function createConversation({ load = "latest", onOpenDoc = null } =
       if (presented?.length) {
         inst.state.messages = [...inst.state.messages, ...presented];
         _renderLogs();
+        inst.emit("change", { messages: inst.state.messages.length, arrived: presented.length });
       }
     } catch {
       /* 静默:下一周期再试 */
@@ -379,6 +388,7 @@ export async function createConversation({ load = "latest", onOpenDoc = null } =
       if (presented?.length) {
         inst.state.messages = [...inst.state.messages, ...presented];
         _renderLogs();
+        inst.emit("change", { messages: inst.state.messages.length, arrived: presented.length });
       }
     } catch {
       /* 静默 */

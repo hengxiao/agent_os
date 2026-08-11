@@ -1,4 +1,4 @@
-/* Desktop page 驱动(docs/DESKTOP-WIDGET.md §6;C4.2:真实 app 接入)。
+/* Desktop page 驱动(docs/DESKTOP-WIDGET.md §6;C4.3:五 explorer 薄壳接入)。
 
    职责(compound 语义对照 §1):
    - createCompound(DESKTOP_DEF, path "/root") + mount_view——窗口/任务栏/
@@ -6,78 +6,25 @@
    - 行为层 = local UI 操作:activate/minimize/close/reorder 直改 state +
      relayout(红线:action 三态不进 widget;desktop 的 activate/close 事件
      由本适配层代发);
-   - app 接入(§5 两种来源):
-     conversation = 薄壳真实 app(conversation-app.js 工厂,一会话一实例;
-       顶栏「+ 新对话」= 新会话新实例);
-     doc-editor 直进(§5-2):对话流文档卡「打开详情」→ 工厂建实例 →
-       attach_existing 进窗口区(同名聚焦不重复);窗口区 tab 面 = 完整编辑器,
-       对话流 doc 卡 = card 面活视图(link_view 重挂,hard link 同一实例);
-     runs-explorer 仍是占位(C4.3 换);
-   - inbox 真实化:/platform/api/decisions 轮询 + SSE decision.new 扇入,
-     pending 行进 state,badge = pending 数(§7 补丁;C4.1 模拟升权退役);
-   - SSE 单源(/platform/api/stream):decision.new/run.finished 扇给各
-     conversation 实例的轮询汇聚 + inbox 刷新;断线回落 5s 轮询(同 app.js)。 */
+   - app 接入(§5):conversation/doc-editor(C4.2 接线不动);
+     五 explorer 薄壳(explorer-apps.js 工厂,C4.3):skills/runs/tools/lab/
+     debug-console——顶栏选件打开,detail 链接按 kind 路由(已开 activate+
+     locate,未开工厂 + attach_existing 再 locate);
+   - 卡 DnD(APP-MODEL §15,envelope 不变):对话卡拖入任务栏 = 按卡型路由
+     (同 detail 链接);拖放协议三键(source/source_kind/ref)照旧;
+   - conversation 未读 badge(C4.3 §7 小注):arrived 经闸门按可见性记账——
+     激活不记(改写 badge:null)/最小化累记;激活时清账;
+   - inbox 真实化 + SSE 单源(C4.2 不动)。 */
 
 import { initTheme } from "/static/js/themes.js";
 import { BUILD } from "/static/js/widget-sandbox.js";
-import {
-  createCompound, createWidget, registerWidgetDef, orderedIds, DESKTOP_DEF,
-} from "/static/js/widgets/index.js";
+import { createCompound, orderedIds, DESKTOP_DEF } from "/static/js/widgets/index.js";
 import { createConversation } from "./conversation-app.js";
 import { createDocEditor } from "./doc-editor.js";
-
-/* ── 占位 app(runs-explorer;C4.3 换真实件)────────────────────────── */
-
-function _renderRuns(state) {
-  const rows = (state.runs ?? []).filter((r) => !state.filter || r.name.includes(state.filter));
-  return (
-    `<div class="w-app" data-app="runs-explorer">` +
-    `<input class="input" data-runs-filter="1" value="${esc(state.filter ?? "")}" placeholder="筛选运行(Enter 生效)">` +
-    `<div class="w-app-lines" data-runs-lines="1">` +
-    rows
-      .map((r) => `<div class="w-app-line" data-kind="${esc(r.kind)}">${esc(r.name)}</div>`)
-      .join("") +
-    `</div></div>`
-  );
-}
-
-function mountRunsExplorer(host, { path = "" } = {}) {
-  const widget = createWidget(RUNS_EXPLORER_DEF, { path });
-  const render = () => {
-    host.innerHTML = _renderRuns(widget.state);
-  };
-  widget.update = () => render();
-  host.addEventListener("input", (e) => {
-    if (e.target.closest("[data-runs-filter]")) widget.state.filter = e.target.value;
-  });
-  host.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" || !e.target.closest("[data-runs-filter]")) return;
-    e.preventDefault?.();
-    render();
-    widget.emit("change", { filter: widget.state.filter });
-  });
-  render();
-  return widget;
-}
-
-const RUNS_EXPLORER_DEF = registerWidgetDef({
-  kind: "runs-explorer",
-  v: 1,
-  state_schema: { type: "object" },
-  state_defaults: {
-    filter: "",
-    runs: [
-      { name: "weather.query · 成功 · 2m", kind: "ok" },
-      { name: "news.digest · 失败 · 1h", kind: "err" },
-      { name: "doc.review · 成功 · 3h", kind: "ok" },
-    ],
-  },
-  actions: [],
-  events: ["change"],
-  aria: { role: "application", label: "运行" },
-  surfaces: ["tab"],
-  mount: mountRunsExplorer,
-});
+import {
+  createSkillsExplorer, createRunsExplorer, createToolsExplorer,
+  createLabApp, createDebugConsole,
+} from "./explorer-apps.js";
 
 /* ── 启动 ────────────────────────────────────────────────────────── */
 
@@ -97,19 +44,40 @@ export function bootDesktop() {
     $("#dt-events").textContent = log.slice(0, 6).join("\n");
   };
 
+  const openDocs = new Map(); // 文档名 → {inst, ed, liveView, liveHost}(hard link 账)
+  const convs = new Map(); // id → conversation api(SSE/轮询扇入面;close 清)
+  const apps = new Map(); // kind → explorer 工厂产物 {inst, locate}(close 清)
+  const unseen = new Map(); // conversation id → 未读计数(未读 badge 的父侧账,§7 小注)
+  let convSeq = 0;
+
+  /* ── 未读 badge 闸门(C4.3 §7 小注:可见性在父不在子)──
+     conversation 的 change 带 arrived(agent 新消息数):激活子不记
+     (改写 badge:null 摘徽),最小化子累记;activate 时清账。 */
+  DESKTOP_DEF.compound.on_child_event = (childInst, event, payload) => {
+    const id = childInst?._compoundId ?? "";
+    if (event === "change" && payload && typeof payload === "object" && "arrived" in payload) {
+      if (inst.state.active === id) {
+        unseen.delete(id);
+        return { payload: { ...payload, badge: null } }; // 激活不记(摘徽)
+      }
+      const n = (unseen.get(id) ?? 0) + Number(payload.arrived ?? 0);
+      unseen.set(id, n);
+      return { payload: { ...payload, badge: n } }; // 最小化累记
+    }
+    return true; // 其余事件照放(含 inbox open)
+  };
+
   /* ── 行为层(C4.1 不动;local;§3/§4)── */
   const activate = (id) => {
     if (id && !inst.child(id)) return;
+    unseen.delete(id); // 激活清未读账(§7 小注:可见性在父)
+    if (id && inst.state.badges?.[id]) delete inst.state.badges[id];
     inst.state.active = id ?? null;
     inst.relayout();
     inst.emit("activate", { id: id ?? null });
-    _hangLiveDocCards(); // 挂接重出后活卡按连接态补挂(log 未重渲也得回来)
+    _hangLiveDocCards();
     _log(`activate ${id ?? "(桌面)"}`);
   };
-
-  const openDocs = new Map(); // 文档名 → {inst, ed, liveView, liveHost}(hard link 账)
-  const convs = new Map(); // id → conversation api(SSE/轮询扇入面;close 清)
-  let convSeq = 0; // 新对话 id 序号(唯一,不看集合大小)
 
   let armed = null;
   let armedTimer = null;
@@ -129,14 +97,15 @@ export function bootDesktop() {
     inst.state.taskbar_order = (inst.state.taskbar_order ?? []).filter((x) => x !== id);
     inst.state.icon_order = (inst.state.icon_order ?? []).filter((x) => x !== id);
     if (inst.state.active === id) inst.state.active = null;
-    // doc 窗口:活卡 view 摘下,hard link 账清(C4.2)
     const docRec = openDocs.get(id);
     if (docRec) {
       docRec.liveView?.detach?.();
       openDocs.delete(id);
     }
-    convs.delete(id); // conversation 关闭 → 轮询扇入面清(实例已 destroy)
-    inst.remove_child(id, { destroy: true }); // 内部 relayout(§4)
+    convs.delete(id);
+    apps.delete(id); // explorer 实例随 remove_child destroy(工厂 destroy 链 close 模块)
+    unseen.delete(id);
+    inst.remove_child(id, { destroy: true });
     inst.emit("close", { id });
     _log(`close ${id}`);
   };
@@ -154,11 +123,11 @@ export function bootDesktop() {
     _log(`reorder ${ids.join(" → ")}`);
   };
 
-  /* ── doc-editor 直进(§5-2):对话流文档卡「打开详情」→ 窗口区 ── */
+  /* ── doc-editor 直进(§5-2,C4.2 不动)── */
   async function openDocWindow(name) {
     if (!name) return;
     if (inst.child(name)) {
-      activate(name); // 同名聚焦(同一 instance,不重复开)
+      activate(name);
       return;
     }
     try {
@@ -169,35 +138,33 @@ export function bootDesktop() {
       try {
         bubbles = await (await fetch(`/platform/api/docs/${encodeURIComponent(name)}/bubbles`)).json();
       } catch {
-        bubbles = []; // 气泡面故障不挡编辑器(同 app.js 降级)
+        bubbles = [];
       }
       const ed = createDocEditor(doc, {
         seedFlows: bubbles,
-        getTabInstance: () => null, // 写动作平台管道 C4.3 接(见 §9 偏差注)
+        getTabInstance: () => null, // 写动作平台管道 C4.4 接(见 §9/§11 偏差注)
         reload: async () => {
           const fresh = await (await fetch(`/platform/api/docs/${encodeURIComponent(name)}`)).json();
           ed.api.setText(fresh.text ?? "");
         },
       });
-      ed.compound._compoundId = name; // 身份即文档名(attach 后 id = slot = 文档名)
+      ed.compound._compoundId = name;
       inst.attach_existing(ed.compound, { slot: name, surface: "tab" });
       openDocs.set(name, { inst: ed.compound, ed, liveView: null, liveHost: null });
       activate(name);
-      _hangLiveDocCards(); // 对话流 doc 卡 → card 面活视图(hard link)
+      _hangLiveDocCards();
       _log(`open-doc ${name}`);
     } catch (err) {
       _log(`open-doc ${name} 失败:${err.message ?? err}`);
     }
   }
 
-  /* doc 活卡重挂(hard link §5):对话流里的文档卡,已开窗口的挂上同一
-     instance 的 card 面活视图;log 重渲 wiping 后按连接态补挂。 */
   function _hangLiveDocCards() {
     const root = $("#dt-root");
     if (!root) return;
     for (const [name, rec] of openDocs) {
       if (rec.liveHost && !rec.liveHost.isConnected) {
-        rec.liveView?.detach?.(); // 旧 host 已被 log 重渲摘掉,view 同步清
+        rec.liveView?.detach?.();
         rec.liveView = null;
         rec.liveHost = null;
       }
@@ -208,34 +175,86 @@ export function bootDesktop() {
       const live = document.createElement("div");
       live.className = "cv-doc-live";
       card.appendChild(live);
-      rec.liveView = rec.inst.link_view(live, { surface: "card" }); // card 面 = 内容预览(§5)
+      rec.liveView = rec.inst.link_view(live, { surface: "card" });
       rec.liveHost = live;
     }
   }
 
-  /* ── conversation 接入(§5-1;薄壳真实 app)── */
+  /* ── explorer 接入(C4.3):已开 activate + locate,未开工厂 + attach + locate ── */
+  const EXPLORERS = {
+    "skills-explorer": createSkillsExplorer,
+    "runs-explorer": createRunsExplorer,
+    "tools-explorer": createToolsExplorer,
+    lab: createLabApp,
+    "debug-console": createDebugConsole,
+  };
+  async function openExplorer(kind, ref = "") {
+    let app = apps.get(kind);
+    if (!app) {
+      app = await EXPLORERS[kind]?.();
+      if (!app) return null;
+      app.inst._compoundId = kind;
+      apps.set(kind, app);
+      inst.attach_existing(app.inst, { slot: kind, surface: "tab" });
+    }
+    activate(kind);
+    if (ref) app.locate?.(ref); // 「打开详情」定位面(§5;导航语义)
+    return app;
+  }
+
+  /* detail 链接路由(C4.3 全 kind;对话卡点击与 runs 行内链接同口) */
+  const _DETAIL_ROUTE = {
+    doc: (ref) => openDocWindow(ref),
+    run: (ref) => openExplorer("runs-explorer", ref),
+    pack: (ref) => openExplorer("skills-explorer", ref),
+    decompose: (ref) => openExplorer("skills-explorer", ref),
+    publish: (ref) => openExplorer("skills-explorer", ref),
+    tool: (ref) => openExplorer("tools-explorer", ref),
+    gate: (ref) => openExplorer("lab", ref),
+    diff: (ref) => openExplorer("lab", ref),
+    draft: (ref) => openExplorer("lab", ref),
+    debug: (ref) => openExplorer("debug-console", ref),
+  };
+  function routeDetail(kind, ref) {
+    const route = _DETAIL_ROUTE[kind];
+    if (route) return route(ref);
+    _log(`detail ${kind}:${ref}(未接 kind,esc 在对话处理)`); // esc/未知:不接
+  }
+
+  /* ── conversation 接入(C4.2 不动;onOpenDetail 升全 kind)── */
   async function openConversation(load) {
-    const conv = await createConversation({ load, onOpenDoc: openDocWindow });
-    conv.inst._compoundId = load === "new" ? `conv-${++convSeq}` : "conversation";
+    const conv = await createConversation({ load, onOpenDetail: routeDetail });
+    conv.inst._compoundId = load && typeof load === "object" && load.session
+      ? `conv-${load.session}`
+      : load === "new"
+        ? `conv-${++convSeq}`
+        : "conversation";
+    // 会话去重(「app 即会话」:同会话已有窗 = 聚焦,不重复开)
+    for (const [id, api] of convs) {
+      if (api.compound.state.session?.id === conv.inst.state.session?.id) {
+        activate(id);
+        return convs.get(id) === conv.api ? conv : { inst: inst.child(id), api: convs.get(id) };
+      }
+    }
     conv.api.onLogRendered = _hangLiveDocCards;
     convs.set(conv.inst._compoundId, conv.api);
     inst.attach_existing(conv.inst, { surface: "tab" });
     return conv;
   }
 
-  /* ── inbox 真实化(C4.2):/api/decisions 读面;badge = pending 数 ── */
+  /* ── inbox 真实化(C4.2 不动)── */
   const inbox = inst.child("inbox");
   async function refreshInbox() {
     try {
       const rows = await (await fetch("/platform/api/decisions")).json();
       inbox.state.pending = (rows ?? []).map((r) => ({ id: r.question_id, ...r }));
-      inbox.emit("change", { badge: inbox.state.pending.length }); // §7 补丁:闸门记账
+      inbox.emit("change", { badge: inbox.state.pending.length });
     } catch {
-      /* 读面故障不挡桌面(fail-safe,同 app.js 决策轮询静默) */
+      /* 读面故障不挡桌面 */
     }
   }
 
-  /* ── SSE 单源(同 app.js):扇入 inbox 刷新 + 各 conversation 轮询汇聚 ── */
+  /* ── SSE 单源(C4.2 不动)── */
   let pollTimer = null;
   const _fanPoll = () => {
     refreshInbox();
@@ -254,12 +273,50 @@ export function bootDesktop() {
       es.addEventListener("run.finished", _fanPoll);
       es.onerror = () => {
         es.close();
-        _startPoll(); // 断线回落轮询(不双轨)
+        _startPoll();
       };
     } catch {
       _startPoll();
     }
   };
+
+  /* ── 卡 DnD(APP-MODEL §15;envelope 三键不变)── */
+  const _DND_MIME = "application/x-agent-os-widget";
+  const _CARD_ROUTE = { // 卡型 → detail 路由 kind(与 app.js _CARD_TO_DETAIL 同映射,接 C4.3 路由)
+    gate_report: "gate", skill_pack: "pack", publish: "publish",
+    diff: "diff", plan: "decompose", table: "run", doc: "doc", doc_list: "doc",
+  };
+  host.addEventListener("dragstart", (e) => {
+    const card = e.target.closest?.(".pf-card[data-reg-path]");
+    if (!card) return;
+    e.dataTransfer?.setData(_DND_MIME, JSON.stringify({
+      source: card.dataset.regPath, source_kind: card.dataset.card,
+      ref: card.dataset.detailRef ?? "", position: {},
+    }));
+  });
+  const tasks = () => host.querySelector(".dt-tasks");
+  host.addEventListener("dragover", (e) => {
+    if (!e.target.closest?.(".dt-tasks")) return;
+    if ([...(e.dataTransfer?.types ?? [])].includes(_DND_MIME)) {
+      e.preventDefault();
+      tasks()?.classList.add("pf-drop-ok");
+    }
+  });
+  host.addEventListener("dragleave", () => tasks()?.classList.remove("pf-drop-ok"));
+  host.addEventListener("drop", (e) => {
+    if (!e.target.closest?.(".dt-tasks")) return;
+    tasks()?.classList.remove("pf-drop-ok");
+    let env = null;
+    try {
+      env = JSON.parse(e.dataTransfer?.getData(_DND_MIME) ?? "null");
+    } catch {
+      env = null;
+    }
+    if (!env || typeof env.source !== "string" || typeof env.source_kind !== "string") return;
+    e.preventDefault();
+    const kind = _CARD_ROUTE[env.source_kind];
+    if (kind && env.ref) routeDetail(kind, env.ref); // 卡面 → 任务栏 = 打开+定位(同 detail 链接)
+  });
 
   /* 事件委托(chrome 全部 data-desk-*;layout 重渲不伤) */
   let suppressClick = false;
@@ -267,6 +324,12 @@ export function bootDesktop() {
     const x = e.target.closest("[data-desk-close]");
     if (x) return close(x.dataset.deskClose, x);
     if (e.target.closest("[data-desk-min]")) return activate(null);
+    // detail 链接全 kind 路由(conversation 外的链接:runs 行内等;
+    // conversation 内由其 wireView 经 onOpenDetail 走同一路由,跳过防双路由)
+    const link = e.target.closest("[data-detail-kind]");
+    if (link && !e.target.closest("[data-cv-log]")) {
+      return routeDetail(link.dataset.detailKind, link.dataset.detailRef ?? "");
+    }
     if (suppressClick) {
       suppressClick = false;
       return;
@@ -299,16 +362,28 @@ export function bootDesktop() {
     reorder(d.id, over.dataset.deskTask, e.clientX < r.x + r.width / 2);
   });
 
-  /* 发起面:顶栏「+ 新对话」(新会话新实例)/占位 app 打开 */
+  /* 发起面:+ 新对话(新会话新实例)/会话列表开会话(去重聚焦)/explorer 选件 */
   $("#dt-newconv").addEventListener("click", async () => {
     const conv = await openConversation("new");
     activate(conv.inst._compoundId);
   });
-  $("#dt-open").addEventListener("click", () => {
-    if (inst.child("runs-explorer")) return activate("runs-explorer");
-    inst.add_child("runs-explorer", { slot: "runs-explorer" });
-    activate("runs-explorer");
+  const _reloadSessions = async () => {
+    try {
+      const sessions = await (await fetch("/platform/api/sessions")).json();
+      $("#dt-sessions").innerHTML = (sessions ?? [])
+        .map((s) => `<option value="${s.id}">${s.title ?? s.id}</option>`)
+        .join("");
+    } catch {
+      /* 列表故障留空 */
+    }
+  };
+  $("#dt-openconv").addEventListener("click", async () => {
+    const sid = $("#dt-sessions").value;
+    if (!sid) return;
+    const conv = await openConversation({ session: sid });
+    activate(conv.inst._compoundId);
   });
+  $("#dt-open").addEventListener("click", () => openExplorer($("#dt-kind").value));
 
   /* desktop 事件面:inbox 整卡 open → 回对话(决策在对话里处理,同旧托盘) */
   inst.on("child_event", (p) => {
@@ -318,21 +393,14 @@ export function bootDesktop() {
     }
   });
 
-  /* 种子(异步;会话/决策读面):boot conversation(最新会话)+ 占位运行 +
-     inbox 真实 pending + SSE 单源 */
+  /* 种子(异步):boot conversation(最新会话)+ runs-explorer + inbox + SSE + 会话列表 */
   (async () => {
     await openConversation("latest");
-    inst.add_child("runs-explorer", { slot: "runs-explorer" });
+    await openExplorer("runs-explorer");
+    activate(null); // 回桌面(图标栅格;boot 后无主窗)
     await refreshInbox();
     connectStream();
+    await _reloadSessions();
     _log("desktop boot /root");
   })().catch((err) => _log(`boot 失败:${err.message ?? err}`));
-}
-
-function esc(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }

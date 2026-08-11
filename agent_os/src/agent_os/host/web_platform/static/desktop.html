@@ -4,16 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Desktop Widget — Agent OS(C4.2 验证页,与旧壳并存)</title>
-<link rel="stylesheet" href="/static/css/tokens.css?v=2026-08-11.4">
-<link rel="stylesheet" href="/static/css/app.css?v=2026-08-11.4">
-<link rel="stylesheet" href="/static/css/widgets.css?v=2026-08-11.4">
-<link rel="stylesheet" href="/static/css/themes/classic.css?v=2026-08-11.4">
-<link rel="stylesheet" href="/static/css/themes/moe.css?v=2026-08-11.4">
-<link rel="stylesheet" href="/static/css/themes/terminal.css?v=2026-08-11.4">
-<link rel="stylesheet" href="/static/css/themes/blueprint.css?v=2026-08-11.4">
-<link rel="stylesheet" href="/static/css/themes/ink.css?v=2026-08-11.4">
-<link rel="stylesheet" href="/static/css/themes/pixel.css?v=2026-08-11.4">
-<link rel="stylesheet" href="./static/platform.css?v=2026-08-11.4">
+<link rel="stylesheet" href="/static/css/tokens.css?v=2026-08-11.5">
+<link rel="stylesheet" href="/static/css/app.css?v=2026-08-11.5">
+<link rel="stylesheet" href="/static/css/widgets.css?v=2026-08-11.5">
+<link rel="stylesheet" href="/static/css/themes/classic.css?v=2026-08-11.5">
+<link rel="stylesheet" href="/static/css/themes/moe.css?v=2026-08-11.5">
+<link rel="stylesheet" href="/static/css/themes/terminal.css?v=2026-08-11.5">
+<link rel="stylesheet" href="/static/css/themes/blueprint.css?v=2026-08-11.5">
+<link rel="stylesheet" href="/static/css/themes/ink.css?v=2026-08-11.5">
+<link rel="stylesheet" href="/static/css/themes/pixel.css?v=2026-08-11.5">
+<link rel="stylesheet" href="./static/platform.css?v=2026-08-11.5">
 <style>
   /* desktop chrome(全 token,platform 视觉同族;C4.4 产品化时归位 shared css) */
   body { background: var(--bg-0); color: var(--fg-0); font-size: var(--text-xs); margin: 0; }
@@ -129,10 +129,10 @@
     margin-top: var(--s1); border-top: var(--stroke) dashed var(--line);
     max-height: 300px; overflow: auto; padding-top: var(--s1);
   }
-  /* 演示 app 薄壳(runs-explorer 占位) */
-  .w-app { display: flex; flex-direction: column; gap: var(--s2); height: 100%; }
-  .w-app-line { padding: var(--s1) var(--s2); border-bottom: var(--stroke) solid var(--line); font-family: var(--font-mono); }
-  .w-app-line[data-kind="err"] { color: var(--sig-err, #d33); }
+  /* legacy 薄壳宿主(C4.3:skills/tools/lab/debug 原页面接进窗口)+ runs 自装 */
+  .xp-legacy { height: 100%; overflow: auto; }
+  .xp-runs { height: 100%; overflow: auto; }
+  .pf-drop-ok { outline: 2px dashed var(--live); outline-offset: -2px; }
   .dt-events-wrap { margin: 0 var(--s3) var(--s2); }
   .dt-events {
     border: var(--stroke) solid var(--line); border-radius: var(--r-sm);
@@ -144,24 +144,32 @@
 <body data-route="desktop-widget">
   <div class="dt-top">
     <b>Desktop Widget</b>
-    <button class="btn" id="dt-newconv">+ 新对话(add_child conversation)</button>
-    <button class="btn" id="dt-open">打开运行(占位 app)</button>
+    <button class="btn" id="dt-newconv">+ 新对话</button>
+    <label>会话 <select class="input" id="dt-sessions"></select></label>
+    <button class="btn" id="dt-openconv">开会话</button>
+    <label>app <select class="input" id="dt-kind">
+      <option value="skills-explorer">技能</option>
+      <option value="runs-explorer">运行</option>
+      <option value="tools-explorer">工具</option>
+      <option value="lab">Lab</option>
+      <option value="debug-console">调试</option>
+    </select></label>
+    <button class="btn" id="dt-open">打开</button>
     <span class="dt-build" id="dt-build"></span>
   </div>
   <div class="dt-info">
-    <b>C4.2 验证页(docs/DESKTOP-WIDGET.md §5):真实 app 进 desktop,与旧壳(/platform/)并存</b>——
-    <b>conversation</b> = 薄壳真实对话(orchestrator/卡片/SSE 照旧,同端点);
-    对话流文档卡「打开详情」→ <b>doc-editor</b> 经 <code>attach_existing</code> 进窗口区,
-    卡下挂同一 instance 的 card 面活视图(<b>hard link 真实用例</b>);
-    <b>inbox</b> 接真实 /api/decisions(badge = pending 数);
-    最小化 = hidden 语义(重开逐字在);关闭 = 两段 ✕;任务栏拖拽重排持久于 state。
+    <b>C4.3 验证页(docs/DESKTOP-WIDGET.md §5):五 explorer 薄壳接入,与旧壳(/platform/)并存</b>——
+    skills/runs/tools/lab/debug-console 原页面逻辑薄壳化(行为零回退,最小化重开保活);
+    详情链接全 kind 路由(已开 activate + 定位);对话卡可<b>拖进任务栏</b>打开(§15 envelope 不变);
+    最小化的 conversation 来新消息 → 任务栏 <b>badge</b>(激活不记/最小化记,§7 小注);
+    「app 即会话」:会话列表直接开会话窗(同会话聚焦去重)。
   </div>
   <div id="dt-root"></div>
   <div class="dt-events-wrap">
     <div class="dt-events" id="dt-events" role="log" aria-label="desktop 事件记录"></div>
   </div>
   <script type="module">
-    import { bootDesktop } from "./static/desktop-page.js?v=2026-08-11.4";
+    import { bootDesktop } from "./static/desktop-page.js?v=2026-08-11.5";
     bootDesktop();
   </script>
 </body>

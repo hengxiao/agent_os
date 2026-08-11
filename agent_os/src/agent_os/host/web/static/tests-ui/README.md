@@ -16,6 +16,19 @@ BASE=http://127.0.0.1:8391 ./run.sh   # 打已部署的服务器(页面路径 /s
 退出码:0 全绿,1 有失败。每个用例打印 ✓/✗ 明细;console error、pageerror、
 HTTP ≥400 都会被收集进「无 JS 错误」断言。
 
+## 数据 fixture(seed)
+
+test_desktop 的「哪些失败/为什么挂」流程需要系统里**至少有一条成功 run 和一条
+失败 run**;数据重置(清 sessions/drafts/runs/traces)后系统裸奔,这两步会超时。
+重置后跑一次:
+
+```bash
+python3 seed.py   # 缺省打 http://127.0.0.1:8391;需服务 token 有效(15 分钟窗内)
+```
+
+种子 = 1 条成功 run(API 真跑 demo.fib)+ 1 条失败 run 记录(落盘 fixture,
+原因写在 seed.py 头注:「启动后跑挂」的 run API 造不出来)。
+
 ## 环境(全部项目内,不入库,已 gitignore)
 
 | 目录 | 内容 | 重建 |

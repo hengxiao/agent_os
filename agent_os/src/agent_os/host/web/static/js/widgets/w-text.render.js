@@ -52,7 +52,7 @@ export function textEditorTabHtml(state, slots = {}) {
     `<div class="wd-text${state.dirty ? " is-dirty" : ""}${readonly ? " is-readonly" : ""}"` +
     ` data-variant="${mono ? "mono" : "plain"}">` +
     (state.field || headSide
-      ? `<div class="wd-text-head"><span class="wd-text-name">${esc(state.field ?? "")} · ${esc(state.lang ?? "plain")}</span>` +
+      ? `<div class="wd-text-head"><span class="wd-text-name">${esc(state.field ?? "")}${state.lang ? ` · ${esc(state.lang)}` : ""}</span>` +
         (headSide ? `<span class="wd-head-side">${headSide}</span>` : "") +
         `</div>`
       : "") +
@@ -70,8 +70,9 @@ export function textEditorTabHtml(state, slots = {}) {
     ` aria-label="${esc(state.label ?? state.field ?? "")}"${readonly ? " readonly" : ""}` +
     // mono 变体不软换行(行号槽/着色层对齐的前提,VS Code 同律;§3.1 行号基线对齐)
     (mono ? ` wrap="off"` : "") +
-    ` placeholder="${esc(copy("w.text.ph"))}">` +
-    `${esc(value)}</textarea>` +
+    // readonly 空态不显示「开始输入」(F5:语义矛盾;占位只给可写态)
+    (readonly ? "" : ` placeholder="${esc(copy("w.text.ph"))}"`) +
+    `>${esc(value)}</textarea>` +
     `<span class="wd-micro-box">` +
     `<span class="wd-micro-dot" aria-hidden="true"${state.dirty ? "" : " hidden"}></span>` +
     `<span class="wd-micro">${esc(textEditorMicro(value))}</span>` +

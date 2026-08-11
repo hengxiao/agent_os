@@ -1243,8 +1243,39 @@ const { jsonHighlightHtml, jsonKeyCount, matchBrace, relTime } =
   assert.ok(ro.includes("is-readonly"), "readonly 类(无光标/无脏条走 CSS)");
   const plain = renderTextEditor({ value: "a", mono: false, field: "f", label: "f" });
   assert.ok(!plain.includes("wd-gutter") && !plain.includes("wd-curline"), "plain 无行号槽/当前行槽");
-  assert.ok(renderTextEditor({ value: "a", mono: true, field: "f<x>", label: "f<x>" }).includes("f&lt;x&gt; · "),
-    "头部 field 转义");
+  assert.ok(renderTextEditor({ value: "a", mono: true, field: "f<x>", label: "f<x>", lang: "md" }).includes("f&lt;x&gt; · md"),
+    "头部 field 转义 + lang 后缀(F4:显式 lang 才显)");
+  assert.ok(renderTextEditor({ value: "a", mono: true, field: "f", label: "f" }).includes('<span class="wd-text-name">f</span>'),
+    "F4:无 lang 不留裸分隔符(微标点分隔不受影响)");
+}
+
+{
+  // F2/F3/F5(2026-08-11 review 修复):updated_at 数据源 / baseline 进 state / readonly 无占位
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountTextEditor(host, { value: "原文", field: "f", label: "f" });
+  assert.equal(w.state.baseline, "原文", "F3:baseline 进 state(挂载初值)");
+  const ta = host.querySelector("textarea");
+  ta.value = "改过的";
+  host.trigger("input", { target: ta });
+  assert.ok(w.state.dirty, "输入后 dirty");
+  // 模拟序列化往返(compound hidden 语义依赖 state 可序列化)
+  w.state = JSON.parse(JSON.stringify(w.state));
+  w.revert();
+  assert.equal(w.state.value, "原文", "F3:序列化恢复后 revert 仍回 baseline");
+  const ta2 = host.querySelector("textarea"); // revert 全量重渲,元素换新,重取
+  ta2.value = "再改";
+  host.trigger("input", { target: ta2 });
+  w.commit();
+  assert.ok(!w.state.dirty && w.state.baseline === "再改", "commit 锚点与 dirty 复位");
+  assert.ok(typeof w.state.updated_at === "number" && w.state.updated_at > 0,
+    "F2:commit 写 updated_at(card meta 相对时间数据源)");
+  const roHtml = renderTextEditor({ value: "", readonly: true, field: "f", label: "f" });
+  assert.ok(!roHtml.includes("placeholder="), "F5:readonly 无占位文案(语义矛盾)");
+  const wrHtml = renderTextEditor({ value: "", readonly: false, field: "f", label: "f" });
+  assert.ok(wrHtml.includes("placeholder="), "可写态保留占位");
 }
 
 {

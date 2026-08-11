@@ -22,7 +22,7 @@ export const TEXT_EDITOR_DEF = registerWidgetDef({
   kind: "text-editor",
   v: 1,
   state_schema: { type: "object" },
-  state_defaults: { value: "", dirty: false, readonly: false, lang: "plain", wrap: true, mono: false },
+  state_defaults: { value: "", baseline: "", dirty: false, readonly: false, lang: "", wrap: true, mono: false },
   actions: [
     { id: "set_value", exec: "local", args_input: { value: { type: "string" } } },
     { id: "commit", exec: "local" },
@@ -52,6 +52,7 @@ export function _mountText(host, def, { value = "", field = "", mono = null, row
     path,
     state: {
       value: String(value ?? ""),
+      baseline: String(value ?? ""), // commit 锚点进 state(F3:序列化恢复后 revert 仍正确)
       dirty: false,
       readonly: Boolean(readonly),
       mono: mono ?? host.dataset?.variant === "mono",
@@ -63,7 +64,6 @@ export function _mountText(host, def, { value = "", field = "", mono = null, row
     onRegister,
     onUnregister,
   });
-  let baseline = widget.state.value; // commit 锚点(revert 回这里)
 
   const textarea = () => host.querySelector("textarea");
   const render = () => {
@@ -91,9 +91,47 @@ export function _mountText(host, def, { value = "", field = "", mono = null, row
     }
   };
 
+  /* 行高/上padding实测(F1:不再硬编码——token/字体变更不会静默错位;
+     stub/异常面无计算样式,回落与 css 约定同值 20 / 0) */
+  const lineH = () => {
+    const ta = textarea();
+    const v = ta ? host.ownerDocument?.defaultView?.getComputedStyle?.(ta)?.lineHeight : null;
+    const n = parseFloat(v);
+    return Number.isFinite(n) && n > 0 ? n : 20;
+  };
+  const padTop = () => {
+    const ta = textarea();
+    const v = ta ? host.ownerDocument?.defaultView?.getComputedStyle?.(ta)?.paddingTop : null;
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  /* 行号槽行数随输入增减(巡检:此前只在 render 时建行,输入新行没行号) */
+  const syncGutter = () => {
+    const gi = host.querySelector(".wd-gutter-in");
+    if (!gi) return; // plain 无槽
+    const doc = host.ownerDocument ?? globalThis.document;
+    const lines = Math.max(String(widget.state.value ?? "").split("\n").length, 1);
+    let cur = gi.querySelectorAll?.(".wd-gl")?.length ?? 0;
+    while (cur < lines) {
+      const s = doc.createElement("span");
+      s.className = "wd-gl";
+      s.dataset.line = String(cur + 1);
+      s.textContent = String(cur + 1);
+      gi.appendChild(s);
+      cur += 1;
+    }
+    while (cur > lines) {
+      const all = gi.querySelectorAll(".wd-gl");
+      const last = all[all.length - 1];
+      last?.remove?.();
+      if (!last?.remove) break; // stub 无 remove:全清重来
+      cur -= 1;
+    }
+  };
+
   /* 光标面(W6.1,§3.1):当前行高亮槽定位 + 行号槽当前行 + 行列 tip——
-     全部局部 DOM 写(不重渲;选区/焦点不动)。行高 20px = --text-sm × 1.6
-     (widgets.css 槽/pre/textarea 三面同算式)。 */
+     全部局部 DOM 写(不重渲;选区/焦点不动)。 */
   const syncCursor = () => {
     const ta = textarea();
     if (!ta) return;
@@ -104,7 +142,8 @@ export function _mountText(host, def, { value = "", field = "", mono = null, row
     const cur = host.querySelector(".wd-curline");
     if (cur) {
       cur.hidden = Boolean(widget.state.readonly); // readonly 无光标(§3.1)
-      cur.style.top = `${(line - 1) * 20 - (ta.scrollTop ?? 0)}px`;
+      // 文本第 N 行顶边 = paddingTop + (N-1)*行高 - scrollTop(巡检:两处实测补齐)
+      cur.style.top = `${padTop() + (line - 1) * lineH() - (ta.scrollTop ?? 0)}px`;
     }
     for (const gl of [...(host.querySelectorAll?.(".wd-gl") ?? [])]) {
       gl.classList?.toggle("is-current", gl.dataset?.line === String(line));
@@ -137,8 +176,9 @@ export function _mountText(host, def, { value = "", field = "", mono = null, row
       const ta = textarea();
       if (!ta || e.target !== ta) return;
       widget.state.value = ta.value;
-      widget.state.dirty = ta.value !== baseline;
+      widget.state.dirty = ta.value !== widget.state.baseline; // 删回原文 = 不脏(F3 后语义不变)
       syncDirty();
+      syncGutter(); // 行号槽随输入增减(巡检修复)
       syncCursor();
       widget.emit("change", { value: ta.value, dirty: widget.state.dirty });
     });
@@ -158,21 +198,25 @@ export function _mountText(host, def, { value = "", field = "", mono = null, row
     host.addEventListener(
       "scroll",
       (e) => {
-        if (e.target === textarea()) syncScroll();
+        if (e.target === textarea()) {
+          syncScroll();
+          syncCursor(); // 巡检:滚动也重定位当前行(否则滚轮/程序滚动后高亮滞留旧位)
+        }
       },
       true
     );
   }
 
   widget.commit = () => {
-    baseline = widget.state.value;
+    widget.state.baseline = widget.state.value; // F3:锚点在 state
     widget.state.dirty = false;
+    widget.state.updated_at = Date.now() / 1000; // F2:card meta 相对时间的数据源(此前从不写,relTime 是死代码)
     syncDirty();
     widget.emit("commit", { value: widget.state.value });
   };
   widget.revert = () => {
-    widget.update({ value: baseline, dirty: false }); // 全量重渲,选区保留
-    widget.emit("revert", { value: baseline });
+    widget.update({ value: widget.state.baseline, dirty: false }); // 全量重渲,选区保留
+    widget.emit("revert", { value: widget.state.baseline });
   };
   const _destroy = widget.destroy.bind(widget);
   widget.destroy = () => {

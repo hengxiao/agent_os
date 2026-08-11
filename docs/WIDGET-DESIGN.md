@@ -86,6 +86,11 @@
 > 4. mono 变体不软换行(wrap=off)——行号槽/着色层逐行对齐的前提(VS Code 同律),
 >    plain 变体保持软换行(无槽不对齐问题);
 > 5. 预览末行「渐隐」落 0.35 透明度(效果图 fill-opacity 同值),非渐变 mask。
+>
+> W-text 二次巡检修复(2026-08-11,F1-F5 + 三条新发现,均已验证):
+> 行高/padding 改实测(不再硬编码)、滚动也重定位当前行、行号槽随输入增减
+> (W-json 同源)、baseline 进 state(序列化恢复 revert 正确)、commit 写
+> updated_at(card 相对时间不再死代码)、readonly 无占位、头部无 lang 不留裸分隔。
 
 ### 3.2 W-json JSON 编辑器 → [效果图](widgets/design/w-json.svg)
 

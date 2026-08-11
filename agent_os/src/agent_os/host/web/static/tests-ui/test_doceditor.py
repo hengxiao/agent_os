@@ -132,3 +132,111 @@ def run(t):
         t.check("导出菜单开合(getTabInstance 已接通)",
                 menu.count() > 0 and not menu.first.is_hidden())
     t.no_errors("写动作全程无 JS 错误")
+
+    run_scroll(t)  # 滚动层级重构(2026-08-12):锁视口/双栏独立滚/气泡封顶 + 截图
+
+
+def run_scroll(t):
+    """滚动层级(2026-08-12 重构):锁视口/双栏独立滚/气泡封顶;截图进 .shots/。"""
+    import os
+    shots = os.path.join(os.path.dirname(__file__), ".shots")
+    os.makedirs(shots, exist_ok=True)
+
+    pg = t.open("/platform/")
+    pg.wait_for_selector(".dt-icon", timeout=10000)
+    pg.wait_for_timeout(400)
+    t.check("产品根无开发信息栏(泄漏清零)", pg.locator(".dt-info").count() == 0)
+    t.check("发起面 =「+ 新建」菜单(无裸 select)",
+            pg.locator("#dt-newbtn").count() == 1 and pg.locator("#dt-newMenu").is_hidden())
+    pg.locator("#dt-newbtn").click()
+    pg.wait_for_timeout(200)
+    t.check("菜单开合:展开含会话/app 两路",
+            not pg.locator("#dt-newMenu").is_hidden()
+            and pg.locator("#dt-sessions").count() == 1 and pg.locator("#dt-kind").count() == 1)
+    pg.locator("#dt-newbtn").click()
+    body0 = pg.evaluate("() => document.body.scrollHeight - document.documentElement.clientHeight")
+    t.check("页级滚动为零(锁视口)", body0 <= 1, f"delta={body0}")
+
+    # 长文档:右栏 preview 独立滚,左 chat 不滚;页面不滚
+    # (幂等:已存在不重建,409 不进 bad_responses;JS 串内禁放 // 注释——拼接无换行会吃掉余下脚本)
+    pg.evaluate(
+        "async () => { const g = await fetch('/platform/api/docs/dev.longscroll');"
+        "if (g.ok) return 'exists';"
+        "await fetch('/platform/api/docs', {method:'POST', headers:{'Content-Type':'application/json'},"
+        "body: JSON.stringify({name:'dev.longscroll', title:'dev.longscroll',"
+        "text: '# 长文档\\n' + Array.from({length:90}, (_,i)=>`第 ${i+1} 行正文,撑高右栏预览区测独立滚动。`).join('\\n\\n')})}); }"
+    )
+    pg.locator('.dt-icon[data-desk-open="conversation"]').click()
+    pg.wait_for_timeout(500)
+    ta = pg.locator("[data-cv-input]")
+    ta.fill("文档列表")
+    ta.press("Enter")
+    pg.wait_for_selector('[data-cv-log] [data-detail-kind="doc"][data-detail-ref="dev.longscroll"]', timeout=15000)
+    pg.locator('[data-cv-log] [data-detail-kind="doc"][data-detail-ref="dev.longscroll"]').first.click()
+    pg.wait_for_timeout(1500)
+    win = pg.locator(".dt-win")
+    t.check("长文档窗口打开(块数 ≥10)", win.locator(".doc-para[data-anchor]").count() >= 10,
+            f"blocks={win.locator('.doc-para[data-anchor]').count()}")
+    pv = win.locator("[data-doc-preview]")
+    pv_delta = pv.evaluate("e => e.scrollHeight - e.clientHeight")
+    chat_delta = win.locator("[data-doc-chat-log]").evaluate("e => e.scrollHeight - e.clientHeight")
+    t.check("右栏 preview 独立可滚(长文档)", pv_delta > 100, f"delta={pv_delta}")
+    t.check("左 chat 此时不滚(消息少)", chat_delta <= 1, f"delta={chat_delta}")
+    body1 = pg.evaluate("() => document.body.scrollHeight - document.documentElement.clientHeight")
+    t.check("长文档下页级滚动仍为零", body1 <= 1, f"delta={body1}")
+    pv.evaluate("e => e.scrollTop = e.scrollHeight")
+    pg.wait_for_timeout(300)
+    t.check("右栏滚动:左栏不跟随(chat scrollTop=0)",
+            win.locator("[data-doc-chat-log]").evaluate("e => e.scrollTop") == 0)
+    tb_y = win.locator(".doc-toolbar").bounding_box()["y"]
+    wb_y = pg.locator(".dt-win-body").bounding_box()["y"]
+    t.check("右栏滚动:toolbar 钉顶不动", abs(tb_y - wb_y) < 40, f"toolbar_y={tb_y:.0f} body_y={wb_y:.0f}")
+    pg.screenshot(path=f"{shots}/dual-pane-fullheight.png")
+    pv.evaluate("e => e.scrollTop = 0")
+
+    # 左栏滚右栏不动(灌长对话流进左 chat;布局断言,行为流另有覆盖)
+    pg.evaluate(
+        "() => { const log = document.querySelector('[data-doc-chat-log]');"
+        "for (let i = 0; i < 30; i++) {"
+        "const d = document.createElement('div'); d.className = 'doc-chat-msg'; d.dataset.role = 'user';"
+        "d.textContent = '左栏滚动测试消息 ' + i; log.appendChild(d); } }"
+    )
+    pg.wait_for_timeout(300)
+    chat_delta2 = win.locator("[data-doc-chat-log]").evaluate("e => e.scrollHeight - e.clientHeight")
+    t.check("灌 30 条:左 chat 独立可滚", chat_delta2 > 100, f"delta={chat_delta2}")
+    win.locator("[data-doc-chat-log]").evaluate("e => e.scrollTop = e.scrollHeight")
+    pg.wait_for_timeout(300)
+    t.check("左栏滚动:右栏不跟随(preview scrollTop=0)", pv.evaluate("e => e.scrollTop") == 0)
+    t.check("左栏滚动:composer 钉底可见", win.locator("[data-doc-chat-input]").is_visible())
+    body2 = pg.evaluate("() => document.body.scrollHeight - document.documentElement.clientHeight")
+    t.check("左栏滚动:页级仍零", body2 <= 1, f"delta={body2}")
+    pg.screenshot(path=f"{shots}/left-scroll-right-still.png")
+
+    # 长气泡封顶(320px 内滚;锚段不被顶走)
+    pg.evaluate(
+        "() => { const log = document.querySelector('[data-doc-chat-log]');"
+        "log.innerHTML = ''; }"  # 清空布局断言泵入行(只影响本页 DOM)
+    )
+    block = win.locator(".doc-para[data-anchor]").nth(1)
+    block.click(button="right")
+    pg.wait_for_timeout(600)
+    y0 = block.bounding_box()["y"]
+    pg.evaluate(
+        "() => { const log = document.querySelector('.doc-bubble-pop .w-bubble-log');"
+        "for (let i = 0; i < 30; i++) {"
+        "const d = document.createElement('div'); d.className = 'w-bubble-msg';"
+        "d.innerHTML = '<span class=\"w-bubble-body\"><span class=\"w-bubble-tx\">封顶测试行 ' + i + '</span></span>';"
+        "log.appendChild(d); } }"
+    )
+    pg.wait_for_timeout(300)
+    pop_h = pg.locator(".doc-bubble-pop").first.bounding_box()["height"]
+    t.check("气泡封顶 320px", pop_h <= 321, f"h={pop_h:.0f}")
+    blog_delta = pg.locator(".doc-bubble-pop .w-bubble-log").evaluate("e => e.scrollHeight - e.clientHeight")
+    t.check("气泡内滚(w-bubble-log 可滚)", blog_delta > 100, f"delta={blog_delta}")
+    t.check("气泡输入钉卡底可见", pg.locator(".doc-bubble-pop [data-bubble-draft]").is_visible())
+    y1 = block.bounding_box()["y"]
+    t.check("锚段不被顶走(y 不变)", abs(y1 - y0) < 2, f"{y0:.0f}→{y1:.0f}")
+    body3 = pg.evaluate("() => document.body.scrollHeight - document.documentElement.clientHeight")
+    t.check("气泡封顶下页级仍零", body3 <= 1, f"delta={body3}")
+    pg.screenshot(path=f"{shots}/bubble-capped.png")
+    t.no_errors("滚动层级全程无 JS 错误")

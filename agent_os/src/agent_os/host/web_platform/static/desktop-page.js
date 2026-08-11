@@ -444,8 +444,23 @@ export function bootDesktop() {
     reorder(d.id, over.dataset.deskTask, e.clientX < r.x + r.width / 2);
   });
 
-  /* 发起面:+ 新对话(新会话新实例)/会话列表开会话(去重聚焦)/explorer 选件 */
+  /* 发起面:「+ 新建」菜单(会话/app 两路收拢;点外/点项即收) */
+  const newBtn = $("#dt-newbtn");
+  const newMenu = $("#dt-newMenu");
+  const _closeNew = () => {
+    newMenu.hidden = true;
+    newBtn.setAttribute("aria-expanded", "false");
+  };
+  newBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    newMenu.hidden = !newMenu.hidden;
+    newBtn.setAttribute("aria-expanded", newMenu.hidden ? "false" : "true");
+  });
+  document.addEventListener("click", (e) => {
+    if (!newMenu.hidden && !e.target.closest(".dt-new")) _closeNew();
+  });
   $("#dt-newconv").addEventListener("click", async () => {
+    _closeNew();
     const conv = await openConversation("new");
     activate(conv.inst._compoundId);
   });
@@ -462,10 +477,14 @@ export function bootDesktop() {
   $("#dt-openconv").addEventListener("click", async () => {
     const sid = $("#dt-sessions").value;
     if (!sid) return;
+    _closeNew();
     const conv = await openConversation({ session: sid });
     activate(conv.inst._compoundId);
   });
-  $("#dt-open").addEventListener("click", () => openExplorer($("#dt-kind").value));
+  $("#dt-open").addEventListener("click", () => {
+    _closeNew();
+    openExplorer($("#dt-kind").value);
+  });
 
   /* desktop 事件面:inbox 整卡 open → 回对话(决策在对话里处理,同旧托盘) */
   inst.on("child_event", (p) => {

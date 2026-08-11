@@ -144,6 +144,8 @@ def run(t):
     # ⑦ 四 legacy explorer:开 → 内容在 → 最小化 → 重开保活 → 两段 ✕ 关
     for kind, label in [("skills-explorer", "技能"), ("tools-explorer", "工具"),
                         ("lab", "Lab"), ("debug-console", "调试")]:
+        pg.locator("#dt-newbtn").click()  # 「+ 新建」菜单(C4.4 发起面收拢)
+        pg.wait_for_timeout(200)
         pg.select_option("#dt-kind", kind)
         pg.click("#dt-open")
         pg.wait_for_timeout(1800)
@@ -175,6 +177,8 @@ def run(t):
     opt_count = pg.locator("#dt-sessions option").count()
     t.check("会话列表已装(发起面)", opt_count >= 1, f"options={opt_count}")
     if opt_count:
+        pg.locator("#dt-newbtn").click()
+        pg.wait_for_timeout(200)
         pg.locator("#dt-sessions").select_option(index=0)
         pg.locator("#dt-openconv").click()
         pg.wait_for_timeout(800)
@@ -182,6 +186,8 @@ def run(t):
         t.check("同会话开会话 = 去重聚焦(不重复开窗)", rows_after == rows_before,
                 f"{rows_before} → {rows_after}")
         t.check("去重聚焦到既有 conversation", pg.evaluate("() => __desktop.state.active") == "conversation")
+    pg.locator("#dt-newbtn").click()
+    pg.wait_for_timeout(200)
     pg.locator("#dt-newconv").click()
     pg.wait_for_timeout(1500)
     new_conv = next((i for i in _task_ids(pg) if i.startswith("conv-")), None)

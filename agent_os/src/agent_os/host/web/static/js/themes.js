@@ -114,7 +114,9 @@ function sheetTokens(theme) {
   if (typeof document === "undefined" || !document.styleSheets) return null;
   const file = theme.css.split("/").pop();
   for (const sheet of document.styleSheets) {
-    const href = sheet.href ?? "";
+    // 构建戳 ?v= 与 hash 不影响文件名匹配(2026-08-11 前 endsWith 直比,
+    // 带戳链接全灭——六主题不注册,copy() 全回落 key 原文)
+    const href = (sheet.href ?? "").split("?")[0].split("#")[0];
     if (!href.endsWith(file)) continue;
     let rules = [];
     try {

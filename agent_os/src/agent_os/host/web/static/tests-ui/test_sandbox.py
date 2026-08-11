@@ -16,6 +16,17 @@ def run(t):
     pg.wait_for_timeout(800)
     t.no_errors("沙盒加载无 JS 错误")
 
+    # copy 解析回归(2026-08-11:?v= 构建戳曾弄断主题注册,copy 全回落 key 原文;
+    # stub 不经样式表探测测不出,必须真实浏览器断言)
+    resolved = pg.evaluate(
+        """async () => {
+          const m = await import('/static/js/themes.js');
+          return { go: m.copy('w.card.go'), theme: m.currentThemeId() };
+        }"""
+    )
+    t.check("copy 解析:返回文案而非 key 原文", resolved["go"] == "打开 →",
+            f"得到 {resolved['go']!r}(theme={resolved['theme']})")
+
     for kind in KINDS:
         for surface in ("tab", "card"):
             pg.select_option("#sb-kind", kind)

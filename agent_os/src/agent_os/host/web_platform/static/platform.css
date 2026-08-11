@@ -415,25 +415,33 @@
   box-shadow: 0 2px 8px color-mix(in srgb, var(--fg-0) 12%, transparent);
 }
 
-/* 气泡浮出化:绝对定位浮在段落右缘,小箭头指向锚点行;正文不再被挤压 */
+/* 气泡浮出化:绝对定位浮在段落右缘,小箭头指向锚点行;正文不再被挤压。
+   v2(2026-08-12):最大高度由宿主 JS 按锚点空间精算(inline maxHeight;
+   clamp(200px, 45vh, 可用−16)),贴底锚点翻转向上(doc-bubble-up),
+   高度变化 120ms ease-out 过渡;滚动/resize 重算(见 doc-editor _fitBubble) */
 .doc-bubble-pop {
   position: absolute; right: 0; top: 1.5em; z-index: 4;
   width: min(360px, 92%);
   background: var(--bg-1); border: var(--stroke) solid var(--line);
   border-radius: var(--r-md);
   box-shadow: 0 4px 14px color-mix(in srgb, var(--fg-0) 16%, transparent);
-  /* 封顶(2026-08-12;宿主壳几何——壳尺寸/定位归宿主(W5.4 切割线),
-     卡面 render 不动;滚动链经壳子树选择器落地) */
-  max-height: 320px;
+  max-height: 45vh; /* 兜底;JS 精算覆写 */
   display: flex;
   flex-direction: column;
+  transition: max-height 120ms ease-out;
+}
+
+.doc-bubble-pop.doc-bubble-up { top: auto; bottom: 1.5em; }
+.doc-bubble-pop.doc-bubble-up::before {
+  top: auto; bottom: -6px; border-bottom: none; border-top: 6px solid var(--line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-bubble-pop { transition: none; }
 }
 
 .doc-bubble-pop .doc-bubble-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.doc-bubble-pop .doc-bubble-body > .w-bubble { flex: 1; min-height: 0; max-height: 100%; display: flex; flex-direction: column; }
-.doc-bubble-pop .w-bubble-head, .doc-bubble-pop .w-bubble-quote { flex: none; }
-.doc-bubble-pop .w-bubble-log { flex: 1; min-height: 0; overflow-y: auto; }
-.doc-bubble-pop .w-bubble-input { flex: none; }
+.doc-bubble-pop .doc-bubble-body > .w-bubble { flex: 1; min-height: 0; max-height: 100%; }
 
 .doc-bubble-pop::before { /* 小箭头(指向锚点行) */
   content: ""; position: absolute; top: -6px; right: var(--s4);

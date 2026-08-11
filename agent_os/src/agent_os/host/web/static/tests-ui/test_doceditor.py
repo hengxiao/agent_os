@@ -134,6 +134,7 @@ def run(t):
     t.no_errors("写动作全程无 JS 错误")
 
     run_scroll(t)  # 滚动层级重构(2026-08-12):锁视口/双栏独立滚/气泡封顶 + 截图
+    run_bubble_v2(t)  # W-bubble v2(用户验收反馈 2026-08-11)
 
 
 def run_scroll(t):
@@ -230,7 +231,8 @@ def run_scroll(t):
     )
     pg.wait_for_timeout(300)
     pop_h = pg.locator(".doc-bubble-pop").first.bounding_box()["height"]
-    t.check("气泡封顶 320px", pop_h <= 321, f"h={pop_h:.0f}")
+    max_h = pg.evaluate("() => Math.round(Math.max(200, innerHeight * 0.45))")
+    t.check("气泡封顶 ≤ maxHeight(v2 算法)", pop_h <= max_h + 1, f"h={pop_h:.0f} max={max_h}")
     blog_delta = pg.locator(".doc-bubble-pop .w-bubble-log").evaluate("e => e.scrollHeight - e.clientHeight")
     t.check("气泡内滚(w-bubble-log 可滚)", blog_delta > 100, f"delta={blog_delta}")
     t.check("气泡输入钉卡底可见", pg.locator(".doc-bubble-pop [data-bubble-draft]").is_visible())
@@ -240,3 +242,113 @@ def run_scroll(t):
     t.check("气泡封顶下页级仍零", body3 <= 1, f"delta={body3}")
     pg.screenshot(path=f"{shots}/bubble-capped.png")
     t.no_errors("滚动层级全程无 JS 错误")
+
+
+def run_bubble_v2(t):
+    """W-bubble v2(用户验收反馈 2026-08-11):封顶内滚/翻转/连发不吞/pill/折叠。"""
+    import os
+    shots = os.path.join(os.path.dirname(__file__), ".shots")
+    os.makedirs(shots, exist_ok=True)
+
+    pg = t.open("/platform/")
+    pg.wait_for_selector(".dt-icon", timeout=10000)
+    pg.wait_for_timeout(400)
+    pg.locator('.dt-icon[data-desk-open="conversation"]').click()
+    pg.wait_for_timeout(500)
+    ta = pg.locator("[data-cv-input]")
+    ta.fill("文档列表")
+    ta.press("Enter")
+    pg.wait_for_selector('[data-cv-log] [data-detail-kind="doc"][data-detail-ref="dev.longscroll"]', timeout=15000)
+    pg.locator('[data-cv-log] [data-detail-kind="doc"][data-detail-ref="dev.longscroll"]').first.click()
+    pg.wait_for_timeout(1500)
+    win = pg.locator(".dt-win")
+
+    # ① 长线程封顶:30 条经 receiveReply 入流(real path),只有 log 滚
+    anchor = win.locator(".doc-para[data-anchor]").nth(1).get_attribute("data-anchor") or ""
+    win.locator(".doc-para[data-anchor]").nth(1).click(button="right")
+    pg.wait_for_timeout(600)
+    pg.evaluate(
+        "(anchor) => { const live = __desktop.child('dev.longscroll').child(anchor).views.at(-1).live;"
+        "for (let i = 0; i < 30; i++) live.receiveReply('第 ' + i + ' 条批注回复,内容足够长,验证封顶与唯一滚动区。'); }",
+        anchor
+    )
+    pg.wait_for_timeout(400)
+    pop = pg.locator(".doc-bubble-pop").first
+    pop_h = pop.bounding_box()["height"]
+    max_h = pg.evaluate("() => Math.round(Math.max(200, Math.min(innerHeight * 0.45, innerHeight)))")
+    t.check("长线程:气泡 ≤ maxHeight(clamp 生效)", pop_h <= max_h + 1, f"h={pop_h:.0f} max={max_h}")
+    log = pg.locator(".doc-bubble-pop .w-bubble-log")
+    log_delta = log.evaluate("e => e.scrollHeight - e.clientHeight")
+    t.check("长线程:log 唯一滚动区(内滚)", log_delta > 100, f"delta={log_delta}")
+    t.check("长线程:composer 钉底可见", pg.locator(".doc-bubble-pop [data-bubble-draft]").is_visible())
+    body0 = pg.evaluate("() => document.body.scrollHeight - document.documentElement.clientHeight")
+    t.check("长线程:页级仍零", body0 <= 1, f"delta={body0}")
+    pg.screenshot(path=f"{shots}/bubble-v2-capped.png")
+
+    # ② 连发 5 条全部入流(busy 不吞;队列串行)
+    draft = pg.locator(".doc-bubble-pop [data-bubble-draft]")
+    for i in range(5):
+        draft.fill(f"连发消息 {i + 1}")
+        draft.press("Enter")
+        pg.wait_for_timeout(120)  # 快速连发(busy 中;v2 入队不吞)
+    pg.wait_for_timeout(400)
+    log_text = log.inner_text()
+    got = [f"连发消息 {i + 1}" in log_text for i in range(5)]
+    t.check("连发 5 条全部入流(输入不丢)", all(got), f"got={got}")
+    pg.wait_for_timeout(2500)
+    log_text2 = log.inner_text()
+    replies = log_text2.count("Agent")
+    t.check("回复按序回填(≥1 agent 回复到达)", replies >= 1, f"agents={replies}")
+    t.no_errors("连发无 JS 错误")
+
+    # ③ 非底部新消息 →「↓ 新消息」pill(不硬拽);点击滚底自收
+    log.evaluate("e => e.scrollTop = 0")
+    pg.evaluate(
+        "(anchor) => { const live = __desktop.child('dev.longscroll').child(anchor).views.at(-1).live;"
+        "live.receiveReply('远处新消息——pill 测试'); }",
+        anchor
+    )
+    pg.wait_for_timeout(400)
+    pill = pg.locator("[data-bubble-pill]")
+    t.check("非底部新消息:pill 浮出", pill.count() > 0 and pill.first.is_visible())
+    pill.first.click()
+    pg.wait_for_timeout(300)
+    bottomed = log.evaluate("e => e.scrollTop + e.clientHeight >= e.scrollHeight - 4")
+    t.check("pill 点击滚底自收", bottomed and (pill.count() == 0 or pill.first.is_hidden()))
+    t.no_errors("pill 无 JS 错误")
+
+    # ④ 长单条消息折叠/展开
+    long_text = "\n".join([f"折叠测试第 {i} 行" for i in range(10)])  # 真换行(JSON 序列化带行)
+    pg.evaluate(
+        "([anchor, txt]) => { const live = __desktop.child('dev.longscroll').child(anchor).views.at(-1).live;"
+        "live.receiveReply(txt); }",
+        [anchor, long_text]
+    )
+    pg.wait_for_timeout(400)
+    t.check("长单条消息折叠(clamp + 展开钮)", pg.locator(".w-bubble-tx.is-clamped").count() > 0
+            and pg.locator('[data-more]').count() > 0)
+    pg.locator("[data-more]").first.click()
+    pg.wait_for_timeout(300)
+    t.check("展开:clamp 撤", pg.locator(".w-bubble-tx.is-clamped").count() == 0)
+    pg.locator("[data-more]").first.click()
+    pg.wait_for_timeout(300)
+    t.check("再点折叠:clamp 回", pg.locator(".w-bubble-tx.is-clamped").count() > 0)
+    pg.screenshot(path=f"{shots}/bubble-v2-collapse.png")
+
+    # ⑤ 贴底锚点开泡 → 向上翻转(doc-bubble-up;宿主壳几何)
+    fold = pg.locator(".doc-bubble-fold").first
+    if fold.count():
+        fold.click()  # 收起当前泡
+        pg.wait_for_timeout(300)
+    pv = win.locator("[data-doc-preview]")
+    pv.evaluate("e => e.scrollTop = e.scrollHeight")  # 文档滚到底
+    pg.wait_for_timeout(400)
+    bottom_block = win.locator(".doc-para[data-anchor]").last
+    bottom_block.click(button="right")
+    pg.wait_for_timeout(600)
+    pop2 = pg.locator(".doc-bubble-pop").first
+    t.check("贴底锚点:向上翻转(doc-bubble-up)",
+            pop2.count() > 0 and "doc-bubble-up" in (pop2.get_attribute("class") or ""),
+            f"class={pop2.get_attribute('class') if pop2.count() else '无'}")
+    pg.screenshot(path=f"{shots}/bubble-v2-flip.png")
+    t.no_errors("W-bubble v2 全程无 JS 错误")

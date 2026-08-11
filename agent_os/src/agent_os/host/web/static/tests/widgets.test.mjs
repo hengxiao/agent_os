@@ -2088,3 +2088,151 @@ console.log("widgets.test.mjs: W6.6 ruling assertions passed");
 }
 
 console.log("widgets.test.mjs: W6.7/C3 assembly assertions passed");
+
+/* ── W-bubble v2(用户验收反馈 2026-08-11;docs/WIDGET-DESIGN.md §3.13 v2)──
+   四区排版/log 唯一滚/未读分隔线/长消息折叠/autosize composer/busy 队列/
+   滚底语义 pill——结构(render 纯函数)+ 行为(mount 逻辑)两侧断言 */
+const { bubbleLongMsg, bubbleNewFrom } = await import("../js/widgets/w-bubble.render.js");
+
+{
+  // 纯函数:长消息判定(>6 行或 >240 字)+ 未读游标(末数 assistant 计)
+  assert.ok(bubbleLongMsg("1\n2\n3\n4\n5\n6\n7"), "7 行 = 长消息");
+  assert.ok(!bubbleLongMsg("1\n2\n3"), "3 行不折叠");
+  assert.ok(bubbleLongMsg("x".repeat(300)), "300 字 = 长消息");
+  assert.ok(!bubbleLongMsg("短"), "短消息不折叠");
+  const msgs = [
+    { role: "user", text: "u1" }, { role: "assistant", text: "a1" },
+    { role: "assistant", text: "a2" }, { role: "assistant", text: "a3" },
+  ];
+  assert.equal(bubbleNewFrom(msgs, 2), 2, "未读 2 → 分隔线在 a2 前");
+  assert.equal(bubbleNewFrom(msgs, 3), 1, "未读 3 → 在 a1 前");
+  assert.equal(bubbleNewFrom(msgs, 0), -1, "无未读不出线");
+  assert.equal(bubbleNewFrom(msgs, 9), -1, "未读超量不出线(防御)");
+}
+
+{
+  // render v2 四区结构:head/quote/log/composer 顺序固定;pill 位;textarea
+  const s = {
+    anchor: { member: "lab.travel", path: "plan.md#L7-L7", quote: "第三天行程摘录" },
+    messages: [
+      { role: "user", text: "预算偏高", ts: 1 },
+      { role: "assistant", text: "改景山", ts: 2 },
+    ],
+    busy: false, draft: "", newFrom: 1, newpill: false,
+  };
+  const h = renderBubble(s);
+  const zones = ["w-bubble-head", "w-bubble-quote", "w-bubble-log", "w-bubble-input"];
+  const pos = zones.map((z) => h.indexOf(z));
+  assert.ok(pos.every((p, i) => p > 0 && (i === 0 || p > pos[i - 1])), "四区自上而下固定序(v2)");
+  assert.ok(h.includes("w-bubble-newline"), "未读分隔线在游标处(newFrom=1)");
+  assert.ok(h.includes("以下是新消息"), "分隔线文案(copy 键)");
+  assert.ok(h.includes('data-bubble-pill="1" hidden'), "pill 缺省藏");
+  assert.ok(h.includes("<textarea") && h.includes('rows="1"'), "composer = autosize textarea");
+  const withPill = renderBubble({ ...s, newpill: true });
+  assert.ok(withPill.includes('data-bubble-pill="1"') && !withPill.includes('data-bubble-pill="1" hidden'),
+    "newpill=true → pill 显出");
+  // 长消息折叠:>6 行出 clamp + 展开钮;expanded 后撤 clamp + 折叠钮
+  const long = Array.from({ length: 8 }, (_, i) => `第${i + 1}行`).join("\n");
+  const hs = renderBubble({ ...s, messages: [{ role: "assistant", text: long, ts: 1 }] });
+  assert.ok(hs.includes("w-bubble-tx is-clamped"), "长消息 clamp(v2)");
+  assert.ok(hs.includes('data-more="0"') && hs.includes("展开"), "展开钮在");
+  const hx = renderBubble({ ...s, messages: [{ role: "assistant", text: long, ts: 1, expanded: true }] });
+  assert.ok(!hx.includes("is-clamped") && hx.includes("折叠"), "expanded → 撤 clamp 出折叠钮");
+}
+
+{
+  // 行为 v2:busy 不吞(队列串行)——连发 3 条全部入流,emit 逐条按序
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountBubble(host, { anchor: { member: "m", path: "p#L1-L1" }, seedMessages: [] });
+  const sent = [];
+  w.on("submit", (p) => sent.push(p.text));
+  const mk = (text) => {
+    const input = new StubEl("textarea");
+    input.dataset.bubbleDraft = "";
+    input.parentNode = host;
+    input.value = text;
+    host.trigger("input", { target: input });
+    host.trigger("keydown", { target: input, key: "Enter" });
+  };
+  mk("第一条");
+  mk("第二条"); // busy 中——v2 不吞:入队
+  mk("第三条");
+  assert.deepEqual(
+    w.state.messages.filter((m) => m.role === "user").map((m) => m.text),
+    ["第一条", "第二条", "第三条"],
+    "连发 3 条用户消息全部入流(busy 不吞)"
+  );
+  assert.deepEqual(sent, ["第一条"], "在飞一条(emit 串行)");
+  w.receiveReply("回一");
+  assert.deepEqual(sent, ["第一条", "第二条"], "回复后按序 pump 下一条");
+  w.receiveReply("回二");
+  w.receiveReply("回三");
+  assert.deepEqual(sent, ["第一条", "第二条", "第三条"], "队列清空(输入不丢)");
+  assert.equal(w.state.busy, false, "收尾 busy 复位");
+
+  // 失败不堵队:notifyError 后重试补发(用户消息不重复)
+  mk("第四条");
+  w.notifyError("网络断了");
+  const usersAfterErr = w.state.messages.filter((m) => m.role === "user").length;
+  const retry = new StubEl("button");
+  retry.closest = (sel) => (sel === "[data-bubble-retry]" ? retry : null);
+  host.trigger("click", { target: retry });
+  assert.equal(sent.at(-1), "第四条", "重试补发同一文本");
+  assert.equal(w.state.messages.filter((m) => m.role === "user").length, usersAfterErr, "重试不重复追加");
+  w.receiveReply("回四");
+
+  // Shift+Enter 换行:不发送
+  const ta = new StubEl("textarea");
+  ta.dataset.bubbleDraft = "";
+  ta.parentNode = host;
+  ta.value = "换行草稿";
+  host.trigger("input", { target: ta });
+  host.trigger("keydown", { target: ta, key: "Enter", shiftKey: true });
+  assert.equal(sent.length, 5, "Shift+Enter 不发送(换行;前序含重试一次)");
+  assert.equal(w.state.draft, "换行草稿", "草稿在(未吞)");
+
+  // 滚底语义 pill:非底部新消息 → newpill 出
+  const doc2 = makeDocument();
+  globalThis.document = doc2;
+  const host2 = doc2.createElement("div");
+  doc2.body.appendChild(host2);
+  const w2 = mountBubble(host2, { anchor: { member: "m", path: "p#L1-L1" }, seedMessages: [] });
+  const log2 = host2.querySelector(".w-bubble-log");
+  log2.scrollHeight = 5000; // stub 滚动面:人为拉满
+  log2.clientHeight = 200;
+  log2.scrollTop = 0; // 不在底
+  w2.receiveReply("远处新消息");
+  assert.equal(w2.state.newpill, true, "非底部新消息 → newpill(不硬拽)");
+  assert.ok(host2.innerHTML.includes('data-bubble-pill="1"') && !host2.innerHTML.includes('data-bubble-pill="1" hidden'),
+    "pill 上屏");
+  const pillBtn = new StubEl("button");
+  pillBtn.dataset.bubblePill = "1";
+  pillBtn.closest = (sel) => (sel === "[data-bubble-pill]" ? pillBtn : null);
+  host2.trigger("click", { target: pillBtn });
+  assert.equal(w2.state.newpill, false, "pill 点击滚底自收");
+  const log2b = host2.querySelector(".w-bubble-log");
+  assert.equal(log2b.scrollTop, log2b.scrollHeight, "点击滚底");
+
+  // 长消息展开/折叠行为(data-more 切 expanded)
+  const doc3 = makeDocument();
+  globalThis.document = doc3;
+  const host3 = doc3.createElement("div");
+  doc3.body.appendChild(host3);
+  const w3 = mountBubble(host3, {
+    anchor: { member: "m", path: "p#L1-L1" },
+    seedMessages: [{ role: "assistant", text: Array.from({ length: 8 }, (_, i) => `行${i}`).join("\n") }],
+  });
+  assert.ok(host3.innerHTML.includes("is-clamped"), "挂载即折叠(>6 行)");
+  const moreBtn = new StubEl("button");
+  moreBtn.dataset.more = "0";
+  moreBtn.closest = (sel) => (sel === "[data-more]" ? moreBtn : null);
+  host3.trigger("click", { target: moreBtn });
+  assert.ok(!host3.innerHTML.includes("is-clamped") && w3.state.messages[0].expanded, "点击展开(expanded 入 state)");
+  host3.trigger("click", { target: moreBtn });
+  assert.ok(host3.innerHTML.includes("is-clamped"), "再点折叠");
+}
+
+console.log("widgets.test.mjs: W-bubble v2 assertions passed");

@@ -476,13 +476,25 @@
 
 参照:Notion comment / Slack thread。
 
-**tab(展开态)效果要求**:
+**tab(展开态)效果要求(v2 · 用户验收反馈 2026-08-11)**:
 - 浮层卡(--shadow-3,圆角 12,140ms 入场)带小箭头指向锚点;
-- 顶部锚点引用块:左 3px `--live` 条 + 原文摘录 2 行截断 + 位置徽标「L7」mono 弱;
-- 消息流:每条 = 头像/图标圆 20px + 名称 500 + 相对时间弱 + 内容 13px;用户与 agent 不分左右,靠图标与名称区分(Notion 式,避免 IM 感);
-- 输入区:圆角 8 输入框(「回复…」)+ Enter 发送 / Shift+Enter 换行 + 发送钮(--live 实心,空输入禁用);
-- 发送中:输入区骨架条 + 消息流尾部 typing 三点;失败:行内红条 + 重试;
-- 头部 ✕ 收起;Esc 同效。
+- 自上而下**固定四区**:header(批注 · 位置徽标 L7 + ✕ 收起)/ quote(锚段
+  摘录 2 行截断 + 左 3px `--live` 条)/ **log(唯一滚动区**,flex:1 +
+  min-height:0 + overflow:auto)/ composer(钉底);
+- 消息流(log 内):图标圆 20px + 名称 500 + 相对时间弱 + 内容 13px;不分左右
+  (Notion 式);typing 三点进 log 尾部;**未读分隔线**(「以下是新消息」细线,
+  首次打开插在游标处);**长单条消息折叠**(>6 行 line-clamp + 「展开/折叠」钮);
+- composer:autosize textarea(1 行起,最多 4 行,超过内滚),Enter 发送 /
+  Shift+Enter 换行;发送钮空输入禁用(**busy 不禁用**——发送中可续写);
+- **busy 不吞消息**:连发进本地队列,用户消息先入流(不等回包),在飞一条
+  emit 串行,回复按序回填;失败行内红条 + 重试(不堵队);输入永不丢;
+- **滚底语义**:新消息到达时 log 已在底 → 自动滚底;不在底 → 浮
+  「↓ 新消息」pill(点击滚底自收),不硬拽;
+- 点外不收起(防误丢草稿);Esc / ✕ 收起;
+- **宿主壳几何(切割线:壳归宿主)**:maxHeight = clamp(200px, 45vh,
+  可用空间−16px),spaceBelow < 240 且上方更大 → 翻转向上(箭头随翻);
+  文档滚动/窗口 resize 重算跟随锚段;高度变化 120ms ease-out 过渡
+  (reduced-motion 停用)。
 
 **card(收起态)效果要求**:段旁 22px 圆标(`--live` 实底,未读数白字 11px;无未读则 💬 线稿图标 40% 透明)
 + hover 出预览条(--shadow-2:最后一条摘录 1 行 +「N 条」)。
@@ -490,7 +502,12 @@
 **验收清单**:
 - [x] 气泡永远指向锚点,滚动跟随不错位;
 - [x] 未读数 = 我没看过的消息数(游标语义),不是总数;
-- [x] 多气泡同屏不互相遮挡(右侧栏堆叠或错列)。
+- [x] 多气泡同屏不互相遮挡(右侧栏堆叠或错列);
+- [x] (v2)长线程:气泡 ≤ maxHeight,只有 log 滚,页级滚动为零;
+- [x] (v2)贴底锚点开泡向上翻转;滚动/resize 几何跟随;
+- [x] (v2)连发不吞:用户消息全部先入流,回复按序回;
+- [x] (v2)非底部新消息出 pill,点击滚底自收;
+- [x] (v2)长消息折叠/展开;
 
 > W6.4 实现注(2026-08-04;**切割线不动**,W5.4 定案):
 > 1. 三条验收的指向/游标/堆叠都是宿主(doc-editor)既有行为面,本期未动
@@ -504,6 +521,25 @@
 > 3. Enter 发送 / Shift+Enter 不触发(单行 input 保持;真换行需切
 >    textarea,未落——记为已知限制);
 > 4. card 未读徽标改实心(.wd-badge-solid:live 底白字)。
+
+> **v2 实现注**(2026-08-12;用户验收反馈「长泡泡没解决」):
+> - **控件本体**(w-bubble.render/w-bubble/widgets.css):四区固定;log 唯一
+>   滚动区;未读分隔线由 canonical state.newFrom 驱动(doc-editor 首开时按
+>   seen 游标算 `bubbleNewFrom(messages, unread)` 纯函数);长消息折叠 =
+>   `bubbleLongMsg` 纯函数(>6 行或 >240 字)+ per-message `expanded` 标志
+>   (可序列化);composer 切 autosize textarea;**busy 队列**:连发入队、
+>   用户消息先入流、在飞一条、回复按序 pump、失败不堵队(重试补发
+>   lastText);**滚底语义**:渲前记底部态,仅「消息增长」拍定 pill
+>   (非增长重渲不动 pill——队列续渲误清是实测抓出的真 bug);
+> - **宿主壳**(doc-editor `_fitBubble` + platform.css):开泡/文档滚动/
+>   窗口 resize 重算 maxHeight 与翻转(inline style 覆写 45vh 兜底);
+>   `.doc-bubble-up` 翻转载荷(箭头随翻,top↔bottom);120ms ease-out;
+> - **copy 新键六主题全补**:w.bubble.expand/collapse/newpill/newhere;
+> - **测试**:stub 三块(纯函数/四区结构/pill/折叠 + 队列行为:连发 3 条全
+>   入流、在飞一条、按序 pump、失败重试不重复、Shift+Enter 不发送、pill
+>   出/收);tests-ui 五断言组(长线程封顶内滚/连发 5 条全入流/pill 出收/
+>   折叠展开/贴底翻转)+ 三截图(.shots/bubble-v2-*);
+> - card 面不动(§3.13 收起态语义保持)。
 
 ---
 

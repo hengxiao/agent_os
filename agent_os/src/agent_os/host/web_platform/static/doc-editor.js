@@ -32,6 +32,7 @@
 import { copy } from "/static/js/themes.js";
 import { createCompound, mdToHtml, registerWidgetDef } from "/static/js/widgets/index.js";
 import { registerContextProvider } from "/static/js/widgets/cascade.js";
+import { bubbleNewFrom } from "/static/js/widgets/w-bubble.render.js";
 import { docTabHtml } from "./details.js";
 
 // 长文档阈值(§2/§7 边界):>200KB 预览截断提示,不炸(展示面只读,无编辑器)
@@ -248,6 +249,29 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     return Math.max(0, assistant - Math.min(_seenGet(entry.anchor), assistant));
   }
 
+  /* 气泡壳高度算法(v2 · 宿主壳几何;§3.13 v2 B):开泡/滚动/resize 时按
+     锚点与视口空间精算——首选下方展开,spaceBelow < 240 且上方更大 → 翻转
+     向上(doc-bubble-up);maxHeight = clamp(200px, 45vh, 可用−16px)。
+     stub/无布局环境静默(切割线:壳几何归宿主,卡面 render 不动)。 */
+  function _fitBubble(entry) {
+    const block = [...(cur?.preview.children ?? [])].find((c) => c.dataset?.anchor === entry.anchor);
+    const rect = block?.getBoundingClientRect?.();
+    if (!rect) return;
+    const vh = globalThis.innerHeight ?? 900;
+    const spaceBelow = vh - rect.bottom - 16;
+    const spaceAbove = rect.top - 16;
+    const up = spaceBelow < 240 && spaceAbove > spaceBelow;
+    const avail = Math.max(0, (up ? spaceAbove : spaceBelow) - 16);
+    const maxH = Math.round(Math.max(200, Math.min(vh * 0.45, avail)));
+    entry.el.style.maxHeight = `${maxH}px`;
+    entry.el.classList.toggle("doc-bubble-up", up);
+  }
+  const _refitBubbles = () => {
+    for (const entry of bubbles.values()) {
+      if (!entry.el.hidden) _fitBubble(entry);
+    }
+  };
+
   /* 开气泡(多条并存,各锚点独立;种子 = 持久化消息流,开关不丢;
      同锚点重开 = 聚焦,不重复建。C3:add_child + link_view 进壳;
      view 被控件内 ✕ 摘过时重开先重挂。壳挂交互面 cur.preview) */
@@ -260,6 +284,7 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       }
       existing.el.hidden = false; // 收起着的话先展开(重开 = 聚焦)
       if (existing.marker) existing.marker.hidden = true;
+      _fitBubble(existing); // v2:重开重算几何
       // D4:重开也记"已读"(seen 游标随聚焦前进)
       _seenSet(anchor, existing.inst.state.messages.filter((m) => m.role === "assistant").length);
       existing.view?.live?.focus?.();
@@ -269,10 +294,13 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     // compound add_child(段落批注 = 动态子件;canonical 持 state,view 由 link_view 挂)
     const anchorState = { member: doc.name, path: anchor, quote: blockTextOf(anchor) };
     const seed = (seedByAnchor[anchor] ?? []).map((m) => ({ role: m.role, text: m.text, ts: m.ts ?? m.at }));
+    // v2 未读游标:首开的未读 assistant 数(分隔线插位;canonical 带 newFrom)
+    const unreadN = Math.max(0, seed.filter((m) => m.role === "assistant").length - _seenGet(anchor));
     const bubbleInst = inst.add_child("chat-bubble", {
       slot: anchor,
-      state: { anchor: anchorState, messages: seed, open: true, busy: false, draft: "", unread: 0 },
-      options: { anchor: anchorState, triggerPath: `${inst.path}/${anchor}`, seedMessages: seed },
+      state: { anchor: anchorState, messages: seed, open: true, busy: false, draft: "", unread: 0,
+        newFrom: bubbleNewFrom(seed, unreadN), newpill: false },
+      options: { anchor: anchorState, triggerPath: `${inst.path}/${anchor}`, seedMessages: seed, unread: unreadN },
     });
     // 浮出定位壳(宿主职责,W5.4 切割线;结构同 D5:fold 首子 + body)
     const wrap = (cur.host.ownerDocument ?? globalThis.document).createElement("div");
@@ -299,6 +327,7 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     const view = bubbleInst.link_view(body, { surface: "tab" });
     const entry = { inst: bubbleInst, view, el: wrap, body, marker, anchor, severity: "" };
     bubbles.set(anchor, entry);
+    _fitBubble(entry); // v2:开泡即精算几何(宿主壳)
     // D4:打开即记"已读"(seen 游标 = 当前 assistant 数)
     _seenSet(anchor, bubbleInst.state.messages.filter((m) => m.role === "assistant").length);
     view.live.focus?.();
@@ -694,9 +723,14 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     /* host 委托(重挂载幂等):委托只挂一次,永远转给最新实例(否则 N 次挂载 =
        N 个委托,导出菜单被切 N 次:偶数次 = 没切的幽灵 bug,D1-D4 旧码已潜伏) */
     viewHost.__docEditorClick = onHostClick; // 最新实例(重挂载覆盖)
+    viewHost.__docEditorScroll = _refitBubbles; // v2 滚动重算同纪律(转给最新实例)
     if (!viewHost.__docEditorBound) {
       viewHost.__docEditorBound = true;
       viewHost.addEventListener("click", (e) => viewHost.__docEditorClick?.(e));
+      // v2:文档滚动 → 气泡壳几何重算(跟随锚段;壳随块滚,重算翻转/上限)
+      viewHost.addEventListener("scroll", (e) => {
+        if (e.target.closest?.("[data-doc-preview]")) viewHost.__docEditorScroll?.();
+      }, true);
     }
   }
 
@@ -721,6 +755,14 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     if (mopts.surface !== "card") cur = els; // 交互面 = 最近非 card 挂接
     refresh();
     return { host: viewHost, detach: () => view.detach() };
+  };
+
+  /* v2:窗口 resize → 气泡壳几何重算;实例销毁即摘除(防监听泄漏) */
+  globalThis.addEventListener?.("resize", _refitBubbles);
+  const _baseDestroy = inst.destroy.bind(inst);
+  inst.destroy = () => {
+    globalThis.removeEventListener?.("resize", _refitBubbles);
+    _baseDestroy();
   };
 
   const api = {

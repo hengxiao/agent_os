@@ -14,7 +14,7 @@
 
 import { getWidgetDef, registerWidgetDef } from "./registry.js";
 import { bindCardOpen, createWidget } from "./widget.js";
-import { copy } from "../themes.js";
+import { copy, currentThemeId } from "../themes.js";
 
 /* ── supervisor-inbox(系统件薄壳,C4.1)────────────────────────────── */
 
@@ -86,11 +86,11 @@ export function orderedIds(ids, order) {
   return [...o, ...ids.filter((id) => !o.includes(id))];
 }
 
-/* 子件标题/图标位(纯):aria.label 为标题,缺省回落 slot id(C4.2:doc 子件
-   id = 文档名,题名即文档);首字为 glyph(与 platform 壳 tab 同源惯例);
+/* 子件标题/图标位(纯):优先级 = owner 题名(slotRefs.title,C4.4)>
+   aria.label > slot id;首字为 glyph(与 platform 壳 tab 同源惯例);
    图标 = 图标位非 card 面缩略(DESKTOP-WIDGET §3-1 允许)。 */
-function _meta(kind, id) {
-  const label = String(getWidgetDef(kind)?.aria?.label ?? id ?? kind ?? "?");
+function _meta(kind, id, title = null) {
+  const label = String(title ?? getWidgetDef(kind)?.aria?.label ?? id ?? kind ?? "?");
   return { label, glyph: label.trim().charAt(0) || "?" };
 }
 
@@ -111,7 +111,7 @@ export function renderDesktopLayout(state, slotRefs) {
   const taskbarRows = taskIds
     .map((id) => {
       const r = slotRefs[id];
-      const m = _meta(r.kind, id);
+      const m = _meta(r.kind, id, r.title);
       return (
         `<div class="dt-task" role="button" tabindex="0" data-desk-task="${esc(id)}" ` +
         `data-active="${active === id ? "1" : "0"}" aria-label="${esc(m.label)}">` +
@@ -136,7 +136,7 @@ export function renderDesktopLayout(state, slotRefs) {
   let main;
   if (active) {
     const r = slotRefs[active];
-    const m = _meta(r.kind, active);
+    const m = _meta(r.kind, active, r.title);
     main =
       `<div class="dt-win">` +
       `<div class="dt-titlebar">` +
@@ -153,7 +153,7 @@ export function renderDesktopLayout(state, slotRefs) {
     const icons = iconIds
       .map((id) => {
         const r = slotRefs[id];
-        const m = _meta(r.kind, id);
+        const m = _meta(r.kind, id, r.title);
         return (
           `<button class="dt-icon" data-desk-open="${esc(id)}" aria-label="打开 ${esc(m.label)}">` +
           `<span class="dt-glyph" aria-hidden="true">${esc(m.glyph)}</span>` +
@@ -191,6 +191,12 @@ export const DESKTOP_DEF = registerWidgetDef({
       max: 30,
     },
     layout: renderDesktopLayout,
+    // C4.4(C4.1 偏差清零):desktop 级全局上下文注入——真实可序列化值
+    // (用户/主题/当前时间;cascade widget 级 fragment 经此改写,§7-2)
+    child_context: (child, frag) => ({
+      ...frag,
+      desktop: { user: "local", theme: currentThemeId(), at: new Date().toISOString() },
+    }),
   },
 });
 

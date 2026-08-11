@@ -82,7 +82,8 @@ _appDef("runs-explorer", "运行");
   // ② layout 三分支(纯函数直调;slotRefs 伪造)
   const refs = {
     inbox: { path: "/root/inbox", kind: "supervisor-inbox", surface: "card", badge: 2 },
-    conversation: { path: "/root/conversation", kind: "conversation", surface: "tab", badge: null },
+    conversation: { path: "/root/conversation", kind: "conversation", surface: "tab", badge: null,
+      title: "对话 · abc123" },
     "runs-explorer": { path: "/root/runs-explorer", kind: "runs-explorer", surface: "tab", badge: 4 },
   };
   const before = JSON.stringify(refs);
@@ -98,6 +99,8 @@ _appDef("runs-explorer", "运行");
   assert.ok(desk.includes('data-desk-task-badge="runs-explorer">4<'), "任务行 badge 按 slotRefs 上屏");
   assert.ok(!desk.includes('data-desk-task-badge="conversation"'), "无 badge 的子件无徽标");
   assert.ok(!desk.includes('data-desk-open="inbox"'), "inbox 系统件不进图标/任务行");
+  assert.ok(desk.includes("对话 · abc123"), "per-instance 题名:slotRefs.title 优先(C4.4)");
+  assert.ok(desk.includes(">运行<"), "无 title 回落 aria.label(题名优先级)");
 
   // 分支二:单窗(active=conversation)——标题栏 + 激活 slot;无图标栅格
   const win = renderDesktopLayout({ wallpaper: "default", active: "conversation", icon_order: [], taskbar_order: [] }, refs);
@@ -229,6 +232,25 @@ _appDef("runs-explorer", "运行");
   inst.emit("activate", { id: "runs-explorer" });
   inst.emit("close", { id: "runs-explorer" });
   assert.deepEqual(seen, [["activate", "runs-explorer"], ["close", "runs-explorer"]], "activate/close 事件可发");
+}
+
+{
+  // ⑥ C4.4:slotRefs.title 元信息(owner 提供)+ child_context 全局注入
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const inst = createCompound(DESKTOP_DEF, { path: "/root" });
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  inst.mount_view(host);
+  inst.add_child("runs-explorer", { slot: "runs-explorer", title: "运行·自题" });
+  assert.ok(host.innerHTML.includes("运行·自题"), "add_child title 上屏(slotRefs.title,盖过 aria.label)");
+  const { contextCascade } = await import("../js/widgets/index.js");
+  const cascade = contextCascade("/root/runs-explorer");
+  const wfrag = (cascade.cascade ?? []).find((f) => f.scope === "widget");
+  assert.ok(wfrag?.data?.desktop, "child_context 注入 desktop 级上下文(§7-2,C4.4)");
+  assert.equal(wfrag.data.desktop.user, "local", "desktop 上下文 user");
+  assert.ok(wfrag.data.desktop.theme && wfrag.data.desktop.at, "desktop 上下文 theme/at(真实值)");
+  JSON.stringify(wfrag.data.desktop); // 可序列化(协议铁律)
 }
 
 console.log("desktop-widget.test.mjs: all assertions passed");

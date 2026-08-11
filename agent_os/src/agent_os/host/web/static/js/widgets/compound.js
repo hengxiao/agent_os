@@ -153,8 +153,10 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
 
   /* canonical 子实例创建(register 由 compound 统一做);kind 带 compound
      字段时递归 createCompound——否则预定义的 compound 子件会是「僵尸」
-     (有 def 无 compound API,真实浏览器首崩的第二个根因) */
-  const _spawn = (id, kind, { state: childState = {}, surface = "tab", slot = null, options = {} } = {}) => {
+     (有 def 无 compound API,真实浏览器首崩的第二个根因)。
+     title(C4.4):owner 提供的 slot 元信息(题名;与 slot/surface 同面,
+     slotRefs 随行——per-instance 任务栏题名,不归子 state 管) */
+  const _spawn = (id, kind, { state: childState = {}, surface = "tab", slot = null, options = {}, title = null } = {}) => {
     const childDef = getWidgetDef(kind);
     if (!childDef) throw new Error(`compound: 未知 kind ${kind}(注册表惰性校验,§2)`);
     if (children.has(id)) throw new Error(`compound: 子件 id 重复 ${id}`);
@@ -166,6 +168,7 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
       kind,
       slot: slot ?? id,
       surface,
+      title,
       path: inst.path ? `${inst.path}/${id}` : id,
       inst: childInst,
       views: [],
@@ -207,7 +210,8 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
       const slotRefs = Object.fromEntries(
         [...children.values()].map((r) => [
           r.slot,
-          { path: r.path, kind: r.kind, surface: r.surface, badge: inst.state.badges?.[r.id] ?? null },
+          { path: r.path, kind: r.kind, surface: r.surface, badge: inst.state.badges?.[r.id] ?? null,
+            title: r.title ?? null }, // C4.4:owner 提供的题名元信息(slotRefs 扩展项)
         ])
       );
       view.host.innerHTML = cx.layout(inst.state, slotRefs); // §3-1:子 HTML 不内联
@@ -234,13 +238,13 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
   inst.children_snapshot = () =>
     [...children.values()].map((r) => ({ id: r.id, kind: r.kind, slot: r.slot, path: r.path }));
 
-  inst.add_child = (kind, { state: childState = {}, surface = "tab", slot = null, options = {} } = {}) => {
+  inst.add_child = (kind, { state: childState = {}, surface = "tab", slot = null, options = {}, title = null } = {}) => {
     if (!allow.has(kind)) throw new Error(`compound ${def.kind}: kind ${kind} 不在 dynamic.allow 白名单(§4)`);
     if (children.size >= max) throw new Error(`compound ${def.kind}: 子件数达 max=${max}(§4)`);
-    return _spawn(slot ?? `${kind}-${++seq}`, kind, { state: childState, surface, slot, options });
+    return _spawn(slot ?? `${kind}-${++seq}`, kind, { state: childState, surface, slot, options, title });
   };
 
-  inst.attach_existing = (childInst, { slot = null, surface = "tab", options = {} } = {}) => {
+  inst.attach_existing = (childInst, { slot = null, surface = "tab", options = {}, title = null } = {}) => {
     if (!childInst?.kind) throw new Error("compound: attach_existing 需要 widget 实例");
     if (childInst === inst) throw new Error("compound: 不能收养自己(§10 防环)");
     if (childInst._compoundOwner) throw new Error(`compound: ${childInst.kind} 已有 owner(§1 ownership 唯一)`);
@@ -253,6 +257,7 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
       kind: childInst.kind,
       slot: slot ?? id,
       surface,
+      title, // C4.4:owner 提供的题名元信息(同 _spawn)
       path: inst.path ? `${inst.path}/${id}` : id,
       inst: childInst,
       views: [],
@@ -261,7 +266,10 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
     };
     childInst._compoundOwner = inst;
     childInst._compoundId = id;
-    childInst.path = rec.path; // §6:path 重算(身份不变)
+    // §6:path 重算(身份不变)——C4.4 起级联到后代(_repathSubtree):
+    // 全树寻址唯一(如 /root/<doc>/<bubble>,DESKTOP-WIDGET §7 验收)
+    if (childInst._repathSubtree) childInst._repathSubtree(rec.path);
+    else childInst.path = rec.path;
     // §5 公开面同 _spawn:仅 leaf 子件;重挂(move)时重指新 rec.views,防陈旧别名
     if (!childInst._compound) childInst.views = rec.views;
     childInst.link_view = (host, opts = {}) => _linkView(rec, host, opts); // hard link 入口(§5;同 _spawn 的分离纪律)
@@ -346,6 +354,19 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
 
   inst._compound = { children }; // 防环遍历面(§10)
 
+  /* 子树级联改址(C4.4):本实例与全部后代的 path 换前缀,provider 逐个
+     按新 path 注销重注(与 §6-2 同面)——attach/reparent 时全树寻址唯一 */
+  inst._repathSubtree = (newPath) => {
+    inst.path = newPath;
+    for (const rec of children.values()) {
+      _unregisterChild(rec);
+      rec.path = `${newPath}/${rec.id}`;
+      rec.inst.path = rec.path;
+      _registerChild(rec);
+      rec.inst._repathSubtree?.(rec.path); // 递归到叶(bubble 级)
+    }
+  };
+
   // 预定义 slots(§4:随实例创建)
   for (const s of cx.slots ?? []) {
     _spawn(s.id ?? `${s.kind}-${++seq}`, s.kind, {
@@ -353,6 +374,7 @@ export function createCompound(def, { state = {}, path = "", onRegister = null, 
       surface: s.surface ?? "tab",
       slot: s.id ?? null,
       options: s.options ?? {},
+      title: s.title ?? null, // C4.4:slot 配置可带题名(同 attach/add)
     });
   }
 

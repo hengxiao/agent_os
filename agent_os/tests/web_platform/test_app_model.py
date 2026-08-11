@@ -250,6 +250,23 @@ def test_spawn_dedupe_and_unknown_kind(client):
     assert client.post("/api/apps/spawn", json={"kind": "evil", "ref": "x"}).status_code == 400
 
 
+def test_spawn_dedupe_repairs_missing_state_keys(client):
+    """C4.4:去重命中缺键实例 → 按本次(schema 已校验)state 补键;冲突键不覆盖。"""
+    r1 = client.post("/api/apps/spawn", json={"kind": "doc", "ref": "demo.repair", "state": {}})
+    assert r1.status_code == 201 and r1.json()["opened"] is True
+    r2 = client.post(
+        "/api/apps/spawn",
+        json={"kind": "doc", "ref": "demo.repair",
+              "state": {"name": "demo.repair", "text": "", "dirty": False, "savedAt": 0,
+                         "view": "split", "versions": [], "bubbles": []}},
+    )
+    assert r2.json()["opened"] is False, "kind+ref 去重(返回既有)"
+    assert r2.json()["instance"]["state"]["name"] == "demo.repair", "缺键补进(args_from 可绑)"
+    r3 = client.post("/api/apps/spawn", json={"kind": "doc", "ref": "demo.repair",
+                                              "state": {"name": "tampered.zzz"}})
+    assert r3.json()["instance"]["state"]["name"] == "demo.repair", "冲突键以既有为准"
+
+
 # ---------------------------------------------------------------------------
 # M2 app.state 持久化(docs/APP-MODEL.md §10):写/读/坏文件隔离/重启解析
 # ---------------------------------------------------------------------------

@@ -829,6 +829,14 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             kind=body.kind, ref=body.ref, title=body.title or body.ref,
             state=body.state, created_by=body.created_by,
         )
+        if not opened and body.state:
+            # C4.4:去重命中的既有实例缺键时按本次(已过 schema 校验)的 state
+            # 补键——陈旧/最小登记(state={})不再永久卡死 args_from 绑定;
+            # 冲突键以既有为准(去重语义不动,"登记即伪造"仍由 schema 关闸)
+            missing = {k: v for k, v in body.state.items() if k not in (inst.get("state") or {})}
+            if missing:
+                instances.update_state(inst["id"], missing)
+                inst = instances.get(inst["id"])
         return {"instance": inst, "opened": opened}
 
     @app.get("/api/apps/{instance_id}")
@@ -991,9 +999,10 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+        # C4.4(docs/DESKTOP-WIDGET.md §6):产品入口 = desktop 根(旧壳 app.js 退役)
+        return FileResponse(static_dir / "desktop.html")
 
-    # C4.1(docs/DESKTOP-WIDGET.md §6):desktop widget 验证页,与旧壳并存(旧壳 C4.4 退役)
+    # 开发直达(与产品入口同一份;旧壳 C4.4 退役后保留本页双入口)
     @app.get("/desktop.html", include_in_schema=False)
     def desktop() -> FileResponse:
         return FileResponse(static_dir / "desktop.html")

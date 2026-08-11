@@ -288,7 +288,9 @@ v0.1 说"action = skill 调用 → 内核仲裁自动覆盖 UI 全部副作用,U
 >   (args_input {wallpaper: boolean})——壁纸开关写穿透持久化(重启恢复),
 >   旧持久化无 desktop 键时前端/后端各自缺省容错(壁纸开);
 > - **测试**:前端 `desktop.test.mjs`(桌面渲染/同源断言/开始菜单/最小化/
->   托盘/壁纸/icon_mode 不回归);后端 `test_m5_desktop_minimize_and_wallpaper`
+>   托盘/壁纸/icon_mode 不回归;**C4.4 注:该文件随旧壳退役,接替 =
+>   `desktop-widget.test.mjs` + tests-ui `test_desktop.py`**);后端
+>   `test_m5_desktop_minimize_and_wallpaper`
 >   (最小化 tab 保留/壁纸持久化重启恢复/args_input 非 bool 拒);M1-M5 既有
 >   测试原样全绿(前端 26 文件 + 本新文件;后端 web_platform 68 个)。
 

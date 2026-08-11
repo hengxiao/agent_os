@@ -87,18 +87,30 @@ bubble)顺延 `/root/<app-id>/<bubble-id>`。全树寻址自此唯一。
 | C4.1 ✅ | desktop def + layout 三分支 + 任务栏(badge 补丁);**与旧壳并存**:新页 `/platform/desktop.html` 先跑通 | tests-ui:开 app/最小化/重开 state 不动/关闭/重排 |
 | C4.2 ✅ | conversation app 与 doc-editor 进白名单(薄壳/直进) | 既有行为测试 + 新 UI 测试 |
 | C4.3 ✅ | 其余 apps(skills/runs/tools/lab/debug)薄壳化 | 同上 |
-| C4.4 | platform index 切换到 desktop 根,旧壳退役 | 全量回归 + 旧壳代码删除 |
+| C4.4 ✅ | platform index 切换到 desktop 根,旧壳退役 | 全量回归 + 旧壳代码删除 |
 
-## 7. 验收清单(C4 全量)
+## 7. 验收清单(C4 全量;C4.4 核对结果)
 
-- [ ] 桌面/单窗/任务栏三分支渲染正确,切换无 JS 错误(真实浏览器);
-- [ ] 最小化 → 重开:app 内容逐字在(hidden 语义,不重建 instance);
-- [ ] 关闭 = remove_child;重开后是全新 instance;
-- [ ] 任务栏 badge 与子事件一致(闸门记账);重排持久于 state;
-- [ ] 对话卡拖入 → 窗口区打开同一 ref;doc 卡 ↔ doc-editor 同 instance 双形态;
-- [ ] inbox 预定义子件在托盘,升权请求到达有 badge;
-- [ ] 全部 app action 仍走三态 exec;desktop 自身 action(activate/close/reorder)是 local;
-- [ ] 寻址全树唯一:/root/... 通到 bubble 级。
+- [x] 桌面/单窗/任务栏三分支渲染正确,切换无 JS 错误(真实浏览器)——
+  tests-ui `test_desktop.py` 全程段段 no_errors(2026-08-12,四套 145 项全绿);
+- [x] 最小化 → 重开:app 内容逐字在(hidden 语义,不重建 instance)——
+  conversation 消息+草稿(canonical state 断言)/legacy 保活囊逐字/doc-editor
+  canonical;真实浏览器断言;
+- [x] 关闭 = remove_child;重开后是全新 instance——stub `desktop-widget.test.mjs`
+  ⑤(remove 后 add_child ≠ 旧 instance)+ UI 两段 ✕;
+- [x] 任务栏 badge 与子事件一致(闸门记账);重排持久于 state——badge 三态
+  (最小化记/激活清/激活中不记)+ taskbar_order 断言;
+- [x] 对话卡拖入 → 窗口区打开同一 ref;doc 卡 ↔ doc-editor 同 instance 双形态——
+  DnD 摘要卡 → runs 激活定位(行内 ref);doc 卡 ↔ 窗口 = hard link 活卡,
+  canonical source 同一(instance 断言);
+- [x] inbox 预定义子件在托盘,升权请求到达有 badge——badge = 真实
+  /api/decisions pending 数(UI 对照端点值);
+- [x] 全部 app action 仍走三态 exec;desktop 自身 action(activate/close/
+  reorder)是 local——doc 写动作(snapshot/rewind)经 app action 管道实测
+  (agent 消息回话 + 内容往返一致);activate/close/reorder = state + relayout;
+- [x] 寻址全树唯一:/root/... 通到 bubble 级——基座 `_repathSubtree` 级联
+  改址(C4.4 增补;reparent 时后代 path/provider 逐个重注)+ doc-editor
+  app 级 provider 驱动侧重注;stub + UI(children_snapshot 前缀)双断言。
 
 ## 8. 不做清单
 
@@ -237,4 +249,52 @@ bubble)顺延 `/root/<app-id>/<bubble-id>`。全树寻址自此唯一。
 >   /locate 三分支,fake open/close 断账)+ `conversation-app.test.mjs` ④ 改
 >   open-detail 全 kind;33 文件全绿。tests-ui `test_desktop.py` 扩为 55 项
 >   (badge 三态/run 链接 locate/DnD/四 legacy 开·保活·关/会话去重/重排/
->   C4.2 链不回退);五套 135 项全绿(两跑);BUILD 2026-08-11.5 三方同步。
+>   C4.2 链不回退);四套 135 项全绿(两跑);BUILD 2026-08-11.5 三方同步。
+
+## 12. 实现注(C4.4 收官,2026-08-12)
+
+> - **切根**:`/platform/` = desktop 根(app.py index 路由改指 desktop.html;
+>   `/platform/desktop.html` 保留为开发直达,同一文件)。
+> - **遗留偏差清零**:
+>   ① **doc 写动作**(C4.2 偏差 1):开窗即 `POST /apps/spawn`(kind doc,
+>     与旧壳 `_spawnForTab` 同参)——snapshot/rewind 经 `#dt-root` 委托的
+>     `data-tab-act` 管道(args/cascade/session_id 同旧壳 tabAction,rewind 后
+>     重拉全文,结果以 agent 消息进 boot conversation);export/apply 经
+>     doc-editor 内部 `getTabInstance`(回填 spawnId)。全部走三态 exec;
+>     **server 增补**:spawn 去重命中时按本次(schema 已校验)state **补缺键**
+>     (`app.py app_spawn`;陈旧/最小登记不再永久卡死 args_from;冲突键以既有
+>     为准——pytest `test_spawn_dedupe_repairs_missing_state_keys`);
+>   ② **child_context**(C4.1 偏差 1):DESKTOP_DEF 挂 `child_context`——注入
+>     `{user, theme: currentThemeId(), at: ISO}`(真实可序列化;§7-2 改写面);
+>   ③ **per-instance 题名**(C4.3 偏差 5):基座 slotRefs 增 `title` 元信息
+>     (owner 提供,与 slot/surface 同面——add_child/attach_existing/slots 均可给),
+>     `_meta` 优先级 title > aria.label > id;conversation 窗 = 会话标题(缺省
+>     `对话 · <sid前6>`),doc 窗 = 文档名。
+> - **寻址补全**(§7 末条):基座新增 `_repathSubtree(newPath)`——attach/
+>   reparent 时后代 path 级联改址 + provider 逐个注销重注(此前只改本实例,
+>   后代留旧前缀);doc-editor 的 app 级 provider 在基座外,经
+>   `api._rebindAppProvider` 由驱动重注(`/root/<name>`)。
+> - **旧壳退役**(接替表):
+>   - `web_platform/static/app.js` → desktop-page.js(根驱动)+
+>     conversation-app.js(对话)+ explorer-apps.js(五 app);
+>   - `web_platform/static/index.html` → desktop.html(产品根);
+>   - `tests/desktop.test.mjs`(M5 旧壳桌面)→ desktop-widget.test.mjs +
+>     tests-ui `test_desktop.py`;
+>   - `platform.test.mjs` 旧壳集成段(对话流/tab 模型/详情 tab 全流程)→
+>     conversation-app.test.mjs + tests-ui 四套;cards.js/details.js 共享渲染
+>     断言保留(文件剪至 446 行);
+>   - `platform.css` 旧壳专属规则(829→470 行;pf-shell/pf-side/pf-tabs/
+>     pf-tray/pf-desk/pf-win/pf-log/pf-input/pf-pulse/pf-twocol/pf-wait 等)→
+>     desktop.html 内联 dt-* chrome;共享面(卡面/doc-*/gate/diff 详情)保留。
+> - **本期偏差**(明示):① esc detail kind 仍不接(对话内作答,同托盘语义);
+>   ② debug-console 无 ref 定位面;③ lab 跨草稿 locate 不保 dirty(导航语义);
+>   ④ 浏览表卡整卡拖不路由(无整卡 ref);⑤ desktop.html 的 dt-* 样式暂留
+>   内联(C4.x 后归位 shared css 的清理单独立项);⑥ legacy 模块写
+>   location.hash 的惯例如旧(skills/tools 选中态落在 desktop.html 的 hash 上,
+>   无路由副作用)。
+> - **测试**:stub 32 文件全绿(退役 desktop.test.mjs 随退;新增 reparent
+>   级联断言 + slotRefs.title/child_context 断言);pytest test_app_model.py
+>   31 过(含 spawn 补键新例);tests-ui 四套 **145 项**全绿(三跑;
+>   test_doceditor.py 改打 /platform/ 根:出卡→doc 窗口→批注全程→view
+>   source→snapshot/rewind 两击/导出菜单;/root 通到 bubble 级断言);
+>   curl `/platform/` 200 内容为 desktop 根;BUILD 2026-08-11.6 三方同步。

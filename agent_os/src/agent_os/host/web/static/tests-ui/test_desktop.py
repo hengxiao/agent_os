@@ -47,7 +47,8 @@ def run(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("文档列表")
     ta.press("Enter")
-    pg.wait_for_timeout(2500)
+    # 条件等待(orchestrator LLM 路由超时可至秒级;定长会抢跑)
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=15000)
     doc_link = pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first
     t.check("orchestrator 出卡:doc 链接在", doc_link.count() > 0, f"count={doc_link.count()}")
     doc_link.click()
@@ -67,7 +68,7 @@ def run(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("C4.3 留证消息")
     ta.press("Enter")
-    pg.wait_for_timeout(2000)
+    pg.wait_for_selector("text=C4.3 留证消息", timeout=15000)
     pg.locator("[data-cv-input]").fill("未发送的半句")
     pg.wait_for_timeout(200)
     pg.locator("[data-desk-min]").click()
@@ -85,8 +86,13 @@ def run(t):
     chip = pg.locator('[data-desk-task-badge="conversation"]')
     t.check("最小化:badge 记 2(闸门按可见性记账)", chip.count() > 0 and chip.inner_text() == "2",
             f"chip={chip.inner_text() if chip.count() else '无'}")
-    t.check("badge 账进 state.badges",
-            pg.evaluate("() => __desktop.state.badges.conversation") == 2)
+    badges_val = None
+    for _ in range(10):  # 记账 → relayout 同拍但 evaluate 有调度隙;短轮询读稳
+        badges_val = pg.evaluate("() => __desktop.state.badges.conversation ?? null")
+        if badges_val == 2:
+            break
+        pg.wait_for_timeout(200)
+    t.check("badge 账进 state.badges", badges_val == 2, f"badges={badges_val}")
     pg.locator('[data-desk-task="conversation"]').click()
     pg.wait_for_timeout(500)
     t.check("激活:badge 清账", pg.locator('[data-desk-task-badge="conversation"]').count() == 0)
@@ -102,7 +108,7 @@ def run(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("哪些失败")
     ta.press("Enter")
-    pg.wait_for_timeout(2500)
+    pg.wait_for_selector('[data-cv-log] [data-detail-kind="run"]', timeout=15000)
     run_link = pg.locator('[data-cv-log] [data-detail-kind="run"]').first
     t.check("浏览卡:run 行链接在", run_link.count() > 0, f"count={run_link.count()}")
     run_ref = run_link.get_attribute("data-detail-ref") or ""
@@ -121,7 +127,7 @@ def run(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("为什么挂")
     ta.press("Enter")
-    pg.wait_for_timeout(2500)
+    pg.wait_for_selector('.cv-log .pf-card[data-card="table"]:not([data-detail-ref=""])', timeout=15000)
     card = pg.locator('.cv-log .pf-card[data-card="table"]:not([data-detail-ref=""])').first
     t.check("摘要卡可拖(draggable + 整卡 ref)",
             card.count() > 0 and card.get_attribute("draggable") == "true"

@@ -19,6 +19,7 @@
 import { initTheme } from "/static/js/themes.js";
 import { BUILD } from "/static/js/widget-sandbox.js";
 import { createCompound, orderedIds, DESKTOP_DEF } from "/static/js/widgets/index.js";
+import { contextCascade } from "/static/js/widgets/cascade.js";
 import { createConversation } from "./conversation-app.js";
 import { createDocEditor } from "./doc-editor.js";
 import {
@@ -123,7 +124,9 @@ export function bootDesktop() {
     _log(`reorder ${ids.join(" → ")}`);
   };
 
-  /* ── doc-editor 直进(§5-2,C4.2 不动)── */
+  /* ── doc-editor 直进(§5-2,C4.2)+ 写动作管道(C4.4 偏差清零)──
+     开窗即 spawn doc app 实例(与旧壳 _spawnForTab 同参):snapshot/rewind/
+     export/apply 四动作走同一 app action 管道(三态 exec 不动) */
   async function openDocWindow(name) {
     if (!name) return;
     if (inst.child(name)) {
@@ -140,22 +143,90 @@ export function bootDesktop() {
       } catch {
         bubbles = [];
       }
+      const rec = { spawnId: null, ed: null, inst: null, liveView: null, liveHost: null };
       const ed = createDocEditor(doc, {
         seedFlows: bubbles,
-        getTabInstance: () => null, // 写动作平台管道 C4.4 接(见 §9/§11 偏差注)
+        getTabInstance: () => ({ instance: rec.spawnId }), // 写动作实例面(spawn 后回填)
         reload: async () => {
           const fresh = await (await fetch(`/platform/api/docs/${encodeURIComponent(name)}`)).json();
           ed.api.setText(fresh.text ?? "");
         },
       });
+      rec.ed = ed;
+      rec.inst = ed.compound;
       ed.compound._compoundId = name;
-      inst.attach_existing(ed.compound, { slot: name, surface: "tab" });
-      openDocs.set(name, { inst: ed.compound, ed, liveView: null, liveHost: null });
+      inst.attach_existing(ed.compound, { slot: name, surface: "tab", title: name });
+      ed.api._rebindAppProvider?.(`/root/${name}`); // 级联改址随 reparent(§6;app 级 provider 在基座外)
+      openDocs.set(name, rec);
+      // spawn(C4.4;失败不阻断编辑面——数据面增强,不是依赖,同旧壳语义)
+      try {
+        const sp = await fetch("/platform/api/apps/spawn", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kind: "doc", ref: name, title: name,
+            state: { name, text: "", dirty: false, savedAt: 0, view: "split", versions: [], bubbles: [] },
+            created_by: convs.get("conversation")?.compound.state.session?.id ?? "",
+          }),
+        });
+        if (sp.ok) rec.spawnId = (await sp.json()).instance?.id ?? null;
+      } catch {
+        rec.spawnId = null;
+      }
       activate(name);
       _hangLiveDocCards();
       _log(`open-doc ${name}`);
     } catch (err) {
       _log(`open-doc ${name} 失败:${err.message ?? err}`);
+    }
+  }
+
+  /* doc 写动作(C4.4):snapshot/rewind 按钮(data-tab-act,docTabHtml 工具条)
+     与 export/apply(doc-editor 内部 getTabInstance)同管道——POST app action,
+     结果以 agent 消息进 boot conversation(与旧壳 tabAction 同语义);
+     rewind 后重拉全文(版本回滚 → 内容变) */
+  async function docTabAction(btn, name, rec) {
+    const actId = btn.dataset.tabAct;
+    btn.disabled = true;
+    try {
+      const args = {};
+      if (actId === "doc.rewind") {
+        args.version = btn.closest("[data-slot]")?.querySelector("[data-rewind-version]")?.value ?? "";
+      }
+      const res = await fetch(
+        `/platform/api/apps/${encodeURIComponent(rec.spawnId)}/actions/${encodeURIComponent(actId)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            surface: "tab",
+            args,
+            session_id: convs.get("conversation")?.compound.state.session?.id ?? "",
+            cascade: contextCascade(`/doc/${name}`).cascade, // §17.7-3 级联信封(同旧壳)
+          }),
+        }
+      );
+      if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+      const result = await res.json();
+      if (result.text) {
+        const conv = convs.get("conversation");
+        if (conv) {
+          conv.compound.state.messages = [
+            ...conv.compound.state.messages,
+            { role: "agent", text: result.text, cards: result.cards ?? [] },
+          ];
+          conv.refresh();
+        }
+      }
+      if (actId === "doc.rewind") {
+        const fresh = await (await fetch(`/platform/api/docs/${encodeURIComponent(name)}`)).json();
+        rec.ed.api.setText(fresh.text ?? ""); // 回滚后全文重拉(同旧壳 tabAction 重渲)
+      }
+      _log(`${actId} ${name} ✓`);
+    } catch (err) {
+      _log(`${actId} ${name} 失败:${err.message ?? err}`);
+    } finally {
+      btn.disabled = false;
     }
   }
 
@@ -238,7 +309,10 @@ export function bootDesktop() {
     }
     conv.api.onLogRendered = _hangLiveDocCards;
     convs.set(conv.inst._compoundId, conv.api);
-    inst.attach_existing(conv.inst, { surface: "tab" });
+    // C4.4 per-instance 题名:会话标题(缺省 对话·sid 前 6;slotRefs.title 元信息)
+    const sid = conv.inst.state.session?.id ?? "";
+    const title = conv.inst.state.session?.title || `对话 · ${sid.slice(0, 6)}`;
+    inst.attach_existing(conv.inst, { surface: "tab", title });
     return conv;
   }
 
@@ -324,6 +398,14 @@ export function bootDesktop() {
     const x = e.target.closest("[data-desk-close]");
     if (x) return close(x.dataset.deskClose, x);
     if (e.target.closest("[data-desk-min]")) return activate(null);
+    // doc 写动作按钮(docTabHtml 工具条 data-tab-act;C4.4 接通 app 管道)
+    const tAct = e.target.closest("[data-tab-act]");
+    if (tAct) {
+      const slotEl = tAct.closest("[data-slot]");
+      const rec = slotEl?.dataset.slot ? openDocs.get(slotEl.dataset.slot) : null;
+      if (rec?.spawnId) return docTabAction(tAct, slotEl.dataset.slot, rec);
+      return; // 无 spawn 实例 = 数据面未备(静默,同旧壳 spawn 失败降级)
+    }
     // detail 链接全 kind 路由(conversation 外的链接:runs 行内等;
     // conversation 内由其 wireView 经 onOpenDetail 走同一路由,跳过防双路由)
     const link = e.target.closest("[data-detail-kind]");

@@ -453,3 +453,47 @@ console.log("compound.test.mjs: C3 doc-editor compound assertions passed");
 }
 
 console.log("compound.test.mjs: C4.1 badge patch assertions passed");
+
+{
+  // C4.4:reparent 级联改址(_repathSubtree)——attach 后全后代 path 换新前缀,
+  // provider 按新 path 重注(全树寻址唯一,DESKTOP-WIDGET §7「/root 通到叶」)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const innerDef = registerWidgetDef({
+    kind: `t-inner-${Math.random().toString(36).slice(2, 8)}`,
+    v: 1, state_schema: { type: "object" }, state_defaults: {}, actions: [], events: [],
+    aria: { role: "group" }, surfaces: ["tab"],
+    compound: {
+      slots: [{ id: "leaf", kind: "log-viewer", surface: "tab",
+        state: { lines: [{ kind: "info", text: "叶" }] } }],
+      layout: () => `<div data-slot="leaf"></div>`,
+    },
+  });
+  const inner = createCompound(innerDef, { path: "/tmp/inner" });
+  const leafBefore = inner.children_snapshot().map((s) => s.path);
+  assert.deepEqual(leafBefore, ["/tmp/inner/leaf"], "attach 前后代按原前缀");
+  const outer = createCompound(
+    registerWidgetDef({
+      kind: `t-outer-${Math.random().toString(36).slice(2, 8)}`,
+      v: 1, state_schema: { type: "object" }, state_defaults: {}, actions: [], events: [],
+      aria: { role: "group" }, surfaces: ["tab"],
+      compound: { dynamic: { allow: [innerDef.kind], max: 2 }, layout: () => `<div></div>` },
+    }),
+    { path: "/root" }
+  );
+  inner._compoundId = "inner"; // 身份指定(attach 后 id = slot;与 desktop 驱动同手法)
+  outer.attach_existing(inner, { slot: "inner" });
+  assert.equal(inner.path, "/root/inner", "reparent 后本实例 path 重算(§6)");
+  assert.deepEqual(
+    inner.children_snapshot().map((s) => s.path),
+    ["/root/inner/leaf"],
+    "后代 path 级联改址(全树寻址唯一)"
+  );
+  const { contextCascade } = await import("../js/widgets/index.js");
+  const cas = contextCascade("/root/inner/leaf");
+  assert.ok((cas.cascade ?? []).some((f) => f.scope === "widget"), "后代 provider 按新 path 重注可取");
+  const stale = contextCascade("/tmp/inner/leaf");
+  assert.ok(!(stale.cascade ?? []).some((f) => f.scope === "widget"), "旧 path provider 已注销(无幽灵注册)");
+}
+
+console.log("compound.test.mjs: C4.4 reparent cascade assertions passed");

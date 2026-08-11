@@ -160,9 +160,10 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     state: { source: currentText, view: "preview", seen: {}, changed: [...changedAnchors] },
   });
   // app 级 cascade provider(文档名/版本/脏;widget 级由 child_context 注入,§7-2)
-  const unregApp = registerContextProvider(`/doc/${doc?.name ?? "untitled"}`, "app", () => ({
-    name: doc.name, versions: doc.versions ?? [], dirty,
-  }));
+  // C4.4:reparent 后 path 前缀变了(如挂进 desktop /root/<name>)——
+  // 本 provider 在 compound 基座之外,驱动经 _rebindAppProvider 改址重注
+  const _appProvider = () => ({ name: doc.name, versions: doc.versions ?? [], dirty });
+  let unregApp = registerContextProvider(`/doc/${doc?.name ?? "untitled"}`, "app", _appProvider);
 
   // D4 未读增量:seen 游标进 compound state(可序列化);localStorage 备份照原
   const _seenKey = (anchor) => `doc.seen.${doc.name}.${anchor}`;
@@ -749,6 +750,10 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       refresh();
     },
     _unregister: unregApp, // app 级 provider 注销面(实例销毁路径留口)
+    _rebindAppProvider(newPath) {
+      unregApp?.(); // reparent 改址(C4.4):旧 path 注销,新 path 重注
+      unregApp = registerContextProvider(newPath, "app", _appProvider);
+    },
   };
   return { compound: inst, api };
 }

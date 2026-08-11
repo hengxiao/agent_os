@@ -34,10 +34,11 @@ export const BUBBLE_DEF = registerWidgetDef({
   actions: [
     { id: "open", exec: "local" },
     { id: "close", exec: "local" },
+    { id: "delete", exec: "local" }, // v3:批注删除(协议原则:action 必是 skill,local 也是)
     { id: "apply_reply", exec: "local", args_input: { index: { type: "integer" } },
       context: ["widget"] }, // 轻动作不背大信封(§16.1-3)
   ],
-  events: ["submit", "apply", "open", "close"],
+  events: ["submit", "apply", "open", "close", "delete"],
   aria: { role: "dialog", keys: ["Enter", "Escape"] },
   surfaces: ["card", "tab"],
   render: renderBubble, // W5.3:render 面进 def(registry 校验形态)
@@ -160,6 +161,10 @@ export function mountBubble(
     widget.emit("close", { anchor });
     widget.destroy();
   };
+  /* v3:删除(action local skill;事件上行 → 父级摘除 + 后端删持久化) */
+  widget.delete = () => {
+    widget.emit("delete", { anchor });
+  };
   widget.apply_reply = (index) => {
     const m = widget.state.messages[index];
     if (m?.role === "assistant") widget.emit("apply", { anchor, text: m.text });
@@ -187,6 +192,15 @@ export function mountBubble(
   });
   host.addEventListener("click", (e) => {
     if (e.target.closest("[data-bubble-x]")) return widget.close(); // ✕ 收起(§3.13)
+    // 🗑 删除(v3):两击确认(第一击武装,第二击上行 delete)
+    const del = e.target.closest("[data-bubble-del]");
+    if (del) {
+      if (del.dataset.armed === "1") return widget.delete();
+      del.dataset.armed = "1";
+      del.classList.add("is-armed");
+      del.title = copy("w.bubble.del.confirm");
+      return;
+    }
     if (e.target.closest("[data-bubble-retry]")) return _submit(true); // 失败重试
     if (e.target.closest("[data-bubble-send]")) return _submit();
     // 「↓ 新消息」pill:点击滚底自收

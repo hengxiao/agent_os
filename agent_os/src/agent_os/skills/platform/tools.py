@@ -47,8 +47,10 @@ PLATFORM_TOOLS = (
     "platform.skills.reload",
 )
 
-#: 锚点格式(docs/DOC-EDITOR.md §2.1):doc.md#L<start>-L<end>(1-based 行号区间)
-_ANCHOR_RE = re.compile(r"^doc\.md#L(\d+)-L(\d+)$")
+#: 锚点格式(docs/DOC-EDITOR.md §2.1;v3 用户裁决 2026-08-11):
+#: doc.md#L<start>[:C<col>]-L<end>[:C<col>](1-based 行号区间,列可选;
+#: 旧行级 anchor 向后兼容)
+_ANCHOR_RE = re.compile(r"^doc\.md#L(\d+)(?::C(\d+))?-L(\d+)(?::C(\d+))?$")
 
 
 class PlatformActionError(Exception):
@@ -214,8 +216,9 @@ def register_platform_tools(registry: Any, *, deps: dict[str, Any]) -> None:
             # 按段替换(doc.apply 语义;人按才落,越界/已变 → 400)
             m = _ANCHOR_RE.match(anchor)
             if not m:
-                raise PlatformActionError(400, f"锚点格式非法: {anchor!r}(须 doc.md#L<start>-L<end>)")
-            start, end = int(m.group(1)), int(m.group(2))
+                raise PlatformActionError(400, f"锚点格式非法: {anchor!r}(须 doc.md#L<start>-L<end>,列可选)")
+            # v3:RE 组 (1,3)=行号,(2,4)=可选列;apply 按整行段替换(列级精确定位未开)
+            start, end = int(m.group(1)), int(m.group(3))
             doc = doc_store.read(name)
             lines = doc["text"].split("\n")
             if start < 1 or end < start or end > len(lines):

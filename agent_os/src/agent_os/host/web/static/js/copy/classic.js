@@ -360,6 +360,8 @@ export const COPY = {
   "w.bubble.fail": "发送失败,检查网络",
   "w.bubble.retry": "重试",
   "w.bubble.close": "收起",
+  "w.bubble.del": "删除批注",
+  "w.bubble.del.confirm": "再点一次确认删除",
   "w.bubble.expand": "展开",
   "w.bubble.collapse": "折叠",
   "w.bubble.newpill": "↓ 新消息",

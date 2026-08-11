@@ -1275,10 +1275,12 @@ def w_bubble():
     g.append(ps("M336 160 L348 160 L342 148 Z", BG1, LINE))
     g += shadow(280, 160, 660, 300, 12, 3)
     g.append(rs(280, 160, 660, 300, 12, BG1, LINE))
-    # ① header:批注 · 锚点 + L7 徽标 + ✕
+    # ① header:批注 · 锚点 + L7 徽标 + 🗑 删除 + ✕ 收起(v3)
     g.append(ts(300, 186, "批注 · lab.travel / plan.md", 12, FG1, 500))
     p, _ = pill(560, 172, "L7", "neutral", h=18, mono=True)
     g.append(p)
+    g.append(cs(888, 182, 11, BG2))  # 🗑 删除(v3:两击确认)
+    g.append(ts(888, 186, "🗑", 10, FG1, anchor="middle"))
     g.append(cs(916, 182, 11, BG2))  # ✕ hover
     g.append(ts(916, 186, "✕", 11, FG1, anchor="middle"))
     # ② quote:左 3px live 条 + 摘录 2 行截断
@@ -1319,8 +1321,8 @@ def w_bubble():
     g.append(rs(300, 412, 472, 40, 8, "none", stroke=LIVE, sw=1.5))
     b, _ = button(784, 412, "发送", "primary", h=40, size=13)
     g.append(b)
-    # 壳几何注(宿主侧)
-    g.append(ts(280, 478, "宿主壳:maxHeight = clamp(200px, 45vh, 可用−16);贴底锚点翻转向上;滚动/resize 重算;120ms ease-out", 10, FG2))
+    # 壳几何注(宿主侧;v3 原位/翻转/删除链)
+    g.append(ts(280, 478, "宿主壳:原位开泡(右键点旁)+ clamp(200px, 45vh, 可用−16);贴底翻转;选区 → 列范围锚点;点外收起=原位标记;🗑 两击删除", 10, FG2))
     # card(收起态):22px 圆标 + hover 预览条
     g += card()
     g.append(ts(38, 536, "第三天:上午故宫,下午颐和园,预算 ¥720。", 12, FG2))

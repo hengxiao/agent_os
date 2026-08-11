@@ -53,12 +53,16 @@ export function renderBubble(state, { surface = "tab" } = {}) {
   const newFrom = Number.isInteger(state.newFrom) ? state.newFrom : -1;
   return (
     `<div class="w-bubble" role="dialog" aria-label="${esc(anchorTo)}">` +
-    // ① header
+    // ① header:批注 · 锚点 + L# 徽标 + 🗑 删除(v3)+ ✕ 收起
     `<div class="w-bubble-head">` +
     `<span class="w-bubble-title">${esc(copy("w.bubble.comment"))} · ${esc(anchorTo)}` +
     (lineNo ? ` <span class="wd-badge mono">L${esc(lineNo)}</span>` : "") +
     `</span>` +
+    `<span class="w-bubble-acts">` +
+    `<button type="button" class="w-bubble-x w-bubble-del" data-bubble-del="1" ` +
+    `aria-label="${esc(copy("w.bubble.del"))}" title="${esc(copy("w.bubble.del"))}">🗑</button>` +
     `<button type="button" class="w-bubble-x" data-bubble-x="1" aria-label="${esc(copy("w.bubble.close"))}">✕</button>` +
+    `</span>` +
     `</div>` +
     // ② quote(保持:左 3px live 条 + 2 行截断)
     `<div class="w-bubble-quote">` +

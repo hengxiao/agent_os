@@ -352,6 +352,8 @@ export const COPY = {
   "w.bubble.fail": "发送未成,查网络",
   "w.bubble.retry": "重试",
   "w.bubble.close": "收",
+  "w.bubble.del": "删此批注",
+  "w.bubble.del.confirm": "再点确认删",
   "w.bubble.expand": "展",
   "w.bubble.collapse": "拢",
   "w.bubble.newpill": "↓ 新讯",

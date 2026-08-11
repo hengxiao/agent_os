@@ -79,20 +79,24 @@ def run(t):
     t.check("重开:草稿逐字在(hidden)", pg.locator("[data-cv-input]").input_value() == "未发送的半句")
 
     # ④ 未读 badge(§7 小注:可见性在父——最小化记 / 激活清 / 激活中不记)
+    # 差量断言:真实流量(轮询/SSE 呈现)可能同期加账,基线 +2 而非绝对 2
     pg.locator("[data-desk-min]").click()
     pg.wait_for_timeout(500)
+    base_val = pg.evaluate("() => __desktop.state.badges.conversation ?? 0")
     pg.evaluate("() => __desktop.child('conversation').emit('change', { messages: 9, arrived: 2 })")
     pg.wait_for_timeout(500)
     chip = pg.locator('[data-desk-task-badge="conversation"]')
-    t.check("最小化:badge 记 2(闸门按可见性记账)", chip.count() > 0 and chip.inner_text() == "2",
-            f"chip={chip.inner_text() if chip.count() else '无'}")
+    t.check("最小化:badge 记 +2(闸门按可见性记账)",
+            chip.count() > 0 and chip.inner_text() == str(base_val + 2),
+            f"base={base_val} chip={chip.inner_text() if chip.count() else '无'}")
     badges_val = None
     for _ in range(10):  # 记账 → relayout 同拍但 evaluate 有调度隙;短轮询读稳
         badges_val = pg.evaluate("() => __desktop.state.badges.conversation ?? null")
-        if badges_val == 2:
+        if badges_val is not None and badges_val >= base_val + 2:
             break
         pg.wait_for_timeout(200)
-    t.check("badge 账进 state.badges", badges_val == 2, f"badges={badges_val}")
+    t.check("badge 账进 state.badges", badges_val is not None and badges_val >= base_val + 2,
+            f"base={base_val} badges={badges_val}")
     pg.locator('[data-desk-task="conversation"]').click()
     pg.wait_for_timeout(500)
     t.check("激活:badge 清账", pg.locator('[data-desk-task-badge="conversation"]').count() == 0)

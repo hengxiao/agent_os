@@ -7,7 +7,7 @@ view source 切换 → 写动作(snapshot → rewind 两击 → 导出菜单开�
 真实 DOM 选择器(以 web_platform/static/desktop-page.js + doc-editor.js 为准):
 .dt-icon[data-desk-open], [data-cv-input], [data-detail-kind="doc"][data-detail-ref],
 .doc-para[data-anchor], .doc-bubble-pop, .doc-bubble-body, [data-bubble-draft],
-[data-bubble-send], .doc-bubble-fold, .doc-bubble-marker, [data-doc-bubblebar] .doc-bar-item,
+[data-bubble-send], .doc-bubble-marker, [data-doc-bubblebar] .doc-bar-item,
 .doc-viewseg [data-vm], [data-tab-act="doc.snapshot"], [data-doc-rewind],
 [data-rewind-version], [data-doc-export], [data-export-menu];调试钩 window.__desktop。
 """
@@ -64,8 +64,8 @@ def run(t):
         t.check("泡内消息流更新(发送可见)", "desktop 根验证" in body_text, body_text[:60])
     t.no_errors("发送全程无 JS 错误")
 
-    # ✕ 收起 → 段旁标记(可见性管控)
-    fold = pg.locator(".doc-bubble-fold").first
+    # ✕ 收起 → 段旁标记(可见性管控;v3:卡面头部 ✕,壳不再自带)
+    fold = pg.locator("[data-bubble-x]").first
     if fold.count():
         fold.click()
         pg.wait_for_timeout(400)
@@ -135,6 +135,7 @@ def run(t):
 
     run_scroll(t)  # 滚动层级重构(2026-08-12):锁视口/双栏独立滚/气泡封顶 + 截图
     run_bubble_v2(t)  # W-bubble v2(用户验收反馈 2026-08-11)
+    run_bubble_v3(t)  # 气泡交互 v3(用户裁决 2026-08-11):原位/选区/点外收/垃圾桶
 
 
 def run_scroll(t):
@@ -336,9 +337,9 @@ def run_bubble_v2(t):
     pg.screenshot(path=f"{shots}/bubble-v2-collapse.png")
 
     # ⑤ 贴底锚点开泡 → 向上翻转(doc-bubble-up;宿主壳几何)
-    fold = pg.locator(".doc-bubble-fold").first
+    fold = pg.locator("[data-bubble-x]").first
     if fold.count():
-        fold.click()  # 收起当前泡
+        fold.click()  # 收起当前泡(v3:卡面 ✕)
         pg.wait_for_timeout(300)
     pv = win.locator("[data-doc-preview]")
     pv.evaluate("e => e.scrollTop = e.scrollHeight")  # 文档滚到底
@@ -346,9 +347,108 @@ def run_bubble_v2(t):
     bottom_block = win.locator(".doc-para[data-anchor]").last
     bottom_block.click(button="right")
     pg.wait_for_timeout(600)
-    pop2 = pg.locator(".doc-bubble-pop").first
+    pop2 = pg.locator(".doc-bubble-pop:not([hidden])").first  # 只看可见泡(折叠的旧壳留 DOM)
     t.check("贴底锚点:向上翻转(doc-bubble-up)",
             pop2.count() > 0 and "doc-bubble-up" in (pop2.get_attribute("class") or ""),
             f"class={pop2.get_attribute('class') if pop2.count() else '无'}")
     pg.screenshot(path=f"{shots}/bubble-v2-flip.png")
     t.no_errors("W-bubble v2 全程无 JS 错误")
+
+
+def run_bubble_v3(t):
+    """气泡交互 v3(用户裁决 2026-08-11):原位开泡/选区关联/点外收起原位图标/
+    图标重开草稿在/垃圾桶删除(后端同步)。"""
+    import os
+    shots = os.path.join(os.path.dirname(__file__), ".shots")
+    os.makedirs(shots, exist_ok=True)
+
+    pg = t.open("/platform/")
+    pg.wait_for_selector(".dt-icon", timeout=10000)
+    pg.wait_for_timeout(400)
+    pg.locator('.dt-icon[data-desk-open="conversation"]').click()
+    pg.wait_for_timeout(500)
+    ta = pg.locator("[data-cv-input]")
+    ta.fill("文档列表")
+    ta.press("Enter")
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=15000)
+    pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
+    pg.wait_for_timeout(1500)
+    win = pg.locator(".dt-win")
+
+    # ① 段落中段右键 → 气泡在该点旁(原位浮出)
+    block = win.locator(".doc-para[data-anchor]").nth(1)
+    bb = block.bounding_box()
+    cx, cy = bb["x"] + bb["width"] * 0.4, bb["y"] + bb["height"] / 2
+    block.click(button="right", position={"x": bb["width"] * 0.4, "y": bb["height"] / 2})
+    pg.wait_for_timeout(600)
+    pop = pg.locator(".doc-bubble-pop").first
+    t.check("原位开泡:壳出现", pop.count() > 0)
+    if pop.count():
+        pb = pop.bounding_box()
+        t.check("原位:壳在点击点旁(非段首/段尾)",
+                abs(pb["y"] - cy) < 90 and pb["x"] > bb["x"] + bb["width"] * 0.2,
+                f"pop=({pb['x']:.0f},{pb['y']:.0f}) click=({cx:.0f},{cy:.0f})")
+        pg.screenshot(path=f"{shots}/bubble-v3-inplace.png")
+    t.no_errors("原位开泡无 JS 错误")
+
+    # ② 选定文字右键 → quote = 选中文本(anchor 带列范围)
+    # (须在普通段落块上拖选——标题/列表独占块渲染与源有符号差,回落行级)
+    pg.locator("[data-bubble-x]").first.click()  # 收起 ① 的泡(控件内 ✕)
+    pg.wait_for_timeout(300)
+    # 用鼠标拖选第二段(普通段落)前几个字
+    b1 = win.locator(".doc-para[data-anchor]").nth(1)
+    r1 = b1.bounding_box()
+    pg.mouse.move(r1["x"] + 24, r1["y"] + r1["height"] / 2)
+    pg.mouse.down()
+    pg.mouse.move(r1["x"] + 150, r1["y"] + r1["height"] / 2, steps=6)
+    pg.mouse.up()
+    pg.wait_for_timeout(200)
+    sel_text = pg.evaluate("() => String(getSelection())")
+    b1.click(button="right", position={"x": 60, "y": r1["height"] / 2})
+    pg.wait_for_timeout(600)
+    quote = pg.locator(".doc-bubble-pop .w-bubble-quote").first.inner_text()
+    t.check("选区右键:quote = 选中文本", bool(sel_text) and sel_text[:6] in quote,
+            f"sel={sel_text[:20]!r} quote={quote[:30]!r}")
+    child_ids = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().map(s => s.id)")
+    has_col = any(":C" in i for i in child_ids)
+    t.check("选区右键:anchor 带列范围(:C)", has_col, f"ids={child_ids[-2:]}")
+    pg.screenshot(path=f"{shots}/bubble-v3-selection.png")
+    t.no_errors("选区关联无 JS 错误")
+
+    # ③ 输入草稿 → 点泡外 → 缩成图标在原位附近(非段首);点图标重开草稿在
+    pg.locator("[data-bubble-draft]").first.fill("v3 草稿不丢验证")
+    pg.wait_for_timeout(200)
+    pg.locator(".dt-win-body").click(position={"x": 40, "y": 120})  # 点泡外
+    pg.wait_for_timeout(400)
+    t.check("点泡外:壳收起", pop.count() == 0 or not pop.is_visible())
+    marker = pg.locator(".doc-bubble-marker").first
+    t.check("点泡外:原位标记显出", marker.count() > 0 and marker.is_visible())
+    if marker.count():
+        mb = marker.bounding_box()
+        t.check("标记在原位附近(锚点行旁,非段首)", mb["y"] > r1["y"] - 4, f"my={mb['y']:.0f}")
+        pg.screenshot(path=f"{shots}/bubble-v3-marker.png")
+        marker.click()
+        pg.wait_for_timeout(500)
+        t.check("点标记:泡重开", pg.locator(".doc-bubble-pop").first.is_visible())
+        draft_val = pg.locator("[data-bubble-draft]").first.input_value()
+        t.check("重开:草稿逐字在(收起≠删除)", draft_val == "v3 草稿不丢验证", f"draft={draft_val!r}")
+    t.no_errors("点外收起/重开无 JS 错误")
+
+    # ④ 垃圾桶:两击删除 → 壳消失 + 后端记录删除(重拉不含)
+    anchor_col = next((i for i in child_ids if ":C" in i), None)
+    del_btn = pg.locator("[data-bubble-del]").first
+    t.check("垃圾桶在泡头", del_btn.count() > 0)
+    del_btn.click()  # 第一击武装
+    pg.wait_for_timeout(250)
+    pg.locator("[data-bubble-del]").first.click()  # 第二击确认
+    pg.wait_for_timeout(800)
+    t.check("垃圾桶:气泡消失", pg.locator(".doc-bubble-pop").count() == 0
+            or not pg.locator(".doc-bubble-pop").first.is_visible())
+    t.check("垃圾桶:compound 子件摘除", anchor_col not in pg.evaluate(
+        "() => __desktop.child('demo.test').children_snapshot().map(s => s.id)"))
+    if anchor_col:
+        rest = pg.evaluate("() => fetch('/platform/api/docs/demo.test/bubbles').then(r => r.json())")
+        t.check("垃圾桶:后端重拉不含该批注(持久化已删)",
+                not any(b.get("anchor") == anchor_col for b in rest),
+                f"rest anchors={[b.get('anchor') for b in rest]}")
+    t.no_errors("垃圾桶删除全程无 JS 错误")

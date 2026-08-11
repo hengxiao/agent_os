@@ -2076,7 +2076,7 @@ console.log("widgets.test.mjs: W6.6 ruling assertions passed");
     "platform.css 旧 .pf-dline[data-kind] 冲突规则已删(视觉归 widget)");
   // doc-editor 组装:气泡引用块透传/失败走控件失败态/C3 compound 化
   const ded = readFileSync(new URL("../../../web_platform/static/doc-editor.js", import.meta.url), "utf8");
-  assert.ok(ded.includes("quote: blockTextOf(anchor)"), "bubble anchor.quote 透传锚段摘录(§3.13 锚点块)");
+  assert.ok(ded.includes("quote: quote ?? blockTextOf(anchor)"), "bubble anchor.quote 透传锚段摘录(§3.13 锚点块)");
   assert.ok(ded.includes("notifyError"), "发送失败走控件失败态(行内红条 + 重试)");
   assert.ok(ded.includes("createCompound") && ded.includes('kind: "doc-editor"'), "C3:doc-editor = compound(docs/COMPOUND-WIDGET.md §9)");
   assert.ok(ded.includes('allow: ["chat-bubble"]'), "C3:段落批注 = 动态 chat-bubble 子件(白名单)");
@@ -2236,3 +2236,50 @@ const { bubbleLongMsg, bubbleNewFrom } = await import("../js/widgets/w-bubble.re
 }
 
 console.log("widgets.test.mjs: W-bubble v2 assertions passed");
+
+/* ── W-bubble v3(用户裁决 2026-08-11;docs/WIDGET-DESIGN.md §3.13 v3)──
+   锚点列范围解析(parseAnchor 兼容旧行级)+ delete action(协议:action 必是
+   skill,local 也是)+ header 垃圾桶(两击确认上行 delete)+ 选区 quote 透传 */
+
+{
+  // parseAnchor:列范围 + 旧行级兼容 + 非法拒
+  const { parseAnchor } = await import("../../../web_platform/static/doc-editor.js");
+  assert.deepEqual(parseAnchor("doc.md#L7-L9"), { start: 7, end: 9, sc: null, ec: null }, "旧行级 anchor 兼容");
+  assert.deepEqual(parseAnchor("doc.md#L7:C3-L9:C10"), { start: 7, end: 9, sc: 3, ec: 10 }, "列范围解析");
+  assert.deepEqual(parseAnchor("doc.md#L2:C5-L2:C9"), { start: 2, end: 2, sc: 5, ec: 9 }, "单行选区");
+  assert.equal(parseAnchor("doc.md#L7-L9-C3"), null, "坏格式拒");
+  assert.equal(parseAnchor("plan.md#L7-L9"), null, "非 doc.md 拒");
+}
+
+{
+  // delete action 声明(协议原则:action 必是 skill,local 也是)+ 事件面
+  const { BUBBLE_DEF } = await import("../js/widgets/index.js");
+  const del = BUBBLE_DEF.actions.find((a) => a.id === "delete");
+  assert.ok(del && del.exec === "local", "delete action 声明(exec:local)");
+  assert.ok(BUBBLE_DEF.events.includes("delete"), "delete 事件声明(上行面)");
+  const h = renderBubble({ anchor: { member: "m", path: "plan.md#L7-L7", quote: "q" }, messages: [], busy: false, draft: "" });
+  assert.ok(h.includes("data-bubble-del"), "header 垃圾桶在(v3)");
+  assert.ok(h.includes("data-bubble-x"), "✕ 收起保持");
+}
+
+{
+  // 垃圾桶两击:第一击武装(不上行),第二击 emit delete(一次)
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const w = mountBubble(host, { anchor: { member: "m", path: "p#L1-L1" }, seedMessages: [] });
+  const dels = [];
+  w.on("delete", (p) => dels.push(p.anchor));
+  const btn = new StubEl("button");
+  btn.dataset.bubbleDel = "1";
+  btn.closest = (sel) => (sel === "[data-bubble-del]" ? btn : null);
+  host.trigger("click", { target: btn });
+  assert.equal(dels.length, 0, "第一击只武装(不上行)");
+  assert.equal(btn.dataset.armed, "1", "armed 标记");
+  host.trigger("click", { target: btn });
+  assert.equal(dels.length, 1, "第二击上行 delete(一次)");
+  assert.equal(dels[0].path, "p#L1-L1", "delete 负载带锚点(父级据此 remove_child + 删持久化)");
+}
+
+console.log("widgets.test.mjs: W-bubble v3 assertions passed");

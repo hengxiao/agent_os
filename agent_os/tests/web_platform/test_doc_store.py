@@ -713,3 +713,48 @@ def test_doc_list_card_dedupes():
         docs=[{"name": "demo.test", "title": "A"}, {"name": "demo.test", "title": "A2"}, {"name": "a.b"}]
     )
     assert [d["name"] for d in card["data"]["docs"]] == ["demo.test", "a.b"], "同名去重(先见为准)"
+
+
+def test_bubble_delete(store):
+    """v3 批注删除:delete_bubble 删持久化;缺流/缺文档 → FileNotFoundError。"""
+    store.create("design.new_ui", text="x")
+    store.save_bubble("design.new_ui", "doc.md#L1-L3", {"role": "user", "text": "这段绕?"})
+    store.save_bubble("design.new_ui", "doc.md#L5:C2-L6:C4", {"role": "user", "text": "选区批注"})
+    assert len(store.read_bubbles("design.new_ui")) == 2
+    store.delete_bubble("design.new_ui", "doc.md#L1-L3")
+    rest = store.read_bubbles("design.new_ui")
+    assert [b["anchor"] for b in rest] == ["doc.md#L5:C2-L6:C4"], "删除后只剩选区批注(列范围锚点)"
+    with pytest.raises(FileNotFoundError):
+        store.delete_bubble("design.new_ui", "doc.md#L1-L3")  # 再删 → 不存在
+    with pytest.raises(FileNotFoundError):
+        store.delete_bubble("no.such", "doc.md#L1-L1")  # 文档不存在
+
+
+def test_bubble_delete_endpoint(tmp_path):
+    """v3 删除端点:POST /api/docs/<name>/bubbles/delete;格式 400/幂等/删后读面不含。"""
+    from fastapi.testclient import TestClient
+
+    from agent_os.host.web_platform.app import create_platform_app
+
+    client = TestClient(create_platform_app(manager=_FakeManager(), lab_store=None, artifacts_root=tmp_path))
+    client.post("/api/docs", json={"name": "design.new_ui", "title": "新 UI", "text": "# 概述\n内容\n"})
+    r0 = client.post("/api/docs/design.new_ui/bubbles/delete", json={"anchor": "doc.md#L1-L1"})
+    assert r0.status_code == 200 and r0.json()["deleted"] is False, "删除幂等:无流也 200(deleted=false)"
+    assert client.post("/api/docs/design.new_ui/bubbles/delete",
+                       json={"anchor": "坏锚点"}).status_code == 400, "格式非法 → 400"
+    r0c = client.post("/api/docs/design.new_ui/bubbles/delete", json={"anchor": "doc.md#L1:C2-L3:C9"})
+    assert r0c.status_code == 200 and r0c.json()["deleted"] is False, "列范围格式合法(新 RE 兼容)"
+    # 直接落一条流(夹具目录可达),再走端点删 → 读面不含(重拉无该批注)
+    import hashlib
+    import json as _json
+
+    anchor = "doc.md#L2-L2"
+    bdir = tmp_path / "docs" / "design.new_ui" / "bubbles"
+    bdir.mkdir(parents=True)
+    (bdir / f"{hashlib.sha1(anchor.encode()).hexdigest()[:12]}.json").write_text(
+        _json.dumps({"anchor": anchor, "messages": [{"role": "user", "text": "待删"}]}), encoding="utf-8"
+    )
+    assert any(b["anchor"] == anchor for b in client.get("/api/docs/design.new_ui/bubbles").json())
+    r = client.post("/api/docs/design.new_ui/bubbles/delete", json={"anchor": anchor})
+    assert r.status_code == 200 and r.json()["deleted"] is True
+    assert not any(b["anchor"] == anchor for b in client.get("/api/docs/design.new_ui/bubbles").json()),         "删除后读面不含该批注"

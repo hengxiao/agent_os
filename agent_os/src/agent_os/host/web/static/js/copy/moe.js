@@ -351,6 +351,8 @@ export const COPY = {
   "w.bubble.fail": "发送失败,看看网络",
   "w.bubble.retry": "重试",
   "w.bubble.close": "收起来",
+  "w.bubble.del": "删掉批注喵",
+  "w.bubble.del.confirm": "再点一下确认删喵",
   "w.bubble.expand": "展开喵",
   "w.bubble.collapse": "折叠喵",
   "w.bubble.newpill": "↓ 新消息喵",

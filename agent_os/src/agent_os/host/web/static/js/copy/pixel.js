@@ -358,6 +358,8 @@ export const COPY = {
   "w.bubble.fail": "SEND FAILED",
   "w.bubble.retry": "RETRY",
   "w.bubble.close": "FOLD",
+  "w.bubble.del": "DELETE NOTE",
+  "w.bubble.del.confirm": "CLICK AGAIN TO CONFIRM",
   "w.bubble.expand": "EXPAND",
   "w.bubble.collapse": "FOLD",
   "w.bubble.newpill": "↓ NEW",

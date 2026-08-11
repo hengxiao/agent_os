@@ -94,10 +94,12 @@ export function mdBlocks(text) {
   return blocks;
 }
 
-/* 锚点解析(doc.md#L<start>-L<end> → {start, end};非法 → null) */
+/* 锚点解析(v3 用户裁决 2026-08-11):doc.md#L<start>[:C<col>]-L<end>[:C<col>]
+   → {start, end, sc, ec}(列可空;旧行级 anchor 向后兼容,sc/ec = null) */
 export function parseAnchor(anchor) {
-  const m = /^doc\.md#L(\d+)-L(\d+)$/.exec(String(anchor ?? ""));
-  return m ? { start: Number(m[1]), end: Number(m[2]) } : null;
+  const m = /^doc\.md#L(\d+)(?::C(\d+))?-L(\d+)(?::C(\d+))?$/.exec(String(anchor ?? ""));
+  if (!m) return null;
+  return { start: Number(m[1]), end: Number(m[3]), sc: m[2] != null ? Number(m[2]) : null, ec: m[4] != null ? Number(m[4]) : null };
 }
 
 /* C4.2:工厂与挂载分离——只建实例(def/compound/闭包事实源),不碰 DOM;
@@ -187,12 +189,17 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
      交互面唯一;窗口摘 view(最小化)期间渲染写空树无害,重挂即更新。 */
   let cur = null; // {host, preview, chatLog, chatInput, chars, dirtyEl}
 
-  /* 段落原文(cascade widget 级 fragment:锚点段 + 全文) */
+  /* 段落原文(cascade widget 级 fragment:锚点段 + 全文;v3:列范围时取选中跨度) */
   function blockTextOf(anchor) {
     const range = parseAnchor(anchor);
     if (!range) return "";
     const lines = currentText.split("\n");
-    return lines.slice(range.start - 1, range.end).join("\n");
+    if (range.sc == null) return lines.slice(range.start - 1, range.end).join("\n");
+    const seg = lines.slice(range.start - 1, range.end);
+    if (!seg.length) return "";
+    seg[seg.length - 1] = seg[seg.length - 1].slice(0, range.ec != null ? range.ec - 1 : undefined);
+    seg[0] = seg[0].slice(range.sc - 1);
+    return seg.join("\n");
   }
 
   /* layout(纯;state 驱动):preview = 段落块 chrome(与 D5 同构),
@@ -229,8 +236,9 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
   function _rehangShells() {
     if (!cur || inst.state.view === "source") return;
     for (const entry of bubbles.values()) {
+      // v3:壳按块级锚点归位(列范围锚点不对应块;块内偏移在 entry.offTop)
       const block = [...cur.preview.children].find(
-        (c) => c !== entry.el && c !== entry.marker && c.dataset?.anchor === entry.anchor
+        (c) => c !== entry.el && c !== entry.marker && c.dataset?.anchor === entry.blockAnchor
       );
       (block ?? cur.preview).appendChild(entry.el);
       if (entry.marker) (block ?? cur.preview).appendChild(entry.marker);
@@ -249,22 +257,32 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     return Math.max(0, assistant - Math.min(_seenGet(entry.anchor), assistant));
   }
 
-  /* 气泡壳高度算法(v2 · 宿主壳几何;§3.13 v2 B):开泡/滚动/resize 时按
-     锚点与视口空间精算——首选下方展开,spaceBelow < 240 且上方更大 → 翻转
-     向上(doc-bubble-up);maxHeight = clamp(200px, 45vh, 可用−16px)。
-     stub/无布局环境静默(切割线:壳几何归宿主,卡面 render 不动)。 */
+  /* 气泡壳高度算法(v2 · 宿主壳几何;§3.13 v2 B;v3 按 point 块内偏移):
+     开泡/滚动/resize 时按锚点与视口空间精算——首选下方展开,spaceBelow < 240
+     且上方更大 → 翻转向上(doc-bubble-up,top↔bottom 随翻);maxHeight =
+     clamp(200px, 45vh, 可用−16px)。stub/无布局环境静默(切割线:壳几何归宿主)。 */
   function _fitBubble(entry) {
-    const block = [...(cur?.preview.children ?? [])].find((c) => c.dataset?.anchor === entry.anchor);
+    const block = [...(cur?.preview.children ?? [])].find((c) => c.dataset?.anchor === entry.blockAnchor);
     const rect = block?.getBoundingClientRect?.();
     if (!rect) return;
+    const pointY = rect.top + (entry.offTop ?? 24); // 锚点(点击点/选区)的视口纵位
     const vh = globalThis.innerHeight ?? 900;
-    const spaceBelow = vh - rect.bottom - 16;
-    const spaceAbove = rect.top - 16;
+    const spaceBelow = vh - pointY - 16;
+    const spaceAbove = pointY - 16;
     const up = spaceBelow < 240 && spaceAbove > spaceBelow;
     const avail = Math.max(0, (up ? spaceAbove : spaceBelow) - 16);
     const maxH = Math.round(Math.max(200, Math.min(vh * 0.45, avail)));
     entry.el.style.maxHeight = `${maxH}px`;
     entry.el.classList.toggle("doc-bubble-up", up);
+    if (entry.offTop != null) {
+      if (up) {
+        entry.el.style.top = "auto";
+        entry.el.style.bottom = `${Math.round(Math.max(4, rect.height - entry.offTop + 16))}px`;
+      } else {
+        entry.el.style.bottom = "auto";
+        entry.el.style.top = `${Math.round(entry.offTop)}px`;
+      }
+    }
   }
   const _refitBubbles = () => {
     for (const entry of bubbles.values()) {
@@ -272,10 +290,49 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     }
   };
 
+  /* 选区 → 行列范围锚点(v3 用户裁决):普通段落块做列级映射(mdToHtml 后
+     文本与源一致);特殊独占块(标题/列表/表格)渲染与源有 markdown 符号差,
+     回落行级(quote 仍是选中文本)。失败 → null(调用方回落行级)。 */
+  function _domTextOffset(root, node, offset) {
+    const docu = root.ownerDocument ?? globalThis.document;
+    const walker = docu.createTreeWalker?.(root, 4 /* NodeFilter.SHOW_TEXT */);
+    if (!walker) return null;
+    let acc = 0;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (n === node) return acc + offset;
+      acc += (n.nodeValue ?? "").length;
+    }
+    return null;
+  }
+
+  function _selectionAnchor(block, sel) {
+    const base = parseAnchor(block?.dataset?.anchor ?? "");
+    if (!base) return null;
+    // 标记语法块(#/-/* /| 前缀)渲染文与源有符号差,列映射不可靠 → 回落行级
+    // (普通段落单行/多行 textContent≈源文,可做列级映射)
+    const srcFirst = currentText.split("\n")[base.start - 1] ?? "";
+    if (/^(#{1,6}\s|\s*[-*]\s|\s*\|)/.test(srcFirst)) return null;
+    const range = sel.getRangeAt?.(0);
+    if (!range) return null;
+    const text = block.textContent ?? "";
+    const offS = _domTextOffset(block, range.startContainer, range.startOffset);
+    const offE = _domTextOffset(block, range.endContainer, range.endOffset);
+    if (offS == null || offE == null || offE <= offS) return null;
+    const upS = text.slice(0, offS);
+    const upE = text.slice(0, offE);
+    const ls = base.start + upS.split("\n").length - 1;
+    const le = base.start + upE.split("\n").length - 1;
+    if (le > base.end) return null;
+    const cs = offS - (upS.lastIndexOf("\n") + 1) + 1;
+    const ce = offE - (upE.lastIndexOf("\n") + 1) + 1;
+    return `doc.md#L${ls}:C${cs}-L${le}:C${ce}`;
+  }
+
   /* 开气泡(多条并存,各锚点独立;种子 = 持久化消息流,开关不丢;
      同锚点重开 = 聚焦,不重复建。C3:add_child + link_view 进壳;
-     view 被控件内 ✕ 摘过时重开先重挂。壳挂交互面 cur.preview) */
-  function openBubble(anchor, blockEl) {
+     view 被控件内 ✕ 摘过时重开先重挂。壳挂交互面 cur.preview。
+     v3:point = 右键点(原位浮出,该点旁);quote = 选区原文(列范围锚点)) */
+  function openBubble(anchor, blockEl, { point = null, quote = null } = {}) {
     if (!cur) return null;
     const existing = bubbles.get(anchor);
     if (existing) {
@@ -292,7 +349,7 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       return existing;
     }
     // compound add_child(段落批注 = 动态子件;canonical 持 state,view 由 link_view 挂)
-    const anchorState = { member: doc.name, path: anchor, quote: blockTextOf(anchor) };
+    const anchorState = { member: doc.name, path: anchor, quote: quote ?? blockTextOf(anchor) };
     const seed = (seedByAnchor[anchor] ?? []).map((m) => ({ role: m.role, text: m.text, ts: m.ts ?? m.at }));
     // v2 未读游标:首开的未读 assistant 数(分隔线插位;canonical 带 newFrom)
     const unreadN = Math.max(0, seed.filter((m) => m.role === "assistant").length - _seenGet(anchor));
@@ -302,20 +359,17 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
         newFrom: bubbleNewFrom(seed, unreadN), newpill: false },
       options: { anchor: anchorState, triggerPath: `${inst.path}/${anchor}`, seedMessages: seed, unread: unreadN },
     });
-    // 浮出定位壳(宿主职责,W5.4 切割线;结构同 D5:fold 首子 + body)
+    // 浮出定位壳(宿主职责,W5.4 切割线;v3:壳内不再自带 ✕——与卡面头部
+    // ✕/🗑 叠位冲突;收起 = 卡面 ✕(close 事件)/点泡外(v3)/Esc,语义同一)
     const wrap = (cur.host.ownerDocument ?? globalThis.document).createElement("div");
     wrap.className = "doc-bubble-pop";
     wrap.dataset.anchor = anchor;
-    const fold = (cur.host.ownerDocument ?? globalThis.document).createElement("button");
-    fold.className = "doc-bubble-fold";
-    fold.dataset.bubbleFold = "1";
-    fold.title = copy("platform.doc.fold");
-    fold.textContent = "✕";
-    wrap.appendChild(fold);
     const body = (cur.host.ownerDocument ?? globalThis.document).createElement("div");
     body.className = "doc-bubble-body";
     wrap.appendChild(body);
-    const parent = [...cur.preview.children].find((c) => c.dataset?.anchor === anchor) ?? blockEl ?? cur.preview;
+    // v3:壳归位到**块**级锚点(列范围锚点不对应任何块;块内偏移随 point)
+    const blockAnchor = blockEl?.dataset?.anchor ?? anchor;
+    const parent = [...cur.preview.children].find((c) => c.dataset?.anchor === blockAnchor) ?? blockEl ?? cur.preview;
     parent.appendChild(wrap);
     const marker = (cur.host.ownerDocument ?? globalThis.document).createElement("button");
     marker.className = "doc-bubble-marker";
@@ -323,11 +377,23 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     marker.dataset.anchor = anchor;
     marker.hidden = true;
     parent.appendChild(marker);
+    // v3 原位:point(右键点)给壳/标记的块内偏移;无 point = 旧语义(块顶 1.5em)
+    let offTop = null;
+    let offLeft = null;
+    const bRect = parent.getBoundingClientRect?.();
+    if (point && bRect) {
+      offTop = Math.max(4, point.y - bRect.top + 8);
+      offLeft = Math.max(8, Math.min(point.x - bRect.left, Math.max(8, bRect.width - 48)));
+      wrap.style.right = "auto";
+      wrap.style.left = `${Math.round(offLeft)}px`;
+      wrap.style.top = `${Math.round(offTop)}px`;
+      marker.style.top = `${Math.round(Math.max(0, offTop - 22))}px`; // 标记留在原位附近(行尾)
+    }
     // §5:view 挂进壳(link_view;hard link 视图,挂载点不限 slot 内)
     const view = bubbleInst.link_view(body, { surface: "tab" });
-    const entry = { inst: bubbleInst, view, el: wrap, body, marker, anchor, severity: "" };
+    const entry = { inst: bubbleInst, view, el: wrap, body, marker, anchor, blockAnchor, offTop, offLeft, severity: "" };
     bubbles.set(anchor, entry);
-    _fitBubble(entry); // v2:开泡即精算几何(宿主壳)
+    _fitBubble(entry); // v2/v3:开泡即精算几何(宿主壳)
     // D4:打开即记"已读"(seen 游标 = 当前 assistant 数)
     _seenSet(anchor, bubbleInst.state.messages.filter((m) => m.role === "assistant").length);
     view.live.focus?.();
@@ -359,8 +425,35 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       if (entry.marker) entry.marker.hidden = false;
       _seenSet(anchor, entry.inst.state.messages.filter((m) => m.role === "assistant").length);
       renderBubbleBar();
+      return;
+    }
+    if (event === "delete") {
+      _deleteBubble(entry, anchor); // v3:垃圾桶上行 → 摘除 + remove_child + 后端删持久化
     }
   });
+
+  /* v3:批注删除(控件 delete action → 闸门放行 → 此面):壳/标记摘除,
+     compound remove_child(destroy),后端端点删持久化(失败不挡 UI,读面是事实源) */
+  async function _deleteBubble(entry, anchor) {
+    entry.el.remove?.();
+    entry.marker?.remove?.();
+    bubbles.delete(anchor);
+    renderBubbleBar();
+    try {
+      inst.remove_child(anchor, { destroy: true });
+    } catch {
+      /* 已不在子表(防御) */
+    }
+    try {
+      await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/bubbles/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ anchor }),
+      });
+    } catch {
+      /* 删除失败不挡 UI(下一轮读面仍是事实源) */
+    }
+  }
 
   /* comment.send(§3 run+cascade):出海在父级(本组件)——专属端点 */
   async function _submitComment(entry, { anchor: a, text, cascade }) {
@@ -569,6 +662,26 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
      旧壳 #detailHost 跨 renderDetail 存活语义同前——永远转给最新实例) */
   async function onHostClick(e) {
     if (!cur) return;
+    // v3 用户裁决:点泡外收起(草稿不丢——壳藏起 + 原位标记显出;
+    // 覆盖 v2「点外不收起」,DESIGN §3.13 v3)。
+    // 注意:泡内控件点击(发送/删除/重试等)会先重渲卡面把事件目标摘出 DOM,
+    // 冒泡到这时 closest(".doc-bubble-pop") 已空——须按控件 data 面判内,
+    // 否则发送键一按就被误收(真实浏览器抓出)
+    const _BUBBLE_CTL = ["[data-bubble-send]", "[data-bubble-del]", "[data-bubble-retry]",
+      "[data-bubble-x]", "[data-more]", "[data-bubble-pill]", "[data-apply]", "[data-bubble-draft]"];
+    const _inPop = e.target.closest?.(".doc-bubble-pop") ||
+      _BUBBLE_CTL.some((sel) => e.target.closest?.(sel));
+    if (!_inPop && !e.target.closest?.("[data-bubble-marker]")) {
+      let folded = false;
+      for (const entry of bubbles.values()) {
+        if (!entry.el.hidden) {
+          entry.el.hidden = true;
+          if (entry.marker) entry.marker.hidden = false;
+          folded = true;
+        }
+      }
+      if (folded) renderBubbleBar();
+    }
     // D5:[发送] → 主对话一轮
     if (e.target.closest("[data-doc-chat-send]")) return sendChat();
     // UX 批:建议 chips(回填并发送)
@@ -584,18 +697,7 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       globalThis.localStorage?.setItem?.("doc.introSeen", "1");
       return;
     }
-    // UX 批:气泡浮出——✕ 收起为段旁标记
-    const foldBtn = e.target.closest("[data-bubble-fold]");
-    if (foldBtn) {
-      const wrapEl = foldBtn.closest(".doc-bubble-pop") ?? foldBtn.parentNode;
-      const entry = bubbles.get(wrapEl?.dataset?.anchor);
-      if (entry) {
-        entry.el.hidden = true;
-        if (entry.marker) entry.marker.hidden = false;
-        renderBubbleBar(); // 标记未读数刷新
-      }
-      return;
-    }
+    // UX 批:气泡浮出——壳内 ✕ 已并入卡面头部(v3;close 事件路径),此处无 fold 分支
     // UX 批:段旁标记 → 重新展开(openBubble early-return 记 seen;view 缺时重挂)
     const markerBtn = e.target.closest("[data-bubble-marker]");
     if (markerBtn) {
@@ -697,13 +799,22 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     // UX 批:一次性引导浮层(localStorage 记忆只显一次;关闭在 host 委托)
     const intro = viewHost.querySelector("[data-doc-intro]");
     if (intro) intro.hidden = globalThis.localStorage?.getItem?.("doc.introSeen") === "1";
-    // D5:右键(contextmenu)任意块 → 开 local 气泡(问问题/表达需求,不是主对话)
+    // D5/v3:右键(contextmenu)——原位开泡:选区在块内 → 行列范围锚点 +
+    // quote = 选中文本;无选区 → 点击点所在块(行级),壳浮在该点旁
     els.preview.addEventListener("contextmenu", (e) => {
       e.preventDefault?.();
       const block = e.target.closest?.("[data-anchor]") ??
         (e.target.dataset?.anchor ? e.target : null);
-      const anchor = block?.dataset?.anchor;
-      if (anchor) openBubble(anchor, block);
+      if (!block) return;
+      const lineAnchor = block.dataset.anchor;
+      const sel = (cur.host.ownerDocument ?? globalThis.document).getSelection?.();
+      let anchor = lineAnchor;
+      let quote = null;
+      if (sel && !sel.isCollapsed && String(sel).trim()) {
+        quote = String(sel);
+        anchor = _selectionAnchor(block, sel) ?? lineAnchor; // v3:选区关联(列可选)
+      }
+      openBubble(anchor, block, { point: { x: e.clientX, y: e.clientY }, quote });
     });
     // D2:段落锚点钮 → 开/聚焦对应气泡
     els.preview.addEventListener("click", (e) => {

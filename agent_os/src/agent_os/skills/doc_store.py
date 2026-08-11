@@ -210,6 +210,16 @@ class DocStore:
                 continue
         return out
 
+    def delete_bubble(self, name: str, anchor: str) -> None:
+        """删除锚点消息流(v3 气泡垃圾桶;删持久化文件)。流不存在 → FileNotFoundError。"""
+        d = self._dir(name)
+        if not d.is_dir():
+            raise FileNotFoundError(f"文档不存在: {name}")
+        path = d / "bubbles" / f"{hashlib.sha1(anchor.encode()).hexdigest()[:12]}.json"
+        if not path.is_file():
+            raise FileNotFoundError(f"批注不存在: {name} {anchor}")
+        path.unlink()
+
     # ------------------------------------------------------------------
     # chat(D5):doc 作用域主对话的消息流(chat.json;与 bubbles 区分——
     # chat 是主对话,bubbles 是段落批注,两个文件都留)

@@ -68,9 +68,11 @@ _log = logging.getLogger("agent_os.platform")
 #: 后端校验集在此,前端类名/copy 在 doc-editor.js,两端各一份单一事实源)
 DOC_SEVERITIES = ("must", "should", "nit")
 
-#: 锚点格式(docs/DOC-EDITOR.md §2.1):doc.md#L<start>-L<end>(1-based 行号区间;
+#: 锚点格式(docs/DOC-EDITOR.md §2.1;v3 用户裁决 2026-08-11):
+#: doc.md#L<start>[:C<col>]-L<end>[:C<col>](1-based 行号区间,列可选——
+#: 选区右键关联到列范围;旧行级 anchor 向后兼容);
 #: review 批注集校验用;platform.doc.apply 技能侧另有同形一份——skills/platform/)
-_ANCHOR_RE = re.compile(r"^doc\.md#L(\d+)-L(\d+)$")
+_ANCHOR_RE = re.compile(r"^doc\.md#L(\d+)(?::C(\d+))?-L(\d+)(?::C(\d+))?$")
 
 
 class MessageBody(BaseModel):
@@ -357,6 +359,25 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             return doc_store.read_bubbles(name)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/docs/{name}/bubbles/delete")
+    def delete_doc_bubble(name: str, body: dict[str, Any]) -> dict[str, Any]:
+        """批注删除(v3 用户裁决:气泡垃圾桶 → 上行到父 → 此端点删持久化)。
+
+        anchor 格式校验(列可选,行级向后兼容);**删除幂等**:流不存在也 200
+        (deleted=false)——前端对只开过没落盘的泡同样走这条路,不当错误面。
+        """
+        anchor = str(body.get("anchor") or "")
+        if not _ANCHOR_RE.match(anchor):
+            raise HTTPException(status_code=400, detail=f"锚点格式非法: {anchor!r}")
+        try:
+            doc_store.delete_bubble(name, anchor)
+            deleted = True
+        except FileNotFoundError:
+            deleted = False  # 幂等:本就不存在(只开过没落盘/别处已删)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"deleted": deleted, "anchor": anchor}
 
     @app.post("/api/docs/{name}/review")
     def doc_review(name: str) -> dict[str, Any]:

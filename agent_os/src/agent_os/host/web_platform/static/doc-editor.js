@@ -276,11 +276,18 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
   /* 气泡壳定位(widget-libs 试点:vendored Floating UI 替换手写几何)——
      computePosition(虚拟参考点(锚点块内偏移),壳,{placement:"bottom-start",
      middleware:[offset(8), flip(), shift({padding:16}), size(上限), arrow]});
-     v3 行为契约不变:原位开泡/翻转/maxHeight clamp(200px, 45vh, 可用−16)/
+     v3 行为契约不变:原位开泡/翻转/maxHeight clamp(200px, min(380,45vh), 可用−16)/
      标记原位。stub/无布局环境静默(切割线:壳几何归宿主,卡面 render 不动)。 */
   function _fitBubble(entry) {
     const block = [...(cur?.preview.children ?? [])].find((c) => c.dataset?.anchor === entry.blockAnchor);
     if (!block?.getBoundingClientRect) return;
+    // F2b(2026-08-13 验收):块零 rect(detached 旧块/过渡态)会把泡甩到页顶——
+    // 跳本拍,下一帧重试(重开路径已先重挂;stub/无 rAF 环境不守卫,照旧跑)
+    const br0 = block.getBoundingClientRect();
+    if (br0 && br0.width === 0 && br0.height === 0 && typeof requestAnimationFrame !== "undefined") {
+      requestAnimationFrame(() => { if (!entry.el.hidden) _fitBubble(entry); });
+      return;
+    }
     if (!entry._refEl) {
       // 虚拟参考点:块内偏移(点击点/选区);rect 每次现取——滚动随行(v3 原位语义)
       entry._refEl = {
@@ -304,8 +311,9 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
           padding: 16,
           apply({ availableHeight }) {
             const vh = globalThis.innerHeight ?? 900;
-            const maxH = Math.round(Math.max(200, Math.min(vh * 0.45, availableHeight - 16)));
-            entry.el.style.maxHeight = `${maxH}px`; // v2/v3 契约:clamp(200, 45vh, 可用−16)
+            // F3(2026-08-13 验收):380px 绝对上限,超出内滚(原 45vh 在高大屏上无顶)
+            const maxH = Math.round(Math.max(200, Math.min(Math.min(380, vh * 0.45), availableHeight - 16)));
+            entry.el.style.maxHeight = `${maxH}px`; // v3.2 契约:clamp(200, min(380,45vh), 可用−16)
           },
         }),
         ...(entry.arrowEl ? [arrow({ element: entry.arrowEl, padding: 6 })] : []),
@@ -488,6 +496,7 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       }
       existing.el.hidden = false; // 收起着的话先展开(重开 = 聚焦)
       if (existing.marker) existing.marker.hidden = true;
+      if (!existing.el.isConnected) _rehangShells(); // F2b:壳被布局重渲摘出时先挂回再定位
       _fitBubble(existing); // v2:重开重算几何
       // D4:重开也记"已读"(seen 游标随聚焦前进)
       _seenSet(anchor, existing.inst.state.messages.filter((m) => m.role === "assistant").length);
@@ -529,13 +538,15 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     marker.hidden = true;
     parent.appendChild(marker);
     // v3 原位:point(右键点)给虚拟参考点的块内偏移(间隙由 offset(8) 中间件给);
-    // 无 point = 旧语义(参考点落块右上);标记定位统一走 _placeMarker(v3.1)
+    // 无 point = 旧语义(参考点落块右上);
+    // F1(2026-08-13 验收):左缘 = 点击点块内偏移,只钳 8px 边距——
+    // 不再钳"块宽−48"(那会把泡吸到右缘呈固定面板);视口边界交给 shift(padding:16)
     let offTop = null;
     let offLeft = null;
     const bRect = parent.getBoundingClientRect?.();
     if (point && bRect) {
       offTop = Math.max(4, point.y - bRect.top);
-      offLeft = Math.max(8, Math.min(point.x - bRect.left, Math.max(8, bRect.width - 48)));
+      offLeft = Math.max(8, point.x - bRect.left);
     }
     // §5:view 挂进壳(link_view;hard link 视图,挂载点不限 slot 内)
     const view = bubbleInst.link_view(body, { surface: "tab" });
@@ -974,13 +985,23 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       const sel = (cur.host.ownerDocument ?? globalThis.document).getSelection?.();
       let anchor = lineAnchor;
       let quote = null;
+      // F2a(2026-08-13 验收):无效坐标(0,0/非有限——合成事件/过渡态)不当点位;
+      // 先按块矩形中心再试一次 caret 映射,仍不成才回落行级(该行已有行级泡则聚焦不新建)
+      const px = e.clientX, py = e.clientY;
+      const validPt = Number.isFinite(px) && Number.isFinite(py) && (px !== 0 || py !== 0);
       if (sel && !sel.isCollapsed && String(sel).trim()) {
         quote = String(sel);
         anchor = _selectionAnchor(block, sel) ?? lineAnchor; // v3:选区关联(列可选)
       } else {
-        anchor = _pointAnchor(block, e.clientX, e.clientY) ?? lineAnchor; // v3.1:点锚点(零宽)
+        if (validPt) anchor = _pointAnchor(block, px, py) ?? lineAnchor; // v3.1:点锚点(零宽)
+        if (anchor === lineAnchor) {
+          const br = block.getBoundingClientRect?.();
+          if (br && br.width > 0 && br.height > 0) {
+            anchor = _pointAnchor(block, br.left + br.width / 2, br.top + br.height / 2) ?? lineAnchor;
+          }
+        }
       }
-      openBubble(anchor, block, { point: { x: e.clientX, y: e.clientY }, quote });
+      openBubble(anchor, block, { point: validPt ? { x: px, y: py } : null, quote });
     });
     // D2:段落锚点钮 → 开/聚焦对应气泡;v3.1:点高亮区 = 重开对应泡
     els.preview.addEventListener("click", (e) => {

@@ -137,6 +137,7 @@ def run(t):
     run_bubble_v2(t)  # W-bubble v2(用户验收反馈 2026-08-11)
     run_bubble_v3(t)  # 气泡交互 v3(用户裁决 2026-08-11):原位/选区/点外收/垃圾桶
     run_bubble_v31(t)  # 行文级批注 v3.1(用户裁决):点锚点/多泡/高亮/标记跟选段
+    run_bubble_v32(t)  # 气泡 UX 验收修复 v3.2(2026-08-13):F1 点旁/F2 无效坐标/F3 380 封顶/F4 连发
 
 
 def run_scroll(t):
@@ -564,3 +565,105 @@ def run_bubble_v31(t):
         t.check("重渲后行内高亮仍在(relayout 重挂)", win.locator(".doc-hl").count() > 0,
                 f"hl={win.locator('.doc-hl').count()}")
     t.no_errors("v3.1 全程无 JS 错误")
+
+
+def run_bubble_v32(t):
+    """气泡 UX 验收修复(2026-08-13,F1–F4):F1 泡左缘=点击点旁(不吸右缘);
+    F2 无效坐标(0,0)回落(已有行级泡聚焦不新建)+ 不页顶跳;
+    F3 380px 绝对上限内滚;F4 连发按 composer DOM 当前值全入流。"""
+    import os
+    shots = os.path.join(os.path.dirname(__file__), ".shots")
+    os.makedirs(shots, exist_ok=True)
+
+    pg = t.open("/platform/")
+    pg.wait_for_selector(".dt-icon", timeout=10000)
+    pg.wait_for_timeout(400)
+    pg.locator('.dt-icon[data-desk-open="conversation"]').click()
+    pg.wait_for_timeout(500)
+    ta = pg.locator("[data-cv-input]")
+    ta.fill("文档列表")
+    ta.press("Enter")
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=15000)
+    pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
+    pg.wait_for_timeout(1500)
+    win = pg.locator(".dt-win")
+    vpop = ".doc-bubble-pop:not([hidden])"  # 只看可见泡(折叠壳留 DOM)
+
+    # ① F1:段内偏左右键 → 泡左缘 = 点击点旁(不吸行右缘),纵向在点击行下方
+    block = win.locator(".doc-para[data-anchor]").nth(1)
+    bb = block.bounding_box()
+    block.click(button="right", position={"x": 100, "y": bb["height"] / 2})
+    pg.wait_for_timeout(600)
+    pop = pg.locator(vpop).first
+    t.check("F1:点旁开泡壳出现", pop.count() > 0)
+    if pop.count():
+        pb = pop.bounding_box()
+        click_x, click_y = bb["x"] + 100, bb["y"] + bb["height"] / 2
+        t.check("F1:泡左缘 = 点击点旁(±60px)", abs(pb["x"] - click_x) < 60,
+                f"pop_x={pb['x']:.0f} click_x={click_x:.0f}")
+        t.check("F1:不吸行右缘", pb["x"] < bb["x"] + bb["width"] - 100,
+                f"pop_x={pb['x']:.0f} block_right={bb['x'] + bb['width']:.0f}")
+        t.check("F1:纵向在点击行下方", pb["y"] >= click_y,
+                f"pop_y={pb['y']:.0f} click_y={click_y:.0f}")
+        pg.screenshot(path=f"{shots}/bubble-v32-point.png")
+    t.no_errors("F1 无 JS 错误")
+
+    # ② F2:合成 contextmenu(clientX/Y=0,无效坐标)→ 块中心重试 → 仍不成回落
+    # 行级;该行已有泡时再发 → 聚焦不新建(子件数不变);壳不页顶跳
+    pg.locator(".dt-win-body").click(position={"x": 40, "y": 120})  # 点泡外收 ① 的泡
+    pg.wait_for_timeout(400)
+    n0 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    pg.evaluate(
+        "() => { const b = document.querySelector('.dt-win .doc-para[data-anchor]');"
+        "b.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 0, clientY: 0})); }")
+    pg.wait_for_timeout(600)
+    n1 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    t.check("F2:无效坐标首发开泡(回落链建成一只)", n1 == n0 + 1, f"n0={n0} n1={n1}")
+    pop2 = pg.locator(vpop).first
+    y2 = pop2.bounding_box()["y"] if pop2.count() else -1
+    t.check("F2:泡可见且不页顶跳(y > 50)", pop2.count() > 0 and y2 > 50, f"y={y2:.0f}")
+    pg.evaluate(
+        "() => { const b = document.querySelector('.dt-win .doc-para[data-anchor]');"
+        "b.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 0, clientY: 0})); }")
+    pg.wait_for_timeout(600)
+    n2 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    t.check("F2:该块已有泡 → 聚焦不新建(子件数不变)", n2 == n1, f"n1={n1} n2={n2}")
+    t.no_errors("F2 无 JS 错误")
+
+    # ③ F3:30 条回复灌入 → min(380px, 45vh) 封顶(视口 900 → 45vh=405,
+    # 380 是绝对制约项)+ log 内滚
+    anchor = pg.evaluate(
+        "() => __desktop.child('demo.test').children_snapshot().map(s => s.id).filter(i => i !== 'doc').at(-1)")
+    pg.evaluate(
+        "(a) => { const live = __desktop.child('demo.test').child(a).views.at(-1).live;"
+        "for (let i = 0; i < 30; i++) live.receiveReply('v32 第 ' + i + ' 条批注回复,内容足够长,验证 380px 绝对封顶与内滚。'); }",
+        anchor)
+    pg.wait_for_timeout(500)
+    pop3 = pg.locator(vpop).first
+    pop_h = pop3.bounding_box()["height"]
+    ih = pg.evaluate("() => innerHeight")
+    cap = min(380, round(ih * 0.45))
+    t.check("F3:气泡 ≤ min(380px, 45vh)(绝对上限生效)", pop_h <= cap + 1,
+            f"h={pop_h:.0f} cap={cap} innerHeight={ih}")
+    log = pg.locator(f"{vpop} .w-bubble-log")
+    log_delta = log.evaluate("e => e.scrollHeight - e.clientHeight")
+    t.check("F3:log 内滚(scrollHeight > clientHeight)", log_delta > 100,
+            f"delta={log_delta}")
+    pg.screenshot(path=f"{shots}/bubble-v32-capped.png")
+    t.no_errors("F3 无 JS 错误")
+
+    # ④ F4:直写 composer value(不经 input 事件,draft 滞后场景)+ Enter 连发
+    # 5 条 → 全入流(发送读 DOM 当前值,不吞)
+    for i in range(5):
+        pg.evaluate(
+            "(i) => { const ta2 = document.querySelector('.doc-bubble-pop:not([hidden]) [data-bubble-draft]');"
+            "ta2.value = 'v32连发 ' + i;"
+            "ta2.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); }",
+            i)
+        pg.wait_for_timeout(120)
+    pg.wait_for_timeout(500)
+    log_text = pg.locator(f"{vpop} .w-bubble-log").inner_text()
+    got = [f"v32连发 {i}" in log_text for i in range(5)]
+    t.check("F4:直写 value 连发 5 条全入流(不吞)", all(got), f"got={got}")
+    pg.screenshot(path=f"{shots}/bubble-v32-burst.png")
+    t.no_errors("v3.2 全程无 JS 错误")

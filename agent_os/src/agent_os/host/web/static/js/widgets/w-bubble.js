@@ -118,7 +118,13 @@ export function mountBubble(
   }
 
   function _submit(retry = false) {
-    const text = retry ? widget.state.lastText : widget.state.draft.trim();
+    // F4(2026-08-13 验收):发送以 composer DOM 当前值为准——连发/脚本直写 value
+    // 不经 input 事件,state.draft 滞后会把后一条吞掉;retry 仍按 lastText 补发。
+    // 只采信真输入控件(stub region 面 div 也带空 value,不能当真)
+    const draftEl = host.querySelector("[data-bubble-draft]");
+    const domDraft = draftEl && /^(TEXTAREA|INPUT)$/.test(draftEl.tagName ?? "") && typeof draftEl.value === "string"
+      ? draftEl.value : null;
+    const text = retry ? widget.state.lastText : String(domDraft ?? widget.state.draft ?? "").trim();
     if (!text) return;
     if (retry) {
       queue.unshift(text); // 失败重试:补发同一文本(用户消息已在流,不重复追加)
@@ -129,8 +135,7 @@ export function mountBubble(
     widget.state.draft = "";
     widget.state.messages = [...widget.state.messages, { role: "user", text, ts: Date.now() / 1000 }];
     queue.push(text);
-    const ta = host.querySelector("[data-bubble-draft]");
-    if (ta) autosize(ta); // 清空后回 1 行
+    if (draftEl) autosize(draftEl); // 清空后回 1 行
     render(); // 用户消息先入流(不等回包)
     _pump();
   }

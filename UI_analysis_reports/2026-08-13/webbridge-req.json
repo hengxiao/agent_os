@@ -1,0 +1,1 @@
+{"action":"evaluate","args":{"code":"(() => { const body = document.body; const html = document.documentElement; return {bodyScrollTop: body.scrollTop, bodyScrollHeight: body.scrollHeight, bodyClientHeight: body.clientHeight, htmlScrollTop: html.scrollTop, htmlScrollHeight: html.scrollHeight, htmlClientHeight: html.clientHeight}; })()"},"session":"ux-annotation-test"}

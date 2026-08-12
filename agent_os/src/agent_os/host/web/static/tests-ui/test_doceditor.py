@@ -136,6 +136,7 @@ def run(t):
     run_scroll(t)  # 滚动层级重构(2026-08-12):锁视口/双栏独立滚/气泡封顶 + 截图
     run_bubble_v2(t)  # W-bubble v2(用户验收反馈 2026-08-11)
     run_bubble_v3(t)  # 气泡交互 v3(用户裁决 2026-08-11):原位/选区/点外收/垃圾桶
+    run_bubble_v31(t)  # 行文级批注 v3.1(用户裁决):点锚点/多泡/高亮/标记跟选段
 
 
 def run_scroll(t):
@@ -268,6 +269,10 @@ def run_bubble_v2(t):
     anchor = win.locator(".doc-para[data-anchor]").nth(1).get_attribute("data-anchor") or ""
     win.locator(".doc-para[data-anchor]").nth(1).click(button="right")
     pg.wait_for_timeout(600)
+    # v3.1:右键建的是点锚点(零宽 L:C-L:C),子件 id 从快照取(不猜列号)
+    anchor = pg.evaluate(
+        "() => __desktop.child('dev.longscroll').children_snapshot().map(s => s.id).filter(i => i !== 'doc').at(-1)"
+    ) or anchor
     pg.evaluate(
         "(anchor) => { const live = __desktop.child('dev.longscroll').child(anchor).views.at(-1).live;"
         "for (let i = 0; i < 30; i++) live.receiveReply('第 ' + i + ' 条批注回复,内容足够长,验证封顶与唯一滚动区。'); }",
@@ -406,41 +411,44 @@ def run_bubble_v3(t):
     sel_text = pg.evaluate("() => String(getSelection())")
     b1.click(button="right", position={"x": 60, "y": r1["height"] / 2})
     pg.wait_for_timeout(600)
-    quote = pg.locator(".doc-bubble-pop .w-bubble-quote").first.inner_text()
+    quote = pg.locator(".doc-bubble-pop:not([hidden]) .w-bubble-quote").first.inner_text()  # 只看可见泡(折叠壳留 DOM)
     t.check("选区右键:quote = 选中文本", bool(sel_text) and sel_text[:6] in quote,
             f"sel={sel_text[:20]!r} quote={quote[:30]!r}")
     child_ids = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().map(s => s.id)")
     has_col = any(":C" in i for i in child_ids)
     t.check("选区右键:anchor 带列范围(:C)", has_col, f"ids={child_ids[-2:]}")
+    # 本次开泡的锚点 = 快照最后一个子件(v3.1:点锚点/列范围列号不定,不猜)
+    anchor_col = [i for i in child_ids if i != "doc"][-1] if child_ids else None
     pg.screenshot(path=f"{shots}/bubble-v3-selection.png")
     t.no_errors("选区关联无 JS 错误")
 
     # ③ 输入草稿 → 点泡外 → 缩成图标在原位附近(非段首);点图标重开草稿在
-    pg.locator("[data-bubble-draft]").first.fill("v3 草稿不丢验证")
+    # (全程用可见泡作用域:折叠的旧壳留 DOM,别让 .first 撞上隐藏壳)
+    vpop = ".doc-bubble-pop:not([hidden])"
+    pg.locator(f"{vpop} [data-bubble-draft]").first.fill("v3 草稿不丢验证")
     pg.wait_for_timeout(200)
     pg.locator(".dt-win-body").click(position={"x": 40, "y": 120})  # 点泡外
     pg.wait_for_timeout(400)
-    t.check("点泡外:壳收起", pop.count() == 0 or not pop.is_visible())
-    marker = pg.locator(".doc-bubble-marker").first
-    t.check("点泡外:原位标记显出", marker.count() > 0 and marker.is_visible())
+    t.check("点泡外:壳收起", pg.locator(vpop).count() == 0)
+    marker = pg.locator(f'.doc-bubble-marker[data-anchor="{anchor_col}"]')  # ② 那只(① 的标记也在)
+    t.check("点泡外:原位标记显出", marker.count() > 0 and marker.first.is_visible())
     if marker.count():
-        mb = marker.bounding_box()
+        mb = marker.first.bounding_box()
         t.check("标记在原位附近(锚点行旁,非段首)", mb["y"] > r1["y"] - 4, f"my={mb['y']:.0f}")
         pg.screenshot(path=f"{shots}/bubble-v3-marker.png")
-        marker.click()
+        marker.first.click()
         pg.wait_for_timeout(500)
-        t.check("点标记:泡重开", pg.locator(".doc-bubble-pop").first.is_visible())
-        draft_val = pg.locator("[data-bubble-draft]").first.input_value()
+        t.check("点标记:泡重开", pg.locator(vpop).first.is_visible())
+        draft_val = pg.locator(f"{vpop} [data-bubble-draft]").first.input_value()
         t.check("重开:草稿逐字在(收起≠删除)", draft_val == "v3 草稿不丢验证", f"draft={draft_val!r}")
     t.no_errors("点外收起/重开无 JS 错误")
 
     # ④ 垃圾桶:两击删除 → 壳消失 + 后端记录删除(重拉不含)
-    anchor_col = next((i for i in child_ids if ":C" in i), None)
-    del_btn = pg.locator("[data-bubble-del]").first
+    del_btn = pg.locator(f"{vpop} [data-bubble-del]").first  # 可见泡内(隐藏壳留 DOM)
     t.check("垃圾桶在泡头", del_btn.count() > 0)
     del_btn.click()  # 第一击武装
     pg.wait_for_timeout(250)
-    pg.locator("[data-bubble-del]").first.click()  # 第二击确认
+    pg.locator(f"{vpop} [data-bubble-del]").first.click()  # 第二击确认
     pg.wait_for_timeout(800)
     t.check("垃圾桶:气泡消失", pg.locator(".doc-bubble-pop").count() == 0
             or not pg.locator(".doc-bubble-pop").first.is_visible())
@@ -452,3 +460,107 @@ def run_bubble_v3(t):
                 not any(b.get("anchor") == anchor_col for b in rest),
                 f"rest anchors={[b.get('anchor') for b in rest]}")
     t.no_errors("垃圾桶删除全程无 JS 错误")
+
+
+def run_bubble_v31(t):
+    """行文级批注(v3.1 用户裁决;docs/DOC-BUBBLE.md):点锚点/一行多泡/
+    行内高亮/点高亮重开/标记跟选段末/重渲高亮仍在。"""
+    import os
+    shots = os.path.join(os.path.dirname(__file__), ".shots")
+    os.makedirs(shots, exist_ok=True)
+
+    pg = t.open("/platform/")
+    pg.wait_for_selector(".dt-icon", timeout=10000)
+    pg.wait_for_timeout(400)
+    pg.locator('.dt-icon[data-desk-open="conversation"]').click()
+    pg.wait_for_timeout(500)
+    ta = pg.locator("[data-cv-input]")
+    ta.fill("文档列表")
+    ta.press("Enter")
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=15000)
+    pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
+    pg.wait_for_timeout(1500)
+    win = pg.locator(".dt-win")
+
+    # ① 同一行两个不同位置右键 → 两个点锚点泡(不同列),各自独立
+    block = win.locator(".doc-para[data-anchor]").nth(1)
+    bb = block.bounding_box()
+    block.click(button="right", position={"x": 40, "y": bb["height"] / 2})
+    pg.wait_for_timeout(500)
+    block.click(button="right", position={"x": min(bb["width"] - 20, 220), "y": bb["height"] / 2})
+    pg.wait_for_timeout(500)
+    ids = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().map(s => s.id)")
+    col_pts = [i for i in ids if ":C" in i]
+    t.check("一行两点右键 → 两个点锚点泡(零宽,列不同)", len(col_pts) >= 2, f"ids={col_pts}")
+    import re as _re
+    fmt_ok = all(
+        _re.match(r"^doc\.md#L(\d+):C(\d+)-L(\d+):C(\d+)$", i)
+        and _re.match(r"^doc\.md#L(\d+):C(\d+)-L(\d+):C(\d+)$", i).group(1)
+            == _re.match(r"^doc\.md#L(\d+):C(\d+)-L(\d+):C(\d+)$", i).group(3)
+        for i in col_pts
+    )
+    t.check("点锚点格式 Lx:Cy-Lx:Cy(零宽,同行)", fmt_ok, str(col_pts))
+    pops = pg.locator(".doc-bubble-pop:not([hidden])")
+    t.check("两泡同屏可见(一行多泡)", pops.count() >= 2, f"pops={pops.count()}")
+    pg.screenshot(path=f"{shots}/bubble-v31-two-per-line.png")
+    t.no_errors("一行多泡无 JS 错误")
+
+    # ② 选区 → 行内高亮在正确文本上(.doc-hl 内容 = 选中文本)
+    # 先收起 ① 的两只泡(壳 360px 宽会盖住下方文本,拖选会落在壳上)
+    pg.locator(".dt-win-body").click(position={"x": 40, "y": 60})
+    pg.wait_for_timeout(400)
+    b2 = win.locator(".doc-para[data-anchor]").nth(3)  # 另一普通段(标题块列映射回落行级)
+    r2 = b2.bounding_box()
+    pg.mouse.move(r2["x"] + 20, r2["y"] + r2["height"] / 2)
+    pg.mouse.down()
+    pg.mouse.move(r2["x"] + 130, r2["y"] + r2["height"] / 2, steps=6)
+    pg.mouse.up()
+    pg.wait_for_timeout(200)
+    sel_text = pg.evaluate("() => String(getSelection())")
+    b2.click(button="right", position={"x": 70, "y": r2["height"] / 2})
+    pg.wait_for_timeout(600)
+    # ② 的选区锚点(快照最后子件;给 ③ 的 marker 定位用)
+    sel_anchor = pg.evaluate(
+        "() => __desktop.child('demo.test').children_snapshot().map(s => s.id).filter(i => i !== 'doc').at(-1)")
+    hl = win.locator(".doc-hl").first
+    t.check("选区开泡:行内高亮出现", hl.count() > 0, f"hl={hl.count()}")
+    if hl.count():
+        hl_text = hl.inner_text()
+        t.check("高亮文本 = 选中文本", bool(sel_text) and hl_text == sel_text.strip(),
+                f"hl={hl_text[:24]!r} sel={sel_text[:24]!r}")
+    pg.screenshot(path=f"{shots}/bubble-v31-inline-hl.png")
+    t.no_errors("行内高亮无 JS 错误")
+
+    # ③ 标记在选段末(末矩形右侧,非一律行尾)
+    pg.locator(".dt-win-body").click(position={"x": 40, "y": 60})  # 点泡外收起全部
+    pg.wait_for_timeout(400)
+    if hl.count():
+        hl_r = hl.bounding_box()
+        mk = win.locator(f'.doc-bubble-marker[data-anchor="{sel_anchor}"]')  # ② 那只(① 的标记也在)
+        t.check("收起后标记在", mk.count() > 0)
+        if mk.count():
+            mk_r = mk.first.bounding_box()
+            t.check("标记跟选段末(右侧附近,非块右缘)",
+                    abs(mk_r["x"] - hl_r["x"] - hl_r["width"]) < 60,
+                    f"marker_x={mk_r['x']:.0f} hl_right={hl_r['x'] + hl_r['width']:.0f}")
+    # ④ 点高亮 → 重开对应泡(内容独立)
+    if hl.count():
+        hl.click()
+        pg.wait_for_timeout(500)
+        pop2 = pg.locator(".doc-bubble-pop:not([hidden])").first
+        t.check("点高亮:泡重开", pop2.count() > 0 and pop2.is_visible())
+        t.check("重开泡锚点 = 高亮锚点(带列)",
+                ":C" in (pg.locator(".doc-bubble-pop:not([hidden]) .w-bubble-title").first.inner_text() or ""))
+        pg.screenshot(path=f"{shots}/bubble-v31-click-hl.png")
+    t.no_errors("点高亮重开无 JS 错误")
+
+    # ⑤ 重渲后高亮仍在(view source 往返 → relayout → 重挂)
+    seg_src = pg.locator('.doc-viewseg [data-vm="source"]').first
+    if seg_src.count():
+        seg_src.click()
+        pg.wait_for_timeout(400)
+        pg.locator('.doc-viewseg [data-vm="preview"]').first.click()
+        pg.wait_for_timeout(500)
+        t.check("重渲后行内高亮仍在(relayout 重挂)", win.locator(".doc-hl").count() > 0,
+                f"hl={win.locator('.doc-hl').count()}")
+    t.no_errors("v3.1 全程无 JS 错误")

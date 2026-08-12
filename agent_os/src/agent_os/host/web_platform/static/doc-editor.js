@@ -104,6 +104,18 @@ export function parseAnchor(anchor) {
   return { start: Number(m[1]), end: Number(m[3]), sc: m[2] != null ? Number(m[2]) : null, ec: m[4] != null ? Number(m[4]) : null };
 }
 
+/* 列范围锚点 → 块内文本偏移(纯,导出;高亮包 mark/标记定位共用):
+   行级/零宽/越界 → null(行级锚点不出行内高亮) */
+export function anchorColOffsetsOf(text, anchor) {
+  const r = parseAnchor(anchor);
+  if (!r || r.sc == null || r.ec == null) return null;
+  if (r.start === r.end && r.sc === r.ec) return null; // 零宽点锚点:无文本不高亮
+  const lines = String(text ?? "").split("\n").slice(r.start - 1, r.end);
+  if (!lines.length) return null;
+  const head = lines.slice(0, -1).reduce((a, l) => a + l.length + 1, 0);
+  return { offS: r.sc - 1, offE: head + r.ec - 1 };
+}
+
 /* C4.2:工厂与挂载分离——只建实例(def/compound/闭包事实源),不碰 DOM;
    视图经 inst.mount_view(host) 挂(自包含骨架;可重挂,见文件头 C4.2 注)。 */
 export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, reload = null } = {}) {
@@ -250,6 +262,8 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
   const _relayout = () => {
     _baseRelayout();
     _rehangShells();
+    _paintHighlights(); // v3.1:行内高亮随重挂(幂等;双区同步)
+    for (const entry of bubbles.values()) _placeMarker(entry); // 标记跟选段末/点位
   };
   inst.relayout = _relayout; // C4.2:外部扇出(desktop 经 live.update)也带壳挂回
 
@@ -283,7 +297,8 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       strategy: "absolute", // 壳挂在锚点块内(offsetParent = 块)
       middleware: [
         offset(8),
-        flip(), // 空间不足 → 翻转向上(顶替手写 spaceBelow/spaceAbove 比较)
+        flip({ padding: 16 }), // 空间不足 → 翻转向上(与 shift 同 padding,
+        // 抗过渡/布局沉降期的瞬时误翻——实测 flake 抓出;v3 翻转语义不变)
         shift({ padding: 16 }),
         size({
           padding: 16,
@@ -321,12 +336,113 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     }
   };
 
-  /* 选区 → 行列范围锚点(v3 用户裁决):普通段落块做列级映射(mdToHtml 后
-     文本与源一致);特殊独占块(标题/列表/表格)渲染与源有 markdown 符号差,
-     回落行级(quote 仍是选中文本)。失败 → null(调用方回落行级)。 */
+  /* 点锚点(v3.1 行文级):无选区右键时,caretRangeFromPoint 把点击点映射为
+     行列 → 零宽点锚点 `L3:C8-L3:C8`;标记语法块回落行级(同选区规则);
+     无 caret 面/映射失败 → null(调用方回落行级)。 */
+  function _pointAnchor(block, x, y) {
+    const base = parseAnchor(block?.dataset?.anchor ?? "");
+    if (!base) return null;
+    const srcFirst = currentText.split("\n")[base.start - 1] ?? "";
+    if (/^(#{1,6}\s|\s*[-*]\s|\s*\|)/.test(srcFirst)) return null;
+    const docu = block.ownerDocument ?? globalThis.document;
+    let node = null;
+    let offset = 0;
+    if (docu.caretRangeFromPoint) {
+      const r = docu.caretRangeFromPoint(x, y);
+      if (!r) return null;
+      node = r.startContainer;
+      offset = r.startOffset;
+    } else if (docu.caretPositionFromPoint) {
+      const p = docu.caretPositionFromPoint(x, y);
+      if (!p) return null;
+      node = p.offsetNode;
+      offset = p.offset;
+    } else {
+      return null;
+    }
+    const off = _domTextOffset(block, node, offset);
+    if (off == null) return null;
+    const upto = (block.textContent ?? "").slice(0, off);
+    const line = base.start + upto.split("\n").length - 1;
+    if (line > base.end) return null;
+    const col = off - (upto.lastIndexOf("\n") + 1) + 1;
+    return `doc.md#L${line}:C${col}-L${line}:C${col}`; // 零宽点锚点
+  }
+
+  /* 列范围锚点 → 块内文本偏移(纯函数 anchorColOffsetsOf 的闭包面;
+     行级/零宽/越界 → null(行级锚点不出行内高亮) */
+  function anchorColOffsets(anchor) {
+    return anchorColOffsetsOf(currentText, anchor);
+  }
+
+  /* 行内高亮(v3.1):列范围锚点的文本包 .doc-hl(--live 浅底 + 底部细线,
+     Notion 式);按文本偏移 split text nodes 包 span;预览重渲后重挂
+     (与 _rehangShells 同周期,refresh 调);行级锚点维持段落左条,不出行内高亮 */
+  function _paintHighlights() {
+    if (!cur || inst.state.view === "source") return;
+    const docu = cur.host.ownerDocument ?? globalThis.document;
+    for (const entry of bubbles.values()) {
+      const offs = anchorColOffsets(entry.anchor);
+      if (!offs) continue;
+      const block = [...cur.preview.children].find((c) => c.dataset?.anchor === entry.blockAnchor);
+      if (!block?.textContent) continue;
+      if (block.querySelector?.(`.doc-hl[data-anchor="${entry.anchor}"]`)) continue; // 幂等(重挂不叠包)
+      const walker = docu.createTreeWalker?.(block, 4, _TEXT_FILTER); // 跳过泡壳/标记子树
+      if (!walker) continue;
+      const cuts = [];
+      let acc = 0;
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (typeof n.splitText !== "function") break; // stub 无文本节点操作面:静默
+        const len = (n.nodeValue ?? "").length;
+        const a = Math.max(offs.offS - acc, 0);
+        const b = Math.min(offs.offE - acc, len);
+        if (a < b) cuts.push([n, a, b]);
+        acc += len;
+      }
+      for (let i = cuts.length - 1; i >= 0; i--) { // 从后往前包,偏移不失效
+        const [n, a, b] = cuts[i];
+        const mid = n.splitText(a);
+        mid.splitText(b - a);
+        const mark = docu.createElement("span");
+        mark.className = "doc-hl";
+        mark.dataset.anchor = entry.anchor;
+        mid.parentNode.replaceChild(mark, mid);
+        mark.appendChild(mid);
+      }
+    }
+  }
+
+  /* 标记跟随(v3.1):列范围锚点的 marker 定位在锚点范围**末尾**(末矩形右侧);
+     零宽点锚点 → 点位旁;行级锚点 → 行尾(旧语义)。块内坐标,滚动随行。 */
+  function _placeMarker(entry) {
+    if (!entry.marker || !cur) return;
+    const block = [...cur.preview.children].find((c) => c.dataset?.anchor === entry.blockAnchor);
+    const bRect = block?.getBoundingClientRect?.();
+    if (!bRect) return;
+    const hl = [...(block.querySelectorAll?.(".doc-hl") ?? [])].find((e) => e.dataset?.anchor === entry.anchor);
+    if (hl) {
+      const r = hl.getBoundingClientRect();
+      entry.marker.style.right = "auto";
+      entry.marker.style.left = `${Math.round(r.right - bRect.left + 4)}px`;
+      entry.marker.style.top = `${Math.round(r.bottom - bRect.top - 6)}px`;
+      return;
+    }
+    if (entry.offTop != null) {
+      // 点锚点/无高亮:点位旁(offLeft/offTop)
+      entry.marker.style.right = "auto";
+      entry.marker.style.left = `${Math.round((entry.offLeft ?? 8) + 4)}px`;
+      entry.marker.style.top = `${Math.round(Math.max(0, entry.offTop - 14))}px`;
+    }
+    // 行级锚点:不动(CSS 默认 right:0 行尾)
+  }
+  /* 块内文本偏移(TreeWalker 累加;跳过泡壳/标记子树——它们挂在块内,
+     不剔除会把批注卡文本算进锚点偏移,v3.1 高亮/点锚点实测抓出) */
+  const _TEXT_FILTER = (n) =>
+    n.parentElement?.closest?.(".doc-bubble-pop,.doc-bubble-marker") ? 2 : 1; // REJECT 子树
+
   function _domTextOffset(root, node, offset) {
     const docu = root.ownerDocument ?? globalThis.document;
-    const walker = docu.createTreeWalker?.(root, 4 /* NodeFilter.SHOW_TEXT */);
+    const walker = docu.createTreeWalker?.(root, 4 /* NodeFilter.SHOW_TEXT */, _TEXT_FILTER);
     if (!walker) return null;
     let acc = 0;
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -413,20 +529,23 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     marker.hidden = true;
     parent.appendChild(marker);
     // v3 原位:point(右键点)给虚拟参考点的块内偏移(间隙由 offset(8) 中间件给);
-    // 无 point = 旧语义(参考点落块右上);标记留在原位附近(行尾)
+    // 无 point = 旧语义(参考点落块右上);标记定位统一走 _placeMarker(v3.1)
     let offTop = null;
     let offLeft = null;
     const bRect = parent.getBoundingClientRect?.();
     if (point && bRect) {
       offTop = Math.max(4, point.y - bRect.top);
       offLeft = Math.max(8, Math.min(point.x - bRect.left, Math.max(8, bRect.width - 48)));
-      marker.style.top = `${Math.round(Math.max(0, offTop - 14))}px`;
     }
     // §5:view 挂进壳(link_view;hard link 视图,挂载点不限 slot 内)
     const view = bubbleInst.link_view(body, { surface: "tab" });
     const entry = { inst: bubbleInst, view, el: wrap, body, marker, anchor, blockAnchor, offTop, offLeft, arrowEl, unfit: null, severity: "" };
     bubbles.set(anchor, entry);
     _fitBubble(entry); // 开泡即定位(Floating UI;widget-libs 试点)
+    _paintHighlights(); // v3.1:行内高亮(列范围锚点)
+    _rehangShells(); // add_child 触发的是基座内层 relayout(不经我们的 _relayout 包装),
+    // 先开的壳会被摘出 DOM——补挂回(一行多泡 v3.1 抓出;幂等)
+    _placeMarker(entry); // v3.1:标记跟选段末/点位
     // autoUpdate(开泡期间:文档滚动/窗口 resize/布局位移自动重算——
     // 顶替手工 scroll/resize 监听;隐藏不重算,删除/销毁时摘。
     // stub/无 window 环境静默(vendored 库触摸 window))
@@ -674,7 +793,7 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
   }
 
   function refresh() {
-    _relayout(); // compound relayout(preview 块 chrome / source slot 进出)+ 壳挂回
+    _relayout(); // compound relayout + 壳挂回 + 行内高亮/标记(均在 _relayout 内)
     renderChat();
     renderStatus();
     renderBubbleBar();
@@ -712,7 +831,8 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     const _BUBBLE_CTL = ["[data-bubble-send]", "[data-bubble-del]", "[data-bubble-retry]",
       "[data-bubble-x]", "[data-more]", "[data-bubble-pill]", "[data-apply]", "[data-bubble-draft]"];
     const _inPop = e.target.closest?.(".doc-bubble-pop") ||
-      _BUBBLE_CTL.some((sel) => e.target.closest?.(sel));
+      _BUBBLE_CTL.some((sel) => e.target.closest?.(sel)) ||
+      e.target.closest?.(".doc-hl"); // v3.1:高亮区 = 重开入口(开泡语义,非"泡外")
     if (!_inPop && !e.target.closest?.("[data-bubble-marker]")) {
       let folded = false;
       for (const entry of bubbles.values()) {
@@ -841,11 +961,13 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     // UX 批:一次性引导浮层(localStorage 记忆只显一次;关闭在 host 委托)
     const intro = viewHost.querySelector("[data-doc-intro]");
     if (intro) intro.hidden = globalThis.localStorage?.getItem?.("doc.introSeen") === "1";
-    // D5/v3:右键(contextmenu)——原位开泡:选区在块内 → 行列范围锚点 +
-    // quote = 选中文本;无选区 → 点击点所在块(行级),壳浮在该点旁
+    // D5/v3/v3.1:右键(contextmenu)——选区在块内 → 行列范围锚点(quote = 选中);
+    // 无选区 → caretRangeFromPoint 点锚点(零宽,该点行列);映射不成回落行级;
+    // 壳浮在该点旁(块限定 .doc-para,防 .doc-hl 的 data-anchor 抢 closest)
     els.preview.addEventListener("contextmenu", (e) => {
       e.preventDefault?.();
-      const block = e.target.closest?.("[data-anchor]") ??
+      const block = e.target.closest?.(".doc-para[data-anchor]") ??
+        e.target.closest?.("[data-anchor]") ??
         (e.target.dataset?.anchor ? e.target : null);
       if (!block) return;
       const lineAnchor = block.dataset.anchor;
@@ -855,14 +977,22 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       if (sel && !sel.isCollapsed && String(sel).trim()) {
         quote = String(sel);
         anchor = _selectionAnchor(block, sel) ?? lineAnchor; // v3:选区关联(列可选)
+      } else {
+        anchor = _pointAnchor(block, e.clientX, e.clientY) ?? lineAnchor; // v3.1:点锚点(零宽)
       }
       openBubble(anchor, block, { point: { x: e.clientX, y: e.clientY }, quote });
     });
-    // D2:段落锚点钮 → 开/聚焦对应气泡
+    // D2:段落锚点钮 → 开/聚焦对应气泡;v3.1:点高亮区 = 重开对应泡
     els.preview.addEventListener("click", (e) => {
+      const hl = e.target.closest?.(".doc-hl");
+      if (hl?.dataset?.anchor) {
+        const block = hl.closest?.(".doc-para[data-anchor]");
+        openBubble(hl.dataset.anchor, block);
+        return;
+      }
       const btn = e.target.closest("[data-anchor-btn]");
       if (!btn) return;
-      const block = btn.closest("[data-anchor]") ?? btn.parentNode;
+      const block = btn.closest(".doc-para[data-anchor]") ?? btn.closest("[data-anchor]") ?? btn.parentNode;
       const anchor = block?.dataset?.anchor;
       if (anchor) openBubble(anchor, block);
     });

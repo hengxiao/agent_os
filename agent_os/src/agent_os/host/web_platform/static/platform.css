@@ -316,6 +316,16 @@
 /* ── D2:段落锚点与气泡(docs/DOC-EDITOR.md §2.1)── */
 .doc-para { position: relative; padding-left: var(--s4); }
 
+/* 行内高亮(v3.1 行文级批注):列范围锚点的文本包 mark——
+   --live 12-18% 浅底 + 底部 2px 细线(Notion 式);点选重开对应泡 */
+.doc-hl {
+  background: color-mix(in srgb, var(--live) 15%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--live) 55%, transparent);
+  border-radius: 2px 2px 0 0;
+  cursor: pointer;
+}
+.doc-hl:hover { background: color-mix(in srgb, var(--live) 22%, transparent); }
+
 .doc-anchor-btn {
   position: absolute; left: 0; top: 0;
   border: 0; background: transparent; color: var(--fg-2);

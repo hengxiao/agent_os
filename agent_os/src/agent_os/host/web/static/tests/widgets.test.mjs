@@ -2395,3 +2395,26 @@ console.log("widgets.test.mjs: text-editor-cm assertions passed");
 }
 
 console.log("widgets.test.mjs: md-viewer-mi assertions passed");
+
+/* ── 行文级批注(v3.1 用户裁决;docs/DOC-BUBBLE.md)──
+   点锚点格式化(零宽)/列范围偏移纯函数/多锚点同段并存(结构面);
+   包 mark/标记定位的真实 DOM 行为断 tests-ui。 */
+
+{
+  const { parseAnchor, anchorColOffsetsOf } = await import("../../../web_platform/static/doc-editor.js");
+  // 点锚点:零宽(L3:C8-L3:C8)解析往返
+  assert.deepEqual(parseAnchor("doc.md#L3:C8-L3:C8"), { start: 3, end: 3, sc: 8, ec: 8 }, "零宽点锚点解析");
+  // 偏移纯函数:行级/零宽 → null(不出行内高亮);列范围 → 块内偏移
+  assert.equal(anchorColOffsetsOf("甲\n乙\n丙", "doc.md#L2-L2"), null, "行级锚点不出行内高亮");
+  assert.equal(anchorColOffsetsOf("甲乙丙", "doc.md#L1:C3-L1:C3"), null, "零宽点锚点不高亮");
+  assert.deepEqual(anchorColOffsetsOf("甲乙丙", "doc.md#L1:C2-L1:C4"), { offS: 1, offE: 3 }, "单行选区偏移(0基)");
+  assert.deepEqual(anchorColOffsetsOf("甲\n乙丙丁\n戊", "doc.md#L2:C2-L3:C2"), { offS: 1, offE: 5 }, "跨行选区偏移(块内坐标系,含换行符位)");
+  assert.equal(anchorColOffsetsOf("短", "doc.md#L9:C1-L9:C2"), null, "越界行 → null(防御)");
+  // 多锚点同段:同一行不同列范围各自成串(Map 键即锚点串,天然分立)
+  const a1 = "doc.md#L3:C4-L3:C9";
+  const a2 = "doc.md#L3:C12-L3:C18";
+  assert.notEqual(a1, a2);
+  assert.ok(parseAnchor(a1).sc !== parseAnchor(a2).sc, "同行不同列 = 不同锚点串(一行多泡前提)");
+}
+
+console.log("widgets.test.mjs: 行文级批注(v3.1)assertions passed");

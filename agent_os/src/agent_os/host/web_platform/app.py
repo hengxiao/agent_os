@@ -28,6 +28,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from agent_os.api.v1 import ChatRequest, Message, Role
 from agent_os.host.web_platform.apps import (
     AppInstanceStore,
     AppRegistry,
@@ -40,6 +41,11 @@ from agent_os.host.web_platform.artifacts import (
     build_escalation_card,
     build_table_card,
     validate_card,
+)
+from agent_os.host.web_platform.doc_generate import (
+    GenerateOutputError,
+    build_generate_messages,
+    parse_generate_output,
 )
 from agent_os.host.web_platform.orchestrator import Orchestrator, human_error
 from agent_os.host.web_platform.sessions import SessionStore, new_message
@@ -59,6 +65,7 @@ from agent_os.skills.platform import (
     build_platform_kernel,
     platform_skill_names,
 )
+from agent_os.skills.reanchor import reanchor_annotations
 from agent_os.tools.lab_tools import register_doc_tools
 
 _log = logging.getLogger("agent_os.platform")
@@ -161,6 +168,21 @@ class DocChatBody(BaseModel):
     doc 作用域主对话的一轮——只有用户消息;全文/批注由服务端自己装信封。"""
 
     text: str = ""
+
+
+class DocGenerateBody(BaseModel):
+    """``POST /api/docs/{name}/generate``(P1,批注批处理工作流 v2 设计 §7.2):
+
+    - ``baseVersion``:基于哪个版本生成(int 序号或 "vNNN";缺省 = 当前最新快照),
+      与当前不符 → 409(裁决 C5 版本冲突);
+    - ``chatContext``:chat 上下文(缺省 = 主对话最近 20 条);
+    - ``annotations``:待处理批注(缺省 = 库内全部 pending);
+    - ``userPrompt``:本次生成的附加指令(可选)。"""
+
+    baseVersion: Any = None
+    chatContext: list[dict[str, Any]] | None = None
+    annotations: list[dict[str, Any]] | None = None
+    userPrompt: str | None = None
 
 
 #: 升权档 → 人话(W2 decisions 聚合字段;摘要层禁 tier 术语,前端按 tier 自取 copy,
@@ -559,6 +581,139 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         doc_store.save_chat(name, {"role": "user", "text": body.text})
         doc_store.save_chat(name, {"role": "assistant", "text": reply})
         return {"reply": reply, "changed": changed}
+
+    @app.post("/api/docs/{name}/generate")
+    def doc_generate(name: str, body: DocGenerateBody) -> dict[str, Any]:
+        """批注批处理生成(P1,设计 v2 §7.2;PLAN-ANNOTATION-WORKFLOW-V2 §1):
+
+        全部 pending 批注(缺省读库;显式传入则用传入)+ chat 上下文 + 附加指令
+        → LLM 一次生成完整新文档(§7.3 模板,XML 块契约)→ 解析
+        ``<modified_document>``/``<annotation_results>``(不合 → 重试一次 →
+        再败 502,**不半截落库**)→ working 更新 + snapshot 新版本(meta 扩
+        generationInput/annotationResults,版本不可变)→ 逐条写批注状态
+        (applied/ignored + generation.aiNote)→ **reanchor**(§7.1:精确 →
+        ±3 行模糊全文匹配 → outdated)→ 返回 {newVersion, annotationResults,
+        diff(unified)}。
+
+        baseVersion 与当前最新快照不符 → 409(裁决 C5 版本冲突)。
+        LLM 面 = 与 chat 同一 ProviderManager + 默认 model(原文直取,
+        orchestrator._route_llm 先例)。
+        """
+        try:
+            doc = doc_store.read(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        versions = doc_store.list_versions(name)
+        cur_vid = versions[0]["version"] if versions else None
+        cur_no = int(cur_vid[1:]) if cur_vid else 0
+        if body.baseVersion is not None:
+            try:
+                base_no = _norm_version(body.baseVersion)
+            except (TypeError, ValueError) as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            if base_no != cur_no:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"版本冲突: baseVersion=v{base_no:03d} ≠ 当前 {cur_vid or '(无快照)'}"
+                        "(文档已被更新,刷新后重试)"
+                    ),
+                )
+        if providers is None or not route_model:
+            raise HTTPException(status_code=503, detail="生成功能不可用: 未配置 LLM provider")
+        before = doc["text"]
+        annotations = body.annotations
+        if annotations is None:
+            annotations = [a for a in doc_store.read_annotations(name) if a.get("status") == "pending"]
+        chat_context = body.chatContext if body.chatContext is not None else doc_store.read_chat(name)[-20:]
+        messages = build_generate_messages(
+            document=before,
+            base_version=cur_no,
+            chat_context=chat_context,
+            annotations=annotations,
+            user_prompt=body.userPrompt,
+        )
+        raw = ""
+        parsed: tuple[str, list[dict[str, Any]]] | None = None
+        last_err: Exception | None = None
+        for _attempt in (1, 2):  # 输出不合契约 → 重试一次 → 再败 502(不落库)
+            try:
+                raw = asyncio.run(_chat_text(providers, route_model, messages, timeout=300))
+            except Exception as e:
+                raise HTTPException(
+                    status_code=503, detail=f"生成助手暂不可用: {type(e).__name__}: {e}"
+                ) from e
+            try:
+                parsed = parse_generate_output(raw)
+                break
+            except GenerateOutputError as e:
+                last_err = e
+        if parsed is None:
+            snippet = re.sub(r"\s+", " ", raw).strip()[:200]
+            raise HTTPException(
+                status_code=502,
+                detail=f"生成输出两次不合契约({last_err});原文摘要: {snippet!r}",
+            )
+        new_text, results = parsed
+        doc_store.save(name, new_text)
+        new_vid = doc_store.snapshot(
+            name,
+            source="generate",
+            parent=cur_vid,
+            extra={
+                "generationInput": {
+                    "chatContext": chat_context,
+                    "annotations": annotations,
+                    "userPrompt": body.userPrompt,
+                },
+                "annotationResults": results,
+            },
+        )
+        new_no = int(new_vid[1:])
+        # 逐条写批注状态(partial 归 applied 并留 aiNote;库内没有的锚点跳过——
+        # 显式传入的临时批注不落状态)
+        known = {a.get("anchor") for a in doc_store.read_annotations(name)}
+        for r in results:
+            if r["annotationId"] not in known:
+                continue
+            doc_store.set_annotation_status(
+                name,
+                r["annotationId"],
+                status="ignored" if r["status"] == "ignored" else "applied",
+                applied_in_version=new_no,
+                generation={
+                    "appliedByVersion": new_no,
+                    "result": r["status"],
+                    "aiNote": r["aiNote"],
+                },
+            )
+        # reanchor(§7.1):全部批注在新文本上重定位;锚点变更 → hash 键换名
+        anns = doc_store.read_annotations(name)
+        for old, new in zip(anns, reanchor_annotations(new_text, anns), strict=True):
+            if new == old:
+                continue
+            if new["anchor"] != old["anchor"]:
+                doc_store.delete_annotation(name, old["anchor"])
+            doc_store.save_annotation(name, new)
+        import difflib
+
+        diff = "\n".join(
+            difflib.unified_diff(
+                before.splitlines(),
+                new_text.splitlines(),
+                fromfile=f"{name}@{cur_vid or 'working'}",
+                tofile=f"{name}@{new_vid}",
+                lineterm="",
+            )
+        )
+        return {
+            "newVersion": new_no,
+            "versionId": new_vid,
+            "annotationResults": results,
+            "diff": diff,
+        }
 
     # ------------------------------------------------------------------
     # 升权决策(W2,docs/ESCALATION.md §3):supervisor pending 的**纯转发**——
@@ -1029,6 +1184,32 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         return FileResponse(static_dir / "desktop.html")
 
     return app
+
+
+def _norm_version(v: Any) -> int:
+    """baseVersion 归一:int 序号 / "vNNN" / 数字串 → int;类型/格式非法 → 拒。"""
+    if isinstance(v, bool):
+        raise TypeError(f"baseVersion 非法: {v!r}")
+    if isinstance(v, int):
+        return v
+    m = re.match(r"^v?(\d+)$", str(v or "").strip())
+    if not m:
+        raise ValueError(f"baseVersion 非法: {v!r}(须为序号或 vNNN 串)")
+    return int(m.group(1))
+
+
+async def _chat_text(providers: Any, model: str, messages: list[dict[str, str]], *, timeout: float) -> str:
+    """provider 原文面(orchestrator._route_llm 先例:FastAPI 线程池里
+    ``asyncio.run`` 开私有循环;返回 ``message.content`` 原文,不做 JSON 解析)。"""
+    req = ChatRequest(
+        model=model,
+        messages=[
+            Message(role=Role.SYSTEM if m.get("role") == "system" else Role.USER, content=m.get("content", ""))
+            for m in messages
+        ],
+    )
+    resp = await asyncio.wait_for(providers.chat(req), timeout=timeout)
+    return str(resp.message.content or "")
 
 
 def _llm_route_backend(manager: Any, lab_store: Any) -> tuple[Any, str | None]:

@@ -22,7 +22,7 @@
 **明确退役**(设计 §1.1/§8.2):泡内消息流、发送队列、typing、pill、未读分隔线。
 **保留**:右键原位/选区锚定/行内高亮/一行多泡/标记跟随/点外收起(草稿不丢)/垃圾桶删除/几何定位(Floating UI)。
 
-## 1. P1 —— 数据模型与生成端点(后端先行)
+## 1. P1 —— 数据模型与生成端点(后端先行)✅(2026-08-13 落地)
 
 **Annotation 记录**(DocStore bubbles 扩展,向后兼容:无 status 字段的旧记录读为 pending):
 ```jsonc
@@ -47,6 +47,40 @@
 - pytest:端点全链(mock LLM)、reanchor 三策略、迁移读取兼容、版本不可变不破。
 
 **验收**:pytest `tests/web_platform` 全绿 + 新增 ≥6 例。
+
+> **P1 实现注**(2026-08-13;BUILD 不变,纯后端):
+> - **端点契约** `POST /platform/api/docs/{name}/generate`:入参
+>   `{baseVersion?, chatContext?, annotations?, userPrompt?}`——baseVersion
+>   接受序号或 "vNNN"(缺省 = 当前最新快照,不符 → 409);annotations 缺省 =
+>   库内全部 pending;chatContext 缺省 = 主对话最近 20 条。返回
+>   `{newVersion(序号), versionId("vNNN"), annotationResults, diff(unified,
+>   fromfile= name@旧版本/tofile= name@新版本)}`。
+> - **LLM 面**:与 chat 同一 ProviderManager + 默认 model,按
+>   `orchestrator._route_llm` 先例直取**原文**(kernel.run 强制 JSON 最终答案,
+>   走不通 §7.3 的 XML 块契约);prompt 拆 system(角色+要求+输出格式)/
+>   user(文档+chat+批注+指令);解析 `<modified_document>`/`<annotation_results>`
+>   (纯函数 `web_platform/doc_generate.py`),不合契约 → 重试一次 → 再败 502
+>   带原文摘要,**不半截落库**;超时 300s(真机长文档 98s 实测)。
+> - **存储面**(skills/doc_store.py):新记录写 `annotations/<anchor-hash>.json`,
+>   旧 `bubbles/` 消息流**只读不删**;`read_annotations` = 新记录 + 旧流压缩
+>   (首条 user → content,其余 → history,status=pending,quote 按锚点从当前
+>   全文截,version = 最新快照号);`set_annotation_status` 对旧流**set 即迁移
+>   写新**并记 `migratedFrom`(reanchor 改锚后旧流不复活);`delete_bubble`
+>   扩为两面都删(幂等语义不变);`snapshot` 扩 `extra` 合并进 meta
+>   (generationInput/annotationResults 封存时写一次,版本不可变不破)。
+> - **reanchor**(skills/reanchor.py 纯函数):① 精确——行+列+quote 原位一致
+>   (列 = 1-based 闭区间,与前端 anchorColOffsetsOf 对齐;零宽点锚点 quote 空,
+>   只按行存在判);② 模糊——±3 行窗内 quote **全文匹配**(可跨行,命中复算
+>   行列并保持行级/列级形态);③ 找不到——pending → outdated(锚点原样保留),
+>   **applied/ignored 终态状态保留不抹**(applied 的原文通常就是被应用改掉的);
+>   已 outdated 不再锚。
+> - **状态映射**:LLM result `applied|partial → applied`、`ignored → ignored`,
+>   原 result 与 aiNote 记进 `generation`;LLM 未回的批注保持 pending 并照常重锚。
+> - **测试**:pytest 12 新例(迁移/set 迁移/reanchor 三策略/全链/409/502 重试/
+>   重试成功/版本不可变/解析坏例)→ `tests/web_platform` 113 全绿;ruff 净。
+>   **真机冒烟**(8391,kimi-for-coding):demo.test 10 条旧流迁移 → generate
+>   98s → v133(4 applied / 2 partial→applied / 4 ignored,LLM 自行识别测试
+>   残留为 ignored),meta/状态/旧流保留全对。
 
 ## 2. P2 —— 气泡简化为批注卡(控件 + 宿主)
 

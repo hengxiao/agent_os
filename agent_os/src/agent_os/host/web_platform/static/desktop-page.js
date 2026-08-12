@@ -139,7 +139,8 @@ export function bootDesktop() {
       const doc = await res.json();
       let bubbles = [];
       try {
-        bubbles = await (await fetch(`/platform/api/docs/${encodeURIComponent(name)}/bubbles`)).json();
+        // v4(P2):批注种子 = annotations 读取面(新记录 + 旧流压缩迁移)
+        bubbles = await (await fetch(`/platform/api/docs/${encodeURIComponent(name)}/annotations`)).json();
       } catch {
         bubbles = [];
       }

@@ -29,6 +29,12 @@
   --danger:  #ff5555;   /* failed / error */
   --aborted: #c678dd;   /* aborted */
   --live:    #40d0ff;   /* running / live */
+
+  /* 批注状态(v4 批注卡;v2.1 §11.2 色板,色值走 token 不硬编码) */
+  --ann-pending:  #ff6b8a;
+  --ann-applied:  #52c41a;
+  --ann-ignored:  #bfbfbf;
+  --ann-outdated: #faad14;
   /* 焦点环(docs/WEB-A11Y.md §5.2;契约 token,须对 --bg-0..3 均 ≥3:1) */
   --focus-ring: #40d0ff;
 

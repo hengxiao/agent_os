@@ -342,42 +342,32 @@ function _bind() {
     } catch (err) {
       toast(err.message ?? String(err), "error");
     }
-    // 边注气泡(W2,docs/WIDGETS.md W-bubble;锚点单元的 💬):
-    // 气泡 = 锚点引用行 + 消息流 + 输入框;submit 经 §16 cascade 组装信封,
-    // 出海(POST comment)在本组件(父级),回复进气泡;apply → 边注(不越权)
+    // 边注气泡(v4 · 批注卡,§3.13 v4):💬 开卡;提交即落边注(评论回复链
+    // 退役——无即时 AI 回复,边注驱动下一轮迭代);注销随 close
     const noteBtn = e.target.closest("[data-it-note]");
     if (noteBtn) {
       const unit = noteBtn.closest("[data-anchor]");
       if (!unit || unit.querySelector(".w-bubble") || unit.querySelector(".it-note-form")) return;
       const anchor = JSON.parse(unit.dataset.anchor);
-      // 既有边注数据兼容:该锚点已挂的 notes 作种子消息
+      // 既有边注数据兼容:该锚点最近一条边注作种子内容(展示态;左栏列表仍是全量)
       const key = unit.dataset.anchor;
-      const seed = [...it.notes, ...it.savedComments]
-        .filter((n) => JSON.stringify(n.anchor ?? {}) === key)
-        .map((n) => ({ role: "user", text: n.text, ts: n.at ?? 0 }));
+      const seed = [...it.notes, ...it.savedComments].filter(
+        (n) => JSON.stringify(n.anchor ?? {}) === key
+      );
       const host = document.createElement("div");
       unit.appendChild(host);
       const unreg = _registerIterateProviders(anchor); // §17.7-3:注册制(注销随 close)
       const bubble = mountBubble(host, {
-        anchor, // 原样(与单元 data-anchor 同构,apply 落边注时锚键一致)
+        anchor, // 原样(与单元 data-anchor 同构,落边注时锚键一致)
         triggerPath: _anchorPath(anchor), // cascade 的 §14 触发路径(独立字段,不污染锚)
-        seedMessages: seed,
+        content: seed.at(-1)?.text ?? "",
       });
       bubble.on("close", () => unreg.forEach((fn) => fn()));
-      bubble.on("submit", async ({ anchor: a, text, cascade }) => {
-        try {
-          const body = await postJson(`/api/lab/drafts/${encodeURIComponent(it.name)}/comment`, {
-            anchor: a, text, cascade: cascade.cascade,
-          });
-          bubble.receiveReply(body.reply ?? "");
-        } catch (err) {
-          bubble.receiveReply(`(助手暂不可用: ${err.message ?? err})`);
-        }
-      });
-      bubble.on("apply", ({ anchor: a, text }) => {
-        // apply_reply 只发事件:采纳为边注由父组件决定(气泡不越权)
-        it.notes.push({ anchor: a, text, at: Date.now() / 1000 });
+      bubble.on("submit", ({ anchor: a, content }) => {
+        // v4:提交即边注落左栏(出海 = 下一轮 iterate 时随信封;气泡不越权)
+        it.notes.push({ anchor: a, text: content, at: Date.now() / 1000 });
         _renderLeft();
+        bubble.close();
       });
       bubble.focus();
     }

@@ -326,3 +326,50 @@ def test_parse_generate_output_bad_cases():
     doc, results = parse_generate_output(GOOD_OUTPUT)
     assert doc.startswith("# 标题") and doc.endswith("第三段原文"), "文档本体保真"
     assert results[1]["status"] == "ignored" and results[1]["aiNote"]
+
+
+# ---------------------------------------------------------------------------
+# annotations 端点(P2:save_annotation 的 REST 面;无即时 AI 回复)
+# ---------------------------------------------------------------------------
+
+
+def test_annotations_endpoint_roundtrip(client, store):
+    """POST 创建 → GET 读取面含;同锚点再 POST = 重新编辑:content 更新、
+    状态回 pending、generation/appliedInVersion 清零;migratedFrom 保留。"""
+    _mk_doc(client)
+    r = client.post("/platform/api/docs/t.gen/annotations", json={
+        "anchor": "doc.md#L2-L2", "quote": "第一段原文", "content": "改成书面语", "version": 0,
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "pending" and r.json()["content"] == "改成书面语"
+    got = client.get("/platform/api/docs/t.gen/annotations").json()
+    assert len(got) == 1 and got[0]["anchor"] == "doc.md#L2-L2"
+    # 模拟已被 generate 处理过
+    store.set_annotation_status("t.gen", "doc.md#L2-L2", status="applied", applied_in_version=1,
+                                generation={"appliedByVersion": 1, "result": "applied", "aiNote": "x"})
+    # 重新编辑 → 回 pending 且生成痕迹清零
+    r = client.post("/platform/api/docs/t.gen/annotations", json={
+        "anchor": "doc.md#L2-L2", "quote": "第一段原文", "content": "再简洁一点", "version": 1,
+    })
+    assert r.status_code == 200
+    rec = r.json()
+    assert rec["status"] == "pending" and rec["content"] == "再简洁一点"
+    assert rec["generation"] is None and rec["appliedInVersion"] is None
+    assert client.get("/platform/api/docs/t.gen/annotations").json().__len__() == 1, "upsert 不增条"
+
+
+def test_annotations_endpoint_validation(client):
+    """非法锚点/空内容/超长 → 400;不存在的文档 → 404。"""
+    _mk_doc(client)
+    bad = client.post("/platform/api/docs/t.gen/annotations",
+                      json={"anchor": "not-an-anchor", "content": "x"})
+    assert bad.status_code == 400
+    empty = client.post("/platform/api/docs/t.gen/annotations",
+                        json={"anchor": "doc.md#L2-L2", "content": "   "})
+    assert empty.status_code == 400
+    long_ = client.post("/platform/api/docs/t.gen/annotations",
+                        json={"anchor": "doc.md#L2-L2", "content": "字" * 501})
+    assert long_.status_code == 400 and "过长" in long_.json()["detail"]
+    missing = client.post("/platform/api/docs/no.such/annotations",
+                          json={"anchor": "doc.md#L1-L1", "content": "x"})
+    assert missing.status_code == 404

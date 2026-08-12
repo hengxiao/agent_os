@@ -428,7 +428,7 @@
 /* 气泡浮出化:浮在锚点旁(原位/选区),箭头指向锚点;正文不再被挤压。
    widget-libs(2026-08-12):定位 = vendored Floating UI(computePosition
    inline left/top;flip/shift/size/arrow 中间件),手写几何退役;
-   maxHeight = clamp(200px, 45vh, 可用−16)由 size 中间件覆写本兜底;
+   maxHeight = clamp(200px, min(380px,45vh), 可用−16)由 size 中间件覆写本兜底(v3.2);
    高度变化 120ms ease-out 过渡 */
 .doc-bubble-pop {
   position: absolute; left: 0; top: 0; z-index: 4;
@@ -472,6 +472,28 @@
 }
 
 .doc-bubble-marker:hover { color: var(--live); border-color: var(--live); }
+/* 标记状态色环(v4 · v2.1 §11.2:pending 粉/applied 绿/ignored 灰/outdated 橙虚线;
+   色值走 --ann-* token;色 + tooltip 文字双编码) */
+.doc-bubble-marker[data-status="pending"] { border-color: var(--ann-pending); color: var(--ann-pending); }
+.doc-bubble-marker[data-status="applied"] { border-color: var(--ann-applied); color: var(--ann-applied); }
+.doc-bubble-marker[data-status="ignored"] { border-color: var(--ann-ignored); color: var(--ann-ignored); }
+.doc-bubble-marker[data-status="outdated"] { border-color: var(--ann-outdated); color: var(--ann-outdated); border-style: dashed; }
+
+/* 高亮状态修饰(v4 · v2.1 §11.3:applied 淡出/ignored 删除线/outdated 橙) */
+.doc-hl[data-status="applied"] { background: color-mix(in srgb, var(--live) 5%, transparent); border-bottom-color: transparent; }
+.doc-hl[data-status="ignored"] { background: transparent; border-bottom-color: transparent; text-decoration: line-through; text-decoration-color: var(--ann-ignored); }
+.doc-hl[data-status="outdated"] { background: color-mix(in srgb, var(--ann-outdated) 12%, transparent); border-bottom-color: var(--ann-outdated); }
+
+/* 悬停预览 tooltip(v4 · v2.1 §2.3:marker hover 200ms 出卡——摘录 + 锚点 + 相对时间) */
+.doc-ann-tip {
+  position: fixed; z-index: 8; max-width: 280px;
+  background: var(--bg-1); border: var(--stroke) solid var(--line);
+  border-radius: var(--r-md); box-shadow: 0 4px 14px color-mix(in srgb, var(--fg-0) 16%, transparent);
+  padding: var(--s2) var(--s3); font-size: var(--text-xs); color: var(--fg-1);
+  display: flex; flex-direction: column; gap: var(--s1); pointer-events: none;
+}
+.doc-ann-tip .doc-ann-tip-tx { color: var(--fg-0); font-size: var(--text-sm); }
+.doc-ann-tip .doc-ann-tip-meta { color: var(--fg-2); font-size: var(--text-2xs); display: flex; gap: var(--s2); }
 
 /* 批注列表实体化:摘录列弱化,过长省略 */
 .doc-bar-excerpt {

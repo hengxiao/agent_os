@@ -475,8 +475,8 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
 }
 
 {
-  // W-bubble:开气泡/种子消息(既有边注兼容)/submit 带 cascade 三级/
-  // 回复渲染/apply 只发事件/多条并存/Esc
+  // W-bubble v4(批注卡,§3.13 v4):输入态/提交带 cascade 三级/展示态/
+  // 编辑回 pending/点外(C1:有内容提交、空取消)/空提交抖动/500 字截断
   const doc = makeDocument();
   globalThis.document = doc;
   const anchor = { member: "lab.d", kind: "span", path: "/lab/iterate/member/lab.d/span/prompt/span/0", span: { start: 0 } };
@@ -485,23 +485,19 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
     { prefix: "/lab/iterate", scope: "app", fn: () => ({ draft: "lab.d", tier: "none" }) },
   ];
   const submissions = [];
-  const applies = [];
-  const mk = (a) => {
+  const mk = (a, opts = {}) => {
     const host = doc.createElement("div");
     doc.body.appendChild(host);
-    const b = mountBubble(host, {
-      anchor: a, seedMessages: [{ role: "user", text: "旧边注" }], cascadeProviders: providers,
-    });
+    const b = mountBubble(host, { anchor: a, cascadeProviders: providers, ...opts });
     b.on("submit", (p) => submissions.push(p));
-    b.on("apply", (p) => applies.push(p));
     return { host, b };
   };
   const { host, b } = mk(anchor);
-  assert.ok(host.innerHTML.includes("旧边注"), "既有边注作种子消息(数据兼容)");
+  assert.ok(host.innerHTML.includes('data-view="composing"'), "无内容 → 输入态(composing)");
   assert.ok(host.innerHTML.includes('role="dialog"'), "role=dialog");
-  assert.ok(host.innerHTML.includes('role="log"'), "role=log(消息区)");
+  assert.ok(!host.innerHTML.includes("w-bubble-log"), "v4:消息流 DOM 退役");
   assert.ok(host.innerHTML.includes("lab.d"), "锚点引用行");
-  // submit:消息+骨架+事件(信封三级:span/全文/app 状态都在)
+  // submit:内容 + 事件(信封三级:span/全文/app 状态都在)
   const input = new StubEl("input"); // region 元素不带 dataset,合成驱动(dom-stub 面)
   input.dataset.bubbleDraft = "";
   input.parentNode = host;
@@ -509,32 +505,60 @@ const { contextCascade, registerContextProvider, mountTableEditor, mountKvEditor
   host.trigger("input", { target: input });
   host.trigger("keydown", { target: input, key: "Enter" });
   assert.equal(submissions.length, 1, "Enter 提交");
+  assert.equal(submissions[0].content, "这段精简点", "submit 负载 = content(v4)");
   assert.deepEqual(
     submissions[0].cascade.cascade.map((f) => f.scope),
     ["widget", "app"],
     "级联三级内容都在(span/全文/app)",
   );
   assert.equal(submissions[0].cascade.cascade[0].data.full_text, "全");
-  assert.ok(host.innerHTML.includes("w-bubble-typing"), "busy typing 三点(§3.13)");
-  // 回复渲染 + apply 只发事件(气泡不越权)
-  b.receiveReply("建议:删第二句");
-  assert.ok(host.innerHTML.includes("建议:删第二句"), "回复渲染");
-  const applyBtn = new StubEl("button");
-  applyBtn.dataset.apply = "2"; // assistant 消息索引(seed + submit + reply)
-  applyBtn.parentNode = host;
-  host.trigger("click", { target: applyBtn });
-  assert.deepEqual(applies.map((p) => p.text), ["建议:删第二句"], "apply_reply 只发事件");
+  assert.equal(b.state.status, "pending", "提交后状态 pending");
+  assert.equal(b.state.view, "expanded", "提交后转展示态(乐观更新)");
+  assert.ok(host.innerHTML.includes("这段精简点") && host.innerHTML.includes("w-bubble-status"), "展示态:内容 + 状态徽标");
   assert.ok(!("notes" in b), "气泡不持有批注写面(不越权)");
-  // 多条并存:另一锚点独立
-  const { b: b2 } = mk({ ...anchor, member: "lab.e", path: "/lab/iterate/member/lab.e/span/prompt" });
-  b2.receiveReply("另一条");
-  assert.equal(b.state.messages.length, 3, "本锚点消息流完整(seed+问+答)");
-  assert.equal(b2.state.messages.length, 2, "另一锚点自己的 seed+答");
-  assert.ok(!b.state.messages.some((m) => m.text === "另一条"), "两条气泡互不串");
-  // Esc 关闭(不提交)
+  // 编辑 → 输入态(draft 预填);Esc → 回展示态不提交
+  const editBtn = new StubEl("button");
+  editBtn.dataset.bubbleEdit = "1";
+  editBtn.parentNode = host;
+  editBtn.closest = (sel) => (sel === "[data-bubble-edit]" ? editBtn : null);
+  host.trigger("click", { target: editBtn });
+  assert.equal(b.state.view, "composing", "编辑 → 输入态");
+  assert.equal(b.state.draft, "这段精简点", "草稿预填现有内容");
   const before = submissions.length;
   host.trigger("keydown", { target: input, key: "Escape" });
-  assert.equal(submissions.length, before, "Esc 关闭不产生提交");
+  assert.equal(submissions.length, before, "Esc 取消不产生提交");
+  assert.equal(b.state.view, "expanded", "编辑态 Esc → 回展示态");
+  // 点外(C1):输入态有内容提交
+  const { host: host3, b: b3 } = mk({ ...anchor, member: "lab.e", path: "/lab/iterate/member/lab.e/span/prompt" });
+  const ta3 = new StubEl("textarea");
+  ta3.dataset.bubbleDraft = "";
+  ta3.parentNode = host3;
+  ta3.value = "点外提交的内容";
+  host3.trigger("input", { target: ta3 });
+  b3.submitOrCancel();
+  assert.equal(submissions.length, before + 1, "点外有内容 = 提交");
+  // 点外空 = 取消(close 上行,宿主摘除)
+  const { b: b4 } = mk({ ...anchor, member: "lab.f", path: "/lab/iterate/member/lab.f/span/prompt" });
+  let closedN = 0;
+  b4.on("close", () => (closedN += 1));
+  b4.submitOrCancel();
+  assert.equal(closedN, 1, "点外空 = 取消(close 上行)");
+  // 空提交不发送(抖动提示面)
+  const { host: host5 } = mk({ ...anchor, member: "lab.g", path: "/lab/iterate/member/lab.g/span/prompt" });
+  const ta5 = new StubEl("textarea");
+  ta5.dataset.bubbleDraft = "";
+  ta5.parentNode = host5;
+  host5.trigger("keydown", { target: ta5, key: "Enter" });
+  assert.equal(submissions.length, before + 1, "空输入 Enter 不提交");
+  // 500 字截断(v2.1 §3.4)
+  const { host: host6, b: b6 } = mk({ ...anchor, member: "lab.h", path: "/lab/iterate/member/lab.h/span/prompt" });
+  const ta6 = new StubEl("textarea");
+  ta6.dataset.bubbleDraft = "";
+  ta6.parentNode = host6;
+  ta6.value = "x".repeat(600);
+  host6.trigger("input", { target: ta6 });
+  assert.equal(ta6.value.length, 500, "DOM 值截断 500");
+  assert.equal(b6.state.draft.length, 500, "state.draft 截断 500");
 }
 
 /* ── W3:W-form / W-list / W-tree / W-date ─────────────────────── */
@@ -940,9 +964,9 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
   assert.equal(renderDiffViewer(sDiff), renderDiffViewer(sDiff), "diff render 纯");
   const sChart = { series: [{ name: "s", points: [{ x: 1, y: 2 }] }], type: "line", view: "chart", hidden: [] };
   assert.equal(renderChart(sChart, { label: "L" }), renderChart(sChart, { label: "L" }), "chart render 纯");
-  const sBub = { anchor: { member: "m", path: "p" }, messages: [{ role: "assistant", text: "答" }], busy: false, draft: "" };
+  const sBub = { anchor: { member: "m", path: "p" }, quote: "锚段", content: "改这段", status: "pending", view: "expanded", draft: "" };
   assert.equal(renderBubble(sBub), renderBubble(sBub), "bubble render 纯");
-  assert.ok(renderBubble(sBub).includes("w-bubble-quote"), "气泡卡锚点引用块(§3.13)");
+  assert.ok(renderBubble(sBub).includes("w-bubble-quote"), "批注卡锚点引用块(§3.13 v4)");
 }
 
 {
@@ -1108,11 +1132,11 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
         !h.includes("data-md-copy"),
       "首个标题 + 首段摘录(二段/代码块不进卡);无复制钮;转义"],
     ["chat-bubble", renderBubble,
-      { anchor: { member: "m", path: "p" }, messages: [{ role: "user", text: "问" },
-          { role: "assistant", text: "答<b>" }], busy: false, draft: "", unread: 2 }, {},
-      (h) => h.includes("2 条") && h.includes("2 未读") && h.includes("答&lt;b&gt;") && !h.includes("问") &&
+      { anchor: { member: "m", path: "p" }, quote: "锚段", content: "这条要改<b>",
+        status: "applied", view: "expanded", draft: "" }, {},
+      (h) => h.includes('data-status="applied"') && h.includes("这条要改&lt;b&gt;") &&
         !h.includes("data-bubble-draft"),
-      "消息计数 + 未读徽标 + 最后一条摘录;无输入框;转义"],
+      "状态徽标 + 内容摘录(v4);无输入框;转义"],
   ];
   for (const [name, fn, state, opts, check, desc] of cases) {
     const snapshot = JSON.stringify(state);
@@ -1173,22 +1197,24 @@ const { renderTreeWidget, renderDatePicker, renderLogViewer, renderDiffViewer,
 }
 
 {
-  // bubble card:open 负载沿用本控件语义({anchor});tab 行为不回退(输入框还在)
+  // bubble card(v4):状态徽标 + 内容摘录;open 负载沿用本控件语义({anchor});
+  // tab 行为不回退(无内容 → 输入态)
   const doc = makeDocument();
   globalThis.document = doc;
   const anchor = { member: "lab.d", path: "/x/y" };
   const host = doc.createElement("div");
   doc.body.appendChild(host);
-  const w = mountBubble(host, { anchor, seedMessages: [{ role: "user", text: "旧" }], surface: "card", unread: 3 });
-  assert.ok(host.innerHTML.includes("3 未读"), "未读徽标(mount 选项进 state)");
+  const w = mountBubble(host, { anchor, content: "旧批注", status: "ignored", surface: "card" });
+  assert.ok(host.innerHTML.includes('data-status="ignored"'), "card 状态徽标(v4)");
+  assert.ok(host.innerHTML.includes("旧批注"), "card 内容摘录");
   const opens = [];
   w.on("open", (p) => opens.push(p));
   host.trigger("click", { target: host });
   assert.deepEqual(opens, [{ anchor }], "card open 负载 = {anchor}(与 tab open 事件同语义)");
   const host2 = doc.createElement("div");
   doc.body.appendChild(host2);
-  mountBubble(host2, { anchor, seedMessages: [] });
-  assert.ok(host2.innerHTML.includes("data-bubble-draft"), "tab 输入框不回退");
+  mountBubble(host2, { anchor });
+  assert.ok(host2.innerHTML.includes("data-bubble-draft"), "tab 输入框不回退(composing)");
 }
 
 console.log("widgets.test.mjs: W5.6 dual-surface assertions passed");
@@ -1808,50 +1834,45 @@ const { chartTipHtml, renderChart: _rc64, renderLogViewer: _rl64, renderDiffView
 }
 
 {
-  // W-bubble(§3.13):头部/引用块 L7/头像流/typing/发送禁用/失败重试/card 实心徽标
-  const s = { anchor: { member: "lab.travel", path: "plan.md#L7-L7", quote: "第三天行程摘录" },
-    messages: [{ role: "user", text: "预算偏高", ts: 1 }, { role: "assistant", text: "改景山", ts: 2 }],
-    busy: false, draft: "", unread: 2 };
+  // W-bubble v4(§3.13 v4):头部/引用块 L7/状态徽标/展示态内容/编辑钮/输入态禁用
+  const s = { anchor: { member: "lab.travel", path: "plan.md#L7-L7" }, quote: "第三天行程摘录",
+    content: "预算偏高", status: "pending", view: "expanded", draft: "" };
   const h = _rb64(s);
   assert.ok(h.includes("w-bubble-head") && h.includes("批注 · lab.travel"), "头部(批注 · 锚点)");
   assert.ok(h.includes("w-bubble-quote") && h.includes(">L7<"), "锚点引用块 + L7 徽标");
-  assert.ok(h.includes("w-bubble-av") && h.includes("w-bubble-meta"), "消息 = 图标圆 + 名称 + 相对时间");
-  assert.ok(h.includes('data-bubble-send="1" disabled'), "空输入发送禁用(§3.13)");
-  assert.ok(!h.includes("w-bubble-typing") && !h.includes("pf-skel"), "非 busy 无 typing");
-  const busy = _rb64({ ...s, busy: true, draft: "x" });
-  assert.ok(busy.includes("w-bubble-typing"), "busy → typing 三点");
-  const fail = _rb64({ ...s, error: "发送失败,检查网络" });
-  assert.ok(fail.includes("w-bubble-fail") && fail.includes("重试"), "失败行内红条 + 重试");
-  const hc = _rb64(s, { surface: "card" });
-  assert.ok(hc.includes("wd-badge-solid"), "card 未读实心徽标(§3.13)");
+  assert.ok(h.includes("w-bubble-content") && h.includes("预算偏高"), "展示态渲批注内容");
+  assert.ok(h.includes('data-status="pending"'), "状态徽标 pending");
+  assert.ok(h.includes("data-bubble-edit") && h.includes("data-bubble-del"), "编辑 + 垃圾桶两击面");
+  assert.ok(!h.includes("w-bubble-log") && !h.includes("w-bubble-typing"), "v4:消息流/typing 退役");
+  const hc2 = _rb64(s, { surface: "card" });
+  assert.ok(hc2.includes('data-status="pending"') && hc2.includes("预算偏高"), "card:状态徽标 + 摘录");
+  const composing = _rb64({ ...s, content: "", view: "composing" });
+  assert.ok(composing.includes('data-bubble-send="1" disabled'), "空草稿添加禁用(v4)");
+  const outdated = _rb64({ ...s, status: "outdated", view: "composing", draft: "x" });
+  assert.ok(outdated.includes("w-bubble-quote-tag") && outdated.includes("原文快照"), "outdated 编辑:原文快照前缀");
 }
 
 {
-  // W-bubble 行为:✕ 收起 / 重试不重复追加 / 发送禁用局部刷新
+  // W-bubble v4 行为:✕ 收起 / 添加钮局部解禁 / 提交乐观更新转展示态
   const doc = makeDocument();
   globalThis.document = doc;
   const anchor = { member: "lab.d", path: "plan.md#L7-L7" };
   const host = doc.createElement("div");
   doc.body.appendChild(host);
-  const w = mountBubble(host, { anchor, seedMessages: [] });
+  const w = mountBubble(host, { anchor });
   const submissions = [];
-  w.on("submit", (p) => submissions.push(p.text));
+  w.on("submit", (p) => submissions.push(p.content));
   const input = new StubEl("input");
   input.dataset.bubbleDraft = "";
   input.parentNode = host;
   input.value = "压到 600";
   host.trigger("input", { target: input });
   const send = host.querySelector("[data-bubble-send]");
-  assert.equal(send.disabled, false, "有草稿 → 发送解禁(局部刷新)");
+  assert.equal(send.disabled, false, "有草稿 → 添加解禁(局部刷新)");
   host.trigger("keydown", { target: input, key: "Enter" });
-  assert.deepEqual(submissions, ["压到 600"], "Enter 发送");
-  w.notifyError();
-  assert.ok(host.innerHTML.includes("w-bubble-fail"), "失败红条上屏");
-  const retry = new StubEl("button");
-  retry.closest = (sel) => (sel === "[data-bubble-retry]" ? retry : null);
-  host.trigger("click", { target: retry });
-  assert.deepEqual(submissions, ["压到 600", "压到 600"], "重试重发同一文本");
-  assert.equal(w.state.messages.filter((m) => m.role === "user").length, 1, "重试不重复追加用户消息");
+  assert.deepEqual(submissions, ["压到 600"], "Enter 提交");
+  assert.equal(w.state.view, "expanded", "乐观更新:转展示态");
+  assert.equal(w.state.status, "pending", "乐观更新:状态 pending");
   let closed = false;
   w.on("close", () => { closed = true; });
   const x = new StubEl("button");
@@ -2077,7 +2098,7 @@ console.log("widgets.test.mjs: W6.6 ruling assertions passed");
     "platform.css 旧 .pf-dline[data-kind] 冲突规则已删(视觉归 widget)");
   // doc-editor 组装:气泡引用块透传/失败走控件失败态/C3 compound 化
   const ded = readFileSync(new URL("../../../web_platform/static/doc-editor.js", import.meta.url), "utf8");
-  assert.ok(ded.includes("quote: quote ?? blockTextOf(anchor)"), "bubble anchor.quote 透传锚段摘录(§3.13 锚点块)");
+  assert.ok(ded.includes("seed?.quote ?? quote ?? blockTextOf(anchor)"), "bubble quote 链:种子 → 选区 → 锚段摘录(§3.13 v4)");
   assert.ok(ded.includes("notifyError"), "发送失败走控件失败态(行内红条 + 重试)");
   assert.ok(ded.includes("createCompound") && ded.includes('kind: "doc-editor"'), "C3:doc-editor = compound(docs/COMPOUND-WIDGET.md §9)");
   assert.ok(ded.includes('allow: ["chat-bubble"]'), "C3:段落批注 = 动态 chat-bubble 子件(白名单)");
@@ -2090,153 +2111,55 @@ console.log("widgets.test.mjs: W6.6 ruling assertions passed");
 
 console.log("widgets.test.mjs: W6.7/C3 assembly assertions passed");
 
-/* ── W-bubble v2(用户验收反馈 2026-08-11;docs/WIDGET-DESIGN.md §3.13 v2)──
-   四区排版/log 唯一滚/未读分隔线/长消息折叠/autosize composer/busy 队列/
-   滚底语义 pill——结构(render 纯函数)+ 行为(mount 逻辑)两侧断言 */
-const { bubbleLongMsg, bubbleNewFrom } = await import("../js/widgets/w-bubble.render.js");
+/* ── W-bubble v4(docs/WIDGET-DESIGN.md §3.13 v4 · 批注批处理工作流 v2.1)──
+   单条批注卡:两形态渲染/状态徽标/原文快照前缀/提交乐观更新 + notifyError 回退;
+   v2 消息流面(队列/pill/折叠/分隔线)断言全部退役 */
 
 {
-  // 纯函数:长消息判定(>6 行或 >240 字)+ 未读游标(末数 assistant 计)
-  assert.ok(bubbleLongMsg("1\n2\n3\n4\n5\n6\n7"), "7 行 = 长消息");
-  assert.ok(!bubbleLongMsg("1\n2\n3"), "3 行不折叠");
-  assert.ok(bubbleLongMsg("x".repeat(300)), "300 字 = 长消息");
-  assert.ok(!bubbleLongMsg("短"), "短消息不折叠");
-  const msgs = [
-    { role: "user", text: "u1" }, { role: "assistant", text: "a1" },
-    { role: "assistant", text: "a2" }, { role: "assistant", text: "a3" },
-  ];
-  assert.equal(bubbleNewFrom(msgs, 2), 2, "未读 2 → 分隔线在 a2 前");
-  assert.equal(bubbleNewFrom(msgs, 3), 1, "未读 3 → 在 a1 前");
-  assert.equal(bubbleNewFrom(msgs, 0), -1, "无未读不出线");
-  assert.equal(bubbleNewFrom(msgs, 9), -1, "未读超量不出线(防御)");
+  // 两形态渲染:composing(输入态)/ expanded(展示态)
+  const base = { anchor: { member: "m", path: "doc.md#L3-L3" }, quote: "锚段摘录" };
+  const composing = renderBubble({ ...base, content: "", view: "composing", draft: "" });
+  assert.ok(composing.includes('data-view="composing"'), "输入态 data-view");
+  assert.ok(composing.includes("data-bubble-draft") && composing.includes("data-bubble-cancel"),
+    "输入态:textarea + 取消/添加");
+  assert.ok(composing.includes('data-bubble-send="1" disabled'), "空草稿添加禁用");
+  assert.ok(!composing.includes("w-bubble-log"), "v4:无消息流 DOM(退役)");
+  const expanded = renderBubble({ ...base, content: "改成书面语", status: "applied", view: "expanded",
+    generation: { result: "applied", aiNote: "已改写" }, createdAt: "2026-08-13T00:00:00+00:00" });
+  assert.ok(expanded.includes('data-view="expanded"') && expanded.includes("改成书面语"), "展示态渲内容");
+  assert.ok(expanded.includes('data-status="applied"'), "状态徽标 applied");
+  assert.ok(expanded.includes("已改写"), "AI 处理注(generation.aiNote)");
+  assert.ok(expanded.includes("data-bubble-edit"), "编辑钮");
+  const outdated = renderBubble({ ...base, status: "outdated", view: "composing", draft: "重改" });
+  assert.ok(outdated.includes("w-bubble-quote-tag"), "outdated 编辑:原文快照前缀(v2.1 §1.2)");
 }
 
 {
-  // render v2 四区结构:head/quote/log/composer 顺序固定;pill 位;textarea
-  const s = {
-    anchor: { member: "lab.travel", path: "plan.md#L7-L7", quote: "第三天行程摘录" },
-    messages: [
-      { role: "user", text: "预算偏高", ts: 1 },
-      { role: "assistant", text: "改景山", ts: 2 },
-    ],
-    busy: false, draft: "", newFrom: 1, newpill: false,
-  };
-  const h = renderBubble(s);
-  const zones = ["w-bubble-head", "w-bubble-quote", "w-bubble-log", "w-bubble-input"];
-  const pos = zones.map((z) => h.indexOf(z));
-  assert.ok(pos.every((p, i) => p > 0 && (i === 0 || p > pos[i - 1])), "四区自上而下固定序(v2)");
-  assert.ok(h.includes("w-bubble-newline"), "未读分隔线在游标处(newFrom=1)");
-  assert.ok(h.includes("以下是新消息"), "分隔线文案(copy 键)");
-  assert.ok(h.includes('data-bubble-pill="1" hidden'), "pill 缺省藏");
-  assert.ok(h.includes("<textarea") && h.includes('rows="1"'), "composer = autosize textarea");
-  const withPill = renderBubble({ ...s, newpill: true });
-  assert.ok(withPill.includes('data-bubble-pill="1"') && !withPill.includes('data-bubble-pill="1" hidden'),
-    "newpill=true → pill 显出");
-  // 长消息折叠:>6 行出 clamp + 展开钮;expanded 后撤 clamp + 折叠钮
-  const long = Array.from({ length: 8 }, (_, i) => `第${i + 1}行`).join("\n");
-  const hs = renderBubble({ ...s, messages: [{ role: "assistant", text: long, ts: 1 }] });
-  assert.ok(hs.includes("w-bubble-tx is-clamped"), "长消息 clamp(v2)");
-  assert.ok(hs.includes('data-more="0"') && hs.includes("展开"), "展开钮在");
-  const hx = renderBubble({ ...s, messages: [{ role: "assistant", text: long, ts: 1, expanded: true }] });
-  assert.ok(!hx.includes("is-clamped") && hx.includes("折叠"), "expanded → 撤 clamp 出折叠钮");
-}
-
-{
-  // 行为 v2:busy 不吞(队列串行)——连发 3 条全部入流,emit 逐条按序
+  // 提交乐观更新;notifyError → 回输入态草稿恢复;Shift+Enter 不提交
   const doc = makeDocument();
   globalThis.document = doc;
   const host = doc.createElement("div");
   doc.body.appendChild(host);
-  const w = mountBubble(host, { anchor: { member: "m", path: "p#L1-L1" }, seedMessages: [] });
+  const w = mountBubble(host, { anchor: { member: "m", path: "p#L1-L1" } });
   const sent = [];
-  w.on("submit", (p) => sent.push(p.text));
-  const mk = (text) => {
-    const input = new StubEl("textarea");
-    input.dataset.bubbleDraft = "";
-    input.parentNode = host;
-    input.value = text;
-    host.trigger("input", { target: input });
-    host.trigger("keydown", { target: input, key: "Enter" });
-  };
-  mk("第一条");
-  mk("第二条"); // busy 中——v2 不吞:入队
-  mk("第三条");
-  assert.deepEqual(
-    w.state.messages.filter((m) => m.role === "user").map((m) => m.text),
-    ["第一条", "第二条", "第三条"],
-    "连发 3 条用户消息全部入流(busy 不吞)"
-  );
-  assert.deepEqual(sent, ["第一条"], "在飞一条(emit 串行)");
-  w.receiveReply("回一");
-  assert.deepEqual(sent, ["第一条", "第二条"], "回复后按序 pump 下一条");
-  w.receiveReply("回二");
-  w.receiveReply("回三");
-  assert.deepEqual(sent, ["第一条", "第二条", "第三条"], "队列清空(输入不丢)");
-  assert.equal(w.state.busy, false, "收尾 busy 复位");
-
-  // 失败不堵队:notifyError 后重试补发(用户消息不重复)
-  mk("第四条");
-  w.notifyError("网络断了");
-  const usersAfterErr = w.state.messages.filter((m) => m.role === "user").length;
-  const retry = new StubEl("button");
-  retry.closest = (sel) => (sel === "[data-bubble-retry]" ? retry : null);
-  host.trigger("click", { target: retry });
-  assert.equal(sent.at(-1), "第四条", "重试补发同一文本");
-  assert.equal(w.state.messages.filter((m) => m.role === "user").length, usersAfterErr, "重试不重复追加");
-  w.receiveReply("回四");
-
-  // Shift+Enter 换行:不发送
+  w.on("submit", (p) => sent.push(p));
   const ta = new StubEl("textarea");
   ta.dataset.bubbleDraft = "";
   ta.parentNode = host;
-  ta.value = "换行草稿";
+  ta.value = "第一句改掉";
   host.trigger("input", { target: ta });
+  host.trigger("keydown", { target: ta, key: "Enter" });
+  assert.equal(sent.length, 1, "Enter 提交");
+  assert.equal(w.state.view, "expanded", "乐观更新:展示态");
+  w.notifyError("保存失败");
+  assert.equal(w.state.view, "composing", "失败回输入态");
+  assert.equal(w.state.draft, "第一句改掉", "草稿恢复");
+  const n0 = sent.length;
   host.trigger("keydown", { target: ta, key: "Enter", shiftKey: true });
-  assert.equal(sent.length, 5, "Shift+Enter 不发送(换行;前序含重试一次)");
-  assert.equal(w.state.draft, "换行草稿", "草稿在(未吞)");
-
-  // 滚底语义 pill:非底部新消息 → newpill 出
-  const doc2 = makeDocument();
-  globalThis.document = doc2;
-  const host2 = doc2.createElement("div");
-  doc2.body.appendChild(host2);
-  const w2 = mountBubble(host2, { anchor: { member: "m", path: "p#L1-L1" }, seedMessages: [] });
-  const log2 = host2.querySelector(".w-bubble-log");
-  log2.scrollHeight = 5000; // stub 滚动面:人为拉满
-  log2.clientHeight = 200;
-  log2.scrollTop = 0; // 不在底
-  w2.receiveReply("远处新消息");
-  assert.equal(w2.state.newpill, true, "非底部新消息 → newpill(不硬拽)");
-  assert.ok(host2.innerHTML.includes('data-bubble-pill="1"') && !host2.innerHTML.includes('data-bubble-pill="1" hidden'),
-    "pill 上屏");
-  const pillBtn = new StubEl("button");
-  pillBtn.dataset.bubblePill = "1";
-  pillBtn.closest = (sel) => (sel === "[data-bubble-pill]" ? pillBtn : null);
-  host2.trigger("click", { target: pillBtn });
-  assert.equal(w2.state.newpill, false, "pill 点击滚底自收");
-  const log2b = host2.querySelector(".w-bubble-log");
-  assert.equal(log2b.scrollTop, log2b.scrollHeight, "点击滚底");
-
-  // 长消息展开/折叠行为(data-more 切 expanded)
-  const doc3 = makeDocument();
-  globalThis.document = doc3;
-  const host3 = doc3.createElement("div");
-  doc3.body.appendChild(host3);
-  const w3 = mountBubble(host3, {
-    anchor: { member: "m", path: "p#L1-L1" },
-    seedMessages: [{ role: "assistant", text: Array.from({ length: 8 }, (_, i) => `行${i}`).join("\n") }],
-  });
-  assert.ok(host3.innerHTML.includes("is-clamped"), "挂载即折叠(>6 行)");
-  const moreBtn = new StubEl("button");
-  moreBtn.dataset.more = "0";
-  moreBtn.closest = (sel) => (sel === "[data-more]" ? moreBtn : null);
-  host3.trigger("click", { target: moreBtn });
-  assert.ok(!host3.innerHTML.includes("is-clamped") && w3.state.messages[0].expanded, "点击展开(expanded 入 state)");
-  host3.trigger("click", { target: moreBtn });
-  assert.ok(host3.innerHTML.includes("is-clamped"), "再点折叠");
+  assert.equal(sent.length, n0, "Shift+Enter 不提交(换行)");
 }
 
-console.log("widgets.test.mjs: W-bubble v2 assertions passed");
+console.log("widgets.test.mjs: W-bubble v4 assertions passed");
 
 /* ── W-bubble v3(用户裁决 2026-08-11;docs/WIDGET-DESIGN.md §3.13 v3)──
    锚点列范围解析(parseAnchor 兼容旧行级)+ delete action(协议:action 必是
@@ -2258,7 +2181,7 @@ console.log("widgets.test.mjs: W-bubble v2 assertions passed");
   const del = BUBBLE_DEF.actions.find((a) => a.id === "delete");
   assert.ok(del && del.exec === "local", "delete action 声明(exec:local)");
   assert.ok(BUBBLE_DEF.events.includes("delete"), "delete 事件声明(上行面)");
-  const h = renderBubble({ anchor: { member: "m", path: "plan.md#L7-L7", quote: "q" }, messages: [], busy: false, draft: "" });
+  const h = renderBubble({ anchor: { member: "m", path: "plan.md#L7-L7" }, quote: "q", content: "改", status: "pending", view: "expanded", draft: "" });
   assert.ok(h.includes("data-bubble-del"), "header 垃圾桶在(v3)");
   assert.ok(h.includes("data-bubble-x"), "✕ 收起保持");
 }
@@ -2269,7 +2192,7 @@ console.log("widgets.test.mjs: W-bubble v2 assertions passed");
   globalThis.document = doc;
   const host = doc.createElement("div");
   doc.body.appendChild(host);
-  const w = mountBubble(host, { anchor: { member: "m", path: "p#L1-L1" }, seedMessages: [] });
+  const w = mountBubble(host, { anchor: { member: "m", path: "p#L1-L1" } });
   const dels = [];
   w.on("delete", (p) => dels.push(p.anchor));
   const btn = new StubEl("button");

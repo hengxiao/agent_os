@@ -185,6 +185,18 @@ class DocGenerateBody(BaseModel):
     userPrompt: str | None = None
 
 
+class DocAnnotationBody(BaseModel):
+    """``POST /api/docs/{name}/annotations``(P2):单条批注 upsert——
+    创建 / 重新编辑(同锚点覆盖,状态回 pending 参与下一轮生成)。"""
+
+    anchor: str = ""
+    quote: str = ""
+    content: str = ""
+    version: int | None = None
+    status: str = "pending"
+    severity: str = ""  # 评审批注可选(must|should|nit;P2 runReview 链)
+
+
 #: 升权档 → 人话(W2 decisions 聚合字段;摘要层禁 tier 术语,前端按 tier 自取 copy,
 #: 本字段是给非前端消费方/调试面的固定中文)
 _TIER_HUMAN = {"none": "只读", "reversible": "可改能撤销", "irreversible": "不可逆需审批"}
@@ -388,6 +400,7 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
 
         anchor 格式校验(列可选,行级向后兼容);**删除幂等**:流不存在也 200
         (deleted=false)——前端对只开过没落盘的泡同样走这条路,不当错误面。
+        P1 起 delete_bubble 两面都删(bubbles/ 旧流 + annotations/ 新记录)。
         """
         anchor = str(body.get("anchor") or "")
         if not _ANCHOR_RE.match(anchor):
@@ -400,6 +413,52 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return {"deleted": deleted, "anchor": anchor}
+
+    @app.get("/api/docs/{name}/annotations")
+    def read_doc_annotations(name: str) -> list[dict[str, Any]]:
+        """批注读取面(P2):annotations/ 新记录 + bubbles/ 旧流压缩迁移
+        (同锚点新优先;无 status 的旧记录读为 pending)。"""
+        try:
+            return doc_store.read_annotations(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.post("/api/docs/{name}/annotations")
+    def save_doc_annotation(name: str, body: DocAnnotationBody) -> dict[str, Any]:
+        """单条批注 upsert(P2,save_annotation 路径;**无即时 AI 回复**——
+        comment 对话链退役,批注攒着等 generate 批处理):
+        创建 = pending;重新编辑 = 同锚点覆盖、状态回 pending、generation/
+        appliedInVersion 清零(参与下一轮生成);history/migratedFrom 随已有记录保留。"""
+        anchor = str(body.anchor or "")
+        if not _ANCHOR_RE.match(anchor):
+            raise HTTPException(status_code=400, detail=f"锚点格式非法: {anchor!r}")
+        content = str(body.content or "").strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="批注内容不能为空")
+        if len(content) > 500:
+            raise HTTPException(status_code=400, detail="批注过长(>500 字)")
+        try:
+            existing = next(
+                (a for a in doc_store.read_annotations(name) if a.get("anchor") == anchor), None
+            )
+            return doc_store.save_annotation(
+                name,
+                {
+                    **(existing or {}),
+                    "anchor": anchor,
+                    "quote": str(body.quote or ""),
+                    "content": content,
+                    "version": body.version,
+                    "status": body.status or "pending",
+                    "appliedInVersion": None,
+                    "generation": None,
+                    **({"severity": body.severity} if body.severity else {}),
+                },
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
 
     @app.post("/api/docs/{name}/review")
     def doc_review(name: str) -> dict[str, Any]:

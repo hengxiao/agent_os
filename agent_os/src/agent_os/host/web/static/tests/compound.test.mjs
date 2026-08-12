@@ -283,8 +283,9 @@ console.log("compound.test.mjs: C2 playground smoke assertions passed");
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url, options });
-    if (String(url).endsWith("/comment")) {
-      return { ok: true, json: async () => ({ reply: "建议:删第二句", edits: [{ replace_text: "改过的第二段" }] }) };
+    if (String(url).endsWith("/annotations")) {
+      const sent = JSON.parse(options.body ?? "{}");
+      return { ok: true, json: async () => ({ ...sent, createdAt: "2026-08-13T00:00:00+00:00" }) };
     }
     return { ok: true, json: async () => ({}) };
   };
@@ -294,15 +295,16 @@ console.log("compound.test.mjs: C2 playground smoke assertions passed");
     `<input data-doc-chat-input="1"><span data-doc-chars="1"></span><span data-doc-dirty="1"></span><div data-doc-bubblebar="1"></div>`;
   doc.body.appendChild(host);
   const ed = mountDocEditor(host, { name: "demo.test", text: "# 标题\n首段内容\n\n次段内容", chat: [] },
-    { seedFlows: [{ anchor: "doc.md#L2-L2", messages: [{ role: "user", text: "旧批注", ts: 1 }] }] });
+    { seedFlows: [{ anchor: "doc.md#L2-L2", quote: "首段内容", content: "旧批注", status: "pending" }] });
 
-  // 结构:预定义 doc 子件(md-viewer)在 children_snapshot;kind 注册在表
+  // 结构:预定义 doc 子件(md-viewer)+ 种子批注首挂出标(v4:_ensureEntry 幂等建)
   const snap = ed.compound.children_snapshot();
-  assert.deepEqual(snap.map((s) => s.id), ["doc"], "预定义 slot doc(md-viewer 文档主体)");
+  assert.deepEqual(snap.map((s) => s.id), ["doc", "doc.md#L2-L2"], "预定义 doc + 种子批注出标(v4)");
   assert.equal(snap[0].path, "/doc/demo.test/doc", "子件 path = owner.path + 子段(§1)");
   assert.ok(getWidgetDef("doc-editor")?.compound, "doc-editor 注册进 registry(compound 形态)");
 
-  // 段落开泡 = add_child(chat-bubble);view 经 link_view 挂进宿主壳(§5)
+  // 段落锚点钮开泡:同锚点已有 entry(种子出标)→ 聚焦展开,不重复建;
+  // view 经 link_view 挂进宿主壳(§5)
   const anchorBtn = new StubEl("button");
   anchorBtn.dataset.anchorBtn = "1";
   const paraBlock = new StubEl("div");
@@ -312,14 +314,19 @@ console.log("compound.test.mjs: C2 playground smoke assertions passed");
   paraBlock.parentNode = host.querySelector("[data-doc-preview]");
   host.querySelector("[data-doc-preview]").trigger("click", { target: anchorBtn });
   const snap2 = ed.compound.children_snapshot();
-  assert.equal(snap2.length, 2, "开泡后子件 +1(动态生灭)");
+  assert.equal(snap2.length, 2, "同锚点重开 = 聚焦不新建(子件数不变)");
   assert.equal(snap2[1].kind, "chat-bubble", "批注子件 kind");
   assert.equal(snap2[1].path, "/doc/demo.test/doc.md#L2-L2", "批注 path 与信封寻址一致");
   const entry = ed.bubbles.get("doc.md#L2-L2");
+  assert.equal(entry.el.hidden, false, "锚点钮点开 = 展开(出标时是藏着的)");
   assert.ok(entry.body.innerHTML.includes("w-bubble"), "气泡卡挂进壳(link_view)");
-  assert.ok(entry.body.innerHTML.includes("旧批注"), "种子消息进 canonical state");
+  assert.ok(entry.body.innerHTML.includes("旧批注"), "种子记录进卡(展示态 expanded)");
+  assert.equal(entry.inst.state.status, "pending", "种子状态 pending");
 
-  // child_context(§7-2):submit 信封 widget 级带锚段/全文/文档态
+  // child_context(§7-2):submit 负载 cascade 三级(§16 仍组装;annotations 端点
+  // 不消费全文——落库只要 anchor/quote/content)
+  let submitPayload = null;
+  entry.inst.on("submit", (p) => (submitPayload = p));
   const input3 = new StubEl("input");
   input3.dataset.bubbleDraft = "";
   input3.parentNode = entry.body;
@@ -327,13 +334,19 @@ console.log("compound.test.mjs: C2 playground smoke assertions passed");
   entry.body.trigger("input", { target: input3 });
   entry.body.trigger("keydown", { target: input3, key: "Enter" });
   await new Promise((r) => setTimeout(r, 30));
-  const commentPost = calls.find((c) => String(c.url).endsWith("/comment"));
-  assert.ok(commentPost, "submit → child_event → comment.send 出海(§7-1 闸门放行)");
-  const env = JSON.parse(commentPost.options.body);
-  assert.equal(env.cascade[0].scope, "widget", "widget 级 fragment 在近端");
-  assert.ok(env.cascade[0].data.paragraph.includes("首段内容"), "child_context 注入锚段原文(L2 段)");
-  assert.ok(env.cascade[0].data.full_text.includes("次段内容"), "child_context 注入全文");
-  assert.equal(env.cascade[1].data.name, "demo.test", "app 级文档态(宿主注册)");
+  const annPost = calls.find((c) => String(c.url).endsWith("/annotations") && c.options?.method === "POST");
+  assert.ok(annPost, "submit → child_event → annotations 出海(v4:save_annotation 路径)");
+  const env = JSON.parse(annPost.options.body);
+  assert.equal(env.anchor, "doc.md#L2-L2", "负载带锚点");
+  assert.equal(env.content, "这段太绕", "负载带批注内容(无即时回复)");
+  assert.equal(env.status, "pending", "提交回 pending");
+  assert.equal(submitPayload.cascade.cascade[0].scope, "widget", "widget 级 fragment 在近端");
+  assert.ok(submitPayload.cascade.cascade[0].data.paragraph.includes("首段内容"), "child_context 注入锚段原文");
+  assert.ok(submitPayload.cascade.cascade[0].data.full_text.includes("次段内容"), "child_context 注入全文");
+  assert.equal(submitPayload.cascade.cascade[1].data.name, "demo.test", "app 级文档态(宿主注册)");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(entry.el.hidden, true, "提交成功 → 收起成标记(v2.1 §2.1 帧 3)");
+  assert.equal(entry.marker.hidden, false, "段旁标记显出");
 
   // 可见性管控(§7-3):控件内 ✕ → close → 壳藏起 + 段旁标记;seen 前进
   const xBtn = new StubEl("button");

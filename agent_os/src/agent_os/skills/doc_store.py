@@ -34,6 +34,9 @@ _DOC_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$")
 #: 批注状态机(设计 v2 §3.1;P1)
 ANNOTATION_STATUSES = ("pending", "applied", "ignored", "outdated")
 
+#: 评审 severity 白名单(与 app.py DOC_SEVERITIES 同值;迁移面引用,防环 import)
+DOC_SEVERITY_VALUES = ("must", "should", "nit")
+
 
 def _iso(ts: float | None = None) -> str:
     """ISO 时间戳(Annotation.createdAt;ts None = 现在)。"""
@@ -284,6 +287,8 @@ class DocStore:
             rec["history"] = annotation["history"]
         if "migratedFrom" in annotation:  # 迁移面:旧流锚点(防 reanchor 改锚后旧流复活)
             rec["migratedFrom"] = annotation["migratedFrom"]
+        if annotation.get("severity") in DOC_SEVERITY_VALUES:  # 评审批注可选字段
+            rec["severity"] = annotation["severity"]
         adir = d / "annotations"
         adir.mkdir(exist_ok=True)
         (adir / f"{self._anchor_hash(anchor)}.json").write_text(
@@ -325,19 +330,22 @@ class DocStore:
             if not anchor or anchor in seen:
                 continue
             msgs = [m for m in (flow.get("messages") or []) if isinstance(m, dict)]
-            first_user = next((m for m in msgs if m.get("role") == "user"), None)
-            history = [m for m in msgs if m is not first_user]
+            # 首条 user 消息 → content;无 user(评审流全是 assistant)→ 首条消息
+            first = next((m for m in msgs if m.get("role") == "user"), None) or (msgs[0] if msgs else None)
+            history = [m for m in msgs if m is not first]
             rec: dict[str, Any] = {
                 "anchor": anchor,
                 "quote": self._quote_for_anchor(d, anchor),
                 "version": self._latest_version_no(d),
-                "content": str(first_user.get("text") or "") if first_user else "",
-                "createdAt": _iso(first_user.get("ts")) if first_user else _iso(),
+                "content": str(first.get("text") or "") if first else "",
+                "createdAt": _iso(first.get("ts")) if first else _iso(),
                 "createdBy": "user",
                 "status": "pending",
                 "appliedInVersion": None,
                 "generation": None,
             }
+            if first and first.get("severity") in DOC_SEVERITY_VALUES:
+                rec["severity"] = first["severity"]  # 评审流 severity 随记录保留
             if history:
                 rec["history"] = history
             out.append(rec)

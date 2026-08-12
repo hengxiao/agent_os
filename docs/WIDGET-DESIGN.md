@@ -472,52 +472,49 @@
 > 8. ~~F7(验收报告)~~ **已修(2026-08-05)**:card 摘录剥壳——引用块 `>`
 >    前缀、行内符号(`**`/`` ` ``)、链接取纯文本(有断言)。
 
-### 3.13 W-bubble 聊天气泡 → [效果图](widgets/design/w-bubble.svg)
+### 3.13 W-bubble 批注卡(**v4 · 批注批处理工作流 v2.1**,2026-08-13) → [效果图](widgets/design/w-bubble.svg)
 
-参照:Notion comment / Slack thread。
+参照:Notion comment(单条批注卡;**v4 起对话流退役**——批注攒着等「生成
+下一版本」批处理,无即时 AI 回复)。
 
-**tab(展开态)效果要求(v2 · 用户验收反馈 2026-08-11;v3 · 用户裁决 2026-08-11 交互语义更新)**:
-- 浮层卡(--shadow-3,圆角 12,140ms 入场)带小箭头指向锚点;
-- 自上而下**固定四区**:header(批注 · 位置徽标 L7 + ✕ 收起)/ quote(锚段
-  摘录 2 行截断 + 左 3px `--live` 条)/ **log(唯一滚动区**,flex:1 +
-  min-height:0 + overflow:auto)/ composer(钉底);
-- 消息流(log 内):图标圆 20px + 名称 500 + 相对时间弱 + 内容 13px;不分左右
-  (Notion 式);typing 三点进 log 尾部;**未读分隔线**(「以下是新消息」细线,
-  首次打开插在游标处);**长单条消息折叠**(>6 行 line-clamp + 「展开/折叠」钮);
-- composer:autosize textarea(1 行起,最多 4 行,超过内滚),Enter 发送 /
-  Shift+Enter 换行;发送钮空输入禁用(**busy 不禁用**——发送中可续写);
-- **busy 不吞消息**:连发进本地队列,用户消息先入流(不等回包),在飞一条
-  emit 串行,回复按序回填;失败行内红条 + 重试(不堵队);输入永不丢;
-- **滚底语义**:新消息到达时 log 已在底 → 自动滚底;不在底 → 浮
-  「↓ 新消息」pill(点击滚底自收),不硬拽;
-- 点外不收起(防误丢草稿);Esc / ✕ 收起;
-- **(v3 用户裁决,覆盖上一条)** 右键**原位**开泡(块内任意点,壳浮在该点旁);
-  块内有选区时右键 → 锚点升行列范围(`doc.md#L7:C3-L9:C10`,列可选,旧行级
-  兼容),quote = 选中文本;**点泡外收起**为 💬 圆标**留在原位附近**(锚点行尾,
-  草稿不丢,点标原位重开);卡头 🗑 垃圾桶两击**删除批注**(delete action,
-  exec:local → 事件上行 → 宿主摘除 + 后端删持久化);
+**tab 效果要求(v4)**:子状态机 hidden / composing / preview(宿主 tooltip)/
+expanded(v2.1 §1.2):
+- **composing(输入态)**:右键即开,壳浮在点击点旁(v3.2 几何不动);
+  输入框硬规格(v2.1 §3):宽 240–400px、auto-grow 1→3 行超出内滚;
+  **Enter 提交 / Shift+Enter 换行 / Esc 取消**;**点泡外 = 有内容提交 /
+  空取消**(裁决 C1,覆盖 v3.2 保草稿);空输入提交抖动提示;>500 字截断 + 提示;
+  [取消][添加] 钮(空草稿添加禁用);
+- **expanded(展示态)**:header(批注 · 锚点 L# + 🗑 两击删除[裁决 C3]+ ✕)+
+  quote 区(锚段摘录 2 行截断;outdated 进入编辑时前缀「原文快照:」)+
+  content 正文(壳封顶时此区内滚)+ 底行(**状态徽标** + 相对时间 + [编辑]);
+- **状态徽标**:pending 粉 / applied 绿 / ignored 灰 / outdated 橙虚线——
+  色值走 `--ann-*` token(v2.1 §11.2,不硬编码),色 + 文字双编码;
+- applied/ignored/outdated 可**重新编辑**→ 提交后状态回 pending(参与下一轮
+  生成);generation.aiNote 在展示态出一行「AI 处理:」;
+- **preview(悬停预览)**:marker hover 200ms 出 tooltip 卡(内容摘录 + 锚点 +
+  相对时间;归宿主,marker 是宿主的);
 - **宿主壳几何(切割线:壳归宿主)**:maxHeight = clamp(200px, min(380px, 45vh),
-  可用空间−16px)(v3.2 加 380px 绝对上限,超出 log 内滚),spaceBelow < 240 且上方更大 → 翻转向上(箭头随翻);
-  文档滚动/窗口 resize 重算跟随锚段;高度变化 120ms ease-out 过渡
-  (reduced-motion 停用)。
+  可用空间−16px)(v3.2);翻转/跟随/autoUpdate 全部不动;标记按状态着色
+  (data-status 色环),行内高亮按状态(applied 淡出 / ignored 删除线 /
+  outdated 橙);
+- **退役(代码删除)**:泡内消息流、发送队列、typing、pill、未读分隔线、
+  长消息折叠、apply_reply 链;card 面同步简化(状态徽标 + 内容摘录)。
 
-**card(收起态)效果要求**:段旁 22px 圆标(`--live` 实底,未读数白字 11px;无未读则 💬 线稿图标 40% 透明)
-+ hover 出预览条(--shadow-2:最后一条摘录 1 行 +「N 条」)。
+**card(收起态)效果要求(v4)**:段旁 💬 标记(状态色环)+ hover 预览 tooltip;
+卡片面 = 状态徽标 + 内容摘录(计数/未读徽标退役)。
 
 **验收清单**:
 - [x] 气泡永远指向锚点,滚动跟随不错位;
-- [x] 未读数 = 我没看过的消息数(游标语义),不是总数;
-- [x] 多气泡同屏不互相遮挡(右侧栏堆叠或错列);
-- [x] (v2)长线程:气泡 ≤ maxHeight,只有 log 滚,页级滚动为零;
-- [x] (v2)贴底锚点开泡向上翻转;滚动/resize 几何跟随;
-- [x] (v2)连发不吞:用户消息全部先入流,回复按序回;
-- [x] (v2)非底部新消息出 pill,点击滚底自收;
-- [x] (v2)长消息折叠/展开;
 - [x] (v3)右键原位开泡(点击点旁);选区右键 quote = 选中文本 + 列范围锚点;
-- [x] (v3)点泡外收起为原位标记,点标重开草稿逐字在;
 - [x] (v3)垃圾桶两击删除,后端持久化同步(重拉不含);
-- [x] (v3.2)泡左缘 = 点击点旁(不吸行右缘);无效坐标回落不页顶跳;
-  380px 封顶内滚;连发按 composer DOM 值全入流;
+- [x] (v3.2)泡左缘 = 点击点旁(不吸行右缘);无效坐标回落不页顶跳;380px 封顶;
+- [x] (v4)右键 → 输入态硬规格;Enter 提交即落库(annotations,无即时回复)
+  → 收起成标记(pending 色环)+ 高亮;
+- [x] (v4)点泡外 = 有内容提交 / 空取消(C1);Esc 取消;空提交抖动;500 字截断;
+- [x] (v4)悬停标记 200ms 出预览 tooltip;点标记开展示态;
+- [x] (v4)编辑 → 提交回 pending;状态徽标/标记色环/高亮状态四态;
+- [x] (v4)贴底锚点开泡向上翻转;滚动/resize 几何跟随;
+- [x] (v4)长批注卡 ≤ 380px,content 区内滚,页级滚动为零;
 
 > W6.4 实现注(2026-08-04;**切割线不动**,W5.4 定案):
 > 1. 三条验收的指向/游标/堆叠都是宿主(doc-editor)既有行为面,本期未动
@@ -604,6 +601,39 @@
 >   发送钮只按空输入禁用(busy 不禁用,v2 已是);
 > - **测试**:tests-ui 断言组(点旁左缘/无效坐标不新增/可见泡不页顶/
 >   30 条封顶内滚/连发 5 条全入流)+ 三截图(.shots/bubble-v32-*)。
+
+> **v4 实现注**(2026-08-13;批注批处理工作流 v2.1,PLAN §2 P2):
+> - **控件重写**(w-bubble.js/w-bubble.render.js):state 从消息流改为单条批注
+>   (anchor/quote/content/status/createdAt/view/draft/severity/generation);
+>   view 二态 composing/expanded(hidden/preview 归宿主:壳显隐 + marker
+>   tooltip);def 面 events 保留 submit/open/close/delete,apply 事件与
+>   apply_reply action 退役;乐观更新(提交即写 state 转展示态),父级出海
+>   失败 notifyError 回输入态(草稿恢复);
+> - **宿主**(doc-editor.js):提交链从 comment.send 改 **annotations 端点**
+>   (POST /api/docs/{name}/annotations,save_annotation 路径,无即时回复);
+>   提交成功收起成标记;新建取消(无内容 close)直接摘除;点外 C1 =
+>   submitOrCancel(有内容提交/空取消/展示态收起);标记 data-status 色环 +
+>   高亮 data-status 样式(applied 淡出/ignored 删除线/outdated 橙);
+>   marker hover 200ms tooltip(_hideTip 委托);**种子批注首挂出标**
+>   (_ensureEntry,幂等);评审链改 runReview → 逐条 POST annotations
+>   (severity 随)→ _syncAnnotations 重拉出标(不弹壳);未读游标(seen/
+   unread/bubbleNewFrom)全删;
+> - **修复**:_refEl 参考点改每次现找块(首开 add_child 触发的基座 relayout
+>   会重渲 preview,捕获的块引用过期 → 重开页顶跳;P2 实测抓出);
+> - **REST 面**(P2 补):GET/POST /api/docs/{name}/annotations(upsert:编辑
+>   回 pending、generation 清零、history/migratedFrom 保留;content ≤500);
+>   comment 端点**保留只读兼容**(旧流迁移面的数据源;前端不再调用,报告定);
+> - **迁移补**:旧流无 user 消息(评审流全 assistant)→ 首条消息作 content;
+>   severity 随迁移/写读透传;
+> - **copy**:六主题补 add/cancel/edit/toolong/snapshot/ainote/status.* 十键,
+>   退役 send/apply/you/retry/expand/collapse/newpill/newhere 八键;
+>   token 新增 --ann-pending/applied/ignored/outdated 四枚(tokens.css +
+>   六主题同步,CONTRACT_TOKENS 登记);
+> - **lab-iterate 跟随 v4**:锚点泡提交即落边注(无即时回复),apply 链退役;
+> - **测试**:stub(v4 两形态/乐观更新/点外/截断/Esc/两击删 + 既有全绿);
+>   tests-ui(v3 段 C1 改写/v31 微改/v32 几何回归 + 新 v4 组:输入框规格/
+>   截断提示/Esc 摘除/tooltip/applied 重编辑回 pending)+ 截图
+>   (bubble-v4-tooltip/reedit);pytest +2(annotations 端点往返/校验)。
 
 ---
 

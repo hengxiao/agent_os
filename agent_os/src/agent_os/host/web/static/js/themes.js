@@ -30,6 +30,8 @@ export const CONTRACT_TOKENS = [
   "--log-bg", "--log-fg",
   // 状态
   "--ok", "--warn", "--danger", "--aborted", "--live",
+  // 批注状态(v4 批注卡;v2.1 §11.2)
+  "--ann-pending", "--ann-applied", "--ann-ignored", "--ann-outdated",
   // 焦点可见性(docs/WEB-A11Y.md §5.2):颜色须逐主题自定义并过 ≥3:1 对比度断言;
   // 宽度/偏移是策略常量,只在 tokens.css :root 定义,主题不得覆盖(测试静态断言)
   "--focus-ring",

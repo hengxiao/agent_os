@@ -105,7 +105,8 @@ def main() -> int:
                 mod.run(ctx)
             except Exception:
                 ctx.failures.append("用例异常:\n" + traceback.format_exc(limit=3))
-                print("  ✗ 用例异常,见末尾")
+                print("  ✗ 用例异常:")
+                traceback.print_exc(limit=3)  # 明细随打(原只计数,排查全靠猜)
             page.close()
             total_fail += len(ctx.failures)
             if ctx.failures:

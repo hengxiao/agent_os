@@ -141,8 +141,8 @@ const DOC = {
   assert.ok(calls.find((c) => c.url.endsWith("/candidate/accept")), "accept 请求发出");
   assert.ok(region(".it-top").includes("v001"), "接受后版本下拉出现 v001");
 
-  /* 边注气泡(W2,docs/WIDGETS.md W-bubble):💬 开气泡 → Enter 提交(经 §16
-     cascade 出海到评论端点)→ 回复进气泡 → apply 采纳为边注挂左栏;Esc 关闭 */
+  /* 边注气泡(v4 · 批注卡):💬 开卡(输入态)→ Enter 提交直接落边注挂左栏
+     (评论回复链退役——无即时 AI 回复);Esc 取消不落 */
   const unit = new StubEl("div");
   unit.dataset.anchor = JSON.stringify({ member: "weather.query", kind: "field", path: "description" });
   unit.parentNode = handle.root;
@@ -152,11 +152,12 @@ const DOC = {
     sel === "[data-it-note]" ? noteBtn : sel === "[data-anchor]" ? unit : null;
   handle.root.trigger("click", { target: noteBtn });
   const bubbleHost = unit.children.find((c) => c.innerHTML.includes("w-bubble"));
-  assert.ok(bubbleHost, "💬 开气泡(W-bubble 挂载)");
-  assert.ok(bubbleHost.innerHTML.includes('role="dialog"'), "气泡卡 role=dialog");
-  assert.ok(bubbleHost.innerHTML.includes('role="log"'), "消息区 role=log");
+  assert.ok(bubbleHost, "💬 开批注卡(W-bubble 挂载)");
+  assert.ok(bubbleHost.innerHTML.includes('role="dialog"'), "批注卡 role=dialog");
+  assert.ok(bubbleHost.innerHTML.includes('data-view="composing"'), "新卡 → 输入态");
+  assert.ok(!bubbleHost.innerHTML.includes('role="log"'), "v4:消息流退役");
   assert.ok(bubbleHost.innerHTML.includes("weather.query"), "锚点引用行");
-  // Enter 提交:submit 事件 → 父级 POST comment(cascade 信封)→ 回复渲染
+  // Enter 提交:submit 事件 → 父级直落边注(无即时回复)
   const input = new StubEl("input");
   input.dataset.bubbleDraft = "";
   input.parentNode = bubbleHost;
@@ -164,20 +165,7 @@ const DOC = {
   bubbleHost.trigger("input", { target: input });
   bubbleHost.trigger("keydown", { target: input, key: "Enter" });
   await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
-  const commentCall = calls.find((c) => c.url.endsWith("/comment"));
-  assert.ok(commentCall, "submit 经父级出海到评论端点");
-  const envelope = JSON.parse(commentCall.body);
-  assert.equal(envelope.anchor.member, "weather.query", "信封锚点");
-  assert.ok(Array.isArray(envelope.cascade) && envelope.cascade.length >= 2, "cascade 三级上下文随信");
-  assert.ok(bubbleHost.innerHTML.includes("建议:删第二句"), "回复渲染进气泡");
-  // apply_reply → 边注挂左栏(气泡不越权,采纳由父组件落地)
-  const applyBtn = new StubEl("button");
-  applyBtn.dataset.apply = "1";
-  applyBtn.parentNode = bubbleHost;
-  bubbleHost.trigger("click", { target: applyBtn });
-  await new Promise((r) => setTimeout(r, 0));
-  assert.ok(region(".it-left").includes("建议:删第二句"), "apply → 边注挂到左栏");
+  assert.ok(region(".it-left").includes("太啰嗦"), "提交即边注挂左栏(v4)");
 
   const unit2 = new StubEl("div");
   unit2.dataset.anchor = JSON.stringify({ member: "weather.query", kind: "case", path: "case1.json" });

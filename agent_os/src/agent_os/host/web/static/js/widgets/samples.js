@@ -173,10 +173,14 @@ export const SAMPLES = {
   "chat-bubble": {
     mount: "mountBubble",
     samples: [
-      { name: "典型(带种子消息)", options: {
-        anchor: { member: "lab.demo", path: "plan.md#L7-L7", quote: "第三天行程:上午故宫,下午颐和园,预算 ¥720。" },
-        seedMessages: [{ role: "user", text: "这段太绕", ts: 1785800000 }, { role: "assistant", text: "建议拆开", ts: 1785803600 }] } },
-      { name: "空(新批注)", options: { anchor: { member: "lab.demo", path: "plan.md#L12-L12" } } },
+      { name: "典型(展示态 · 待处理)", options: {
+        anchor: { member: "lab.demo", path: "plan.md#L7-L7" },
+        quote: "第三天行程:上午故宫,下午颐和园,预算 ¥720。", content: "这段太绕,拆开说", status: "pending" } },
+      { name: "已应用(带 AI 处理注)", options: {
+        anchor: { member: "lab.demo", path: "plan.md#L7-L7" },
+        quote: "第三天行程:上午故宫,下午颐和园,预算 ¥720。", content: "预算偏高", status: "applied",
+        generation: { result: "applied", aiNote: "已把预算压到 ¥600" } } },
+      { name: "空(新批注 · 输入态)", options: { anchor: { member: "lab.demo", path: "plan.md#L12-L12" } } },
     ],
   },
 };

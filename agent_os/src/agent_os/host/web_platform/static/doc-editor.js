@@ -32,7 +32,7 @@
 import { copy } from "/static/js/themes.js";
 import { createCompound, mdToHtml, registerWidgetDef } from "/static/js/widgets/index.js";
 import { registerContextProvider } from "/static/js/widgets/cascade.js";
-import { bubbleNewFrom } from "/static/js/widgets/w-bubble.render.js";
+import { relTime } from "/static/js/widgets/w-text.render.js";
 // widget-libs 试点:vendored Floating UI(docs/WIDGET-ARCH.md vendor 集成原则)
 import { computePosition, offset, flip, shift, size, arrow, autoUpdate } from "/static/vendor/floating-ui/floating-ui.dom.mjs";
 import { docTabHtml } from "./details.js";
@@ -182,21 +182,10 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
   const _appProvider = () => ({ name: doc.name, versions: doc.versions ?? [], dirty });
   let unregApp = registerContextProvider(`/doc/${doc?.name ?? "untitled"}`, "app", _appProvider);
 
-  // D4 未读增量:seen 游标进 compound state(可序列化);localStorage 备份照原
-  const _seenKey = (anchor) => `doc.seen.${doc.name}.${anchor}`;
-  const _seenGet = (anchor) => {
-    if (anchor in (inst.state.seen ?? {})) return inst.state.seen[anchor];
-    const raw = globalThis.localStorage?.getItem?.(_seenKey(anchor));
-    return raw ? Number(raw) : 0;
-  };
-  const _seenSet = (anchor, n) => {
-    inst.state.seen[anchor] = n;
-    globalThis.localStorage?.setItem?.(_seenKey(anchor), String(n));
-  };
-  // D2:气泡种子(seedFlows = DocStore bubbles/ 事实源;editsMap 存回复的替换建议)
-  const seedByAnchor = Object.fromEntries((seedFlows ?? []).map((f) => [f.anchor, f.messages ?? []]));
-  const bubbles = new Map(); // anchor → {inst, view, el, body, marker, anchor, severity}
-  const editsMap = new Map(); // anchor → edits(回复时的替换建议存证,apply 用)
+  // D2→v4(P2,批注批处理工作流):批注种子 = annotations 读取面(新记录 +
+  // 旧流压缩迁移);消息流/未读游标/回复存证全部退役(批注卡没有对话)
+  const seedByAnchor = Object.fromEntries((seedFlows ?? []).map((r) => [r.anchor, r]));
+  const bubbles = new Map(); // anchor → {inst, view, el, body, marker, anchor, blockAnchor, offTop, offLeft, ...}
 
   /* 交互面(cur,C4.2):最近非 card 挂接的宿主元素集——bubble 壳/工具条/
      批注栏/主对话的归属。多 view 时 card 面只渲染(不绑批注交互),
@@ -267,12 +256,6 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
   };
   inst.relayout = _relayout; // C4.2:外部扇出(desktop 经 live.update)也带壳挂回
 
-  /* 锚点未读(assistant 数 − seen 游标;D4 增量语义) */
-  function _unreadOf(entry) {
-    const assistant = entry.inst.state.messages.filter((m) => m.role === "assistant").length;
-    return Math.max(0, assistant - Math.min(_seenGet(entry.anchor), assistant));
-  }
-
   /* 气泡壳定位(widget-libs 试点:vendored Floating UI 替换手写几何)——
      computePosition(虚拟参考点(锚点块内偏移),壳,{placement:"bottom-start",
      middleware:[offset(8), flip(), shift({padding:16}), size(上限), arrow]});
@@ -289,10 +272,15 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       return;
     }
     if (!entry._refEl) {
-      // 虚拟参考点:块内偏移(点击点/选区);rect 每次现取——滚动随行(v3 原位语义)
+      // 虚拟参考点:块内偏移(点击点/选区);rect 每次现取——滚动随行(v3 原位语义)。
+      // 块引用**每次现找不捕获**:首开 add_child 会触发基座内层 relayout 重渲
+      // preview,捕获的块引用随后过期(detached → rect 全零 → 重开页顶跳,P2 抓出)
       entry._refEl = {
         getBoundingClientRect: () => {
-          const r = block.getBoundingClientRect();
+          const live = [...(cur?.preview.children ?? [])].find(
+            (c) => c.dataset?.anchor === entry.blockAnchor
+          ) ?? block;
+          const r = live.getBoundingClientRect();
           const x = r.left + (entry.offLeft ?? r.width - 8);
           const y = r.top + (entry.offTop ?? 24);
           return { x, y, top: y, left: x, right: x, bottom: y, width: 0, height: 0 };
@@ -394,7 +382,11 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       if (!offs) continue;
       const block = [...cur.preview.children].find((c) => c.dataset?.anchor === entry.blockAnchor);
       if (!block?.textContent) continue;
-      if (block.querySelector?.(`.doc-hl[data-anchor="${entry.anchor}"]`)) continue; // 幂等(重挂不叠包)
+      const existingHl = block.querySelector?.(`.doc-hl[data-anchor="${entry.anchor}"]`);
+      if (existingHl) { // 幂等(重挂不叠包);状态随刷(generate 后高亮变色)
+        existingHl.dataset.status = entry.inst.state.status ?? "pending";
+        continue;
+      }
       const walker = docu.createTreeWalker?.(block, 4, _TEXT_FILTER); // 跳过泡壳/标记子树
       if (!walker) continue;
       const cuts = [];
@@ -414,6 +406,7 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
         const mark = docu.createElement("span");
         mark.className = "doc-hl";
         mark.dataset.anchor = entry.anchor;
+        mark.dataset.status = entry.inst.state.status ?? "pending"; // v4:高亮状态样式(淡出/删除线/橙)
         mid.parentNode.replaceChild(mark, mid);
         mark.appendChild(mid);
       }
@@ -498,22 +491,30 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       if (existing.marker) existing.marker.hidden = true;
       if (!existing.el.isConnected) _rehangShells(); // F2b:壳被布局重渲摘出时先挂回再定位
       _fitBubble(existing); // v2:重开重算几何
-      // D4:重开也记"已读"(seen 游标随聚焦前进)
-      _seenSet(anchor, existing.inst.state.messages.filter((m) => m.role === "assistant").length);
       existing.view?.live?.focus?.();
       renderBubbleBar();
       return existing;
     }
     // compound add_child(段落批注 = 动态子件;canonical 持 state,view 由 link_view 挂)
-    const anchorState = { member: doc.name, path: anchor, quote: quote ?? blockTextOf(anchor) };
-    const seed = (seedByAnchor[anchor] ?? []).map((m) => ({ role: m.role, text: m.text, ts: m.ts ?? m.at }));
-    // v2 未读游标:首开的未读 assistant 数(分隔线插位;canonical 带 newFrom)
-    const unreadN = Math.max(0, seed.filter((m) => m.role === "assistant").length - _seenGet(anchor));
+    // v4:种子 = 单条批注记录;有内容 = 展示态(expanded),无 = 输入态(composing)
+    const seed = seedByAnchor[anchor];
+    const quoteText = String(seed?.quote ?? quote ?? blockTextOf(anchor) ?? "");
+    const anchorState = { member: doc.name, path: anchor, quote: quoteText };
+    const bubbleState = {
+      anchor: anchorState,
+      quote: quoteText,
+      content: String(seed?.content ?? ""),
+      status: seed?.status ?? "pending",
+      createdAt: seed?.createdAt ?? "",
+      severity: seed?.severity ?? "",
+      generation: seed?.generation ?? null,
+      view: seed?.content ? "expanded" : "composing",
+      draft: "",
+    };
     const bubbleInst = inst.add_child("chat-bubble", {
       slot: anchor,
-      state: { anchor: anchorState, messages: seed, open: true, busy: false, draft: "", unread: 0,
-        newFrom: bubbleNewFrom(seed, unreadN), newpill: false },
-      options: { anchor: anchorState, triggerPath: `${inst.path}/${anchor}`, seedMessages: seed, unread: unreadN },
+      state: bubbleState,
+      options: { ...bubbleState, triggerPath: `${inst.path}/${anchor}` },
     });
     // 浮出定位壳(宿主职责,W5.4 切割线;v3:壳内不再自带 ✕——与卡面头部
     // ✕/🗑 叠位冲突;收起 = 卡面 ✕(close 事件)/点泡外(v3)/Esc,语义同一)
@@ -565,15 +566,14 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
         if (!entry.el.hidden) _fitBubble(entry);
       });
     }
-    // D4:打开即记"已读"(seen 游标 = 当前 assistant 数)
-    _seenSet(anchor, bubbleInst.state.messages.filter((m) => m.role === "assistant").length);
+    // D4 未读游标退役(v4:批注卡无消息流)——打开即展示,无已读语义
     view.live.focus?.();
     renderBubbleBar();
     return entry;
   }
 
-  /* child_event 监听(§7-1 放行后在此接管):submit → comment.send 出海;
-     apply → comment.apply 经 action 管道;close → 可见性管控(§7-3)。
+  /* child_event 监听(§7-1 放行后在此接管):submit → annotations 端点落库
+     (P2:save_annotation 路径,无即时 AI 回复);close → 可见性管控(§7-3)。
      注意负载形态:{child: 子件 id(=锚点串), event, payload}——
      id 是字符串不是实例(基座闸门按 rec.id 打包)。 */
   inst.on("child_event", ({ child, event, payload }) => {
@@ -581,20 +581,19 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     const entry = bubbles.get(anchor);
     if (!entry) return; // doc 子件(md-viewer)或未知锚点,忽略
     if (event === "submit") {
-      _submitComment(entry, payload).catch((err) => {
-        console.warn("comment.send 失败:", err?.message ?? err);
+      _saveAnnotation(entry, payload).catch((err) => {
+        console.warn("annotations 保存失败:", err?.message ?? err);
         entry.view?.live?.notifyError?.(err?.message ?? String(err));
       });
       return;
     }
-    if (event === "apply") {
-      _applyComment(entry, payload).catch(() => {});
-      return;
-    }
     if (event === "close") {
+      if (!entry.inst.state.content && !seedByAnchor[anchor]) {
+        _discardBubble(entry, anchor); // 新建取消(裁决 C1):未落库,直接摘除
+        return;
+      }
       entry.el.hidden = true; // 控件内 ✕ = 收起为段旁标记(live 已自毁)
       if (entry.marker) entry.marker.hidden = false;
-      _seenSet(anchor, entry.inst.state.messages.filter((m) => m.role === "assistant").length);
       renderBubbleBar();
       return;
     }
@@ -602,6 +601,20 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       _deleteBubble(entry, anchor); // v3:垃圾桶上行 → 摘除 + remove_child + 后端删持久化
     }
   });
+
+  /* 新建取消(C1):未落库的批注直接摘除(不出标记,不碰后端) */
+  function _discardBubble(entry, anchor) {
+    entry.unfit?.();
+    entry.el.remove?.();
+    entry.marker?.remove?.();
+    bubbles.delete(anchor);
+    try {
+      inst.remove_child(anchor, { destroy: true });
+    } catch {
+      /* 已不在子表(防御) */
+    }
+    renderBubbleBar();
+  }
 
   /* v3:批注删除(控件 delete action → 闸门放行 → 此面):壳/标记摘除,
      compound remove_child(destroy),后端端点删持久化(失败不挡 UI,读面是事实源) */
@@ -627,46 +640,43 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     }
   }
 
-  /* comment.send(§3 run+cascade):出海在父级(本组件)——专属端点 */
-  async function _submitComment(entry, { anchor: a, text, cascade }) {
+  /* 批注提交(P2,save_annotation 路径):出海在父级(本组件)——annotations
+     端点 upsert;**无即时 AI 回复**(comment 对话链退役,批注攒着等 generate
+     批处理)。成功 → 收起成段旁标记(v2.1 §2.1 帧 3);失败 → 控件回输入态 */
+  async function _saveAnnotation(entry, { anchor: a, content, quote: q }) {
     const anchorStr = typeof a === "string" ? a : (a?.path ?? entry.anchor);
     try {
-      const res = await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/comment`, {
+      const res = await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/annotations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ anchor: anchorStr, text, cascade: cascade.cascade }),
+        body: JSON.stringify({
+          anchor: anchorStr,
+          quote: String(q ?? entry.inst.state.quote ?? ""),
+          content: String(content ?? ""),
+          version: _currentVersionNo(),
+          status: "pending",
+        }),
       });
       if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
-      const body = await res.json();
-      editsMap.set(anchorStr, body.edits ?? []);
-      entry.view?.live?.receiveReply?.(body.reply ?? "");
-      renderBubbleBar(); // D4:新回复 → 未读增量刷新
+      const rec = await res.json();
+      seedByAnchor[anchorStr] = rec; // 种子同步(重开/迁移面一致)
+      entry.inst.state.content = rec.content;
+      entry.inst.state.status = rec.status;
+      entry.inst.state.createdAt = rec.createdAt ?? "";
+      entry.el.hidden = true; // 提交即收起成标记(高亮/标记状态随刷)
+      if (entry.marker) entry.marker.hidden = false;
+      _paintHighlights();
+      _placeMarker(entry);
+      renderBubbleBar();
     } catch (err) {
-      entry.view?.live?.notifyError?.(err.message ?? String(err)); // 失败态(行内红条 + 重试)
+      entry.view?.live?.notifyError?.(err.message ?? String(err)); // 回输入态(草稿恢复)
     }
   }
 
-  /* comment.apply(§3 endpoint):**人按才落**——replace_text 由回复时存证,
-     经 action 管道应用;应用后服务端已 save(.bak),重载 tab 拿新全文 */
-  async function _applyComment(entry, { anchor: a }) {
-    const anchorStr = typeof a === "string" ? a : (a?.path ?? entry.anchor);
-    const replace_text = (editsMap.get(anchorStr) ?? [])[0]?.replace_text;
-    const tab = getTabInstance?.();
-    if (!replace_text || !tab?.instance) return;
-    try {
-      const res = await fetch(
-        `/platform/api/apps/${encodeURIComponent(tab.instance)}/actions/comment.apply`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ surface: "tab", args: { anchor: anchorStr, replace_text } }),
-        }
-      );
-      if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
-      reload?.();
-    } catch (err) {
-      entry.view?.live?.receiveReply?.(`(${err.message ?? err})`);
-    }
+  /* 当前版本号(annotations.version;doc.versions = vid 列表新→旧) */
+  function _currentVersionNo() {
+    const n = Number.parseInt(String(doc.versions?.[0] ?? "").slice(1), 10);
+    return Number.isFinite(n) ? n : null;
   }
 
   /* D5 主对话:发送一轮(chat 端点;agent 直接改文档,changed=true → 右侧重拉) */
@@ -740,8 +750,8 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     cur.dirtyEl.dataset.on = dirty ? "1" : "0";
   }
 
-  /* 批注列表(UX 批实体化;D3 气泡栏演进):每条 = 位置(Lx-Ly)+ 锚段摘录
-     (前 20 字)+ 对话条数 + 未读;点击跳转定位。同步刷新收起标记的未读数 */
+  /* 批注列表(UX 批实体化;v4:消息流/未读退役):每条 = 状态点 + 位置(Lx-Ly)
+     + 批注内容摘录(前 20 字);点击跳转定位。同步刷新收起标记的状态色环 */
   function renderBubbleBar() {
     const bar = cur?.host.querySelector("[data-doc-bubblebar]");
     if (!bar) return;
@@ -750,31 +760,28 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       ? `<div class="doc-bar-title">${esc(copy("platform.doc.bubblebar"))}</div>` +
         entries
           .map((entry) => {
-            const msgs = entry.inst.state.messages;
-            const unread = _unreadOf(entry);
-            const sev = entry.severity ?? "";
-            const excerpt = blockTextOf(entry.anchor).replace(/\s+/g, " ").trim().slice(0, 20);
+            const st = entry.inst.state;
+            const excerpt = String(st.content ?? "").replace(/\s+/g, " ").trim().slice(0, 20);
             return (
               `<button class="doc-bar-item" data-bar-anchor="${esc(entry.anchor)}">` +
-              (sev ? `<span class="doc-sev" data-sev="${esc(sev)}">●</span>` : "") +
+              `<span class="doc-sev doc-bar-status" data-status="${esc(st.status ?? "pending")}">●</span>` +
               `<span class="mono">${esc(entry.anchor.replace("doc.md#", ""))}</span>` +
               (excerpt ? `<span class="doc-bar-excerpt">${esc(excerpt)}</span>` : "") +
-              `<span class="pf-dim">${esc(copy("platform.doc.bubblebar.count").replace("{n}", String(msgs.length)))}</span>` +
-              (unread ? `<span class="doc-bar-n">${unread}</span>` : "") +
               `</button>`
             );
           })
           .join("")
       : "";
-    // 收起标记的未读数随渲染同步
+    // 收起标记的状态色环随渲染同步(v4:未读数退役)
     for (const entry of entries) {
       if (!entry.marker) continue;
-      const unread = _unreadOf(entry);
-      entry.marker.textContent = unread ? `💬 ${unread}` : "💬";
+      entry.marker.textContent = "💬";
+      entry.marker.dataset.status = entry.inst.state.status ?? "pending";
     }
   }
 
-  /* D3 评审流:[评审] → review 端点 → 批注集自动挂段(severity 着色) */
+  /* D3 评审流(v4 改写):[评审] → review 端点(后端仍落旧流,兼容)→ 逐条
+     upsert 进 annotations(severity 随)→ 重拉读取面同步(新锚点出标记,不弹壳) */
   async function runReview() {
     const btn = cur?.host.querySelector("[data-doc-review]");
     if (btn) btn.disabled = true;
@@ -784,29 +791,83 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       });
       if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
       const body = await res.json();
-      // 气泡雨:逐条挂段(锚点块在就开泡并注入批注;块不在记挂空)
       let hung = 0;
       for (const note of body.notes ?? []) {
         if (!DOC_SEVERITIES.includes(note.severity)) continue; // D4:severity 单源校验
-        const block = cur ? [...cur.preview.children].find((c) => c.dataset?.anchor === note.anchor) : null;
-        const entry = openBubble(note.anchor, block ?? cur?.preview);
-        if (!entry) continue;
-        entry.severity = note.severity;
-        entry.el.classList.add(`doc-sev-${note.severity}`);
-        entry.view?.live?.receiveReply?.(note.text);
-        hung += 1;
+        const r = await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/annotations`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            anchor: note.anchor,
+            quote: blockTextOf(note.anchor),
+            content: note.text,
+            version: _currentVersionNo(),
+            status: "pending",
+            severity: note.severity,
+          }),
+        }).catch(() => null);
+        if (r?.ok) hung += 1;
       }
-      renderBubbleBar();
+      await _syncAnnotations();
       return hung;
     } finally {
       if (btn) btn.disabled = false;
     }
   }
 
+  /* 种子出标(v4:批注标记持久可见):种子记录逐条建 entry——壳藏 + 标记显
+     (不弹壳)。首挂 refresh 与 _syncAnnotations 共用;已建跳过(幂等) */
+  function _ensureEntry(rec) {
+    if (!rec?.anchor || bubbles.has(rec.anchor)) return null;
+    const m = /^doc\.md#L(\d+)/.exec(rec.anchor);
+    const blk = m ? mdBlocks(currentText).find((b) => b.start <= Number(m[1]) && Number(m[1]) <= b.end) : null;
+    const blockAnchor = blk ? `doc.md#L${blk.start}-L${blk.end}` : null;
+    const block = blockAnchor && cur
+      ? [...cur.preview.children].find((c) => c.dataset?.anchor === blockAnchor)
+      : null;
+    const created = openBubble(rec.anchor, block ?? cur?.preview);
+    if (created) {
+      created.el.hidden = true;
+      if (created.marker) created.marker.hidden = false;
+    }
+    return created ?? null;
+  }
+
+  /* 批注读取面同步(P2):重拉 annotations → 种子更新;新锚点建 entry(壳藏 +
+     标记显,不弹壳),已有 entry 状态刷新(开着的壳不拽——用户正在看) */
+  async function _syncAnnotations() {
+    let list;
+    try {
+      const res = await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/annotations`);
+      if (!res.ok) return;
+      list = await res.json();
+    } catch {
+      return; // 同步失败不挡 UI(下一轮读面仍是事实源)
+    }
+    for (const rec of list ?? []) seedByAnchor[rec.anchor] = rec;
+    for (const rec of list ?? []) {
+      const entry = bubbles.get(rec.anchor);
+      if (entry) {
+        Object.assign(entry.inst.state, {
+          quote: rec.quote ?? entry.inst.state.quote,
+          content: rec.content ?? entry.inst.state.content,
+          status: rec.status ?? entry.inst.state.status,
+          severity: rec.severity ?? entry.inst.state.severity,
+          generation: rec.generation ?? entry.inst.state.generation,
+        });
+        continue;
+      }
+      _ensureEntry(rec);
+    }
+    _paintHighlights();
+    renderBubbleBar();
+  }
+
   function refresh() {
     _relayout(); // compound relayout + 壳挂回 + 行内高亮/标记(均在 _relayout 内)
     renderChat();
     renderStatus();
+    for (const rec of Object.values(seedByAnchor)) _ensureEntry(rec); // v4:种子批注出标(幂等)
     renderBubbleBar();
   }
 
@@ -834,26 +895,20 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
      旧壳 #detailHost 跨 renderDetail 存活语义同前——永远转给最新实例) */
   async function onHostClick(e) {
     if (!cur) return;
-    // v3 用户裁决:点泡外收起(草稿不丢——壳藏起 + 原位标记显出;
-    // 覆盖 v2「点外不收起」,DESIGN §3.13 v3)。
-    // 注意:泡内控件点击(发送/删除/重试等)会先重渲卡面把事件目标摘出 DOM,
-    // 冒泡到这时 closest(".doc-bubble-pop") 已空——须按控件 data 面判内,
-    // 否则发送键一按就被误收(真实浏览器抓出)
-    const _BUBBLE_CTL = ["[data-bubble-send]", "[data-bubble-del]", "[data-bubble-retry]",
-      "[data-bubble-x]", "[data-more]", "[data-bubble-pill]", "[data-apply]", "[data-bubble-draft]"];
+    // v4(裁决 C1,覆盖 v3.2 保草稿):点泡外 = 输入态有内容提交/空取消,
+    // 展示态收起。注意:泡内控件点击(添加/删除/编辑等)会先重渲卡面把事件
+    // 目标摘出 DOM,冒泡到这时 closest(".doc-bubble-pop") 已空——须按控件
+    // data 面判内,否则添加键一按就被误收(真实浏览器抓出)
+    const _BUBBLE_CTL = ["[data-bubble-send]", "[data-bubble-del]", "[data-bubble-cancel]",
+      "[data-bubble-edit]", "[data-bubble-x]", "[data-bubble-draft]"];
     const _inPop = e.target.closest?.(".doc-bubble-pop") ||
       _BUBBLE_CTL.some((sel) => e.target.closest?.(sel)) ||
       e.target.closest?.(".doc-hl"); // v3.1:高亮区 = 重开入口(开泡语义,非"泡外")
     if (!_inPop && !e.target.closest?.("[data-bubble-marker]")) {
-      let folded = false;
+      // C1:输入态有内容提交/空取消;展示态收起(submitOrCancel 内部判)
       for (const entry of bubbles.values()) {
-        if (!entry.el.hidden) {
-          entry.el.hidden = true;
-          if (entry.marker) entry.marker.hidden = false;
-          folded = true;
-        }
+        if (!entry.el.hidden) entry.view?.live?.submitOrCancel?.();
       }
-      if (folded) renderBubbleBar();
     }
     // D5:[发送] → 主对话一轮
     if (e.target.closest("[data-doc-chat-send]")) return sendChat();
@@ -1003,6 +1058,47 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       }
       openBubble(anchor, block, { point: validPt ? { x: px, y: py } : null, quote });
     });
+    // v4 悬停预览(v2.1 §2.3):marker hover 200ms 出 tooltip(内容摘录 + 锚点 +
+    // 相对时间);移出即收;开着的泡不出(stub 无 rect 面静默)
+    let _tipTimer = null;
+    let _tipEl = null;
+    const _hideTip = () => {
+      if (_tipTimer) {
+        clearTimeout(_tipTimer);
+        _tipTimer = null;
+      }
+      _tipEl?.remove?.();
+      _tipEl = null;
+    };
+    viewHost.addEventListener("mouseover", (e) => {
+      const m = e.target.closest?.("[data-bubble-marker]");
+      if (!m || m.hidden) return;
+      const entry = bubbles.get(m.dataset.anchor);
+      if (!entry || !entry.el.hidden) return; // 开着的泡不出 tooltip
+      if (_tipTimer) clearTimeout(_tipTimer);
+      _tipTimer = setTimeout(() => {
+        const r = m.getBoundingClientRect?.();
+        if (!r || (r.width === 0 && r.height === 0)) return;
+        _tipEl?.remove?.();
+        const st = entry.inst.state;
+        const createdTs = Date.parse(st.createdAt ?? "") / 1000;
+        const tip = (viewHost.ownerDocument ?? globalThis.document).createElement("div");
+        tip.className = "doc-ann-tip";
+        tip.innerHTML =
+          `<span class="doc-ann-tip-tx">${esc(String(st.content ?? "").slice(0, 80))}</span>` +
+          `<span class="doc-ann-tip-meta"><span class="mono">${esc(entry.anchor.replace("doc.md#", ""))}</span>` +
+          `<span>${esc(copy(`w.bubble.status.${st.status ?? "pending"}`))}</span>` +
+          (createdTs ? `<span>${esc(relTime(createdTs))}</span>` : "") +
+          `</span>`;
+        tip.style.left = `${Math.round(r.left)}px`;
+        tip.style.top = `${Math.round(r.bottom + 6)}px`;
+        (viewHost.ownerDocument ?? globalThis.document).body?.appendChild?.(tip); // fixed 定位,挂 body 防祖先 transform
+        _tipEl = tip;
+      }, 200);
+    });
+    viewHost.addEventListener("mouseout", (e) => {
+      if (e.target.closest?.("[data-bubble-marker]")) _hideTip();
+    });
     // D2:段落锚点钮 → 开/聚焦对应气泡;v3.1:点高亮区 = 重开对应泡
     els.preview.addEventListener("click", (e) => {
       const hl = e.target.closest?.(".doc-hl");
@@ -1081,8 +1177,6 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     bubbles,
     compound: inst, // C3:compound 实例(测试面;children_snapshot/child_event 经此取)
     changedAnchors, // UX 批:本次挂载的变化块锚点集(测试面)
-    seenGet: _seenGet, // D4:seen 游标(测试面)
-    seenSet: _seenSet,
     setText(text) {
       currentText = text ?? "";
       dirty = false;

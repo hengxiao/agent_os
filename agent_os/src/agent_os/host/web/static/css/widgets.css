@@ -524,9 +524,10 @@
 .wd-md a { color: var(--live); text-decoration: underline; } /* 常显下划线(F6,spec SVG) */
 .wd-md-table th { background: var(--bg-2); }
 .wd-md-cardtitle { color: var(--fg-0); font-size: 15px; font-weight: 600; } /* §1.1 阶梯:15 标题 */
-/* W-bubble(§3.13):卡本体件(浮出壳/箭头/圆标在宿主 platform.css,不动) */
-/* v2(用户验收反馈 2026-08-11):四区结构——头/引用钉边,log 唯一滚动区,
-   composer 钉底(autosize textarea);未读分隔线/长消息折叠/新消息 pill */
+/* W-bubble(§3.13 v4 · 批注批处理工作流 v2.1):单条批注卡本体件
+   (浮出壳/箭头/圆标在宿主 platform.css,切割线不动)——消息流/队列/typing/
+   pill/未读分隔线退役;两形态:composing(输入态,v2.1 §3 硬规格)/ expanded
+   (展示态);状态徽标色值走 --ann-* token(v2.1 §11.2,色+文字双编码) */
 .w-bubble { display: flex; flex-direction: column; min-height: 0; position: relative; }
 .w-bubble-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); font-size: var(--text-xs); color: var(--fg-1); font-weight: 500; flex: none; }
 .w-bubble-x { border: 0; background: var(--bg-2); color: var(--fg-1); border-radius: 50%; width: calc(var(--s4) + var(--s1)); height: calc(var(--s4) + var(--s1)); cursor: pointer; font-family: inherit; font-size: var(--text-xs); }
@@ -535,53 +536,36 @@
 .w-bubble-del { font-size: var(--text-2xs); }
 .w-bubble-del.is-armed { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
 .w-bubble-quote { display: flex; align-items: flex-start; gap: var(--s2); border-left: var(--stroke-accent) solid var(--live); padding-left: var(--s2); margin: var(--s2) 0; flex: none; }
+.w-bubble-quote-tag { flex: none; color: var(--ann-outdated); font-size: var(--text-2xs); }
 .w-bubble-quote-tx { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--fg-1); font-size: var(--text-xs); }
-.w-bubble-log { flex: 1; min-height: 0; overflow-y: auto; }
-.w-bubble-msg { display: flex; gap: var(--s2); margin: var(--s2) 0; }
-.w-bubble-av {
-  flex: none; width: calc(var(--s4) + var(--s1)); height: calc(var(--s4) + var(--s1));
-  border-radius: 50%; background: var(--line-strong); color: var(--bg-0);
-  display: inline-flex; align-items: center; justify-content: center; font-size: var(--text-2xs);
+/* 输入态(v2.1 §3:textarea 1 行起 3 行止 auto-grow,超出内滚;钮 13px/6px 12px) */
+.w-bubble-compose { display: flex; flex-direction: column; gap: var(--s2); margin-top: var(--s2); }
+.w-bubble-compose textarea.input { resize: none; overflow-y: hidden; max-height: calc(1.5em * 3 + var(--s2)); }
+.w-bubble-compose-bar { display: flex; align-items: center; gap: var(--s2); }
+.w-bubble-compose-bar .wd-btn-primary { margin-left: auto; }
+.w-bubble-hint { color: var(--warn); font-size: var(--text-2xs); }
+.w-bubble-cancel, .w-bubble-edit {
+  border: var(--stroke) solid var(--line); background: transparent; color: var(--fg-1);
+  border-radius: var(--r-conn); padding: var(--s1) var(--s3); font-size: var(--text-xs);
+  cursor: pointer; font-family: inherit;
 }
-.w-bubble-av[data-role="assistant"] { background: var(--live); }
-.w-bubble-body { min-width: 0; flex: 1; }
-.w-bubble-meta { color: var(--fg-2); font-size: var(--text-xs); }
-.w-bubble-meta b { color: var(--fg-0); font-weight: 500; }
-.w-bubble-time { margin-left: var(--s1); }
-.w-bubble-tx { display: block; font-size: var(--text-sm); color: var(--fg-0); white-space: pre-wrap; }
-.w-bubble-tx.is-clamped { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
-.w-bubble-more {
-  border: 0; background: transparent; color: var(--live); cursor: pointer;
-  font-size: var(--text-2xs); font-family: inherit; padding: 0; margin-top: 1px;
-}
-.w-bubble-newline {
-  display: flex; align-items: center; gap: var(--s2);
-  color: var(--fg-2); font-size: var(--text-2xs); margin: var(--s1) 0;
-}
-.w-bubble-newline::before, .w-bubble-newline::after {
-  content: ""; flex: 1; border-top: var(--stroke) solid var(--line);
-}
-.w-bubble-pill {
-  position: absolute; right: var(--s2); bottom: calc(var(--s8) + var(--s4)); z-index: 3;
-  border: var(--stroke) solid var(--line-strong); border-radius: 999px;
-  background: var(--bg-1); color: var(--live); cursor: pointer;
-  padding: var(--s1) var(--s2); font-size: var(--text-2xs); font-family: inherit;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--fg-0) 14%, transparent);
-}
-.w-bubble-typing { display: inline-flex; gap: var(--s1); padding: var(--s1) 0; }
-.w-bubble-typing i { width: var(--s1); height: var(--s1); border-radius: 50%; background: var(--fg-2); animation: wd-typing 1s ease-in-out infinite; }
-.w-bubble-typing i:nth-child(2) { animation-delay: 0.15s; }
-.w-bubble-typing i:nth-child(3) { animation-delay: 0.3s; }
-@keyframes wd-typing { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
-.w-bubble-fail {
-  display: flex; align-items: center; gap: var(--s2); flex: none;
-  background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger);
-  border-radius: var(--r-conn); padding: var(--s1) var(--s2); font-size: var(--text-xs);
-}
-.w-bubble-retry { margin-left: auto; border: 0; background: transparent; color: var(--live); cursor: pointer; font-family: inherit; font-size: var(--text-xs); }
-.w-bubble-input { display: flex; gap: var(--s2); margin-top: var(--s2); flex: none; align-items: flex-end; }
-.w-bubble-input .input { flex: 1; }
-.w-bubble-input textarea.input { resize: none; overflow-y: hidden; max-height: calc(1.5em * 4 + var(--s2)); }
+.w-bubble-cancel:hover, .w-bubble-edit:hover { color: var(--fg-0); border-color: var(--live); }
+/* 空输入提交 → 抖动(v2.1 §3.4) */
+.w-bubble textarea.is-shake { animation: w-bubble-shake .3s ease; border-color: var(--danger); }
+@keyframes w-bubble-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+/* 展示态:content 正文(壳封顶 380 时此区内滚)+ AI 处理注 + 底行(状态徽标/时间/编辑) */
+.w-bubble-content { font-size: var(--text-sm); color: var(--fg-0); white-space: pre-wrap; margin: var(--s2) 0; flex: 1; min-height: 0; overflow-y: auto; }
+.w-bubble-ainote { font-size: var(--text-xs); color: var(--fg-1); border-left: var(--stroke-accent) solid var(--ann-applied); padding-left: var(--s2); margin-bottom: var(--s2); }
+.w-bubble-foot { display: flex; align-items: center; gap: var(--s2); flex: none; }
+.w-bubble-foot .w-bubble-edit { margin-left: auto; }
+.w-bubble-time { color: var(--fg-2); font-size: var(--text-2xs); }
+/* 状态徽标(pending 粉/applied 绿/ignored 灰/outdated 橙虚线;色值走 token) */
+.w-bubble-status { display: inline-flex; align-items: center; gap: var(--s1); font-size: var(--text-2xs); border: 1px solid; border-radius: var(--r-conn); padding: 0 var(--s1-5); }
+.w-bubble-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.w-bubble-status[data-status="pending"] { color: var(--ann-pending); border-color: var(--ann-pending); }
+.w-bubble-status[data-status="applied"] { color: var(--ann-applied); border-color: var(--ann-applied); }
+.w-bubble-status[data-status="ignored"] { color: var(--ann-ignored); border-color: var(--ann-ignored); }
+.w-bubble-status[data-status="outdated"] { color: var(--ann-outdated); border-color: var(--ann-outdated); border-style: dashed; }
 .wd-badge-solid { background: var(--live); color: var(--bg-0); border-color: var(--live); font-weight: 500; }
 
 /* W6.6 W-md view source(§3.12 v2 · 用户裁决):segmented 条 + 源码态

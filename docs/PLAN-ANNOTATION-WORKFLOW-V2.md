@@ -82,7 +82,7 @@
 >   98s → v133(4 applied / 2 partial→applied / 4 ignored,LLM 自行识别测试
 >   残留为 ignored),meta/状态/旧流保留全对。
 
-## 2. P2 —— 气泡简化为批注卡(控件 + 宿主)
+## 2. P2 —— 气泡简化为批注卡(控件 + 宿主)✅(2026-08-13 落地,BUILD 2026-08-13.2)
 
 - w-bubble 改**批注卡**形态(保留 def/events 面,内部重写),子状态机按 v2.1 §1.2:
   hidden / composing(输入态)/ preview(悬停预览)/ expanded(展示态):
@@ -103,6 +103,13 @@
 - 「采纳成批注」类回复链路退役(comment 端点保留只读兼容或直接退役,报告里定)。
 
 **验收**:stub + tests-ui 全绿;新断言(提交即记录/状态徽标/无消息流 DOM)。
+
+> **P2 实现注**(2026-08-13):全链落地明细见 WIDGET-DESIGN.md §3.13 v4 实现注;
+> 生命周期改写见 DOC-BUBBLE.md §3/§4。要点:REST 补 `GET/POST /api/docs/
+> {name}/annotations`(upsert,编辑回 pending);comment 端点保留只读兼容
+> (旧流迁移面数据源,前端不再调用);lab-iterate 跟随 v4(提交即落边注);
+> 修复 _refEl 块引用过期致重开页顶跳(参考点改每次现找);pytest 115 绿
+> (113+2 端点例),stub 32 绿,tests-ui 全绿(含新 v4 组)。
 
 ## 3. P3 —— 生成工作流(前端主链)
 

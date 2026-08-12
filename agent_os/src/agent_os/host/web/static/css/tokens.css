@@ -27,6 +27,12 @@
   --aborted: #9e6bde;   /* aborted(独立一色,中止≠失败) */
   --live:    #3b9eff;   /* running / live 指示(带脉冲动效) */
 
+  /* 批注状态(v4 批注卡;v2.1 §11.2 色板,色值走 token 不硬编码) */
+  --ann-pending:  #ff6b8a;
+  --ann-applied:  #52c41a;
+  --ann-ignored:  #bfbfbf;
+  --ann-outdated: #faad14;
+
   /* 语义:信号类型 */
   --sig-llm:      #6f9fff;
   --sig-tool:     #3fb68b;

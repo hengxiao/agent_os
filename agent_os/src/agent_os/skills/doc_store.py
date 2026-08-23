@@ -31,6 +31,9 @@ from agent_os.skills.reanchor import quote_at
 #: 文档名合法面(与草稿同构:≥2 段点分,段内小写 snake_case;同时是路径穿越防护)
 _DOC_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+$")
 
+#: 版本号合法面(vNNN;版本目录名的穿越防护)
+_VERSION_RE = re.compile(r"^v\d{3,}$")
+
 #: 批注状态机(设计 v2 §3.1;P1)
 ANNOTATION_STATUSES = ("pending", "applied", "ignored", "outdated")
 
@@ -155,13 +158,19 @@ class DocStore:
     ) -> str:
         """封存当前全文为 versions/vNNN(内容 = 保存时的全文)。返回版本号。
         ``extra``(P1):并进 meta.json 的附加字段(generate 的
-        generationInput/annotationResults;版本不可变——只在封存时写一次)。"""
+        generationInput/annotationResults;版本不可变——只在封存时写一次)。
+        ``parent`` 缺省 = 工作稿的 baseVersion(rewind 后的分支点;
+        树状版本模型 v1.8:回推线性、前衍可分支),没有则取最新版。
+        封存后工作稿 baseVersion 指向新版本。"""
         d = self._dir(name)
         if not (d / "doc.md").is_file():
             raise FileNotFoundError(f"文档不存在: {name}")
         vdir = d / "versions"
         vdir.mkdir(exist_ok=True)
         existing = sorted(p.name for p in vdir.iterdir() if p.is_dir() and p.name.startswith("v"))
+        if parent is None:
+            base = str(self.read(name)["meta"].get("baseVersion") or "")
+            parent = base if base in existing else (existing[-1] if existing else None)
         vid = f"v{int(existing[-1][1:]) + 1:03d}" if existing else "v001"
         target = vdir / vid
         target.mkdir()
@@ -173,6 +182,9 @@ class DocStore:
             json.dumps(meta, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        wmeta = self.read(name)["meta"]
+        wmeta["baseVersion"] = vid
+        self._write_meta(name, wmeta)
         return vid
 
     def list_versions(self, name: str) -> list[dict[str, Any]]:
@@ -190,14 +202,75 @@ class DocStore:
                 continue
         return out
 
-    def restore(self, name: str, version: str) -> dict[str, Any]:
+    def restore(self, name: str, version: str, *, rolled_back_from: str | None = None) -> dict[str, Any]:
         """rewind:把快照覆盖回 working(**历史不动**——版本不可变,
-        恢复的是工作副本);版本不存在 → FileNotFoundError。"""
+        恢复的是工作副本);版本不存在 → FileNotFoundError。
+        ``rolled_back_from``(P3,裁决 C2):回滚废弃的版本号——给它 meta 标
+        ``rolledBackTo``(不删,版本链完整可查)。"""
         vdir = self._dir(name) / "versions" / version
         if not (vdir / "doc.md").is_file():
             raise FileNotFoundError(f"版本不存在: {name} {version}")
         shutil.copy2(vdir / "doc.md", self._dir(name) / "doc.md")
+        # 树状版本模型(v1.8):工作稿记下自己的祖版——下一次快照/generate 的
+        # parent 从这里取,分支因此形成(回推线性、前衍可分支)
+        wmeta = self.read(name)["meta"]
+        wmeta["baseVersion"] = version
+        self._write_meta(name, wmeta)
+        if rolled_back_from:
+            mpath = self._dir(name) / "versions" / rolled_back_from / "meta.json"
+            try:
+                meta = json.loads(mpath.read_text(encoding="utf-8"))
+                meta["rolledBackTo"] = version  # 标废弃目标(生成回滚留痕)
+                mpath.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            except (OSError, json.JSONDecodeError):
+                pass  # 目标版本 meta 不在不挡回滚(恢复语义优先)
         return self.read(name)
+
+    def read_version(self, name: str, version: str) -> dict[str, Any]:
+        """读某版快照内容(只读,不动工作稿;回溯预览/diff 提示的数据面)。
+        版本号过 ``_VERSION_RE``(穿越防护与名字同纪律);不存在 → FileNotFoundError。"""
+        if not _VERSION_RE.match(version or ""):
+            raise ValueError(f"版本号不合法: {version!r}")
+        vdir = self._dir(name) / "versions" / version
+        if not (vdir / "doc.md").is_file():
+            raise FileNotFoundError(f"版本不存在: {name} {version}")
+        return {"name": name, "version": version,
+                "text": (vdir / "doc.md").read_text(encoding="utf-8")}
+
+    # ------------------------------------------------------------------
+    # diffsum(版本对摘要缓存;版本不可变 → 缓存天然安全,无需失效面)
+    # ------------------------------------------------------------------
+
+    def read_diffsum(self, name: str, from_version: str, to_version: str) -> dict[str, Any] | None:
+        """读版本对摘要缓存(diffsum/<from>__<to>.json);无/坏 → None(不炸)。"""
+        for v in (from_version, to_version):
+            if not _VERSION_RE.match(v or ""):
+                raise ValueError(f"版本号不合法: {v!r}")
+        path = self._dir(name) / "diffsum" / f"{from_version}__{to_version}.json"
+        if not path.is_file():
+            return None
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            return doc if isinstance(doc, dict) and "summary" in doc else None
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def save_diffsum(self, name: str, from_version: str, to_version: str,
+                     summary: str) -> dict[str, Any]:
+        """写版本对摘要缓存(覆盖同键;含生成时间戳留痕)。"""
+        for v in (from_version, to_version):
+            if not _VERSION_RE.match(v or ""):
+                raise ValueError(f"版本号不合法: {v!r}")
+        d = self._dir(name)
+        if not d.is_dir():
+            raise FileNotFoundError(f"文档不存在: {name}")
+        sdir = d / "diffsum"
+        sdir.mkdir(exist_ok=True)
+        doc = {"from": from_version, "to": to_version,
+               "summary": summary, "at": time.time()}
+        (sdir / f"{from_version}__{to_version}.json").write_text(
+            json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        return doc
 
     # ------------------------------------------------------------------
     # bubbles(D2)/ review(D3):锚点消息流与评审批注集的存取面

@@ -509,4 +509,69 @@ console.log("compound.test.mjs: C4.1 badge patch assertions passed");
   assert.ok(!(stale.cascade ?? []).some((f) => f.scope === "widget"), "旧 path provider 已注销(无幽灵注册)");
 }
 
+
+/* ── P3 生成工作流(v2.1 §4/§5):生成钮四态/状态栏/生成链 → Diff 视图 → 采纳 ── */
+{
+  const { mountDocEditor } = await import("../../../web_platform/static/doc-editor.js");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  const genCalls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    if (u.endsWith("/generate")) {
+      genCalls.push(JSON.parse(options.body ?? "{}"));
+      return { ok: true, json: async () => ({
+        newVersion: 4, versionId: "v004",
+        annotationResults: [{ annotationId: "doc.md#L2-L2", status: "applied", aiNote: "已改写" }],
+        diff: "--- a@v003\n+++ b@v004\n@@ -1,2 +1,2 @@\n-段落一\n+段落一改过\n 段落二",
+      }) };
+    }
+    if (u.endsWith("/annotations")) {
+      return { ok: true, json: async () => ([
+        { anchor: "doc.md#L2-L2", quote: "段落一", content: "改这段", status: "applied" },
+      ]) };
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const ed = mountDocEditor(host, { name: "demo.p3", text: "# 标题\n段落一\n\n段落二", chat: [], versions: ["v003"] },
+    { seedFlows: [{ anchor: "doc.md#L2-L2", quote: "段落一", content: "改这段", status: "pending" }] });
+
+  // 四态:有 pending → 可点 + 计数徽标;状态栏 = 字数 · v003 · 1 条待处理
+  const genBtn = host.querySelector("[data-doc-generate]");
+  assert.ok(genBtn, "生成钮在工具条");
+  assert.equal(genBtn.disabled, false, "有 pending → 可点");
+  assert.equal(host.querySelector("[data-doc-gen-n]").textContent, "1", "计数徽标 = pending 数");
+  assert.equal(host.querySelector("[data-doc-ver]").textContent, "v003", "状态栏版本位");
+  assert.ok(host.querySelector("[data-doc-pending]").textContent.includes("1"), "状态栏 pending 计数");
+
+  // 生成链:点击 → POST generate(baseVersion=3)→ Diff 自动切(摘要/来源卡/行)
+  const genClick = new StubEl("button"); // region 元素无 dataset,合成驱动(dom-stub 面)
+  genClick.dataset.docGenerate = "1";
+  genClick.closest = (sel) => (sel === "[data-doc-generate]" ? genClick : null);
+  genClick.parentNode = host;
+  host.trigger("click", { target: genClick });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(genCalls.length, 1, "generate 出海一次");
+  assert.equal(genCalls[0].baseVersion, 3, "baseVersion = 当前版本号");
+  const dv = host.querySelector("[data-doc-diffview]");
+  assert.equal(dv.hidden, false, "生成后自动切 Diff 视图");
+  assert.ok(host.querySelector("[data-doc-preview]").hidden, "预览藏起");
+  assert.ok(dv.innerHTML.includes("已应用"), "摘要卡(统计文案)");
+  assert.ok(dv.innerHTML.includes("doc-diff-src"), "来源批注卡");
+  assert.ok(dv.innerHTML.includes('data-kind="add"'), "diff 新增行");
+  assert.ok(dv.innerHTML.includes("已改写"), "aiNote 进来源卡");
+  assert.ok(host.querySelector("[data-doc-chatpending]").textContent.includes("已应用"), "状态栏生成摘要");
+
+  // 采纳 → 回预览,diff 钮藏
+  const accept = new StubEl("button");
+  accept.dataset.diffAccept = "1";
+  accept.closest = (sel) => (sel === "[data-diff-accept]" ? accept : null);
+  accept.parentNode = dv;
+  host.trigger("click", { target: accept });
+  assert.equal(host.querySelector("[data-doc-preview]").hidden, false, "采纳 → 回预览");
+  assert.equal(dv.hidden, true, "diffview 藏");
+  console.log("compound.test.mjs: P3 generate workflow assertions passed");
+}
 console.log("compound.test.mjs: C4.4 reparent cascade assertions passed");

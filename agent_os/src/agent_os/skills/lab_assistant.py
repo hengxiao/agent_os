@@ -171,6 +171,52 @@ def doc_editor_skill() -> Skill:
     )
     return Skill(manifest=manifest, prompt=_DOC_EDITOR_PROMPT)
 
+#: 版本差异摘要技能名(Godot 回溯卷轴的 diff 人话摘要;结果落 diffsum 缓存)
+DOC_DIFF_SUMMARIZER_NAME = "skill.dev.doc_diff_summarizer"
+
+_DOC_DIFF_SUMMARIZER_PROMPT = """你是版本差异摘要助手。输入给你:
+
+- from_version / to_version:两个版本号(如 v001、v014);
+- diff:这两个版本的差异行(行首 + = 新版新增,- = 旧版被删;只有变更行)。
+
+任务:用**一两句人话**概括"从 from_version 到 to_version 改了什么"——
+说内容与结构的变化(加了什么章节/改了什么表述/删了什么),不搬术语、不引行号。
+
+纪律:
+1. **只读**:你没有任何工具——只能读输入,不能改任何东西;
+2. 只输出一个 JSON:{{"summary": "…"}},不要别的文字;
+3. diff 里没有的事不编;变更太小就说"只有措辞微调";
+4. 输出给开发者当回溯预览,信息密度优先于修辞。"""
+
+
+def doc_diff_summarizer_skill() -> Skill:
+    """版本差异摘要技能(tools=[] —— 只读 diff,输出人话摘要,不写任何面)。"""
+    manifest = SkillManifest(
+        name=DOC_DIFF_SUMMARIZER_NAME,
+        version="0.1.0",
+        description=(
+            "版本差异摘要助手。Use when 把文档两版本的 diff 概括成一两句人话(回溯预览);"
+            "Do not use when 要读版本全文或改文档(它没有那些面)。"
+        ),
+        inputs={
+            "type": "object",
+            "properties": {
+                "diff": {"type": "string", "description": "差异行(封顶 4000 字符)"},
+                "from_version": {"type": "string"},
+                "to_version": {"type": "string"},
+            },
+            "required": ["diff", "from_version", "to_version"],
+        },
+        outputs={
+            "type": "object",
+            "properties": {"summary": {"type": "string"}},
+            "required": ["summary"],
+        },
+        permissions=SkillPermissions(tools=[], skills=[]),  # 白名单收口
+        limits=SkillLimits(max_steps=2, timeout=60),
+    )
+    return Skill(manifest=manifest, prompt=_DOC_DIFF_SUMMARIZER_PROMPT)
+
 _COMMENTER_PROMPT = """你是锚点评论助手。用户在某段内容上挂了气泡提问或提意见,输入给你:
 
 - anchor:锚点(§14 路径语义:成员/字段/可选 span 段落号);

@@ -359,14 +359,24 @@ export function docTabHtml(doc) {
       : "") +
     `</span></span>` +
     `<span class="pf-spacer"></span>` +
+    // P3 生成工作流(v2.1 §4.1):生成钮(四态在 doc-editor _renderGenBtn)+
+    // 版本历史入口(P4 面板;本期聚焦版本下拉)
+    `<button class="btn doc-tool" data-doc-history="1" title="${esc(copy("platform.doc.history"))}">🕘</button>` +
+    `<button class="btn wd-btn-primary doc-gen" data-doc-generate="1" disabled>` +
+    `🔄 ${esc(copy("platform.doc.generate"))}<span class="doc-gen-n" data-doc-gen-n="1" hidden></span></button>` +
     `<button class="btn doc-tool" data-doc-review="1" title="${esc(copy("platform.doc.review"))}">🔍</button>` +
     `</div>` +
     `<div class="doc-preview" data-doc-preview="1"></div>` +
+    // P3:Diff 视图容器(v2.1 §5;viewseg 第三态;宿主渲染)
+    `<div class="doc-diffview" data-doc-diffview="1" hidden></div>` +
     `<div class="doc-bubblebar" data-doc-bubblebar="1" aria-label="${esc(copy("platform.doc.bubblebar"))}"></div>` +
     `</div>` +
     `</div>` +
+    // P3 状态栏(v2.1 §4.3):字数 · vN · N 批注待处理 · N 对话待应用
     `<div class="doc-status">` +
-    `<span data-doc-chars="1"></span> · <span data-doc-dirty="1"></span>` +
+    `<span data-doc-chars="1"></span> · <span class="doc-status-ver mono" data-doc-ver="1"></span>` +
+    ` · <button class="doc-status-link" data-doc-pending="1"></button>` +
+    ` · <span data-doc-chatpending="1"></span> <span data-doc-dirty="1"></span>` +
     `</div></div>`
   );
 }

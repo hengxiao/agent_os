@@ -39,7 +39,7 @@ class TestCtx:
         self.errors: list[str] = []
         self.bad_responses: list[str] = []
         page.on("console", lambda m: self.errors.append(m.text) if m.type == "error" else None)
-        page.on("pageerror", lambda e: self.errors.append(str(e)))
+        page.on("pageerror", lambda e: self.errors.append(getattr(e, "stack", None) or str(e)))  # stack 定位 flake 来源
         page.on("response", lambda r: self.bad_responses.append(f"{r.status} {r.url}") if r.status >= 400 else None)
 
     def open(self, path: str):
@@ -111,6 +111,8 @@ def main() -> int:
             total_fail += len(ctx.failures)
             if ctx.failures:
                 print(f"  -- {len(ctx.failures)} 项失败 --")
+                for f in ctx.failures:  # 失败明细直打(原来只计数,排障要再跑一次)
+                    print(f"    ✗ {f}")
         browser.close()
     if srv:
         srv.shutdown()

@@ -135,3 +135,22 @@ def test_tool_name_wire_format_mangle_round_trip():
     # 入方向:mangled 响应名解析回点分
     assert resp.message.tool_calls[0].name == "skill.demo.fib"
     assert resp.message.tool_calls[0].args == {"n": 5}
+
+
+def test_openai_compat_dynamic_key_env(monkeypatch):
+    """api_key_env 动态解析:每次调用现读 env(token_refresh 续期即生效);
+    装配期快照会让长跑进程 15 分钟后 401(2026-08-24 实证)。"""
+    monkeypatch.setenv("TEST_KEY_ENV", "t1")
+    p = OpenAICompatibleProvider(base_url="https://api.example.com/v1", api_key_env="TEST_KEY_ENV")
+    assert p.api_key == "t1"
+    monkeypatch.setenv("TEST_KEY_ENV", "t2")
+    assert p.api_key == "t2", "env 续期后必须现读,不许吃装配期快照"
+
+
+def test_openai_compat_pinned_key_wins(monkeypatch):
+    """显式 api_key 钉死,env 不影响(既有语义)。"""
+    monkeypatch.setenv("TEST_KEY_ENV", "env-key")
+    p = OpenAICompatibleProvider(base_url="https://api.example.com/v1", api_key="pinned")
+    assert p.api_key == "pinned"
+    monkeypatch.setenv("TEST_KEY_ENV", "other")
+    assert p.api_key == "pinned"

@@ -141,7 +141,11 @@ class Orchestrator:
     # ------------------------------------------------------------------
 
     def _route(self, text: str) -> dict[str, Any]:
-        """LLM 优先;不可用/超时/schema 不合 → 规则(永远兜底,fail-safe)。"""
+        """高置信精确短语短路 → LLM 优先;不可用/超时/schema 不合 → 规则(永远兜底)。"""
+        # 精确命令短路(2026-08-24 实证:LLM 把「文档列表」误分为 help——
+        # schema 合规但语义错,不产生回落;全匹配短语不付模型漂移税)
+        if _DOC_RE.fullmatch(text.strip()):
+            return {"intent": "doc", "meta": {"route": "rule", "reason": "shortcut"}}
         if self._provider is not None:
             routed, reason = self._route_llm(text)
             if routed is not None:

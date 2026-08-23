@@ -69,6 +69,23 @@ def test_snapshot_restore_immutable(store, tmp_path):
         store.restore("design.new_ui", "v999")
 
 
+def test_read_version(store):
+    """read_version:只读快照内容,不动工作稿;版本号校验 = 穿越防护面。"""
+    store.create("design.new_ui", text="v1 内容\n")
+    store.snapshot("design.new_ui", source="manual")
+    store.save("design.new_ui", "v2 内容\n")
+
+    got = store.read_version("design.new_ui", "v001")
+    assert got["text"] == "v1 内容\n" and got["version"] == "v001"
+    assert store.read("design.new_ui")["text"] == "v2 内容\n", "读版本不动工作稿"
+    with pytest.raises(FileNotFoundError):
+        store.read_version("design.new_ui", "v999")
+    with pytest.raises(ValueError):
+        store.read_version("design.new_ui", "../../etc")  # 版本号穿越防护
+    with pytest.raises(ValueError):
+        store.read_version("../bad", "v001")  # 名字校验沿用 _dir 同面
+
+
 def test_bubbles_and_review(store):
     """气泡流 append/读取(坏文件隔离);评审批注集落盘与最新读取。"""
     store.create("design.new_ui", text="x")
@@ -147,6 +164,131 @@ def _spawn_doc(client, name="design.new_ui"):
     })
     assert r.status_code == 201, r.text
     return r.json()["instance"]["id"]
+
+
+def test_doc_version_read_api(client):
+    """GET …/versions/{v}:只读快照内容;坏版本号 400,不存在 404。"""
+    inst = _spawn_doc(client)
+    client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})
+    r = client.get("/api/docs/design.new_ui/versions/v001")
+    assert r.status_code == 200, r.text
+    assert r.json()["version"] == "v001" and "首版" in r.json()["text"]
+    assert client.get("/api/docs/design.new_ui/versions/v999").status_code == 404
+    assert client.get("/api/docs/design.new_ui/versions/v02x").status_code == 400, "版本号校验"
+
+
+def test_diffsum_cache(store, tmp_path):
+    """diffsum 缓存读写 + 版本号校验(穿越防护与名字同纪律)。"""
+    store.create("design.new_ui", text="x")
+    assert store.read_diffsum("design.new_ui", "v001", "v002") is None
+    store.save_diffsum("design.new_ui", "v001", "v002", "加了概述章")
+    assert store.read_diffsum("design.new_ui", "v001", "v002")["summary"] == "加了概述章"
+    with pytest.raises(ValueError):
+        store.save_diffsum("design.new_ui", "v1", "v002", "x")
+    with pytest.raises(FileNotFoundError):
+        store.save_diffsum("no.such", "v001", "v002", "x")
+
+
+def test_version_branching(store):
+    """树状版本(v1.8):rewind 记 baseVersion;旧版再快照 → parent = 祖版(分支);
+    回推线性(parent 链),前衍可分支(同 parent 多版本);封存后祖版推进。"""
+    store.create("design.new_ui", text="v1\n")
+    store.snapshot("design.new_ui", source="manual")  # v001(parent None)
+    store.save("design.new_ui", "v2\n")
+    store.snapshot("design.new_ui", source="manual")  # v002(parent v001,经 baseVersion)
+    store.restore("design.new_ui", "v001")
+    assert store.read("design.new_ui")["meta"]["baseVersion"] == "v001", "rewind 记祖版"
+    store.save("design.new_ui", "v2 分支\n")
+    assert store.snapshot("design.new_ui", source="manual") == "v003"
+    metas = {v["version"]: v for v in store.list_versions("design.new_ui")}
+    assert metas["v002"]["parent"] == "v001"
+    assert metas["v003"]["parent"] == "v001", "rewind 后的快照挂祖版 = 分支形成"
+    children = sorted(v for v, m in metas.items() if m.get("parent") == "v001")
+    assert children == ["v002", "v003"], "一版多衍"
+    assert store.read("design.new_ui")["meta"]["baseVersion"] == "v003", "封存后祖版推进"
+
+
+def test_version_tree_api(client):
+    """GET …/versions/tree:parent 链 + base;分支结构可读;不存在 404。"""
+    inst = _spawn_doc(client)
+    client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})  # v001
+    client.post(f"/api/apps/{inst}/actions/doc.save",
+                json={"surface": "tab", "args": {"text": "# 概述\n二版\n"}})
+    client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})  # v002
+    client.post(f"/api/apps/{inst}/actions/doc.rewind",
+                json={"surface": "tab", "args": {"version": "v001"}})
+    client.post(f"/api/apps/{inst}/actions/doc.save",
+                json={"surface": "tab", "args": {"text": "# 概述\n分支版\n"}})
+    client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})  # v003 挂 v001
+    r = client.get("/api/docs/design.new_ui/versions/tree")
+    assert r.status_code == 200, r.text
+    tree = r.json()
+    metas = {v["version"]: v for v in tree["versions"]}
+    assert metas["v002"]["parent"] == "v001" and metas["v003"]["parent"] == "v001", "分支"
+    assert tree["base"] == "v003", "base = 最新封存"
+    assert client.get("/api/docs/no.such/versions/tree").status_code == 404
+
+
+class _FakeKernel:
+    """LLM 内核桩:diff 摘要技能返回固定人话。"""
+
+    async def run(self, name, inputs):
+        return {"summary": f"摘要:{inputs['from_version']}→{inputs['to_version']}"}
+
+
+class _LLMManager(_FakeManager):
+    """assemble_lab_kernel 给桩(摘要技能可跑)。"""
+
+    def assemble_lab_kernel(self, overlay):
+        return _FakeKernel()
+
+
+@pytest.fixture()
+def llm_client(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from agent_os.host.web_platform.app import create_platform_app
+
+    return TestClient(create_platform_app(manager=_LLMManager(), lab_store=None, artifacts_root=tmp_path))
+
+
+def test_diff_summary_api_and_cache(llm_client, tmp_path):
+    """diff-summary:LLM 摘要落 diffsum 缓存(版本对不可变,二次命中)。"""
+    inst = _spawn_doc(llm_client)
+    llm_client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})  # v001
+    llm_client.post(f"/api/apps/{inst}/actions/doc.save",
+                    json={"surface": "tab", "args": {"text": "# 概述\n大改的一版\n"}})
+    llm_client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})  # v002
+
+    r1 = llm_client.get("/api/docs/design.new_ui/diff-summary?from=v001&to=v002")
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["cached"] is False and "v001" in r1.json()["summary"]
+    r2 = llm_client.get("/api/docs/design.new_ui/diff-summary?from=v001&to=v002")
+    assert r2.json()["cached"] is True and r2.json()["summary"] == r1.json()["summary"], "二次命中缓存"
+    assert (tmp_path / "docs" / "design.new_ui" / "diffsum" / "v001__v002.json").is_file()
+    assert llm_client.get("/api/docs/design.new_ui/diff-summary?from=v099&to=v002").status_code == 404
+    assert llm_client.get("/api/docs/design.new_ui/diff-summary?from=v1&to=v002").status_code == 400
+
+
+def test_diff_summary_identical_no_llm(client):
+    """两版一致 → 不跑 LLM 直给(_FakeManager 装配必抛,能 200 即证);缓存照写。"""
+    inst = _spawn_doc(client)
+    client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})  # v001
+    r = client.get("/api/docs/design.new_ui/diff-summary?from=v001&to=v001")
+    assert r.status_code == 200 and r.json()["summary"] == "两版内容一致。"
+    assert client.get("/api/docs/design.new_ui/diff-summary?from=v001&to=v001").json()["cached"] is True
+
+
+def test_diff_summary_llm_down(client, tmp_path):
+    """LLM 装配故障 → 503(与 review 同归类),且不写缓存。"""
+    inst = _spawn_doc(client)
+    client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})
+    client.post(f"/api/apps/{inst}/actions/doc.save",
+                json={"surface": "tab", "args": {"text": "# 概述\n大改\n"}})
+    client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})
+    r = client.get("/api/docs/design.new_ui/diff-summary?from=v001&to=v002")
+    assert r.status_code == 503
+    assert not (tmp_path / "docs" / "design.new_ui" / "diffsum").exists(), "失败不写缓存"
 
 
 def test_doc_pipeline_actions(client):

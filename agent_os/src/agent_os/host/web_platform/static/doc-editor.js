@@ -663,11 +663,14 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       entry.inst.state.content = rec.content;
       entry.inst.state.status = rec.status;
       entry.inst.state.createdAt = rec.createdAt ?? "";
+      _genSummary = ""; // 批注变化清生成摘要
       entry.el.hidden = true; // 提交即收起成标记(高亮/标记状态随刷)
       if (entry.marker) entry.marker.hidden = false;
       _paintHighlights();
       _placeMarker(entry);
       renderBubbleBar();
+      _renderGenBtn(); // pending 数变 → 生成钮四态/状态栏随刷
+      renderStatus();
     } catch (err) {
       entry.view?.live?.notifyError?.(err.message ?? String(err)); // 回输入态(草稿恢复)
     }
@@ -679,10 +682,237 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     return Number.isFinite(n) ? n : null;
   }
 
+  /* ── P3 生成工作流(v2.1 §4/§5;PLAN §3)──────────────────────────────
+     生成钮四态(idle 无 pending 禁用/正常+计数徽标/loading/失败红)→
+     POST generate(baseVersion 闸)→ 重拉新全文 + 批注状态刷新 → 自动切
+     Diff 视图(摘要卡 + 来源批注卡 + unified 行)→ 采纳(切预览)/回滚
+     (restore + rolledBackTo 标记,不删)。失败不落半截(后端已保证)。 */
+  let _lastGen = null; // {newVersion, versionId, baseVid, results, diff}(待采纳/回滚)
+  let _genState = "idle"; // idle | loading | fail
+  let _genSummary = ""; // 生成后状态栏摘要(v2.1 §4.3;下一次输入/批注变化清)
+  let _chatAppliedUpto = 0; // chat 徽章:已参与生成的消息边界(P3)
+  let _chatAppliedVer = "";
+  const _toast = (msg) => (globalThis.__docToast ?? (() => {}))(msg);
+
+  function _pendingCount() {
+    return [...bubbles.values()].filter((e) => (e.inst.state.status ?? "pending") === "pending").length;
+  }
+
+  /* 生成钮四态(v2.1 §4.2) */
+  const _setBtnLabel = (btn, text) => {
+    const t = btn.childNodes?.[0];
+    if (t && "nodeValue" in t) t.nodeValue = text;
+    else btn.dataset.label = text; // stub 面无文本节点:记 dataset(测试面)
+  };
+  function _renderGenBtn() {
+    const btn = cur?.genBtn;
+    if (!btn) return;
+    const n = _pendingCount();
+    if (_genState === "loading") {
+      btn.disabled = true;
+      btn.dataset.state = "loading";
+      _setBtnLabel(btn, `⏳ ${copy("platform.doc.generating")}`);
+      if (cur.genN) cur.genN.hidden = true;
+      return;
+    }
+    if (_genState === "fail") {
+      btn.disabled = false;
+      btn.dataset.state = "fail"; // 红色重试(CSS)
+      _setBtnLabel(btn, copy("platform.doc.genfail"));
+      if (cur.genN) cur.genN.hidden = true;
+      return;
+    }
+    btn.dataset.state = "idle";
+    btn.disabled = n === 0;
+    _setBtnLabel(btn, `🔄 ${copy("platform.doc.generate")}`);
+    if (cur.genN) {
+      cur.genN.textContent = String(n);
+      cur.genN.hidden = n === 0;
+    }
+  }
+
+  async function _runGenerate() {
+    if (_genState === "loading") return;
+    const baseVid = doc.versions?.[0] ?? null;
+    const baseNo = _currentVersionNo();
+    _genState = "loading";
+    _renderGenBtn();
+    try {
+      const res = await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseVersion: baseNo }),
+      });
+      if (res.status === 409) { // C5 版本冲突:toast + 自动刷新引导(v2.1 §8.3)
+        _toast(copy("platform.doc.conflict"));
+        if (reload) await reload();
+        _genState = "idle";
+        _renderGenBtn();
+        return;
+      }
+      if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+      const body = await res.json();
+      _lastGen = {
+        newVersion: body.newVersion,
+        versionId: body.versionId,
+        baseVid,
+        results: body.annotationResults ?? [],
+        diff: body.diff ?? "",
+      };
+      doc.versions = [body.versionId, ...(doc.versions ?? [])]; // 版本链推进(本地随更)
+      if (reload) await reload(); // 重拉新全文(setText → refresh)
+      await _syncAnnotations(); // 批注状态/重锚刷新(标记/高亮变色)
+      // chat 徽章:已参与边界推进(v2.1 §4.3「N 条对话待应用」)
+      _chatAppliedUpto = messages.length;
+      _chatAppliedVer = body.versionId;
+      const counts = { applied: 0, ignored: 0, partial: 0 };
+      for (const r of _lastGen.results) counts[r.status] = (counts[r.status] ?? 0) + 1;
+      _genSummary = copy("platform.doc.gen.summary")
+        .replace("{a}", String(counts.applied))
+        .replace("{i}", String(counts.ignored))
+        .replace("{p}", String(counts.partial));
+      _genState = "idle";
+      _renderGenBtn();
+      setViewMode("diff"); // 生成后自动切 Diff(v2.1 §5.1)
+      renderChat();
+      renderStatus();
+    } catch (err) {
+      _genState = "fail"; // 红色重试(v2.1 §8.2;不落半截——后端保证)
+      _renderGenBtn();
+      _toast(`${copy("platform.doc.genfail.toast")}: ${err.message ?? err}`);
+    }
+  }
+
+  /* unified diff 文本 → 行列表(+/−/上下文;hunk 头原样) */
+  function _parseUnified(diff) {
+    const out = [];
+    for (const ln of String(diff ?? "").split("\n")) {
+      if (ln.startsWith("+++") || ln.startsWith("---")) continue;
+      if (ln.startsWith("@@")) {
+        out.push({ kind: "hunk", text: ln });
+        continue;
+      }
+      if (ln.startsWith("+")) {
+        out.push({ kind: "add", text: ln.slice(1) });
+        continue;
+      }
+      if (ln.startsWith("-")) {
+        out.push({ kind: "del", text: ln.slice(1) });
+        continue;
+      }
+      out.push({ kind: "same", text: ln.startsWith(" ") ? ln.slice(1) : ln });
+    }
+    return out;
+  }
+
+  /* Diff 视图渲染(v2.1 §5.2/§5.4):头(标题 + 采纳/回滚)+ 摘要卡 +
+     来源批注卡(状态徽标 + 意见摘录 + aiNote;点击定位回标记)+ unified 行 */
+  function _renderDiff() {
+    if (!cur?.diffview) return;
+    const g = _lastGen;
+    if (!g) {
+      cur.diffview.innerHTML = "";
+      return;
+    }
+    const counts = { applied: 0, ignored: 0, partial: 0 };
+    for (const r of g.results) counts[r.status] = (counts[r.status] ?? 0) + 1;
+    const summary = copy("platform.doc.gen.summary")
+      .replace("{a}", String(counts.applied))
+      .replace("{i}", String(counts.ignored))
+      .replace("{p}", String(counts.partial));
+    const srcCards = g.results
+      .map((r) => {
+        const ann = seedByAnchor[r.annotationId] ?? {};
+        const mapped = r.status === "partial" ? "applied" : r.status; // 状态徽标四态面(partial 归 applied 色系)
+        return (
+          `<button class="doc-diff-src" data-diff-src="${esc(r.annotationId)}">` +
+          `<span class="w-bubble-status" data-status="${esc(mapped)}">${esc(copy(`w.bubble.status.${mapped}`))}</span>` +
+          `<span class="doc-diff-src-tx">${esc(String(ann.content ?? r.annotationId).slice(0, 60))}</span>` +
+          (r.aiNote ? `<span class="doc-diff-src-note">${esc(r.aiNote)}</span>` : "") +
+          `</button>`
+        );
+      })
+      .join("");
+    const rows = _parseUnified(g.diff)
+      .map((row) => `<div class="doc-diff-line" data-kind="${esc(row.kind)}">${esc(row.text) || " "}</div>`)
+      .join("");
+    cur.diffview.innerHTML =
+      `<div class="doc-diff-head"><b>${esc(copy("platform.doc.diff.title").replace("{a}", g.baseVid ?? "base").replace("{b}", g.versionId))}</b>` +
+      `<span class="pf-spacer"></span>` +
+      `<button class="btn wd-btn-primary" data-diff-accept="1">${esc(copy("platform.doc.accept"))} ${esc(g.versionId)}</button>` +
+      `<button class="btn" data-diff-rollback="1">${esc(copy("platform.doc.rollback"))}</button></div>` +
+      `<div class="doc-diff-summary">${esc(summary)}</div>` +
+      (srcCards ? `<div class="doc-diff-srcs">${srcCards}</div>` : "") +
+      `<div class="doc-diff-body mono">${rows}</div>`;
+  }
+
+  /* 采纳(v2.1 §5.5):切预览,当前版本推进(库已是新文;_lastGen 清,Diff 钮藏) */
+  function _acceptGen() {
+    _lastGen = null;
+    setViewMode("preview");
+    _renderGenBtn();
+    renderStatus();
+  }
+
+  /* 回滚(v2.1 §5.5;裁决 C2):restore 父版本 + v 标 rolledBackTo(不删);
+     批注状态不回滚(生成痕迹留在记录面) */
+  async function _rollbackGen() {
+    const g = _lastGen;
+    const tab = getTabInstance?.();
+    if (!g?.baseVid || !tab?.instance) return;
+    try {
+      const res = await fetch(
+        `/platform/api/apps/${encodeURIComponent(tab.instance)}/actions/doc.rewind`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            surface: "tab",
+            args: { version: g.baseVid, rolled_back_from: g.versionId },
+          }),
+        }
+      );
+      if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+      doc.versions = (doc.versions ?? []).filter((v) => v !== g.versionId); // 列表面回落(版本实体仍在库)
+      _lastGen = null;
+      if (reload) await reload();
+      await _syncAnnotations();
+      setViewMode("preview");
+      _renderGenBtn();
+      renderStatus();
+    } catch (err) {
+      _toast(`${copy("platform.doc.rollback")}: ${err.message ?? err}`);
+    }
+  }
+
+  /* Ctrl+Shift+A(v2.1 §9):当前选区在块内 → 选区批注;否则首块行级开输入态 */
+  function _addAnnotationAtCursor() {
+    if (!cur) return;
+    const docu = cur.host.ownerDocument ?? globalThis.document;
+    const sel = docu.getSelection?.();
+    const block = sel?.anchorNode?.parentElement?.closest?.(".doc-para[data-anchor]")
+      ?? [...cur.preview.children][0];
+    if (!block) return;
+    let anchor = block.dataset.anchor;
+    let quote = null;
+    if (sel && !sel.isCollapsed && String(sel).trim() && sel.anchorNode?.parentElement?.closest?.(".doc-para[data-anchor]")) {
+      quote = String(sel);
+      anchor = _selectionAnchor(block, sel) ?? anchor;
+    }
+    openBubble(anchor, block, { quote });
+  }
+
+  /* 版本历史(P4 面板;本期:toast 提示 + 聚焦版本下拉) */
+  function _openHistory() {
+    _toast(copy("platform.doc.history.soon"));
+    cur?.host.querySelector("[data-rewind-version]")?.focus?.();
+  }
+
   /* D5 主对话:发送一轮(chat 端点;agent 直接改文档,changed=true → 右侧重拉) */
   async function sendChat() {
     const text = String(cur?.chatInput?.value ?? "").trim();
     if (!text) return;
+    _genSummary = ""; // 新输入清生成摘要(v2.1 §4.3 状态栏回常规)
     messages.push({ role: "user", text });
     if (cur?.chatInput) cur.chatInput.value = "";
     renderChat();
@@ -694,8 +924,10 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       });
       if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
       const body = await res.json();
-      messages.push({ role: "assistant", text: body.reply ?? "" });
+      // P3 徽章:changed →「已改文档」;否则「待生成处理」(generate 时作 chatContext)
+      messages.push({ role: "assistant", text: body.reply ?? "", changed: !!body.changed });
       renderChat();
+      renderStatus();
       if (body.changed) {
         _prevTexts.set(doc.name, currentText); // UX 批:暂存旧全文,重挂载后 diff 变化块
         reload?.(); // 文档被改 → 重拉全文重渲右侧(chat.json 已落,对话不丢)
@@ -716,17 +948,29 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     });
   }
 
-  /* 左栏:主对话渲染(空态 = 系统提示"告诉我你要什么文档",只展示不占流) */
+  /* 左栏:主对话渲染(空态 = 系统提示"告诉我你要什么文档",只展示不占流);
+     P3:assistant 消息旁状态徽章(已参与 vN / 已改文档 / 待生成处理) */
   function renderChat() {
     if (!cur?.chatLog) return;
     const msgs = messages.length
       ? messages
       : [{ role: "system", text: copy("platform.doc.chat.hint") }];
     cur.chatLog.innerHTML = msgs
-      .map(
-        (m) =>
-          `<div class="doc-chat-msg" data-role="${esc(m.role ?? "user")}">${linkifyLines(m.text)}</div>`
-      )
+      .map((m, i) => {
+        let mark = "";
+        if (m.role === "assistant") {
+          if (i < _chatAppliedUpto) {
+            mark = copy("platform.doc.chat.mark.applied").replace("{v}", _chatAppliedVer);
+          } else {
+            mark = copy(m.changed ? "platform.doc.chat.mark.changed" : "platform.doc.chat.mark.pending");
+          }
+        }
+        return (
+          `<div class="doc-chat-msg" data-role="${esc(m.role ?? "user")}">${linkifyLines(m.text)}` +
+          (mark ? `<span class="doc-chat-mark" data-mark="1">${esc(mark)}</span>` : "") +
+          `</div>`
+        );
+      })
       .join("");
   }
 
@@ -748,6 +992,22 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     cur.chars.textContent = copy("platform.doc.chars").replace("{n}", String(currentText.length));
     cur.dirtyEl.textContent = dirty ? "●" : "";
     cur.dirtyEl.dataset.on = dirty ? "1" : "0";
+    // P3(v2.1 §4.3):字数 · vN · N 批注待处理(可点滚第一条)· N 对话待应用;
+    // 生成后摘要顶替对话位(下一次输入/批注变化清)
+    if (cur.verEl) cur.verEl.textContent = doc.versions?.[0] ?? "—";
+    if (cur.pendingEl) {
+      const n = _pendingCount();
+      cur.pendingEl.textContent = n
+        ? copy("platform.doc.pending").replace("{n}", String(n))
+        : copy("platform.doc.pending.zero");
+      cur.pendingEl.disabled = n === 0;
+    }
+    if (cur.chatPendingEl) {
+      const cn = Math.max(0, messages.length - _chatAppliedUpto);
+      cur.chatPendingEl.textContent = _genSummary || (cn
+        ? copy("platform.doc.chatpending").replace("{n}", String(cn))
+        : copy("platform.doc.chatpending.zero"));
+    }
   }
 
   /* 批注列表(UX 批实体化;v4:消息流/未读退役):每条 = 状态点 + 位置(Lx-Ly)
@@ -778,6 +1038,11 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       entry.marker.textContent = "💬";
       entry.marker.dataset.status = entry.inst.state.status ?? "pending";
     }
+    // P3:diff 钮显隐(有生成结果才显)+ 生成钮四态随批注面同步
+    const diffTab = _vmSeg?.querySelector?.('[data-vm="diff"]');
+    if (diffTab) diffTab.hidden = !_lastGen;
+    _renderGenBtn();
+    renderStatus();
   }
 
   /* D3 评审流(v4 改写):[评审] → review 端点(后端仍落旧流,兼容)→ 逐条
@@ -873,14 +1138,25 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
 
   /* view source(W6.7 用户裁决;C3 化:模式进 compound state.view,layout
      按 state 出块 chrome 或 doc slot——预览 = 块渲染 + 批注锚点(切割线不动),
-     源码 = md-viewer 子件的 source 形态;切换不重取数据)。 */
+     源码 = md-viewer 子件的 source 形态;切换不重取数据)。
+     P3:第三态 diff(纯宿主面,不进 compound state)——preview 藏,diffview 显。 */
   let _viewMode = "preview";
   let _vmSeg = null; // 实例级 seg(跨挂接复用;挂到交互面工具条)
+  let _keysBoundDoc = null; // P3 快捷键绑定的 document(幂等;多窗口各自一份)
   const setViewMode = (mode) => {
-    _viewMode = mode === "source" ? "source" : "preview";
+    if (mode === "diff" && !_lastGen) mode = "preview"; // 无生成结果不落 diff
+    _viewMode = ["preview", "source", "diff"].includes(mode) ? mode : "preview";
     for (const b of _vmSeg?.querySelectorAll?.("[data-vm]") ?? []) {
       b.dataset.on = b.dataset.vm === _viewMode ? "1" : "0";
     }
+    if (_viewMode === "diff") {
+      if (cur?.preview) cur.preview.hidden = true;
+      if (cur?.diffview) cur.diffview.hidden = false;
+      _renderDiff();
+      return;
+    }
+    if (cur?.preview) cur.preview.hidden = false;
+    if (cur?.diffview) cur.diffview.hidden = true;
     inst.state.view = _viewMode;
     // doc 子件的 canonical 形态字段同步(md-viewer 的 view 渲染面)
     const docInst = inst.child("doc");
@@ -923,6 +1199,32 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       const el = cur.host.querySelector("[data-doc-intro]");
       if (el) el.hidden = true;
       globalThis.localStorage?.setItem?.("doc.introSeen", "1");
+      return;
+    }
+    // P3:生成 / 版本历史 / 状态栏 pending 跳转 / Diff 操作(v2.1 §4/§5)
+    if (e.target.closest("[data-doc-generate]")) return _runGenerate();
+    if (e.target.closest("[data-doc-history]")) return _openHistory();
+    if (e.target.closest("[data-doc-pending]")) {
+      const first = [...bubbles.values()].find((en) => (en.inst.state.status ?? "pending") === "pending");
+      if (first) {
+        const blk = [...cur.preview.children].find((c) => c.dataset?.anchor === first.blockAnchor);
+        blk?.scrollIntoView?.();
+        openBubble(first.anchor, blk ?? cur.preview);
+      }
+      return;
+    }
+    if (e.target.closest("[data-diff-accept]")) return _acceptGen();
+    if (e.target.closest("[data-diff-rollback]")) return _rollbackGen();
+    const srcCard = e.target.closest("[data-diff-src]");
+    if (srcCard) {
+      // 来源批注卡 → 切预览 + 定位回标记(v2.1 §5.4)
+      const entry = bubbles.get(srcCard.dataset.diffSrc);
+      setViewMode("preview");
+      if (entry) {
+        const blk = [...cur.preview.children].find((c) => c.dataset?.anchor === entry.blockAnchor);
+        blk?.scrollIntoView?.();
+        openBubble(entry.anchor, blk ?? cur.preview);
+      }
       return;
     }
     // UX 批:气泡浮出——壳内 ✕ 已并入卡面头部(v3;close 事件路径),此处无 fold 分支
@@ -1017,10 +1319,11 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       _vmSeg.className = "wd-seg doc-viewseg";
       _vmSeg.innerHTML =
         `<button class="wd-seg-btn" data-vm="preview" data-on="1">${esc(copy("w.md.preview"))}</button>` +
-        `<button class="wd-seg-btn" data-vm="source" data-on="0">${esc(copy("w.md.source"))}</button>`;
+        `<button class="wd-seg-btn" data-vm="source" data-on="0">${esc(copy("w.md.source"))}</button>` +
+        `<button class="wd-seg-btn" data-vm="diff" data-on="0" hidden>${esc(copy("platform.doc.view.diff"))}</button>`; // P3:有生成结果才显
       _vmSeg.addEventListener("click", (e) => {
         const btn = e.target.closest?.("[data-vm]");
-        if (btn) setViewMode(btn.dataset.vm);
+        if (btn && !btn.hidden) setViewMode(btn.dataset.vm);
       });
     }
     viewHost.querySelector(".doc-toolbar")?.appendChild?.(_vmSeg);
@@ -1099,6 +1402,38 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     viewHost.addEventListener("mouseout", (e) => {
       if (e.target.closest?.("[data-bubble-marker]")) _hideTip();
     });
+    // P3 快捷键(v2.1 §9):Ctrl/Cmd+Shift+A 添加批注 / G 生成 / H 版本历史 /
+    // D Diff;Ctrl/Cmd+1 预览 / 2 源码。**document 级**(viewHost 收不到——
+    // 点击非 focusable 元素后 activeElement 是 body,事件不冒泡进窗口;
+    // 实例级幂等,只绑一次)
+    const docu = viewHost.ownerDocument ?? globalThis.document;
+    if (!_keysBoundDoc && docu?.addEventListener) {
+      _keysBoundDoc = docu;
+      docu.addEventListener("keydown", (e) => {
+        if (!cur) return;
+        if (!(e.ctrlKey || e.metaKey)) return;
+        const k = String(e.key ?? "").toUpperCase();
+        if (e.shiftKey && k === "A") {
+          e.preventDefault?.();
+          _addAnnotationAtCursor();
+        } else if (e.shiftKey && k === "G") {
+          e.preventDefault?.();
+          _runGenerate();
+        } else if (e.shiftKey && k === "H") {
+          e.preventDefault?.();
+          _openHistory();
+        } else if (e.shiftKey && k === "D") {
+          e.preventDefault?.();
+          if (_lastGen) setViewMode("diff");
+        } else if (!e.shiftKey && e.key === "1") {
+          e.preventDefault?.();
+          setViewMode("preview");
+        } else if (!e.shiftKey && e.key === "2") {
+          e.preventDefault?.();
+          setViewMode("source");
+        }
+      });
+    }
     // D2:段落锚点钮 → 开/聚焦对应气泡;v3.1:点高亮区 = 重开对应泡
     els.preview.addEventListener("click", (e) => {
       const hl = e.target.closest?.(".doc-hl");
@@ -1144,6 +1479,13 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       chatInput: viewHost.querySelector("[data-doc-chat-input]"),
       chars: viewHost.querySelector("[data-doc-chars]"),
       dirtyEl: viewHost.querySelector("[data-doc-dirty]"),
+      // P3:生成工作流面
+      diffview: viewHost.querySelector("[data-doc-diffview]"),
+      genBtn: viewHost.querySelector("[data-doc-generate]"),
+      genN: viewHost.querySelector("[data-doc-gen-n]"),
+      verEl: viewHost.querySelector("[data-doc-ver]"),
+      pendingEl: viewHost.querySelector("[data-doc-pending]"),
+      chatPendingEl: viewHost.querySelector("[data-doc-chatpending]"),
     };
     wireView(viewHost, els, mopts);
     const view = _baseMountView(els.preview, mopts);

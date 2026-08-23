@@ -238,21 +238,21 @@ def test_generate_full_chain(client, store, tmp_path):
     r = client.post("/platform/api/docs/t.gen/generate", json={})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["newVersion"] == 1 and body["versionId"] == "v001"
+    assert body["newVersion"] == 2 and body["versionId"] == "v002", "v001 = pre-generate 回滚锚(P3)"
     assert len(body["annotationResults"]) == 2
-    assert "--- t.gen@working" in body["diff"] and "+++ t.gen@v001" in body["diff"], "unified diff 头"
+    assert "--- t.gen@v001" in body["diff"] and "+++ t.gen@v002" in body["diff"], "unified diff 头"
     assert "-第一段原文" in body["diff"] and "+第一段改过的文本" in body["diff"]
     doc = client.get("/platform/api/docs/t.gen").json()
     assert doc["text"] == NEW_TEXT, "working = 新文档"
     meta = json.loads(
-        (tmp_path / "runs" / "docs" / "t.gen" / "versions" / "v001" / "meta.json").read_text(encoding="utf-8")
+        (tmp_path / "runs" / "docs" / "t.gen" / "versions" / "v002" / "meta.json").read_text(encoding="utf-8")
     )
     assert meta["source"] == "generate" and meta["generationInput"]["annotations"], "meta 带生成输入"
     assert meta["annotationResults"][0]["status"] == "applied", "meta 带批注结果"
     anns = {a["anchor"]: a for a in store.read_annotations("t.gen")}
     assert anns["doc.md#L2-L2"]["status"] == "applied"
     assert anns["doc.md#L2-L2"]["generation"]["aiNote"] == "已按意见改写第一段"
-    assert anns["doc.md#L2-L2"]["appliedInVersion"] == 1
+    assert anns["doc.md#L2-L2"]["appliedInVersion"] == 2
     assert anns["doc.md#L4-L4"]["status"] == "ignored", "第二段重锚下移一行(ignored 终态保留)"
     assert anns["doc.md#L5-L5"]["status"] == "pending", "LLM 未回的批注保持 pending 并重锚"
 
@@ -300,14 +300,14 @@ def test_generate_version_immutable(client, store, tmp_path):
     _mk_doc(client)
     _seed_annotations(store)
     assert client.post("/platform/api/docs/t.gen/generate", json={}).status_code == 200
-    v1 = (tmp_path / "runs" / "docs" / "t.gen" / "versions" / "v001" / "doc.md").read_text(encoding="utf-8")
-    assert v1 == NEW_TEXT
-    # 第二轮(generate 后当前 = v001;baseVersion=1 过闸)
-    r = client.post("/platform/api/docs/t.gen/generate", json={"baseVersion": 1})
-    assert r.status_code == 200 and r.json()["newVersion"] == 2
-    v1_after = (tmp_path / "runs" / "docs" / "t.gen" / "versions" / "v001" / "doc.md").read_text(encoding="utf-8")
-    assert v1_after == NEW_TEXT, "v001 不被二次生成改写"
-    store.restore("t.gen", "v001")
+    v2 = (tmp_path / "runs" / "docs" / "t.gen" / "versions" / "v002" / "doc.md").read_text(encoding="utf-8")
+    assert v2 == NEW_TEXT
+    # 第二轮(generate 后当前 = v002;baseVersion=2 过闸)
+    r = client.post("/platform/api/docs/t.gen/generate", json={"baseVersion": 2})
+    assert r.status_code == 200 and r.json()["newVersion"] == 3
+    v2_after = (tmp_path / "runs" / "docs" / "t.gen" / "versions" / "v002" / "doc.md").read_text(encoding="utf-8")
+    assert v2_after == NEW_TEXT, "v002 不被二次生成改写"
+    store.restore("t.gen", "v002")
     assert store.read("t.gen")["text"] == NEW_TEXT
 
 
@@ -373,3 +373,31 @@ def test_annotations_endpoint_validation(client):
     missing = client.post("/platform/api/docs/no.such/annotations",
                           json={"anchor": "doc.md#L1-L1", "content": "x"})
     assert missing.status_code == 404
+
+
+def test_restore_marks_rolled_back_to(store):
+    """裁决 C2:回滚不删版本——restore(rolled_back_from) 给被弃版本 meta
+    标 rolledBackTo,版本链完整。"""
+    store.create("t.rb", text="v1 内容")
+    store.snapshot("t.rb", source="manual")
+    store.save("t.rb", "v2 内容")
+    store.snapshot("t.rb", source="generate", parent="v001")
+    store.restore("t.rb", "v001", rolled_back_from="v002")
+    assert store.read("t.rb")["text"] == "v1 内容", "working 回滚到 v001"
+    meta = next(v for v in store.list_versions("t.rb") if v["version"] == "v002")
+    assert meta.get("rolledBackTo") == "v001", "v002 标废弃目标(不删)"
+    v2doc = store._dir("t.rb") / "versions" / "v002" / "doc.md"
+    assert v2doc.read_text(encoding="utf-8") == "v2 内容", "v002 内容不动(版本不可变)"
+
+
+def test_restore_endpoint(store, client):
+    """restore REST 薄面:复位 working;rolled_back_from 透传;坏版本 404。"""
+    _mk_doc(client)
+    r = client.post("/platform/api/docs/t.gen/restore", json={"version": "v001"})
+    assert r.status_code == 404, "无版本 → 404"
+    store.save("t.gen", "改过的内容")
+    store.snapshot("t.gen", source="manual")
+    store.save("t.gen", "又改")
+    r = client.post("/platform/api/docs/t.gen/restore", json={"version": "v001"})
+    assert r.status_code == 200 and r.json()["text"] == "改过的内容"
+    assert client.get("/platform/api/docs/t.gen").json()["text"] == "改过的内容"

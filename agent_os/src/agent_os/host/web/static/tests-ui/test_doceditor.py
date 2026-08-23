@@ -1,7 +1,7 @@
 """C4.4:doc-editor 真实浏览器测试——desktop 根入口(docs/DESKTOP-WIDGET.md §6 C4.4)。
 
 页面:/platform/(C4.4 起 = desktop 根;旧壳退役)。
-驱动路径:desktop 启动 → 开 conversation → 发「文档列表」出卡 → 点 demo.test 进窗口区 →
+驱动路径:desktop 启动 → 开 conversation → 发「文档列表」出卡 → 点 dev.uitest 进窗口区 →
 段落右键开泡 → 泡内发消息(comment.send)→ ✕ 收起为段旁标记 → 批注列表跳转 →
 view source 切换 → 写动作(snapshot → rewind 两击 → 导出菜单开合;三态 exec 管道)。
 真实 DOM 选择器(以 web_platform/static/desktop-page.js + doc-editor.js 为准):
@@ -12,7 +12,43 @@ view source 切换 → 写动作(snapshot → rewind 两击 → 导出菜单开�
 [data-rewind-version], [data-doc-export], [data-export-menu];调试钩 window.__desktop。
 """
 
-DOC = "demo.test"
+DOC = "dev.uitest"  # 专用测试文档(夹具隔离):不与人共用 demo.test——版本/批注互不染
+
+#: 夹具文本(dev.uitest 初建内容;含标题/普通段/表格,覆盖各段锚点形态)
+FIXTURE_TEXT = """# 测试文档
+
+本文档旨在明确项目的目标、核心动机与关键设计原则,为后续设计与开发提供统一的参考依据。
+
+## 动机
+
+本章节基于业务需求、用户调研、竞品分析与关键数据指标,阐述项目的核心动机与目标,为后续设计决策提供可追溯的依据。
+
+## 翻译对照
+
+| 中文 | English |
+|---|---|
+| 测试文档 | Test Document |
+"""
+
+
+def ensure_doc(pg, name=DOC):
+    """夹具隔离(共享活服务器治理):文档不存在 → 建(FIXTURE_TEXT);
+    存在 → restore 到最旧快照复位文本(版本链累积无害,断言不依赖版本号)。
+    配合 clean_annotations(清批注)使每段对共享状态不敏感。"""
+    pg.evaluate(
+        "async ([n, t]) => {"
+        "const list = await (await fetch('/platform/api/docs')).json();"  # 列表探测(无 404 进错误面)
+        "if (!list.some(d => d.name === n)) {"
+        "await fetch('/platform/api/docs', {method: 'POST', headers: {'Content-Type': 'application/json'},"
+        "body: JSON.stringify({name: n, title: n, text: t})}); return; }"
+        "const d = await (await fetch(`/platform/api/docs/${n}`)).json();"
+        "const vers = d.versions ?? [];"
+        "if (vers.length) {"
+        "await fetch(`/platform/api/docs/${n}/restore`, {method: 'POST',"
+        "headers: {'Content-Type': 'application/json'}, body: JSON.stringify({version: vers[vers.length - 1]})});"
+        "} }",
+        [name, FIXTURE_TEXT])
+    pg.wait_for_timeout(300)
 
 
 def clean_annotations(pg, name=DOC):
@@ -41,16 +77,17 @@ def run(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("文档列表")
     ta.press("Enter")
-    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=15000)
-    link = pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first
-    t.check("doc_list 卡可见 demo.test", link.count() > 0, f"count={link.count()}")
+    ensure_doc(pg)  # 夹具复位(在建卡前——文档不存在时列表卡根本不出)
     clean_annotations(pg)  # 先清库再开文档(种子在打开时读取)
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=30000)
+    link = pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first
+    t.check("doc_list 卡可见 dev.uitest", link.count() > 0, f"count={link.count()}")
     link.click()
     pg.wait_for_timeout(1500)
     win = pg.locator(".dt-win")
     t.check("doc 窗口打开(完整编辑器)", win.locator(".doc-toolbar").count() > 0)
     t.check("窗口题名 = 文档名(per-instance 题名)",
-            "demo.test" in (win.locator(".dt-title").inner_text() if win.locator(".dt-title").count() else ""))
+            DOC in (win.locator(".dt-title").inner_text() if win.locator(".dt-title").count() else ""))
     paras = win.locator(".doc-para[data-anchor]")
     t.check("段落块渲染(doc-para + 锚点)", paras.count() >= 2, f"blocks={paras.count()}")
     t.no_errors("打开文档无 JS 错误")
@@ -62,9 +99,9 @@ def run(t):
     t.check("右键开泡:浮出壳出现(add_child)", pop.count() > 0)
     t.check("批注卡挂进壳(w-bubble 本体)", pop.locator(".w-bubble").count() > 0)
     t.check("新批注 → 输入态(v4 composing)", pop.locator('[data-view="composing"]').count() > 0)
-    paths = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().map(s => s.path)")
+    paths = pg.evaluate("(n) => __desktop.child(n).children_snapshot().map(s => s.path)", DOC)
     t.check("寻址全树唯一:/root 通到 bubble 级(reparent 级联改址)",
-            any(p.startswith("/root/demo.test/") for p in paths), str(paths)[:80])
+            any(p.startswith(f"/root/{DOC}/") for p in paths), str(paths)[:80])
     t.no_errors("开泡无 JS 错误")
 
     # 泡内写批注(v4:submit → annotations 落库,无即时 AI 回复;提交即收起成标记)
@@ -159,6 +196,7 @@ def run(t):
     run_bubble_v31(t)  # 行文级批注 v3.1:点锚点/多泡/高亮/标记跟选段(v4 语义)
     run_bubble_v32(t)  # 几何回归 v3.2:F1 点旁/F2 无效坐标回落
     run_bubble_v4(t)  # 批注卡 v4:输入框规格/截断/Esc/悬停 tooltip/状态色环/重新编辑回 pending
+    run_generate_p3(t)  # P3 生成工作流(真 LLM):四态/生成/Diff/采纳/回滚/快捷键/chat 徽章
 
 
 def run_scroll(t):
@@ -196,7 +234,7 @@ def run_scroll(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("文档列表")
     ta.press("Enter")
-    pg.wait_for_selector('[data-cv-log] [data-detail-kind="doc"][data-detail-ref="dev.longscroll"]', timeout=15000)
+    pg.wait_for_selector('[data-cv-log] [data-detail-kind="doc"][data-detail-ref="dev.longscroll"]', timeout=30000)
     pg.locator('[data-cv-log] [data-detail-kind="doc"][data-detail-ref="dev.longscroll"]').first.click()
     pg.wait_for_timeout(1500)
     win = pg.locator(".dt-win")
@@ -282,7 +320,7 @@ def run_bubble_v2(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("文档列表")
     ta.press("Enter")
-    pg.wait_for_selector('[data-cv-log] [data-detail-kind="doc"][data-detail-ref="dev.longscroll"]', timeout=15000)
+    pg.wait_for_selector('[data-cv-log] [data-detail-kind="doc"][data-detail-ref="dev.longscroll"]', timeout=30000)
     clean_annotations(pg, "dev.longscroll")  # 先清库再开文档
     pg.locator('[data-cv-log] [data-detail-kind="doc"][data-detail-ref="dev.longscroll"]').first.click()
     pg.wait_for_timeout(1500)
@@ -320,8 +358,9 @@ def run_bubble_v3(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("文档列表")
     ta.press("Enter")
-    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=15000)
+    ensure_doc(pg)  # 夹具复位(在建卡前——文档不存在时列表卡根本不出)
     clean_annotations(pg)  # 先清库再开文档(种子在打开时读取)
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=30000)
     pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
     pg.wait_for_timeout(1500)
     win = pg.locator(".dt-win")
@@ -357,10 +396,14 @@ def run_bubble_v3(t):
     sel_text = pg.evaluate("() => String(getSelection())")
     b1.click(button="right", position={"x": 60, "y": r1["height"] / 2})
     pg.wait_for_timeout(600)
+    if pg.locator(f"{vpop} .w-bubble-quote").count() == 0:
+        t.check("选区右键:泡与 quote 区出现", False,
+                f"pops={pg.locator(vpop).count()} sel={sel_text[:20]!r} "
+                f"children={pg.evaluate('() => __desktop.child(\"' + DOC + '\")? children_snapshot().map(s => s.id)')}")
     quote = pg.locator(f"{vpop} .w-bubble-quote").first.inner_text()
     t.check("选区右键:quote = 选中文本", bool(sel_text) and sel_text[:6] in quote,
             f"sel={sel_text[:20]!r} quote={quote[:30]!r}")
-    child_ids = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().map(s => s.id)")
+    child_ids = pg.evaluate("(n) => __desktop.child(n).children_snapshot().map(s => s.id)", DOC)
     has_col = any(":C" in i for i in child_ids)
     t.check("选区右键:anchor 带列范围(:C)", has_col, f"ids={child_ids[-2:]}")
     anchor_col = [i for i in child_ids if i != "doc"][-1] if child_ids else None
@@ -371,22 +414,22 @@ def run_bubble_v3(t):
     t.no_errors("选区关联无 JS 错误")
 
     # ③ 点外(C1):有内容 = 提交(标记出);空 = 取消(无标记无子件)
-    n0 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    n0 = pg.evaluate("(n) => __desktop.child(n).children_snapshot().length", DOC)
     b3 = win.locator(".doc-para[data-anchor]").nth(3)
     b3.click(button="right", position={"x": 80, "y": 10})
     pg.wait_for_timeout(500)
     pg.locator(f"{vpop} [data-bubble-draft]").first.fill("点外提交验证")
     pg.locator(".dt-win-body").click(position={"x": 40, "y": 120})  # 点泡外
     pg.wait_for_timeout(800)
-    anns = pg.evaluate("() => fetch('/platform/api/docs/demo.test/annotations').then(r => r.json())")
+    anns = pg.evaluate("(n) => fetch(`/platform/api/docs/${n}/annotations`).then(r => r.json())", DOC)
     t.check("点外有内容 = 提交落库", any(a.get("content") == "点外提交验证" for a in anns),
             f"contents={[a.get('content') for a in anns]}")
     b3.click(button="right", position={"x": 160, "y": 10})
     pg.wait_for_timeout(500)
-    n1 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    n1 = pg.evaluate("(n) => __desktop.child(n).children_snapshot().length", DOC)
     pg.locator(".dt-win-body").click(position={"x": 40, "y": 120})  # 空点外
     pg.wait_for_timeout(400)
-    n2 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    n2 = pg.evaluate("(n) => __desktop.child(n).children_snapshot().length", DOC)
     t.check("点外空 = 取消(子件摘除)", n2 == n1 - 1, f"{n1}→{n2}")
     t.no_errors("点外 C1 无 JS 错误")
 
@@ -406,7 +449,7 @@ def run_bubble_v3(t):
         draft.fill("v3 选区批注(改)")
         draft.press("Enter")
         pg.wait_for_timeout(800)
-        anns2 = pg.evaluate("() => fetch('/platform/api/docs/demo.test/annotations').then(r => r.json())")
+        anns2 = pg.evaluate("(n) => fetch(`/platform/api/docs/${n}/annotations`).then(r => r.json())", DOC)
         rec = next((a for a in anns2 if a.get("anchor") == anchor_col), {})
         t.check("编辑提交:内容更新且回 pending",
                 rec.get("content") == "v3 选区批注(改)" and rec.get("status") == "pending",
@@ -424,8 +467,8 @@ def run_bubble_v3(t):
     pg.wait_for_timeout(800)
     t.check("垃圾桶:气泡消失", pg.locator(vpop).count() == 0)
     t.check("垃圾桶:compound 子件摘除", anchor_col not in pg.evaluate(
-        "() => __desktop.child('demo.test').children_snapshot().map(s => s.id)"))
-    rest = pg.evaluate("() => fetch('/platform/api/docs/demo.test/annotations').then(r => r.json())")
+        "(n) => __desktop.child(n).children_snapshot().map(s => s.id)", DOC))
+    rest = pg.evaluate("(n) => fetch(`/platform/api/docs/${n}/annotations`).then(r => r.json())", DOC)
     t.check("垃圾桶:后端重拉不含该批注(持久化已删)",
             not any(a.get("anchor") == anchor_col for a in rest),
             f"rest={[a.get('anchor') for a in rest]}")
@@ -447,8 +490,9 @@ def run_bubble_v31(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("文档列表")
     ta.press("Enter")
-    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=15000)
+    ensure_doc(pg)  # 夹具复位(在建卡前——文档不存在时列表卡根本不出)
     clean_annotations(pg)  # 先清库再开文档(种子在打开时读取)
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=30000)
     pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
     pg.wait_for_timeout(1500)
     win = pg.locator(".dt-win")
@@ -467,7 +511,7 @@ def run_bubble_v31(t):
     pg.locator(f"{vpop} [data-bubble-draft]").first.fill("v31 批注乙")
     pg.locator(f"{vpop} [data-bubble-draft]").first.press("Enter")
     pg.wait_for_timeout(700)
-    ids = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().map(s => s.id)")
+    ids = pg.evaluate("(n) => __desktop.child(n).children_snapshot().map(s => s.id)", DOC)
     col_pts = [i for i in ids if ":C" in i]
     t.check("一行两点右键 → 两个点锚点批注(零宽,列不同)", len(col_pts) >= 2, f"ids={col_pts}")
     import re as _re
@@ -495,7 +539,7 @@ def run_bubble_v31(t):
     b2.click(button="right", position={"x": 70, "y": r2["height"] / 2})
     pg.wait_for_timeout(600)
     sel_anchor = pg.evaluate(
-        "() => __desktop.child('demo.test').children_snapshot().map(s => s.id).filter(i => i !== 'doc').at(-1)")
+        "(n) => __desktop.child(n).children_snapshot().map(s => s.id).filter(i => i !== 'doc').at(-1)", DOC)
     pg.locator(f"{vpop} [data-bubble-draft]").first.fill("v31 高亮批注")
     pg.locator(f"{vpop} [data-bubble-draft]").first.press("Enter")
     pg.wait_for_timeout(700)
@@ -560,8 +604,9 @@ def run_bubble_v32(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("文档列表")
     ta.press("Enter")
-    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=15000)
+    ensure_doc(pg)  # 夹具复位(在建卡前——文档不存在时列表卡根本不出)
     clean_annotations(pg)  # 先清库再开文档(种子在打开时读取)
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=30000)
     pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
     pg.wait_for_timeout(1500)
     win = pg.locator(".dt-win")
@@ -590,12 +635,12 @@ def run_bubble_v32(t):
     # 壳不页顶跳
     pg.locator(".dt-win-body").click(position={"x": 40, "y": 120})  # 点泡外(空 → 取消)
     pg.wait_for_timeout(400)
-    n0 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    n0 = pg.evaluate("(n) => __desktop.child(n).children_snapshot().length", DOC)
     pg.evaluate(
         "() => { const b = document.querySelector('.dt-win .doc-para[data-anchor]');"
         "b.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 0, clientY: 0})); }")
     pg.wait_for_timeout(600)
-    n1 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    n1 = pg.evaluate("(n) => __desktop.child(n).children_snapshot().length", DOC)
     t.check("F2:无效坐标首发开泡(回落链建成一只)", n1 == n0 + 1, f"n0={n0} n1={n1}")
     pop2 = pg.locator(vpop).first
     y2 = pop2.bounding_box()["y"] if pop2.count() else -1
@@ -604,7 +649,7 @@ def run_bubble_v32(t):
         "() => { const b = document.querySelector('.dt-win .doc-para[data-anchor]');"
         "b.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 0, clientY: 0})); }")
     pg.wait_for_timeout(600)
-    n2 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    n2 = pg.evaluate("(n) => __desktop.child(n).children_snapshot().length", DOC)
     t.check("F2:该块已有泡 → 聚焦不新建(子件数不变)", n2 == n1, f"n1={n1} n2={n2}")
     t.no_errors("F2 无 JS 错误")
 
@@ -624,8 +669,9 @@ def run_bubble_v4(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("文档列表")
     ta.press("Enter")
-    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=15000)
+    ensure_doc(pg)  # 夹具复位(在建卡前——文档不存在时列表卡根本不出)
     clean_annotations(pg)  # 先清库再开文档(种子在打开时读取)
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=30000)
     pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
     pg.wait_for_timeout(1500)
     win = pg.locator(".dt-win")
@@ -655,10 +701,10 @@ def run_bubble_v4(t):
     t.check("v4:500 字截断", len(ta1.input_value()) == 500, f"len={len(ta1.input_value())}")
     t.check("v4:截断提示在", pop.locator("[data-bubble-hint]:not([hidden])").count() > 0)
     # ④ Esc 取消:无标记无子件残留
-    n0 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    n0 = pg.evaluate("(n) => __desktop.child(n).children_snapshot().length", DOC)
     ta1.press("Escape")
     pg.wait_for_timeout(400)
-    n1 = pg.evaluate("() => __desktop.child('demo.test').children_snapshot().length")
+    n1 = pg.evaluate("(n) => __desktop.child(n).children_snapshot().length", DOC)
     t.check("v4:Esc 取消摘除(子件回落)", n1 == n0 - 1, f"{n0}→{n1}")
     t.no_errors("v4 输入态无 JS 错误")
 
@@ -688,11 +734,11 @@ def run_bubble_v4(t):
 
     # ⑥ applied 态(API 造)→ 标记绿 + 重新编辑回 pending(v2.1 §12.4)
     anchor5 = pg.evaluate(
-        "() => __desktop.child('demo.test').children_snapshot().map(s => s.id).filter(i => i !== 'doc').at(-1)")
+        "(n) => __desktop.child(n).children_snapshot().map(s => s.id).filter(i => i !== 'doc').at(-1)", DOC)
     pg.evaluate(
-        "(a) => fetch('/platform/api/docs/demo.test/annotations', {method: 'POST',"
+        "([a, n]) => fetch(`/platform/api/docs/${n}/annotations`, {method: 'POST',"
         "headers: {'Content-Type': 'application/json'},"
-        "body: JSON.stringify({anchor: a, content: 'v4 悬停预览验证批注', status: 'applied'})})", anchor5)
+        "body: JSON.stringify({anchor: a, content: 'v4 悬停预览验证批注', status: 'applied'})})", [anchor5, DOC])
     pg.wait_for_timeout(300)
     pg.reload()
     pg.wait_for_selector(".dt-icon", timeout=10000)
@@ -701,7 +747,7 @@ def run_bubble_v4(t):
     pg.wait_for_timeout(500)
     pg.locator("[data-cv-input]").fill("文档列表")
     pg.locator("[data-cv-input]").press("Enter")
-    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=15000)
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=30000)
     pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
     pg.wait_for_timeout(1500)
     mk5 = pg.locator(f'.doc-bubble-marker[data-anchor="{anchor5}"]')
@@ -717,10 +763,155 @@ def run_bubble_v4(t):
         d5.press("Enter")
         pg.wait_for_timeout(800)
         rec5 = pg.evaluate(
-            "(a) => fetch('/platform/api/docs/demo.test/annotations').then(r => r.json()).then("
-            "list => list.find(x => x.anchor === a))", anchor5)
+            "([a, n]) => fetch(`/platform/api/docs/${n}/annotations`).then(r => r.json()).then("
+            "list => list.find(x => x.anchor === a))", [anchor5, DOC])
         t.check("v4:重新编辑回 pending(可参与下一轮生成)",
                 rec5 and rec5.get("status") == "pending" and "再改" in rec5.get("content", ""),
                 f"rec={rec5}")
         pg.screenshot(path=f"{shots}/bubble-v4-reedit.png")
     t.no_errors("v4 全程无 JS 错误")
+
+
+def run_generate_p3(t):
+    """P3 生成工作流全链(v2.1 §4/§5,真 LLM):四态 → 生成 → Diff 视图
+    (摘要卡/来源卡/行)→ 状态变色 → 采纳 → 版本推进;再生成 → 回滚(C2);
+    快捷键 Ctrl+Shift+D;chat 徽章。生成走真 LLM,等待给足。"""
+    import os
+    shots = os.path.join(os.path.dirname(__file__), ".shots")
+    os.makedirs(shots, exist_ok=True)
+
+    pg = t.open("/platform/")
+    pg.wait_for_selector(".dt-icon", timeout=10000)
+    pg.wait_for_timeout(400)
+    pg.locator('.dt-icon[data-desk-open="conversation"]').click()
+    pg.wait_for_timeout(500)
+    ta = pg.locator("[data-cv-input]")
+    ta.fill("文档列表")
+    ta.press("Enter")
+    ensure_doc(pg)  # 夹具复位(在建卡前——文档不存在时列表卡根本不出)
+    clean_annotations(pg)  # 先清库再开文档(种子在打开时读取)
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=30000)
+    pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
+    pg.wait_for_timeout(1500)
+    win = pg.locator(".dt-win")
+    gen = win.locator("[data-doc-generate]")
+
+    # ① 四态:无 pending → 禁用
+    t.check("P3:无 pending 生成钮禁用", gen.is_disabled())
+
+    # ② 建批注 → 解禁 + 计数徽标 + 状态栏计数
+    block = win.locator(".doc-para[data-anchor]").nth(1)
+    block.click(button="right", position={"x": 60, "y": 8})
+    pg.wait_for_timeout(500)
+    pg.locator(".doc-bubble-pop:not([hidden]) [data-bubble-draft]").first.fill("这段开场再精炼一点")
+    pg.locator(".doc-bubble-pop:not([hidden]) [data-bubble-draft]").first.press("Enter")
+    pg.wait_for_timeout(800)
+    t.check("P3:建批注后生成钮解禁", not gen.is_disabled())
+    t.check("P3:计数徽标 = 1", win.locator("[data-doc-gen-n]").inner_text().strip() == "1")
+    t.check("P3:状态栏 pending 计数", "1" in win.locator("[data-doc-pending]").inner_text())
+
+    # ③ chat 徽章:发一条(真 LLM;changed 与否都出徽章)
+    ci = win.locator("[data-doc-chat-input]")
+    ci.fill("这篇文档是讲什么的?")
+    ci.press("Enter")
+    pg.wait_for_timeout(2000)
+    pg.wait_for_selector(".doc-chat-mark", timeout=60000)
+    t.check("P3:chat 徽章出现", win.locator(".doc-chat-mark").count() > 0)
+
+    # ④ 生成(真 LLM;loading → Diff 自动切);ver0 在生成前取(推进对照)
+    ver0 = win.locator("[data-doc-ver]").inner_text()
+    gen.click()
+    pg.wait_for_timeout(400)
+    t.check("P3:生成中 loading 态", gen.is_disabled())
+    try:
+        pg.wait_for_selector(".dt-win [data-doc-diffview]:not([hidden])", timeout=240000)
+    except Exception:
+        t.check("P3:生成等 Diff 超时(240s)", False,
+                f"btn={gen.get_attribute('data-state')}/{gen.inner_text()!r} errors={t.errors[-2:]}")
+        raise
+    dv = win.locator("[data-doc-diffview]")
+    head = dv.locator(".doc-diff-head").inner_text()
+    t.check("P3:生成成功自动切 Diff(标题版本范围)", "→" in head and "v" in head, head[:40])
+    t.check("P3:摘要卡在", dv.locator(".doc-diff-summary").count() > 0)
+    t.check("P3:来源批注卡在", dv.locator(".doc-diff-src").count() > 0)
+    t.check("P3:diff 行在(add/del)",
+            dv.locator('.doc-diff-line[data-kind="add"]').count() > 0
+            or dv.locator('.doc-diff-line[data-kind="del"]').count() > 0)
+    pg.screenshot(path=f"{shots}/gen-p3-diff.png")
+    # ⑤ 批注状态随结果更新(标记变色;P2 data-status 面)
+    st = pg.locator(".doc-bubble-marker").first.get_attribute("data-status")
+    t.check("P3:生成后标记变色(非 pending)", st in ("applied", "ignored"), f"status={st}")
+    t.check("P3:状态栏生成摘要", "已应用" in win.locator("[data-doc-chatpending]").inner_text()
+            or "已忽略" in win.locator("[data-doc-chatpending]").inner_text())
+
+    # ⑥ 快捷键 Ctrl+Shift+D 回 diff(先在 preview);来源卡点击 → 定位回批注
+    pg.locator('[data-vm="preview"]').click()
+    pg.wait_for_timeout(300)
+    pg.locator(".dt-win-body").click(position={"x": 40, "y": 300})
+    pg.keyboard.press("Control+Shift+D")
+    pg.wait_for_timeout(400)
+    t.check("P3:Ctrl+Shift+D 切 Diff", not dv.is_hidden())
+    dv.locator(".doc-diff-src").first.click()
+    pg.wait_for_timeout(500)
+    t.check("P3:来源卡点击回预览定位",
+            not win.locator("[data-doc-preview]").is_hidden()
+            and pg.locator(".doc-bubble-pop:not([hidden])").count() > 0)
+    pg.locator("[data-bubble-x]").first.click()  # 收起定位出的泡
+    pg.wait_for_timeout(300)
+
+    # ⑦ 采纳 → 回预览 + 版本推进(ver0 = 生成前版本,采纳后 > 它)
+    pg.locator(".dt-win-body").click(position={"x": 40, "y": 300})
+    pg.keyboard.press("Control+Shift+D")
+    pg.wait_for_timeout(400)
+    dv.locator("[data-diff-accept]").click()
+    pg.wait_for_timeout(500)
+    ver1 = win.locator("[data-doc-ver]").inner_text()
+    t.check("P3:采纳后回预览 + diffview 藏",
+            not win.locator("[data-doc-preview]").is_hidden() and dv.is_hidden())
+    t.check("P3:采纳后版本推进", ver1 != "—" and ver1 != ver0, f"{ver0}→{ver1}")
+    t.no_errors("P3 生成/采纳全程无 JS 错误")
+
+    # ⑧ 再建批注 → 再生成 → 回滚(C2:restore + rolledBackTo,不删)
+    # 取 canonical state.source(而非 innerText——预览里含批注标记 UI 文本,
+    # 回滚不回批注,标记状态变化会让 innerText 恒不等,全文比对必假挂)
+    t1_text = pg.evaluate(
+        """() => {
+          const s = __desktop.children_snapshot().find(x => x.kind === 'doc-editor');
+          return __desktop.child(s.id).state.source;
+        }"""
+    )
+    block2 = win.locator(".doc-para[data-anchor]").nth(1)
+    block2.click(button="right", position={"x": 120, "y": 8})
+    pg.wait_for_timeout(500)
+    pg.locator(".doc-bubble-pop:not([hidden]) [data-bubble-draft]").first.fill("再把标题改得正式一些")
+    pg.locator(".doc-bubble-pop:not([hidden]) [data-bubble-draft]").first.press("Enter")
+    pg.wait_for_timeout(800)
+    win.locator("[data-doc-generate]").click()
+    try:
+        pg.wait_for_selector(".dt-win [data-doc-diffview]:not([hidden])", timeout=240000)
+    except Exception:
+        t.check("P3:二次生成等 Diff 超时(240s)", False,
+                f"btn={win.locator('[data-doc-generate]').get_attribute('data-state')} errors={t.errors[-2:]}")
+        raise
+    t.check("P3:二次生成切 Diff", not dv.is_hidden())
+    dv.locator("[data-diff-rollback]").first.click()
+    src_js = (
+        "() => { const s = __desktop.children_snapshot().find(x => x.kind === 'doc-editor');"
+        " return __desktop.child(s.id).state.source; }"
+    )
+    back = False
+    try:
+        pg.wait_for_function(
+            """(t) => {
+              const s = __desktop.children_snapshot().find(x => x.kind === 'doc-editor');
+              const pv = document.querySelector('.dt-win [data-doc-preview]');
+              return pv && !pv.hidden && __desktop.child(s.id).state.source === t;
+            }""",
+            arg=t1_text, timeout=20000)
+        back = True
+    except Exception:
+        pass
+    t.check("P3:回滚后回预览且文本回落(canonical source)", back,
+            f"src_tail={pg.evaluate(src_js)[-40:]!r} vs t1_tail={t1_text[-40:]!r}")
+    pg.screenshot(path=f"{shots}/gen-p3-rollback.png")
+    t.no_errors("P3 回滚全程无 JS 错误")

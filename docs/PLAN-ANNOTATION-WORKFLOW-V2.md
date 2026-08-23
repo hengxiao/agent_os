@@ -111,7 +111,7 @@
 > 修复 _refEl 块引用过期致重开页顶跳(参考点改每次现找);pytest 115 绿
 > (113+2 端点例),stub 32 绿,tests-ui 全绿(含新 v4 组)。
 
-## 3. P3 —— 生成工作流(前端主链)
+## 3. P3 —— 生成工作流(前端主链)✅(2026-08-13 落地,BUILD 2026-08-13.3)
 
 - 工具栏:「生成下一版本」钮(四态按 v2.1 §4.2:无待处理禁用/正常主色/生成中
   loading/失败红色重试,带 pending 计数徽标)+「Diff」「版本历史」入口;
@@ -127,6 +127,37 @@
 - chat 通道:消息发送不再即时改文档(doc-editor 窗内);消息旁状态徽章「待应用/已应用(vN)」。
 
 **验收**:tests-ui 全链(建批注 → 生成 → Diff → 采纳/回滚 → 状态流转);截图证据。
+
+> **P3 实现注**(2026-08-13):
+> - **生成钮四态**(工具条 `data-doc-generate`):无 pending 禁用 / 正常主色 +
+>   计数徽标 / loading(`⏳ 生成中…`)/ 失败红(`⚠ 重试`,toast 同发);计数 =
+>   库内 pending 批注数(bubbles map 全覆盖,种子出标后);
+> - **生成链** `_runGenerate`:POST generate(baseVersion = 当前快照号)→
+>   409 = toast + 自动刷新(§8.3);成功 → 本地版本链推进 + reload 重拉新文
+>   + `_syncAnnotations`(标记/高亮变色)→ **自动切 Diff 视图**;失败 →
+>   红色重试(不落半截,P1 后端保证);
+> - **回滚锚补洞**:generate 端点在**无快照**时先封存 pre-generate v001——
+>   否则回滚无目标(P1 测试随之适配,版本号 +1);回滚 = action 管道
+>   doc.rewind + `rolled_back_from` → 被弃版本 meta 标 `rolledBackTo`
+>   (C2,不删;restore 扩参,pytest +1);
+> - **Diff 视图**(viewseg 第三态,纯宿主面不进 compound state):标题
+>   版本范围 + ✓ 采纳 / ↩ 回滚 + 摘要卡(应用/忽略/部分计数)+ 来源批注卡
+>   (状态徽标 + 意见摘录 + aiNote,点击切预览定位回标记)+ unified 行
+>   (add/del/same;色系走 --ok/--danger token);
+> - **状态栏**:字数 · vN · N 批注待处理(点击滚到第一条 pending)· N 对话
+>   待应用;生成后摘要顶替对话位(下一次输入/批注变化清);
+> - **快捷键**(viewHost 委托):Ctrl/Cmd+Shift+A 添加批注(选区在块内走选区
+>   链,否则首块)/ G 生成 / H 版本历史(本期 toast + 聚焦版本下拉,P4 正式
+>   面板)/ D Diff / 1 预览 / 2 源码;
+> - **chat 通道(最小改动落法)**:发送行为**不动**(doc_editor 工具面即时改
+>   文档保留——「写一篇/改一节」是生产面,打断超出本期);assistant 消息旁
+>   徽章:changed →「已改文档」,未改 →「待生成处理」,generate 后全部 →
+>   「已参与 vN」(已参与边界 = 生成时消息数);toast 面补上 `__docToast`
+>   接线(desktop boot 挂 util toast——此前只有消费面);
+> - **测试**:stub +1 组(四态/状态栏/生成链/Diff 渲染/采纳,compound.test);
+>   tests-ui +run_generate_p3(真 LLM 两次生成:四态/自动切 Diff/摘要卡/
+>   来源卡定位/变色/采纳版本推进/回滚文本回落/Ctrl+Shift+D/chat 徽章)+
+>   2 截图(.shots/gen-p3-*);pytest 116 绿。
 
 ## 4. P4 —— 版本历史面板 + 批注列表面
 

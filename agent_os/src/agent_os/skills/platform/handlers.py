@@ -533,8 +533,8 @@ async def doc_snapshot(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     d = _deps(ctx)
     doc_store = d["doc_store"]
     name = str(args.get("name") or "")
-    latest = doc_store.list_versions(name)
-    vid = doc_store.snapshot(name, source="manual", parent=latest[0]["version"] if latest else None)
+    # parent 不传 → store 按工作稿 baseVersion 解析(v1.8 树状版本:rewind 后分支)
+    vid = doc_store.snapshot(name, source="manual")
     return {
         "ok": True,
         "text": f"已封存 {vid}。",
@@ -544,11 +544,14 @@ async def doc_snapshot(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 @_guarded
 async def doc_rewind(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
-    """platform.doc.rewind:恢复某版本到全文(历史不动)。"""
+    """platform.doc.rewind:恢复某版本到全文(历史不动);``rolled_back_from``
+    (P3 裁决 C2)给被回滚的版本标 rolledBackTo(不删)。"""
     d = _deps(ctx)
     name = str(args.get("name") or "")
     version = str(args.get("version") or "")
-    doc = d["doc_store"].restore(name, version)
+    doc = d["doc_store"].restore(
+        name, version, rolled_back_from=str(args.get("rolled_back_from") or "") or None
+    )
     return {
         "ok": True,
         "text": f"已恢复到 {version}(版本历史未动)。",

@@ -64,22 +64,47 @@ def run(t):
             and live.locator(".doc-para[data-anchor]").count() >= 2)
     t.no_errors("C4.2 链无 JS 错误")
 
-    # ③ 留证最小化重开(C4.2 链)
-    ta = pg.locator("[data-cv-input]")
+    # ③ 留证最小化重开(C4.2 链)——**显式新建会话**再操作(共享活服务器治理:
+    # 不依赖「最新会话」假设——会话列表随跑次/人工冒烟累积);
+    # 窗口作用域选择器(boot conversation 窗与新窗并存,全局选择器会撞)
+    sid = pg.evaluate("() => fetch('/platform/api/sessions', {method: 'POST'}).then(r => r.json()).then(d => d.id)")
+    # 下拉 options 只在 boot 装(_reloadSessions)——注入新 sid 再选(不依赖列表刷新时机)
+    pg.evaluate("(sid) => { const s = document.querySelector('#dt-sessions');"
+                "const o = document.createElement('option'); o.value = sid; o.textContent = sid;"
+                "s.appendChild(o); }", sid)
+    pg.locator("#dt-newbtn").click()
+    pg.wait_for_timeout(200)
+    pg.locator("#dt-sessions").select_option(value=sid)
+    pg.locator("#dt-openconv").click()
+    pg.wait_for_timeout(1000)
+    conv_task = f'[data-desk-task="conv-{sid}"]'
+    t.check("留证:新会话窗开", pg.locator(conv_task).count() == 1, f"sid={sid[:8]}")
+    conv_win = pg.locator(".dt-win", has=pg.locator("[data-cv-input]")).last
+    ta = conv_win.locator("[data-cv-input]")
     ta.fill("C4.3 留证消息")
     ta.press("Enter")
-    pg.wait_for_selector("text=C4.3 留证消息", timeout=15000)
-    pg.locator("[data-cv-input]").fill("未发送的半句")
+    conv_win.locator("[data-cv-log]").locator("text=C4.3 留证消息").wait_for(timeout=30000)
+    conv_win.locator("[data-cv-input]").fill("未发送的半句")
     pg.wait_for_timeout(200)
-    pg.locator("[data-desk-min]").click()
+    conv_win.locator("[data-desk-min]").click()
     pg.wait_for_timeout(500)
-    pg.locator('[data-desk-task="conversation"]').click()
+    pg.locator(conv_task).click()
     pg.wait_for_timeout(600)
-    t.check("重开:留证消息逐字在", "C4.3 留证消息" in pg.locator("[data-cv-log]").inner_text())
-    t.check("重开:草稿逐字在(hidden)", pg.locator("[data-cv-input]").input_value() == "未发送的半句")
+    conv_win2 = pg.locator(".dt-win", has=pg.locator("[data-cv-input]")).last
+    t.check("重开:留证消息逐字在", "C4.3 留证消息" in conv_win2.locator("[data-cv-log]").inner_text())
+    t.check("重开:草稿逐字在(hidden)", conv_win2.locator("[data-cv-input]").input_value() == "未发送的半句")
+    # 收尾:关新会话窗(两段 ✕ 确认;不占后续段落的全局选择器视野)
+    conv_win2.locator(".dt-titlebar [data-desk-close]").click()
+    pg.wait_for_timeout(250)
+    conv_win2.locator(".dt-titlebar [data-desk-close]").click()
+    pg.wait_for_timeout(400)
+    t.check("留证:新会话窗关闭", pg.locator(conv_task).count() == 0)
 
     # ④ 未读 badge(§7 小注:可见性在父——最小化记 / 激活清 / 激活中不记)
     # 差量断言:真实流量(轮询/SSE 呈现)可能同期加账,基线 +2 而非绝对 2
+    # (共享状态治理:不假设前段留有激活窗——显式激活 boot conversation 再操作)
+    pg.locator('[data-desk-task="conversation"]').click()
+    pg.wait_for_timeout(600)
     pg.locator("[data-desk-min]").click()
     pg.wait_for_timeout(500)
     base_val = pg.evaluate("() => __desktop.state.badges.conversation ?? 0")
@@ -131,7 +156,8 @@ def run(t):
     ta = pg.locator("[data-cv-input]")
     ta.fill("为什么挂")
     ta.press("Enter")
-    pg.wait_for_selector('.cv-log .pf-card[data-card="table"]:not([data-detail-ref=""])', timeout=15000)
+    # LLM 路由:负载下回复可达数十秒(curl 空载 ~2s),15s 会假性超时
+    pg.wait_for_selector('.cv-log .pf-card[data-card="table"]:not([data-detail-ref=""])', timeout=90000)
     card = pg.locator('.cv-log .pf-card[data-card="table"]:not([data-detail-ref=""])').first
     t.check("摘要卡可拖(draggable + 整卡 ref)",
             card.count() > 0 and card.get_attribute("draggable") == "true"

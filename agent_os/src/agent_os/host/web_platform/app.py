@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -54,9 +54,11 @@ from agent_os.skills.doc_store import DocStore
 from agent_os.skills.draft_store import OverlaySkillRegistry
 from agent_os.skills.lab_assistant import (
     DOC_COMMENTER_NAME,
+    DOC_DIFF_SUMMARIZER_NAME,
     DOC_EDITOR_NAME,
     DOC_REVIEWER_NAME,
     doc_commenter_skill,
+    doc_diff_summarizer_skill,
     doc_editor_skill,
     doc_reviewer_skill,
 )
@@ -423,6 +425,116 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
+    @app.get("/api/docs/{name}/versions/tree")
+    def doc_version_tree(name: str) -> dict[str, Any]:
+        """版本树(v1.8 树状版本模型):parent 链全量 + 工作稿祖版。
+        回推线性(沿 parent 走),前衍可分支(同一 parent 的多个版本)。
+        返回 {base, versions:[{version,parent,at,source}](新→旧)}。"""
+        try:
+            meta = doc_store.read(name)["meta"]
+            versions = doc_store.list_versions(name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        vids = {v["version"] for v in versions}
+        base = str(meta.get("baseVersion") or "")
+        return {
+            "base": base if base in vids else (versions[0]["version"] if versions else ""),
+            "versions": [
+                {
+                    "version": v["version"],
+                    "parent": v.get("parent"),
+                    "at": v.get("at", 0),
+                    "source": v.get("source", ""),
+                }
+                for v in versions
+            ],
+        }
+
+
+    @app.get("/api/docs/{name}/versions/{version}")
+    def read_doc_version(name: str, version: str) -> dict[str, Any]:
+        """读版本快照内容(只读,不动工作稿;Godot 侧回溯卷轴的 diff 提示数据面)。"""
+        try:
+            return doc_store.read_version(name, version)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+    @app.get("/api/docs/{name}/diff-summary")
+    def doc_diff_summary(
+        name: str, from_: str = Query("", alias="from"), to: str = Query("")
+    ) -> dict[str, Any]:
+        """版本差异的人话摘要(Godot 回溯卷轴提示;LLM 摘要,结果落 diffsum
+        缓存——版本不可变,缓存天然安全):``?from=v001&to=v014`` →
+        {from,to,summary,cached};坏版本号 400,不存在 404,摘要助手故障 503
+        (与 review 同归类)。两版内容一致 → 不跑 LLM 直给并写缓存。"""
+        try:
+            old = doc_store.read_version(name, from_)["text"]
+            new = doc_store.read_version(name, to)["text"]
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
+        cached = doc_store.read_diffsum(name, from_, to)
+        if cached is not None:
+            return {"from": from_, "to": to, "summary": cached["summary"], "cached": True}
+
+        if old == new:
+            summary = "两版内容一致。"
+            doc_store.save_diffsum(name, from_, to, summary)
+            return {"from": from_, "to": to, "summary": summary, "cached": False}
+
+        import difflib
+
+        diff_text = "\n".join(
+            ln
+            for ln in difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=0)
+            if ln.startswith(("+", "-")) and not ln.startswith(("+++", "---"))
+        )[:4000]
+        try:
+            kernel = manager.assemble_lab_kernel(
+                OverlaySkillRegistry(
+                    manager.shared_skills_registry(),
+                    lab_store,
+                    extra={DOC_DIFF_SUMMARIZER_NAME: doc_diff_summarizer_skill()},
+                )
+            )
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"摘要助手不可用: {e}") from e
+        try:
+            result = asyncio.run(
+                kernel.run(
+                    DOC_DIFF_SUMMARIZER_NAME,
+                    {"diff": diff_text, "from_version": from_, "to_version": to},
+                )
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"摘要助手暂不可用: {type(e).__name__}: {e}"
+            ) from e
+        summary = str((result or {}).get("summary") or "").strip() or "摘要暂缺"
+        doc_store.save_diffsum(name, from_, to, summary)
+        return {"from": from_, "to": to, "summary": summary, "cached": False}
+
+    @app.post("/api/docs/{name}/restore")
+    def restore_doc(name: str, body: dict[str, Any]) -> dict[str, Any]:
+        """restore 的 REST 薄面(P3 起;测试夹具/脚本复位用——UI rewind 仍走
+        action 管道):``{version, rolled_back_from?}``,版本不可变不动。"""
+        version = str(body.get("version") or "")
+        try:
+            doc = doc_store.restore(
+                name, version, rolled_back_from=str(body.get("rolled_back_from") or "") or None
+            )
+            return {"ok": True, "text": doc["text"], "version": version}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+
     @app.post("/api/docs/{name}/annotations")
     def save_doc_annotation(name: str, body: DocAnnotationBody) -> dict[str, Any]:
         """单条批注 upsert(P2,save_annotation 路径;**无即时 AI 回复**——
@@ -716,11 +828,19 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
                 detail=f"生成输出两次不合契约({last_err});原文摘要: {snippet!r}",
             )
         new_text, results = parsed
+        # 回滚锚(P3 裁决 C2):无快照时先把生成前 working 封存为 v001——
+        # 否则回滚无目标(旧文只剩 .bak)
+        if cur_vid is None:
+            cur_vid = doc_store.snapshot(name, source="pre-generate")
+            cur_no = int(cur_vid[1:])
         doc_store.save(name, new_text)
+        # 树状版本模型(v1.8):parent = 工作稿祖版(rewind 分支点)优先于最新快照
+        _base = str(doc_store.read(name)["meta"].get("baseVersion") or "")
+        _vids = {v["version"] for v in doc_store.list_versions(name)}
         new_vid = doc_store.snapshot(
             name,
             source="generate",
-            parent=cur_vid,
+            parent=_base if _base in _vids else cur_vid,
             extra={
                 "generationInput": {
                     "chatContext": chat_context,

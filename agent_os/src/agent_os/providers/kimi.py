@@ -27,7 +27,12 @@ DEFAULT_BASE_URL = "https://api.moonshot.ai/v1"
 
 
 class KimiProvider(OpenAICompatibleProvider):
-    """Moonshot Kimi 接口(OpenAI 兼容协议,§4.3 内置适配器)。"""
+    """Moonshot Kimi 接口(OpenAI 兼容协议,§4.3 内置适配器)。
+
+    key 解析(2026-08-24,15 分钟 OAuth token 教训):显式 api_key 钉死;
+    未显式给则**每次调用现读环境变量**——run-web.sh 的 token_refresh 线程
+    会周期续期 os.environ["MOONSHOT_API_KEY"],若像基类一样构造期冻结,
+    长跑进程 15 分钟后必然 401(generate 链实测反复踩中)。"""
 
     name: str = "kimi"
 
@@ -39,8 +44,18 @@ class KimiProvider(OpenAICompatibleProvider):
         name: str | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        key = api_key or os.environ.get("MOONSHOT_API_KEY") or os.environ.get("KIMI_API_KEY")
-        super().__init__(base_url=base_url, api_key=key, name=name or self.name, client=client)
+        super().__init__(base_url=base_url, api_key=api_key, name=name or self.name, client=client)
+        self._dynamic_key = api_key is None  # 未显式给 key → 动态解析(见类注)
+
+    @property
+    def api_key(self) -> str | None:
+        if getattr(self, "_dynamic_key", False):
+            return os.environ.get("MOONSHOT_API_KEY") or os.environ.get("KIMI_API_KEY")
+        return getattr(self, "_pinned_key", None)
+
+    @api_key.setter
+    def api_key(self, v: str | None) -> None:
+        self._pinned_key = v
 
     def capabilities(self) -> ProviderCaps:
         caps = super().capabilities()

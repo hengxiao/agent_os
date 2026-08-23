@@ -647,7 +647,8 @@ def default_manifests() -> list[dict[str, Any]]:
                     "label": "platform.doc.rewind",
                     "exec": {"mode": "endpoint", "ref": "platform.doc.rewind"},
                     "args_from": ["state.name"],
-                    "args_input": {"version": {"type": "string"}},
+                    "args_input": {"version": {"type": "string"},
+                                   "rolled_back_from": {"type": "string"}},  # P3 C2:回滚留痕(可选)
                     "surface": ["tab"],
                 },
                 {

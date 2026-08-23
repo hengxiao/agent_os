@@ -37,6 +37,29 @@ def test_kimi_key_from_env(monkeypatch):
     assert p.api_key == "env-key"
 
 
+def test_kimi_key_dynamic_per_call(monkeypatch):
+    """15 分钟 OAuth token 场景的正式防线:未显式给 key 时,每次读取现解
+    环境变量(token_refresh 线程续期 os.environ 后,下一调用即生效;
+    构造期冻结的旧行为会让长跑进程 15 分钟后 401)。"""
+    monkeypatch.setenv("MOONSHOT_API_KEY", "t1")
+    p = KimiProvider()
+    assert p.api_key == "t1"
+    monkeypatch.setenv("MOONSHOT_API_KEY", "t2")
+    assert p.api_key == "t2", "env 续期后必须现读,不许吃构造期快照"
+    monkeypatch.delenv("MOONSHOT_API_KEY")
+    assert p.api_key is None
+
+
+def test_kimi_key_pinned_when_explicit(monkeypatch):
+    """显式 api_key 钉死:env 变化不影响(测试/直连场景的既有语义)。"""
+    monkeypatch.setenv("MOONSHOT_API_KEY", "env-key")
+    p = KimiProvider(api_key="pinned")
+    assert p.api_key == "pinned"
+    monkeypatch.setenv("MOONSHOT_API_KEY", "other")
+    assert p.api_key == "pinned"
+
+
+
 def _kimi_payload():
     return {
         "choices": [{

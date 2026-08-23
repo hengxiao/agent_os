@@ -173,6 +173,28 @@ maxHeight = clamp(200px, min(380px, 45vh), 可用空间 − 16px)  # v3.2 起 38
 发送时控件经 cascade 协议向上收集 fragment 链(bubble → doc-editor → …),
 打成信封随 submit 上送——**skill 自己决定怎么用这些 context**,UI 不预设。
 
+### 5.1 生成链(P3;批注批处理主链)
+
+1. 工具条「🔄 生成下一版本」四态:无 pending 禁用 / 正常主色 + 计数徽标 /
+   `⏳ 生成中…` / 失败红(⚠ 重试 + toast);
+2. 点击 → `POST /platform/api/docs/{name}/generate`(baseVersion = 当前快照号;
+   annotations 缺省 = 库内全部 pending;chatContext 缺省 = 主对话最近 20 条);
+   - **409**(C5 版本冲突):toast + 自动刷新;
+   - **502**(输出两次不合契约):不落库,红色重试;
+3. 成功 → 本地版本链推进 + reload 重拉新文 + `_syncAnnotations`(批注状态
+   /重锚刷新,标记/高亮变色)→ **自动切 Diff 视图**;
+4. Diff 视图(viewseg 第三态,宿主面):标题版本范围 + ✓ 采纳 / ↩ 回滚 +
+   摘要卡 + 来源批注卡(点击定位回标记)+ unified 行;
+5. 采纳 = 切预览(库已是新文);回滚 = doc.rewind(restore 父版本)+ 被弃
+   版本 meta 标 `rolledBackTo`(C2,不删);无快照时 generate 先封存
+   pre-generate v001(回滚锚);
+6. 状态栏:字数 · vN · N 批注待处理(点击滚第一条)· N 对话待应用;
+   生成后摘要顶替对话位;
+7. 快捷键:Ctrl/Cmd+Shift+A 添加批注 / G 生成 / H 版本历史(P4)/ D Diff /
+   1 预览 / 2 源码(document 级委托,实例幂等);
+8. chat 通道:发送行为不动(doc_editor 即时改文档保留);assistant 消息旁
+   徽章 = 已改文档 / 待生成处理 / 已参与 vN(generate 推进已参与边界)。
+
 ## 6. 未读语义(v4 退役)
 
 消息流没了,未读游标(seen/unread/bubbleNewFrom)随之全删(P2);

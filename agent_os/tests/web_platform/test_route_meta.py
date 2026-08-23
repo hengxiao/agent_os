@@ -62,3 +62,17 @@ def test_route_meta_only_on_plan_card():
     msg = orch.handle({"messages": []}, "最近有哪些 run")
     assert msg["meta"]["route"] == "llm"
     assert "route_meta" not in msg["cards"][0]["data"], "table 卡不带 route_meta"
+
+
+def test_exact_doc_phrase_shortcut_skips_llm():
+    """高置信精确短语短路(2026-08-24 实证:LLM 把「文档列表」误分为
+    help——schema 合规但语义错,不产生回落)。全匹配短语直接走规则,
+    不付模型漂移税;自然语言(非全匹配)仍走 LLM 优先。"""
+    # provider 给一个会误导的 LLM 响应:短路则该响应永不被消费
+    orch = _orch([_resp('{"intent": "help"}')])
+    msg = orch.handle({"messages": []}, "文档列表")
+    assert msg["meta"]["route"] == "rule" and msg["meta"].get("reason") == "shortcut"
+    # 自然语言仍 LLM 优先(非全匹配不短路)
+    orch2 = _orch([_resp('{"intent": "help"}')])
+    msg2 = orch2.handle({"messages": []}, "把文档列表给我讲讲")
+    assert msg2["meta"]["route"] == "llm"

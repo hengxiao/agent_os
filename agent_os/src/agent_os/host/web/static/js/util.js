@@ -182,6 +182,7 @@ export function toast(msg, kind = "info") {
   el.appendChild(closeBtn);
   const remove = () => el.remove();
   closeBtn.addEventListener("click", remove);
-  document.querySelector("#toastStack").appendChild(el);
+  // desktop.html 无 #toastStack 容器——回退 body(P3 __docToast 接线后实测抓出)
+  (document.querySelector("#toastStack") ?? document.body)?.appendChild(el);
   setTimeout(remove, 3000);
 }

@@ -1674,7 +1674,12 @@ const { renderTreeWidget: _rtw63, renderDatePicker: _rdp63 } = await import("../
   const wk = quickRange("week"); // 快捷命中锚定真实今天(不依赖环境日期)
   const wkDate = parseIso(wk.start);
   const hw = _rdp63({ ...s, value: { ...wk }, cursor: { year: wkDate.getFullYear(), month: wkDate.getMonth() } });
-  assert.ok(hw.includes('data-wd-quick="week" data-on="1"'), "快捷 chip 选中态(值命中本周)");
+  // 周一特例:本周 == 今天时,"today" 在命中序上优先(语义同真),断言随日期分流
+  if (quickRange("week").start === quickRange("today").start && quickRange("week").end === quickRange("today").end) {
+    assert.ok(hw.includes('data-wd-quick="today" data-on="1"'), "快捷 chip 选中态(周一特例:today 优先命中)");
+  } else {
+    assert.ok(hw.includes('data-wd-quick="week" data-on="1"'), "快捷 chip 选中态(值命中本周)");
+  }
   const single = _rdp63({ value: "2026-08-04", mode: "date", open: true, cursor: { year: 2026, month: 7 } });
   assert.ok(!single.includes("wd-months two") && (single.match(/wd-monthblk/g) ?? []).length === 1, "单月单历");
   const bad = _rdp63({ value: "", mode: "date", open: false, cursor: { year: 2026, month: 7 },
@@ -1695,7 +1700,12 @@ const { renderTreeWidget: _rtw63, renderDatePicker: _rdp63 } = await import("../
   const host = doc.createElement("div");
   doc.body.appendChild(host);
   const w = mountDatePicker(host, { mode: "range", value: { ...quickRange("week") } });
-  assert.ok(host.innerHTML.includes('data-wd-quick="week" data-on="1"'), "mount 后 chip 选中态");
+  // 周一特例:本周 == 今天 → "today" 优先命中(与前一处断言同律)
+  const mondayTie = quickRange("week").start === quickRange("today").start && quickRange("week").end === quickRange("today").end;
+  assert.ok(
+    host.innerHTML.includes(mondayTie ? 'data-wd-quick="today" data-on="1"' : 'data-wd-quick="week" data-on="1"'),
+    mondayTie ? "mount 后 chip 选中态(周一特例:today)" : "mount 后 chip 选中态(week)"
+  );
   const outside = doc.createElement("div");
   doc.body.appendChild(outside);
   doc.trigger("click", { target: outside });

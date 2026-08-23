@@ -495,6 +495,58 @@
 .doc-ann-tip .doc-ann-tip-tx { color: var(--fg-0); font-size: var(--text-sm); }
 .doc-ann-tip .doc-ann-tip-meta { color: var(--fg-2); font-size: var(--text-2xs); display: flex; gap: var(--s2); }
 
+/* ── P3 生成工作流(v2.1 §4/§5)────────────────────────────── */
+/* 生成钮四态:idle 由 disabled 表达;loading 降透明;fail 红 */
+.doc-gen[data-state="loading"] { opacity: 0.7; }
+.doc-gen[data-state="fail"] {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger); border-color: var(--danger);
+}
+.doc-gen-n {
+  margin-left: var(--s1); padding: 0 var(--s1); border-radius: var(--r-conn);
+  background: color-mix(in srgb, var(--bg-0) 35%, transparent); font-size: var(--text-2xs);
+}
+/* 状态栏(v2.1 §4.3) */
+.doc-status-link {
+  border: 0; background: transparent; color: var(--fg-1); cursor: pointer;
+  font: inherit; padding: 0;
+}
+.doc-status-link:disabled { color: var(--fg-2); cursor: default; }
+.doc-status-link:not(:disabled):hover { color: var(--live); }
+.doc-status-ver { color: var(--fg-1); }
+/* chat 消息状态徽章(P3) */
+.doc-chat-mark {
+  margin-left: var(--s2); font-size: var(--text-2xs); color: var(--fg-2);
+  border: 1px solid var(--line); border-radius: var(--r-conn); padding: 0 var(--s1);
+}
+/* Diff 视图(v2.1 §5;宿主渲染,W-diff 色系复用 ok/danger token) */
+.doc-preview[hidden], .doc-diffview[hidden] { display: none; }
+.doc-diffview { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s2) var(--s3); }
+.doc-diff-head { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s2); }
+.doc-diff-summary {
+  border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-2); padding: var(--s2) var(--s3); margin-bottom: var(--s2);
+  font-size: var(--text-sm);
+}
+.doc-diff-srcs { display: flex; flex-direction: column; gap: var(--s1); margin-bottom: var(--s2); }
+.doc-diff-src {
+  display: flex; align-items: center; gap: var(--s2); text-align: left;
+  border: var(--stroke) solid var(--line); background: var(--bg-1);
+  border-radius: var(--r-md); padding: var(--s1) var(--s2); cursor: pointer;
+  font-family: inherit; font-size: var(--text-xs); color: var(--fg-1);
+}
+.doc-diff-src:hover { border-color: var(--live); }
+.doc-diff-src-tx { color: var(--fg-0); }
+.doc-diff-src-note { color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-diff-body {
+  border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-1); padding: var(--s1) 0; font-size: var(--text-xs);
+}
+.doc-diff-line { padding: 0 var(--s2); white-space: pre-wrap; }
+.doc-diff-line[data-kind="add"] { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.doc-diff-line[data-kind="del"] { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.doc-diff-line[data-kind="hunk"] { color: var(--fg-2); }
+
 /* 批注列表实体化:摘录列弱化,过长省略 */
 .doc-bar-excerpt {
   color: var(--fg-2); max-width: 180px;

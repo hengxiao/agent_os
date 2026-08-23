@@ -61,3 +61,24 @@ dnf download --destdir=.rpms nspr nss nss-util atk at-spi2-atk at-spi2-core \
 - **textarea 的内容在 `.input_value()`,不在 `inner_text()`**(test_sandbox 踩过);
 - 轮询型面板(State 500ms)留足等待;
 - 选择器以页面真实 id/class 为准,写用例前先 grep 一遍,别猜。
+
+## 共享活服务器治理(BASE=8391 模式;2026-08-13)
+
+打活服务器 = 共享可变状态:会话/版本/批注在跑次与人工冒烟之间**累积**,
+断言依赖「最新」「唯一」「从没被碰过」都会变 flake。纪律(治本,不加 sleep):
+
+- **夹具隔离**:test_doceditor 用**专用文档 `dev.uitest`**(`DOC` 常量),
+  不与人共用的 demo.test;每段开跑前 `ensure_doc(pg)`(不存在则建
+  FIXTURE_TEXT,存在则 restore 最旧快照复位文本——版本链累积无害,
+  断言一律不依赖绝对版本号)+ `clean_annotations(pg)`(清批注,两面)。
+  **顺序必须先复位/清库再打开文档**(种子在打开时读取,P2 踩过)。
+- **会话类断言显式新建**:不假设「最新会话」——test_desktop ③ 留证段先
+  `POST /platform/api/sessions` 拿 sid,`#dt-sessions` 按 value 选中再开窗,
+  且全程用**窗口作用域选择器**(多窗并存时全局 `[data-cv-input]` 会撞);
+  用完两段 ✕ 关掉,不占后续段落视野。
+- **LLM 等待 = 条件等待 + 给足超时 + 失败有信息**:generate 链等 Diff
+  用 `wait_for_selector(timeout=240000)`,超时时 dump 按钮态/错误收集再
+  抛(见 run_generate_p3 的 try/except 模式);
+- **失败明细直打**:run.py 每模块末尾打印全部失败明细(含 traceback),
+  排障不需要复跑。
+

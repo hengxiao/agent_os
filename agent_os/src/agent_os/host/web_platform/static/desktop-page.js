@@ -17,6 +17,7 @@
    - inbox 真实化 + SSE 单源(C4.2 不动)。 */
 
 import { initTheme } from "/static/js/themes.js";
+import { toast } from "/static/js/util.js";
 import { BUILD } from "/static/js/widget-sandbox.js";
 import { createCompound, orderedIds, DESKTOP_DEF } from "/static/js/widgets/index.js";
 import { contextCascade } from "/static/js/widgets/cascade.js";
@@ -30,6 +31,7 @@ import {
 /* ── 启动 ────────────────────────────────────────────────────────── */
 
 export function bootDesktop() {
+  globalThis.__docToast = toast; // doc-editor 的 toast 面(P3 生成失败/冲突提示)
   const $ = (sel) => document.querySelector(sel);
   initTheme();
   $("#dt-build").textContent = `build ${BUILD}`;

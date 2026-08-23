@@ -139,11 +139,12 @@ def _providers(cfg: dict[str, Any]) -> list[Any]:
         providers.append(ClaudeProvider())
     if "openai" in cfg:
         oc = cfg["openai"] or {}
-        api_key = os.environ.get(oc.get("api_key_env", "")) if oc.get("api_key_env") else None
+        # api_key_env 交给 provider 动态解析(每次调用现读;token_refresh 续期即生效),
+        # 不在装配期快照——15 分钟 OAuth token 会过期(2026-08-24 实证)
         providers.append(
             OpenAICompatibleProvider(
                 base_url=oc.get("base_url", "https://api.openai.com/v1"),
-                api_key=api_key,
+                api_key_env=oc.get("api_key_env") or None,
             )
         )
     if "mock" in cfg:

@@ -11,6 +11,7 @@ OpenAI 兼容端点不接受点分函数名。
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -48,12 +49,27 @@ class OpenAICompatibleProvider:
         *,
         name: str | None = None,
         client: httpx.AsyncClient | None = None,
+        api_key_env: str | None = None,
     ) -> None:
         if name is not None:
             self.name = name
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self._client = client
+        # 动态 key(15 分钟 OAuth token 教训):给了 env 名就每次调用现读,
+        # token_refresh 续期 os.environ 后下一调用即生效;显式 api_key 仍钉死
+        self._api_key_env = api_key_env
+
+    @property
+    def api_key(self) -> str | None:
+        env = getattr(self, "_api_key_env", None)
+        if env:
+            return os.environ.get(env)
+        return getattr(self, "_pinned_key", None)
+
+    @api_key.setter
+    def api_key(self, v: str | None) -> None:
+        self._pinned_key = v
 
     def capabilities(self) -> ProviderCaps:
         return ProviderCaps(

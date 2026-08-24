@@ -197,6 +197,7 @@ def run(t):
     run_bubble_v32(t)  # 几何回归 v3.2:F1 点旁/F2 无效坐标回落
     run_bubble_v4(t)  # 批注卡 v4:输入框规格/截断/Esc/悬停 tooltip/状态色环/重新编辑回 pending
     run_generate_p3(t)  # P3 生成工作流(真 LLM):四态/生成/Diff/采纳/回滚/快捷键/chat 徽章
+    run_history_p4(t)  # P4 版本历史抽屉 + 批注列表(本地数据;无 LLM 等待)
 
 
 def run_scroll(t):
@@ -915,3 +916,135 @@ def run_generate_p3(t):
             f"src_tail={pg.evaluate(src_js)[-40:]!r} vs t1_tail={t1_text[-40:]!r}")
     pg.screenshot(path=f"{shots}/gen-p3-rollback.png")
     t.no_errors("P3 回滚全程无 JS 错误")
+
+
+def run_history_p4(t):
+    """P4 版本历史抽屉 + 批注列表(v2.1 §6/§7):抽屉开合(工具栏入口)/
+    版本卡渲染(四态/差异统计/操作)/查看差异切换(readonly)/只读预览回当前/
+    批注列表 tab(分组/行操作定位开泡/重新编辑)。真 LLM 不在本段(全本地数据)。"""
+    import os
+    shots = os.path.join(os.path.dirname(__file__), ".shots")
+    os.makedirs(shots, exist_ok=True)
+
+    pg = t.open("/platform/")
+    pg.wait_for_selector(".dt-icon", timeout=10000)
+    pg.wait_for_timeout(400)
+    pg.locator('.dt-icon[data-desk-open="conversation"]').click()
+    pg.wait_for_timeout(500)
+    ta = pg.locator("[data-cv-input]")
+    ta.fill("文档列表")
+    ta.press("Enter")
+    ensure_doc(pg)
+    clean_annotations(pg)
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=30000)
+    pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
+    pg.wait_for_timeout(1500)
+    win = pg.locator(".dt-win")
+
+    # 造两条批注(不同状态:pending ×1,applied ×1 经 API 改态)
+    block = win.locator(".doc-para[data-anchor]").nth(1)
+    block.click(button="right", position={"x": 60, "y": 8})
+    pg.wait_for_timeout(500)
+    pg.locator(".doc-bubble-pop:not([hidden]) [data-bubble-draft]").first.fill("P4 待处理批注")
+    pg.locator(".doc-bubble-pop:not([hidden]) [data-bubble-draft]").first.press("Enter")
+    pg.wait_for_timeout(800)
+    anchor1 = pg.evaluate(
+        "(n) => __desktop.child(n).children_snapshot().map(s => s.id).filter(i => i !== 'doc').at(-1)", DOC)
+    # 快照两版(供版本历史差异统计;经 UI snapshot 钮)
+    snap = win.locator('[data-tab-act="doc.snapshot"]')
+    snap.click()
+    pg.wait_for_timeout(1200)
+    block.click(button="right", position={"x": 140, "y": 8})
+    pg.wait_for_timeout(500)
+    pg.locator(".doc-bubble-pop:not([hidden]) [data-bubble-draft]").first.fill("P4 已应用批注")
+    pg.locator(".doc-bubble-pop:not([hidden]) [data-bubble-draft]").first.press("Enter")
+    pg.wait_for_timeout(800)
+    anchor2 = pg.evaluate(
+        "(n) => __desktop.child(n).children_snapshot().map(s => s.id).filter(i => i !== 'doc').at(-1)", DOC)
+    pg.evaluate(
+        "(a) => fetch('/platform/api/docs/dev.uitest/annotations', {method: 'POST',"
+        "headers: {'Content-Type': 'application/json'},"
+        "body: JSON.stringify({anchor: a, content: 'P4 已应用批注', status: 'applied'})})", anchor2)
+    pg.wait_for_timeout(300)
+    pg.reload()  # 重开文档拿最新种子/状态
+    pg.wait_for_selector(".dt-icon", timeout=10000)
+    pg.wait_for_timeout(400)
+    pg.locator('.dt-icon[data-desk-open="conversation"]').click()
+    pg.wait_for_timeout(500)
+    pg.locator("[data-cv-input]").fill("文档列表")
+    pg.locator("[data-cv-input]").press("Enter")
+    pg.wait_for_selector(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]', timeout=30000)
+    pg.locator(f'[data-cv-log] [data-detail-kind="doc"][data-detail-ref="{DOC}"]').first.click()
+    pg.wait_for_timeout(1500)
+    win = pg.locator(".dt-win")
+
+    # ① 抽屉开合(工具栏 🕘)
+    win.locator("[data-doc-history]").click()
+    pg.wait_for_timeout(800)
+    drawer = win.locator("[data-doc-history-drawer]")
+    t.check("P4:抽屉开(工具栏入口)", not drawer.is_hidden())
+    cards = drawer.locator(".doc-hist-card")
+    t.check("P4:版本卡渲染(≥2)", cards.count() >= 2, f"cards={cards.count()}")
+    t.check("P4:当前版本卡(data-state=current)",
+            drawer.locator('.doc-hist-card[data-state="current"]').count() >= 1)
+    t.check("P4:差异统计 +a/-b 在卡上",
+            any("+" in (cards.nth(i).inner_text()) for i in range(cards.count())))
+    pg.screenshot(path=f"{shots}/hist-p4-drawer.png")
+    # ② 查看差异(最近版 vs 父版)→ readonly diff 视图
+    diff_btn = drawer.locator("[data-hist-diff]").first
+    t.check("P4:查看差异操作在", diff_btn.count() > 0)
+    diff_btn.click()
+    pg.wait_for_timeout(800)
+    dv = win.locator("[data-doc-diffview]")
+    t.check("P4:查看差异 → diff 视图", not dv.is_hidden())
+    t.check("P4:readonly diff(回到当前,无采纳)",
+            dv.locator("[data-diff-back]").count() > 0 and dv.locator("[data-diff-accept]").count() == 0)
+    dv.locator("[data-diff-back]").click()
+    pg.wait_for_timeout(400)
+    t.check("P4:回到当前(预览复原)", not win.locator("[data-doc-preview]").is_hidden())
+    # ③ 查看完整(只读预览)→ 回到当前(查看操作后抽屉自关——先重开)
+    win.locator("[data-doc-history]").click()
+    pg.wait_for_timeout(600)
+    drawer.locator("[data-hist-view]").first.click()
+    pg.wait_for_timeout(600)
+    t.check("P4:只读预览顶条(查看 vN)", win.locator(".doc-viewing-bar").count() > 0)
+    win.locator("[data-hist-back]").click()
+    pg.wait_for_timeout(400)
+    t.check("P4:回到当前(顶条消失)", win.locator(".doc-viewing-bar").count() == 0)
+    t.check("P4:查看操作后抽屉已自关", drawer.is_hidden())
+    t.no_errors("P4 抽屉全程无 JS 错误")
+
+    # ④ 批注列表 tab:分组/计数/行操作
+    win.locator('[data-doc-tab="ann"]').click()
+    pg.wait_for_timeout(400)
+    annlist = win.locator("[data-doc-annlist]")
+    t.check("P4:ann tab 显列表", not annlist.is_hidden())
+    t.check("P4:tab 标题 pending 计数", win.locator("[data-doc-ann-n]").inner_text().strip() == "1")
+    t.check("P4:按状态分组(pending/applied 组头)",
+            annlist.locator('.w-bubble-status[data-status="pending"]').count() > 0
+            and annlist.locator('.w-bubble-status[data-status="applied"]').count() > 0)
+    rows = annlist.locator(".doc-ann-row")
+    t.check("P4:批注行渲染(2 条)", rows.count() == 2, f"rows={rows.count()}")
+    pg.screenshot(path=f"{shots}/hist-p4-annlist.png")
+    # 定位:点 pending 行定位钮 → 滚动开泡
+    annlist.locator("[data-ann-locate]").first.click()
+    pg.wait_for_timeout(500)
+    t.check("P4:定位开泡", pg.locator(".doc-bubble-pop:not([hidden])").count() > 0)
+    # 重新编辑:applied 行 → 输入态预填 → 提交回 pending(限定 applied 组,
+    # 否则 .first 撞上 pending 组的编辑钮——实测抓出)
+    pg.locator("[data-bubble-x]").first.click()
+    pg.wait_for_timeout(300)
+    annlist.locator('.doc-ann-row[data-status="applied"] [data-ann-edit]').first.click()
+    pg.wait_for_timeout(500)
+    d5 = pg.locator(".doc-bubble-pop:not([hidden]) [data-bubble-draft]").first
+    t.check("P4:重新编辑进输入态", d5.count() > 0)
+    if d5.count():
+        d5.fill("P4 已应用批注(重编)")
+        d5.press("Enter")
+        pg.wait_for_timeout(800)
+        rec = pg.evaluate(
+            "(a) => fetch('/platform/api/docs/dev.uitest/annotations')"
+            ".then(r => r.json()).then(list => list.find(x => x.anchor === a))", anchor2)
+        t.check("P4:重新编辑回 pending", rec and rec.get("status") == "pending"
+                and "重编" in rec.get("content", ""), f"rec={rec}")
+    t.no_errors("P4 批注列表全程无 JS 错误")

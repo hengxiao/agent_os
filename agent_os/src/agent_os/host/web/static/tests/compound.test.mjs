@@ -574,4 +574,83 @@ console.log("compound.test.mjs: C4.1 badge patch assertions passed");
   assert.equal(dv.hidden, true, "diffview 藏");
   console.log("compound.test.mjs: P3 generate workflow assertions passed");
 }
+
+/* ── P4 版本历史抽屉 + 批注列表(v2.1 §6/§7)── */
+{
+  const { mountDocEditor } = await import("../../../web_platform/static/doc-editor.js");
+  const doc = makeDocument();
+  globalThis.document = doc;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith("/versions/tree")) {
+      return { ok: true, json: async () => ({ base: "v003", versions: [
+        { version: "v003", parent: "v002", at: 1786000000, source: "generate", rolledBackTo: null,
+          annotationResults: [{ annotationId: "a", status: "applied", aiNote: "x" }], adds: 5, dels: 2 },
+        { version: "v002", parent: "v001", at: 1785900000, source: "manual", rolledBackTo: "v001",
+          annotationResults: null, adds: 1, dels: 1 },
+        { version: "v001", parent: null, at: 1785800000, source: "manual", rolledBackTo: null,
+          annotationResults: null, adds: null, dels: null },
+      ] }) };
+    }
+    if (u.includes("/versions/v00")) return { ok: true, json: async () => ({ text: "版本内容" }) };
+    if (u.includes("/diff?")) return { ok: true, json: async () => ({ diff: "-旧\n+新", adds: 1, dels: 1 }) };
+    return { ok: true, json: async () => ({}) };
+  };
+  const host = doc.createElement("div");
+  doc.body.appendChild(host);
+  const ed = mountDocEditor(host, { name: "demo.p4", text: "# 标题\n段落一", chat: [], versions: ["v003"] },
+    { seedFlows: [
+      { anchor: "doc.md#L2-L2", quote: "段落一", content: "改这里", status: "pending" },
+      { anchor: "doc.md#L1-L1", quote: "标题", content: "标题 pending", status: "pending" },
+      { anchor: "doc.md#L1:C1-L1:C3", quote: "标题", content: "标题已应用", status: "applied" },
+    ] });
+
+  // 抽屉开合 + 版本卡四态/差异统计/批注统计/操作面
+  const histBtn = new StubEl("button");
+  histBtn.dataset.docHistory = "1";
+  histBtn.closest = (sel) => (sel === "[data-doc-history]" ? histBtn : null);
+  histBtn.parentNode = host;
+  host.trigger("click", { target: histBtn });
+  await new Promise((r) => setTimeout(r, 30));
+  const drawer = host.querySelector("[data-doc-history-drawer]");
+  assert.equal(drawer.hidden, false, "抽屉开(工具栏入口)");
+  const hl = host.querySelector("[data-history-list]").innerHTML;
+  assert.ok(hl.includes('data-state="current"'), "当前版本卡(current)");
+  assert.ok(hl.includes('data-state="rolledback"'), "已回滚卡(rolledBackTo)");
+  assert.ok(hl.includes("+5 -2"), "差异统计(+a/-b)");
+  assert.ok(hl.includes("批注 1 应用"), "批注处理统计(annotationResults)");
+  assert.ok(hl.includes("data-hist-diff="), "查看差异操作(parent 有才出)");
+  assert.ok(!hl.includes('data-state="previewing"'), "无待采纳时无预览中卡");
+
+  // 查看差异 → readonly diff 视图(无采纳/回滚)
+  const dBtn = new StubEl("button");
+  dBtn.dataset.histDiff = "v003";
+  dBtn.closest = (sel) => (sel === "[data-hist-diff]" ? dBtn : null);
+  dBtn.parentNode = host;
+  host.trigger("click", { target: dBtn });
+  await new Promise((r) => setTimeout(r, 30));
+  const dv = host.querySelector("[data-doc-diffview]");
+  assert.equal(dv.hidden, false, "查看差异 → diff 视图切换");
+  assert.ok(dv.innerHTML.includes('data-kind="add"') && dv.innerHTML.includes('data-kind="del"'), "diff 行渲染(add/del)");
+  assert.ok(dv.innerHTML.includes("data-diff-back"), "readonly:回到当前钮");
+  assert.ok(!dv.innerHTML.includes("data-diff-accept"), "readonly:无采纳/回滚(历史对比)");
+
+  // 批注列表 tab:分组(pending 先)/组内按位置/计数/行操作面
+  const annTab = new StubEl("button");
+  annTab.dataset.docTab = "ann";
+  annTab.closest = (sel) => (sel === "[data-doc-tab]" ? annTab : null);
+  annTab.parentNode = host;
+  host.trigger("click", { target: annTab });
+  const annlist = host.querySelector("[data-doc-annlist]");
+  assert.equal(annlist.hidden, false, "ann tab 显列表");
+  const al = annlist.innerHTML;
+  assert.ok(al.includes("data-ann-locate") && al.includes("data-ann-edit") && al.includes("data-ann-del"),
+    "pending 行操作:编辑/删除/定位");
+  assert.ok(al.includes("标题 pending") && al.includes("改这里") && al.includes("标题已应用"), "行内容摘录");
+  assert.ok(al.indexOf("标题 pending") < al.indexOf("改这里"), "组内按文档位置排序(L1 在 L2 前)");
+  assert.ok(al.indexOf("改这里") < al.indexOf("标题已应用"), "组序:pending 组在 applied 组前");
+  assert.equal(host.querySelector("[data-doc-ann-n]").textContent, "2", "tab 标题 pending 计数");
+  console.log("compound.test.mjs: P4 history/annlist assertions passed");
+}
+
 console.log("compound.test.mjs: C4.4 reparent cascade assertions passed");

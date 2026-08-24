@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="680" viewBox="0 0 1000 680">
+  <defs>
+    <filter id="noteShadow2" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="4" dy="6" stdDeviation="6" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+  <rect width="1000" height="680" fill="#0b0e14"/>
+  <text x="40" y="36" font-size="16" fill="#e6ebf2" font-family="sans-serif" font-weight="bold">注释便签:收起态 / 展开态(锚点牵线 + 誊回)</text>
+
+  <!-- 左:信纸局部 -->
+  <rect x="40" y="60" width="470" height="560" rx="4" fill="#f5efdf"/>
+  <text x="70" y="96" font-size="13" fill="#2b2b2b" font-family="serif" font-weight="bold">二、手法</text>
+  <text x="70" y="122" font-size="11" fill="#3a352c" font-family="serif">把文字变成物件:信纸、便签、印章。</text>
+
+  <!-- 锚点段高亮 -->
+  <rect x="62" y="140" width="388" height="88" fill="#3b9eff" fill-opacity="0.07"/>
+  <rect x="62" y="140" width="3" height="88" fill="#3b9eff"/>
+  <text x="70" y="162" font-size="11" fill="#3a352c" font-family="serif">读信、贴签、盖印——都是手上的事。</text>
+  <text x="70" y="182" font-size="11" fill="#3a352c" font-family="serif">交互上相对独立的部分独立成段;该合并</text>
+  <text x="70" y="200" font-size="11" fill="#3a352c" font-family="serif">的合并,不要因为惯性堆在一起。</text>
+  <text x="70" y="222" font-size="9" fill="#a09a88" font-family="sans-serif">doc.md#L12-L18</text>
+
+  <!-- 收起态便签(信纸右缘) -->
+  <path d="M452 184 C 470 180, 478 176, 488 172" fill="none" stroke="#8a8f99" stroke-width="0.8" stroke-dasharray="3 3"/>
+  <g transform="rotate(3 492 166)">
+    <rect x="472" y="148" width="50" height="38" rx="3" fill="#f2d48a" stroke="#d9b25f"/>
+    <path d="M522 148 l0 10 l-10 0 z" fill="#e0bc6d"/>
+    <text x="478" y="170" font-size="9" fill="#6b5a2e" font-family="sans-serif">这段绕?</text>
+  </g>
+  <circle cx="524" cy="150" r="8" fill="#3b9eff"/>
+  <text x="524" y="154" font-size="9" fill="#ffffff" font-family="sans-serif" text-anchor="middle">2</text>
+  <text x="452" y="210" font-size="8" fill="#7a7468" font-family="sans-serif">收起态:折签 + 未读徽标</text>
+
+  <!-- 牵线到展开便签 -->
+  <path d="M452 190 C 500 200, 520 220, 566 240" fill="none" stroke="#8a8f99" stroke-width="1" stroke-dasharray="4 3"/>
+
+  <!-- 右:展开态便签 -->
+  <g transform="rotate(-1 760 340)" filter="url(#noteShadow2)">
+    <rect x="566" y="120" width="400" height="470" rx="6" fill="#f7ecc4" stroke="#d9c98f"/>
+    <path d="M966 120 l0 18 l-18 0 z" fill="#e6d69e"/>
+  </g>
+  <g font-family="sans-serif">
+    <!-- 头:锚点引用行 -->
+    <text x="584" y="148" font-size="10" fill="#8a7a45">doc.md#L12-L18 · 锚段摘录</text>
+    <rect x="584" y="158" width="364" height="34" rx="4" fill="#efe2b0"/>
+    <text x="594" y="172" font-size="9" fill="#6b5a2e" font-family="serif">"…交互上相对独立的部分独立成段;该合并</text>
+    <text x="594" y="185" font-size="9" fill="#6b5a2e" font-family="serif">的合并,不要因为惯性堆在一起。"</text>
+
+    <!-- 对话流 -->
+    <text x="584" y="216" font-size="10" fill="#3b9eff" font-weight="bold">你</text>
+    <text x="622" y="216" font-size="11" fill="#3a352c">这段太绕,能不能顺一遍?</text>
+    <text x="584" y="250" font-size="10" fill="#3fb68b" font-weight="bold">agent</text>
+    <text x="622" y="250" font-size="11" fill="#3a352c">可以拆成两步:先立规矩,再举反例。</text>
+    <text x="622" y="268" font-size="11" fill="#3a352c">建议改成:</text>
+
+    <!-- 建议卡(候选替换文本) -->
+    <rect x="584" y="280" width="364" height="64" rx="4" fill="#fdf8e3" stroke="#d9c98f"/>
+    <text x="596" y="300" font-size="9" fill="#4a4433" font-family="monospace">交互独立的部分独立成段;</text>
+    <text x="596" y="316" font-size="9" fill="#4a4433" font-family="monospace">该合并的合并——不堆砌。</text>
+    <text x="596" y="334" font-size="8" fill="#8a7a45" font-family="sans-serif">候选替换文本(agent 只建议,不直改)</text>
+
+    <!-- 誊回按钮(人按才落) -->
+    <rect x="584" y="356" width="150" height="32" rx="6" fill="#3fb68b"/>
+    <text x="659" y="377" font-size="11" fill="#ffffff" text-anchor="middle">誊回信纸(采纳)</text>
+    <rect x="744" y="356" width="90" height="32" rx="6" fill="none" stroke="#b8a768"/>
+    <text x="789" y="377" font-size="11" fill="#8a7a45" text-anchor="middle">忽略</text>
+
+    <!-- 追问输入 -->
+    <rect x="584" y="404" width="268" height="34" rx="6" fill="#fdf8e3" stroke="#d9c98f"/>
+    <text x="596" y="426" font-size="10" fill="#a89b6d">追问这条便签…</text>
+    <rect x="862" y="404" width="86" height="34" rx="6" fill="#3b9eff"/>
+    <text x="905" y="426" font-size="11" fill="#ffffff" text-anchor="middle">发送</text>
+
+    <text x="584" y="466" font-size="8" fill="#a89b6d">便签 = chat-bubble 的场景形态(state 同构;submit/apply/close 事件不变)</text>
+    <text x="584" y="482" font-size="8" fill="#a89b6d">誊回 = comment.apply 走 action 管道;expected 校验挡住"文档已变化"</text>
+  </g>
+
+  <!-- 图例 -->
+  <rect x="40" y="640" width="920" height="1" fill="#263043"/>
+  <text x="40" y="660" font-size="9" fill="#5d6b82" font-family="sans-serif">级联信封:widget 级(锚段+摘录) → app 级(文档/版本/dirty) → shell 级(主题/会话),回信因此"看着全文改一段"</text>
+</svg>

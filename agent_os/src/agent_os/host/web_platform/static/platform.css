@@ -495,6 +495,71 @@
 .doc-ann-tip .doc-ann-tip-tx { color: var(--fg-0); font-size: var(--text-sm); }
 .doc-ann-tip .doc-ann-tip-meta { color: var(--fg-2); font-size: var(--text-2xs); display: flex; gap: var(--s2); }
 
+/* ── P4 版本历史抽屉 + 批注列表(v2.1 §6/§7)────────────────── */
+/* 抽屉:右栏内右侧覆盖(absolute;.doc-view 需 position:relative) */
+.doc-view { position: relative; }
+.doc-history {
+  position: absolute; top: 0; right: 0; bottom: 0; width: min(320px, 46%);
+  background: var(--bg-1); border-left: var(--stroke) solid var(--line);
+  box-shadow: -4px 0 14px color-mix(in srgb, var(--fg-0) 12%, transparent);
+  display: flex; flex-direction: column; z-index: 5;
+}
+.doc-history-head {
+  display: flex; align-items: center; gap: var(--s2);
+  padding: var(--s2) var(--s3); border-bottom: var(--stroke) solid var(--line);
+  font-size: var(--text-sm);
+}
+.doc-history-list { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s2); display: flex; flex-direction: column; gap: var(--s2); }
+.doc-hist-card {
+  border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-2); padding: var(--s2); display: flex; flex-direction: column; gap: var(--s1);
+}
+.doc-hist-card[data-state="current"] { border-color: var(--live); }
+.doc-hist-card[data-state="previewing"] { border-color: var(--warn); }
+.doc-hist-card[data-state="rolledback"] { opacity: 0.72; }
+.doc-hist-top { display: flex; align-items: center; gap: var(--s2); font-size: var(--text-sm); }
+.doc-hist-dot { color: var(--live); }
+.doc-hist-card[data-state="rolledback"] .doc-hist-dot { color: var(--warn); }
+.doc-hist-card[data-state="history"] .doc-hist-dot { color: var(--fg-2); }
+.doc-hist-state { font-size: var(--text-2xs); color: var(--fg-1); border: 1px solid var(--line); border-radius: var(--r-conn); padding: 0 var(--s1); }
+.doc-hist-time { margin-left: auto; font-size: var(--text-2xs); }
+.doc-hist-meta { display: flex; gap: var(--s2); font-size: var(--text-xs); color: var(--fg-1); }
+.doc-hist-acts { display: flex; gap: var(--s1); flex-wrap: wrap; }
+.doc-hist-confirm {
+  position: absolute; inset: 0; background: color-mix(in srgb, var(--bg-0) 72%, transparent);
+  display: flex; flex-direction: column; justify-content: center; padding: var(--s4); z-index: 6;
+}
+.doc-hist-confirm > b { margin-bottom: var(--s2); }
+.doc-hist-confirm ul { margin: 0 0 var(--s3); padding-left: var(--s4); font-size: var(--text-sm); color: var(--fg-1); }
+.doc-hist-confirm-acts { display: flex; gap: var(--s2); justify-content: flex-end; }
+/* 只读预览顶条(查看完整) */
+.doc-viewing-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s2);
+  border: var(--stroke) solid var(--warn); border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  padding: var(--s1) var(--s2); margin-bottom: var(--s2); font-size: var(--text-xs); color: var(--fg-1);
+}
+/* 左栏 tab 条 + 批注列表 */
+.doc-tabs { display: flex; gap: var(--s1); border-bottom: var(--stroke) solid var(--line); padding-bottom: var(--s1); }
+.doc-tab {
+  border: 0; background: transparent; color: var(--fg-2); cursor: pointer;
+  font-family: inherit; font-size: var(--text-xs); padding: var(--s1) var(--s2);
+  border-bottom: 2px solid transparent;
+}
+.doc-tab[data-on="1"] { color: var(--fg-0); border-bottom-color: var(--live); }
+.doc-annlist { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s2) 0; }
+.doc-ann-group { margin-bottom: var(--s3); }
+.doc-ann-ghead { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s1); }
+.doc-ann-row {
+  border: var(--stroke) solid var(--line); border-radius: var(--r-md);
+  background: var(--bg-1); padding: var(--s2); margin-bottom: var(--s1);
+  display: flex; flex-direction: column; gap: var(--s1);
+}
+.doc-ann-tx { font-size: var(--text-sm); color: var(--fg-0); }
+.doc-ann-meta { font-size: var(--text-2xs); color: var(--fg-2); }
+.doc-ann-acts { display: flex; gap: var(--s1); }
+.doc-ann-empty { padding: var(--s3); text-align: center; }
+
 /* ── P3 生成工作流(v2.1 §4/§5)────────────────────────────── */
 /* 生成钮四态:idle 由 disabled 表达;loading 降透明;fail 红 */
 .doc-gen[data-state="loading"] { opacity: 0.7; }

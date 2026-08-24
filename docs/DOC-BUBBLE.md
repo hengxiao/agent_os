@@ -195,6 +195,27 @@ maxHeight = clamp(200px, min(380px, 45vh), 可用空间 − 16px)  # v3.2 起 38
 8. chat 通道:发送行为不动(doc_editor 即时改文档保留);assistant 消息旁
    徽章 = 已改文档 / 待生成处理 / 已参与 vN(generate 推进已参与边界)。
 
+## 5.2 版本历史抽屉(P4)
+
+- 唤出三入口:工具栏 🕘(toggle)/ 状态栏版本号 / Ctrl+Shift+H;右栏 absolute
+  抽屉(宽 min(320px,46%));数据 = `GET versions/tree`(P4 扩:每版本带
+  rolledBackTo/annotationResults/adds/dels);
+- 版本卡四态:当前(live 边)/ 预览中(P3 待采纳)/ 已回滚(rolledBackTo,
+  暗化)/ 历史;卡 = 相对时间 + 差异统计(+a/-b)+ 批注处理统计 + 操作;
+- 查看完整 = preview 只读渲染(顶条「查看 vN · 回到当前」;锚点面清空);
+  查看差异 = P3 Diff 视图 readonly(无采纳/回滚/摘要,`GET /diff?from&to`);
+- **查看操作后抽屉自关**(挡预览区);回滚 = 确认框列后果 → doc.rewind
+  (restore + rolledBackTo,不删)→ reload + sync;
+
+## 5.3 批注列表 tab(P4)
+
+- 左栏「对话 | 💬 批注 (N)」(N = pending 数);按状态分组(固定序
+  pending/applied/ignored/outdated),组内按文档位置(锚点行列)排序;
+- 行 = content 摘录 + 锚点 + 相对时间 + 操作:pending = 编辑/删除/定位;
+  其余 = 查看效果(定位)/ 重新编辑(`widget.startEdit` 进输入态,提交回
+  pending,参与下一轮生成);删除与垃圾桶同一链(幂等);
+- 定位 = 滚动到标记并 openBubble;计数与 tab 内容随 renderBubbleBar 同步。
+
 ## 6. 未读语义(v4 退役)
 
 消息流没了,未读游标(seen/unread/bubbleNewFrom)随之全删(P2);

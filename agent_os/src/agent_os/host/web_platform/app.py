@@ -429,7 +429,11 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
     def doc_version_tree(name: str) -> dict[str, Any]:
         """版本树(v1.8 树状版本模型):parent 链全量 + 工作稿祖版。
         回推线性(沿 parent 走),前衍可分支(同一 parent 的多个版本)。
-        返回 {base, versions:[{version,parent,at,source}](新→旧)}。"""
+        返回 {base, versions:[{version,parent,at,source}](新→旧)}。
+
+        P4 扩(版本历史抽屉数据面):每版本带 ``rolledBackTo``(C2 留痕)、
+        ``annotationResults``(P1 批注处理结果,供统计)、``adds/dels``
+        (与 parent 的行差统计;difflib 现算,parent 不在链上 → null)。"""
         try:
             meta = doc_store.read(name)["meta"]
             versions = doc_store.list_versions(name)
@@ -439,18 +443,72 @@ def create_platform_app(*, manager: Any, lab_store: Any, artifacts_root: Path) -
             raise HTTPException(status_code=404, detail=str(e)) from e
         vids = {v["version"] for v in versions}
         base = str(meta.get("baseVersion") or "")
-        return {
-            "base": base if base in vids else (versions[0]["version"] if versions else ""),
-            "versions": [
+        import difflib
+
+        def _delta(v: dict[str, Any]) -> tuple[int | None, int | None]:
+            parent = v.get("parent")
+            if not parent or parent not in vids:
+                return None, None
+            try:
+                old = doc_store.read_version(name, parent)["text"]
+                new = doc_store.read_version(name, v["version"])["text"]
+            except FileNotFoundError:
+                return None, None
+            adds = dels = 0
+            for ln in difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=0):
+                if ln.startswith("+") and not ln.startswith("+++"):
+                    adds += 1
+                elif ln.startswith("-") and not ln.startswith("---"):
+                    dels += 1
+            return adds, dels
+
+        out = []
+        for v in versions:
+            adds, dels = _delta(v)
+            out.append(
                 {
                     "version": v["version"],
                     "parent": v.get("parent"),
                     "at": v.get("at", 0),
                     "source": v.get("source", ""),
+                    "rolledBackTo": v.get("rolledBackTo"),
+                    "annotationResults": v.get("annotationResults"),
+                    "adds": adds,
+                    "dels": dels,
                 }
-                for v in versions
-            ],
+            )
+        return {
+            "base": base if base in vids else (versions[0]["version"] if versions else ""),
+            "versions": out,
         }
+
+    @app.get("/api/docs/{name}/diff")
+    def doc_version_diff(
+        name: str, from_: str = Query("", alias="from"), to: str = Query("")
+    ) -> dict[str, Any]:
+        """任意两版本 unified diff(P4 版本历史「查看差异」数据面;difflib 现成,
+        附 +a/-b 行统计)。坏版本号 400,不存在 404。"""
+        try:
+            old = doc_store.read_version(name, from_)["text"]
+            new = doc_store.read_version(name, to)["text"]
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        import difflib
+
+        diff = "\n".join(
+            difflib.unified_diff(
+                old.splitlines(),
+                new.splitlines(),
+                fromfile=f"{name}@{from_}",
+                tofile=f"{name}@{to}",
+                lineterm="",
+            )
+        )
+        adds = sum(1 for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++"))
+        dels = sum(1 for ln in diff.splitlines() if ln.startswith("-") and not ln.startswith("---"))
+        return {"from": from_, "to": to, "diff": diff, "adds": adds, "dels": dels}
 
 
     @app.get("/api/docs/{name}/versions/{version}")

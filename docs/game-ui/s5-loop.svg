@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760">
+  <defs>
+    <filter id="glow5" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="arrL" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+      <path d="M0 0 L8 4 L0 8 z" fill="#3b9eff"/>
+    </marker>
+  </defs>
+  <rect width="1280" height="760" fill="#0b0e14"/>
+  <text x="40" y="34" font-size="16" fill="#e6ebf2" font-family="sans-serif" font-weight="bold">核心循环轨道:UI 围绕「检查 → 注释 → 再生成」组织</text>
+
+  <!-- ═══ 循环轨道(置顶任务追踪器) ═══ -->
+  <rect x="40" y="56" width="1200" height="118" rx="12" fill="#11151d" stroke="#263043"/>
+
+  <!-- 连线 -->
+  <line x1="270" y1="115" x2="480" y2="115" stroke="#33405a" stroke-width="2"/>
+  <line x1="700" y1="115" x2="920" y2="115" stroke="#33405a" stroke-width="2"/>
+  <!-- 回流线:③ → ① -->
+  <path d="M1000 140 C 900 168, 340 168, 210 142" fill="none" stroke="#3b9eff" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#arrL)"/>
+  <text x="560" y="168" font-size="9" fill="#3b9eff" font-family="sans-serif">环闭合:亮点流回 ①(新版本落案 + 变化段晕染 + 批注变绿)</text>
+
+  <!-- 站① 检查(已完成态) -->
+  <circle cx="200" cy="115" r="22" fill="#171d29" stroke="#3fb68b" stroke-width="2"/>
+  <text x="200" y="121" font-size="12" fill="#3fb68b" font-family="sans-serif" text-anchor="middle" font-weight="bold">✓</text>
+  <text x="200" y="84" font-size="12" fill="#9aa7ba" font-family="sans-serif" text-anchor="middle">① 检查</text>
+  <text x="200" y="152" font-size="9" fill="#5d6b82" font-family="sans-serif" text-anchor="middle">主操作:编者先读</text>
+
+  <!-- 站② 注释(当前站,点亮 + pending 徽标) -->
+  <circle cx="560" cy="115" r="30" fill="none" stroke="#3b9eff" stroke-width="1.2" stroke-dasharray="4 4" opacity="0.5"/>
+  <circle cx="560" cy="115" r="24" fill="#171d29" stroke="#3b9eff" stroke-width="2.5" filter="url(#glow5)"/>
+  <text x="560" y="122" font-size="13" fill="#3b9eff" font-family="sans-serif" text-anchor="middle" font-weight="bold">✎</text>
+  <circle cx="582" cy="95" r="11" fill="#d9a03f"/>
+  <text x="582" y="99" font-size="10" fill="#1a1c2c" font-family="sans-serif" text-anchor="middle" font-weight="bold">2</text>
+  <text x="560" y="84" font-size="12" fill="#e6ebf2" font-family="sans-serif" text-anchor="middle" font-weight="bold">② 注释(当前)</text>
+  <text x="560" y="152" font-size="9" fill="#9aa7ba" font-family="sans-serif" text-anchor="middle">右键段落写批注;再写或去生成</text>
+
+  <!-- 站③ 生成(已激活主操作态) -->
+  <circle cx="1000" cy="115" r="24" fill="#3b9eff" stroke="#7ec4ff" stroke-width="2"/>
+  <text x="1000" y="122" font-size="13" fill="#ffffff" font-family="sans-serif" text-anchor="middle" font-weight="bold">▶</text>
+  <text x="1000" y="84" font-size="12" fill="#e6ebf2" font-family="sans-serif" text-anchor="middle">③ 生成(可点)</text>
+  <text x="1000" y="152" font-size="9" fill="#5d6b82" font-family="sans-serif" text-anchor="middle">N&gt;0 才激活;点 = 生成下一版</text>
+
+  <!-- ═══ 信纸区(当前站 = 注释:两枚批注标记在行文里) ═══ -->
+  <rect x="300" y="196" width="620" height="500" rx="4" fill="#f5efdf"/>
+  <rect x="848" y="214" width="40" height="40" rx="3" fill="#c0392b"/>
+  <text x="868" y="240" font-size="12" fill="#f5efdf" font-family="sans-serif" text-anchor="middle" font-weight="bold">v015</text>
+  <text x="330" y="240" font-size="18" fill="#2b2b2b" font-family="serif" font-weight="bold">游戏引擎 UI 重设计</text>
+  <line x1="330" y1="258" x2="826" y2="258" stroke="#d8cdb4"/>
+
+  <text x="330" y="292" font-size="11" fill="#3a352c" font-family="serif">现在的界面把操作员当那双手;而 agentic</text>
+  <text x="330" y="310" font-size="11" fill="#3a352c" font-family="serif">时代,人只是点头的人。
+    <tspan fill="#8a6d1f" font-weight="bold">  注×1</tspan>
+  </text>
+
+  <text x="330" y="348" font-size="13" fill="#2b2b2b" font-family="serif" font-weight="bold">二、手法</text>
+  <text x="330" y="370" font-size="11" fill="#3a352c" font-family="serif">把文字变成物件:信纸、便签、印章。</text>
+  <text x="330" y="388" font-size="11" fill="#3a352c" font-family="serif">读信、贴签、盖印——都是手上的事。
+    <tspan fill="#8a6d1f" font-weight="bold">  注×1</tspan>
+  </text>
+
+  <!-- 右侧:批注坞(注释站的工作面) -->
+  <rect x="950" y="196" width="290" height="240" rx="6" fill="#f7ecc4" stroke="#d9c98f"/>
+  <text x="968" y="222" font-size="9" fill="#8a7a45" font-family="sans-serif">doc.md#L3-L3 · 锚段摘录</text>
+  <rect x="968" y="232" width="254" height="30" rx="4" fill="#efe2b0"/>
+  <text x="976" y="251" font-size="9" fill="#6b5a2e" font-family="serif">"读信、贴签、盖印——都是手上的事。"</text>
+  <text x="968" y="284" font-size="9" fill="#8a7a45" font-family="sans-serif">● 待批处理(pending)</text>
+  <rect x="968" y="296" width="254" height="56" rx="4" fill="#fdf8e3" stroke="#d9c98f"/>
+  <text x="978" y="320" font-size="10" fill="#4a4433" font-family="sans-serif">这句能不能更口语一点?</text>
+  <rect x="968" y="364" width="80" height="26" rx="5" fill="#3fb68b"/>
+  <text x="1008" y="381" font-size="10" fill="#ffffff" font-family="sans-serif" text-anchor="middle">存批注</text>
+
+  <!-- 阶段条(③站主操作时挂出) -->
+  <rect x="950" y="452" width="290" height="66" rx="6" fill="#171d29" stroke="#263043"/>
+  <text x="966" y="474" font-size="9" fill="#5d6b82" font-family="sans-serif">生成中(点③后):</text>
+  <text x="966" y="494" font-size="10" fill="#3fb68b" font-family="sans-serif">✓ 读批注   ● 起草中   · 封存   · 回标</text>
+  <text x="966" y="510" font-size="8" fill="#5d6b82" font-family="sans-serif">具名阶段,没有假百分比</text>
+
+  <!-- 底注 -->
+  <text x="40" y="740" font-size="9" fill="#5d6b82" font-family="sans-serif">轨道 = 主行动面(站点可点);印钮栏只留次行动作(保存/快照/回溯/导出)——功能罗列变成流程引导</text>
+</svg>

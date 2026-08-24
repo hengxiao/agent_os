@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800">
+  <defs>
+    <filter id="paperShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="6" dy="10" stdDeviation="10" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <filter id="noteGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- 背景:压暗的档案室 -->
+  <rect width="1280" height="800" fill="#0b0e14"/>
+
+  <!-- 顶栏 -->
+  <rect x="0" y="0" width="1280" height="52" fill="#11151d"/>
+  <line x1="0" y1="52" x2="1280" y2="52" stroke="#263043" stroke-width="1"/>
+  <text x="20" y="33" font-size="16" fill="#e6ebf2" font-family="sans-serif" font-weight="bold">✉ Agent OS · 信箱</text>
+  <rect x="1060" y="11" width="96" height="30" rx="6" fill="#171d29" stroke="#263043"/>
+  <text x="1072" y="31" font-size="11" fill="#9aa7ba" font-family="sans-serif">视图:信件</text>
+  <rect x="1166" y="11" width="96" height="30" rx="6" fill="#171d29" stroke="#263043"/>
+  <text x="1178" y="31" font-size="11" fill="#9aa7ba" font-family="sans-serif">主题:水墨</text>
+
+  <!-- 左:信箱列表 -->
+  <rect x="16" y="64" width="240" height="712" rx="10" fill="#11151d" stroke="#263043"/>
+  <text x="32" y="92" font-size="11" fill="#5d6b82" font-family="sans-serif">信箱 · 4 封</text>
+
+  <!-- 信 1(选中) -->
+  <rect x="28" y="104" width="216" height="66" rx="8" fill="#171d29" stroke="#3b9eff" stroke-width="1.2"/>
+  <rect x="28" y="104" width="3" height="66" fill="#3b9eff"/>
+  <path d="M40 116 h18 v14 h-18 z M40 116 l9 7 l9 -7" fill="none" stroke="#9aa7ba" stroke-width="1.2"/>
+  <text x="68" y="126" font-size="12" fill="#e6ebf2" font-family="sans-serif" font-weight="bold">design.game-ui</text>
+  <text x="68" y="144" font-size="9" fill="#5d6b82" font-family="sans-serif">游戏引擎 Doc Editor 重设计…</text>
+  <text x="68" y="160" font-size="9" fill="#5d6b82" font-family="sans-serif">2 小时前</text>
+
+  <!-- 信 2(有未读批注) -->
+  <rect x="28" y="180" width="216" height="66" rx="8" fill="#11151d" stroke="#263043"/>
+  <path d="M40 192 h18 v14 h-18 z M40 192 l9 7 l9 -7" fill="none" stroke="#9aa7ba" stroke-width="1.2"/>
+  <text x="68" y="202" font-size="12" fill="#e6ebf2" font-family="sans-serif">notes.dinner</text>
+  <text x="68" y="220" font-size="9" fill="#5d6b82" font-family="sans-serif">晚餐推荐技能说明…</text>
+  <circle cx="232" cy="196" r="4" fill="#3b9eff"/>
+  <rect x="176" y="228" width="60" height="14" rx="7" fill="#d9a03f" fill-opacity="0.18" stroke="#d9a03f" stroke-width="0.8"/>
+  <text x="184" y="238" font-size="8" fill="#d9a03f" font-family="sans-serif">新批注 2</text>
+
+  <!-- 信 3/4 -->
+  <rect x="28" y="256" width="216" height="66" rx="8" fill="#11151d" stroke="#263043"/>
+  <path d="M40 268 h18 v14 h-18 z M40 268 l9 7 l9 -7" fill="none" stroke="#9aa7ba" stroke-width="1.2"/>
+  <text x="68" y="278" font-size="12" fill="#e6ebf2" font-family="sans-serif">report.week32</text>
+  <text x="68" y="296" font-size="9" fill="#5d6b82" font-family="sans-serif">本周运行复盘…</text>
+  <text x="68" y="312" font-size="9" fill="#5d6b82" font-family="sans-serif">3 天前 · v006</text>
+  <rect x="28" y="332" width="216" height="66" rx="8" fill="#11151d" stroke="#263043"/>
+  <path d="M40 344 h18 v14 h-18 z M40 344 l9 7 l9 -7" fill="none" stroke="#9aa7ba" stroke-width="1.2"/>
+  <text x="68" y="354" font-size="12" fill="#e6ebf2" font-family="sans-serif">readme.draft</text>
+  <text x="68" y="372" font-size="9" fill="#5d6b82" font-family="sans-serif">草稿:项目自述…</text>
+  <text x="68" y="388" font-size="9" fill="#5d6b82" font-family="sans-serif">上周 · v002</text>
+
+  <!-- 中:信纸 -->
+  <rect x="300" y="64" width="620" height="700" rx="4" fill="#f5efdf" filter="url(#paperShadow)"/>
+  <rect x="300" y="64" width="620" height="700" rx="4" fill="none" stroke="#e0d6bf"/>
+
+  <!-- 版本朱砂印(页角) -->
+  <g transform="rotate(7 872 104)">
+    <rect x="848" y="82" width="48" height="48" rx="4" fill="#c0392b"/>
+    <rect x="852" y="86" width="40" height="40" rx="2" fill="none" stroke="#f5efdf" stroke-width="1.4"/>
+    <text x="872" y="112" font-size="14" fill="#f5efdf" font-family="sans-serif" font-weight="bold" text-anchor="middle">v014</text>
+  </g>
+  <text x="848" y="152" font-size="8" fill="#7a7468" font-family="sans-serif">版本印 = 快照</text>
+
+  <!-- 信头 -->
+  <text x="330" y="112" font-size="20" fill="#2b2b2b" font-family="serif" font-weight="bold">游戏引擎 UI 重设计</text>
+  <text x="330" y="134" font-size="10" fill="#7a7468" font-family="sans-serif">design.game-ui · 写于 2026-08-16</text>
+  <line x1="330" y1="148" x2="826" y2="148" stroke="#d8cdb4" stroke-width="1"/>
+
+  <!-- 正文段(行文块) -->
+  <text x="330" y="176" font-size="13" fill="#2b2b2b" font-family="serif" font-weight="bold">一、动机</text>
+  <text x="330" y="198" font-size="11" fill="#3a352c" font-family="serif">现在的界面把操作员当那双手;而 agentic</text>
+  <text x="330" y="216" font-size="11" fill="#3a352c" font-family="serif">时代,人只是点头的人。这封信要说的,</text>
+  <text x="330" y="234" font-size="11" fill="#3a352c" font-family="serif">是怎么把这句话落到阅览与批注上。</text>
+
+  <!-- 当前段(微光左道,不是灰底框) -->
+  <rect x="322" y="252" width="512" height="70" fill="#3b9eff" fill-opacity="0.07"/>
+  <rect x="322" y="252" width="3" height="70" fill="#3b9eff"/>
+  <text x="330" y="270" font-size="13" fill="#2b2b2b" font-family="serif" font-weight="bold">二、手法</text>
+  <text x="330" y="292" font-size="11" fill="#3a352c" font-family="serif">把文字变成物件:信纸、便签、印章。</text>
+  <text x="330" y="310" font-size="11" fill="#3a352c" font-family="serif">读信、贴签、盖印——都是手上的事。</text>
+
+  <text x="330" y="356" font-size="11" fill="#3a352c" font-family="serif">注释不落地报告,落成页边便签——谁的</text>
+  <text x="330" y="374" font-size="11" fill="#3a352c" font-family="serif">意见贴在谁那段上,线牵着的才算数。</text>
+
+  <!-- 页边便签 1(展开方向提示;带未读徽标) -->
+  <path d="M834 268 C 860 264, 866 258, 880 252" fill="none" stroke="#8a8f99" stroke-width="0.8" stroke-dasharray="3 3"/>
+  <g transform="rotate(-4 910 248)" filter="url(#noteGlow)">
+    <rect x="886" y="226" width="58" height="46" rx="3" fill="#f2d48a" stroke="#d9b25f"/>
+    <path d="M944 226 l0 12 l-12 0 z" fill="#e0bc6d"/>
+    <text x="892" y="246" font-size="9" fill="#6b5a2e" font-family="sans-serif">这段绕?</text>
+    <text x="892" y="260" font-size="8" fill="#8a7540" font-family="sans-serif">追问 2 条…</text>
+  </g>
+  <circle cx="946" cy="228" r="8" fill="#3b9eff"/>
+  <text x="946" y="232" font-size="9" fill="#ffffff" font-family="sans-serif" text-anchor="middle">2</text>
+
+  <!-- 页边便签 2(收起态) -->
+  <path d="M834 366 C 856 362, 862 358, 876 352" fill="none" stroke="#8a8f99" stroke-width="0.8" stroke-dasharray="3 3"/>
+  <g transform="rotate(3 906 348)">
+    <rect x="882" y="330" width="50" height="38" rx="3" fill="#f2d48a" stroke="#d9b25f"/>
+    <path d="M932 330 l0 10 l-10 0 z" fill="#e0bc6d"/>
+    <text x="888" y="352" font-size="9" fill="#6b5a2e" font-family="sans-serif">改表格?</text>
+  </g>
+
+  <!-- 右栏:印钮(动作) -->
+  <rect x="952" y="64" width="60" height="700" rx="10" fill="#11151d" stroke="#263043"/>
+  <g font-family="sans-serif" font-size="10" fill="#9aa7ba" text-anchor="middle">
+    <rect x="962" y="80" width="40" height="40" rx="6" fill="#171d29" stroke="#263043"/>
+    <rect x="974" y="88" width="16" height="16" rx="2" fill="#c0392b"/>
+    <text x="982" y="136">保存</text>
+    <rect x="962" y="148" width="40" height="40" rx="6" fill="#171d29" stroke="#263043"/>
+    <rect x="974" y="156" width="16" height="16" rx="2" fill="none" stroke="#c0392b" stroke-width="2"/>
+    <text x="982" y="204">快照</text>
+    <rect x="962" y="216" width="40" height="40" rx="6" fill="#171d29" stroke="#263043"/>
+    <path d="M972 236 h20 m-6 -6 l6 6 l-6 6" fill="none" stroke="#9aa7ba" stroke-width="1.6"/>
+    <text x="982" y="272">回溯</text>
+    <rect x="962" y="284" width="40" height="40" rx="6" fill="#171d29" stroke="#263043"/>
+    <path d="M970 296 h24 M970 304 h24 M970 312 h14" stroke="#9aa7ba" stroke-width="1.4"/>
+    <text x="982" y="340">评审</text>
+    <rect x="962" y="352" width="40" height="40" rx="6" fill="#171d29" stroke="#263043"/>
+    <path d="M972 372 h20 m0 0 l-5 -5 m5 5 l-5 5 M982 364 v16" fill="none" stroke="#9aa7ba" stroke-width="1.4"/>
+    <text x="982" y="408">导出</text>
+  </g>
+  <text x="982" y="440" font-size="8" fill="#5d6b82" font-family="sans-serif" text-anchor="middle">动作皆盖章</text>
+
+  <!-- 信末回执联 -->
+  <line x1="316" y1="640" x2="904" y2="640" stroke="#b8ab8c" stroke-width="1" stroke-dasharray="6 5"/>
+  <text x="330" y="664" font-size="10" fill="#7a7468" font-family="sans-serif">回执联 · 写给编者(改动由编者誊回,信纸不换)</text>
+  <rect x="330" y="676" width="480" height="34" rx="6" fill="#efe7d2" stroke="#d8cdb4"/>
+  <text x="342" y="698" font-size="11" fill="#8a8064" font-family="sans-serif">说怎么改这封信…</text>
+  <rect x="822" y="676" width="82" height="34" rx="6" fill="#3b9eff"/>
+  <text x="863" y="698" font-size="11" fill="#ffffff" font-family="sans-serif" text-anchor="middle">寄出</text>
+
+  <!-- 底注 -->
+  <text x="300" y="788" font-size="9" fill="#5d6b82" font-family="sans-serif">信纸 = 文档 · 页边便签 = 批注(气泡) · 版本印 = 快照 · 回执联 = doc 主对话 · 右栏印钮 = action 管道</text>
+</svg>

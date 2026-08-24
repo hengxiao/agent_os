@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="460" viewBox="0 0 1280 460">
+  <defs>
+    <linearGradient id="fadeUp" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#e6ebf2" stop-opacity="0"/>
+      <stop offset="1" stop-color="#e6ebf2" stop-opacity="1"/>
+    </linearGradient>
+    <radialGradient id="inkBlur" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#c0392b" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#c0392b" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft"><feGaussianBlur stdDeviation="1.2"/></filter>
+    <marker id="arrM" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0 0 L6 3 L0 6 z" fill="#9aa7ba"/>
+    </marker>
+  </defs>
+  <rect width="1280" height="460" fill="#0b0e14"/>
+  <text x="40" y="34" font-size="16" fill="#e6ebf2" font-family="sans-serif" font-weight="bold">动效分镜(具名动效;reduced-motion 全部降级为即时切换)</text>
+
+  <!-- 分镜 A:便签飞入 -->
+  <rect x="40" y="56" width="392" height="356" rx="10" fill="#11151d" stroke="#263043"/>
+  <text x="60" y="84" font-size="12" fill="#e6ebf2" font-family="sans-serif" font-weight="bold">A · 便签飞入(批注到达)</text>
+  <!-- 信纸右缘 -->
+  <rect x="60" y="120" width="150" height="240" rx="4" fill="#f5efdf"/>
+  <line x1="210" y1="120" x2="210" y2="360" stroke="#d8cdb4" stroke-dasharray="4 4"/>
+  <!-- 飞行轨迹 -->
+  <path d="M400 150 C 340 160, 300 190, 246 214" fill="none" stroke="#9aa7ba" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arrM)"/>
+  <!-- 三个姿态 -->
+  <g transform="rotate(8 390 146)"><rect x="366" y="130" width="44" height="34" rx="3" fill="#f2d48a" opacity="0.35"/></g>
+  <g transform="rotate(4 320 180)"><rect x="298" y="164" width="44" height="34" rx="3" fill="#f2d48a" opacity="0.6"/></g>
+  <g transform="rotate(-2 248 218)">
+    <rect x="226" y="202" width="46" height="36" rx="3" fill="#f2d48a" stroke="#d9b25f"/>
+    <path d="M272 202 l0 10 l-10 0 z" fill="#e0bc6d"/>
+  </g>
+  <circle cx="270" cy="202" r="6" fill="#3b9eff" opacity="0.9"/>
+  <circle cx="270" cy="202" r="11" fill="none" stroke="#3b9eff" opacity="0.35"/>
+  <text x="60" y="392" font-size="9" fill="#5d6b82" font-family="sans-serif">右缘飞入 · 8°→0° 旋转收束 · 弹簧过冲落定(240ms)</text>
+  <text x="60" y="406" font-size="9" fill="#5d6b82" font-family="sans-serif">未读 = 光点呼吸(1.6s 循环,直至点开)</text>
+
+  <!-- 分镜 B:文字渐变 -->
+  <rect x="448" y="56" width="392" height="356" rx="10" fill="#11151d" stroke="#263043"/>
+  <text x="468" y="84" font-size="12" fill="#e6ebf2" font-family="sans-serif" font-weight="bold">B · 文字渐变(入场与改稿)</text>
+  <rect x="468" y="100" width="200" height="250" rx="4" fill="#f5efdf"/>
+  <g font-family="serif" font-size="11">
+    <text x="482" y="128" fill="#3a352c">第一行:先立规矩。</text>
+    <text x="482" y="152" fill="#3a352c" opacity="0.78">第二行:再举反例。</text>
+    <text x="482" y="176" fill="#3a352c" opacity="0.52">第三行:渐次晕染。</text>
+    <text x="482" y="200" fill="#3a352c" opacity="0.3">第四行:还没写到。</text>
+    <text x="482" y="224" fill="#3a352c" opacity="0.14">第五行:在来的路上。</text>
+  </g>
+  <!-- 改稿墨晕 -->
+  <rect x="684" y="100" width="136" height="250" rx="4" fill="#f5efdf"/>
+  <circle cx="752" cy="196" r="54" fill="url(#inkBlur)"/>
+  <text x="700" y="150" font-size="10" fill="#3a352c" font-family="serif">改动段:</text>
+  <text x="700" y="192" font-size="10" fill="#7a2e22" font-family="serif">新句自墨里</text>
+  <text x="700" y="210" font-size="10" fill="#7a2e22" font-family="serif">化开,落定。</text>
+  <text x="468" y="368" font-size="9" fill="#5d6b82" font-family="sans-serif">左:入场自下而上晕染 + 上浮 6px(每段错开 60ms)</text>
+  <text x="468" y="382" font-size="9" fill="#5d6b82" font-family="sans-serif">右:改稿段墨晕扩散一次(= change-flash,不循环)</text>
+  <text x="468" y="392" font-size="9" fill="#5d6b82" font-family="sans-serif">文字是信的内容,渐变是"落笔"的节奏,不做打字机噪点</text>
+  <text x="468" y="406" font-size="9" fill="#5d6b82" font-family="sans-serif">全部走 MotionPlayer 具名动效 + 主题档位(full/subtle/instant)</text>
+
+  <!-- 分镜 C:盖章 -->
+  <rect x="856" y="56" width="392" height="356" rx="10" fill="#11151d" stroke="#263043"/>
+  <text x="876" y="84" font-size="12" fill="#e6ebf2" font-family="sans-serif" font-weight="bold">C · 盖章(保存/快照)</text>
+  <!-- C1 抬起 -->
+  <rect x="876" y="104" width="112" height="150" rx="4" fill="#f5efdf"/>
+  <rect x="912" y="116" width="40" height="40" rx="3" fill="#c0392b"/>
+  <path d="M920 168 v10 M932 170 v12 M944 168 v10" stroke="#9aa7ba" stroke-width="1.2"/>
+  <text x="932" y="246" font-size="9" fill="#5d6b82" font-family="sans-serif" text-anchor="middle">1 · 抬起</text>
+  <!-- C2 砸落 + 纸震 -->
+  <rect x="1004" y="104" width="112" height="150" rx="4" fill="#f5efdf"/>
+  <rect x="1040" y="176" width="40" height="40" rx="3" fill="#c0392b"/>
+  <path d="M1010 140 q4 -3 8 0 q-4 3 -8 0 M1108 150 q4 -3 8 0 q-4 3 -8 0" fill="none" stroke="#9aa7ba" stroke-width="1"/>
+  <path d="M1008 226 q6 -4 12 0 q6 4 12 0" fill="none" stroke="#9aa7ba" stroke-width="1"/>
+  <text x="1060" y="246" font-size="9" fill="#5d6b82" font-family="sans-serif" text-anchor="middle">2 · 砸落(180ms)+ 纸震</text>
+  <!-- C3 印成,晕染 -->
+  <rect x="1132" y="104" width="112" height="150" rx="4" fill="#f5efdf"/>
+  <circle cx="1188" cy="176" r="34" fill="url(#inkBlur)"/>
+  <rect x="1168" y="156" width="40" height="40" rx="3" fill="#c0392b" filter="url(#soft)"/>
+  <rect x="1172" y="160" width="32" height="32" rx="2" fill="none" stroke="#f5efdf" stroke-width="1.2"/>
+  <text x="1188" y="182" font-size="9" fill="#f5efdf" font-family="sans-serif" text-anchor="middle">v015</text>
+  <text x="1188" y="246" font-size="9" fill="#5d6b82" font-family="sans-serif" text-anchor="middle">3 · 印成,晕染一次</text>
+  <text x="876" y="392" font-size="9" fill="#5d6b82" font-family="sans-serif">动画只随动作成功播放(先管道,后盖章;失败 = 印抬起不落)</text>
+  <text x="876" y="406" font-size="9" fill="#5d6b82" font-family="sans-serif">朱砂 = ink 主题印章意象的物化;状态含义仍由文字承担(双编码)</text>
+
+  <text x="40" y="444" font-size="9" fill="#5d6b82" font-family="sans-serif">三格对应契约的具名动效:note-arrive / text-reveal / change-flash / stamp-press</text>
+</svg>

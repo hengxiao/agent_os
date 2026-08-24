@@ -159,7 +159,7 @@
 >   来源卡定位/变色/采纳版本推进/回滚文本回落/Ctrl+Shift+D/chat 徽章)+
 >   2 截图(.shots/gen-p3-*);pytest 116 绿。
 
-## 4. P4 —— 版本历史面板 + 批注列表面
+## 4. P4 —— 版本历史面板 + 批注列表面 ✅(2026-08-24 落地,BUILD 2026-08-24.1)
 
 - **版本历史**:右侧抽屉(v2.1 §6.2),版本卡四态(当前/预览中/历史/已回滚),
   每卡 = 相对时间 + 差异统计(+a/-b)+ 批注处理统计 + 查看/查看差异/回滚;
@@ -169,6 +169,34 @@
 - 数据面:generate 写 meta 的 generationInput/annotationResults 读出渲染。
 
 **验收**:tests-ui(时间线渲染/查看/差异/回滚链)。
+
+> **P4 实现注**(2026-08-24):
+> - **后端**:`GET /api/docs/{name}/versions/tree` 扩字段(每版本带
+>   rolledBackTo/annotationResults/adds/dels——adds/dels 由 difflib 与 parent
+>   现算,无 parent → null);新增 `GET /api/docs/{name}/diff?from&to`
+>   (任意两版本 unified diff + 行统计,「查看差异」数据面);pytest +1(127)。
+> - **版本历史抽屉**(doc-editor 右栏 absolute,宽 min(320px,46%)):唤出三入口
+>   = 工具栏 🕘(toggle)/ 状态栏版本号 / Ctrl+Shift+H;版本卡四态
+>   = 当前(live 边)/ 预览中(P3 待采纳)/ 已回滚(rolledBackTo,暗化)/ 历史;
+>   卡 = 相对时间 + 差异统计 + 批注处理统计 + 操作;
+>   - 查看完整 = preview 区只读渲染(顶条「查看 vN · 回到当前」;锚点面清空
+>     防误开泡),回到当前 = `setDocText` 重渲;
+>   - 查看差异 = P3 Diff 视图复用(readonly 形态:回到当前,无采纳/回滚/摘要);
+>   - **查看操作后抽屉自关**(抽屉挡预览区,实测点击拦截抓出);
+>   - 回滚 = 确认框(列后果:内容恢复/{latest} 标 rolledBackTo 不删/批注保留)
+>     → action 管道 doc.rewind → reload + sync + 卡面随刷;
+> - **批注列表 tab**(左栏「对话 | 💬 批注 (N)」):按状态分组
+>   (pending/applied/ignored/outdated 固定序),组内按文档位置排序(锚点行列);
+>   行 = content 摘录 + 锚点 + 相对时间 + 操作(pending:编辑/删除/定位;
+>   其余:查看效果=定位/重新编辑);重新编辑经 widget.startEdit(新暴露)
+>   进输入态,提交回 pending;删除与垃圾桶同一链;计数/tab 内容随
+>   renderBubbleBar 同步;
+> - **修复**:setText 原仅挂 api,闭包 `_backToCurrent` 误调 ReferenceError——
+>   提闭包函数 `setDocText`,api 与内部共用;
+> - **测试**:stub +P4 组(抽屉结构/四态/差异与批注统计/readonly diff/
+>   分组组序/组内位置序/行操作面/计数);tests-ui +run_history_p4(抽屉开合/
+>   版本卡/查看差异切换/只读预览/列表分组/定位开泡/重新编辑回 pending;
+>   applied 行选择器限定组——.first 撞 pending 组编辑钮实测抓出)+ 2 截图。
 
 ## 5. P5 —— 迁移、文档、验收
 

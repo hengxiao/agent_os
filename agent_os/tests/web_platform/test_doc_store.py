@@ -226,7 +226,27 @@ def test_version_tree_api(client):
     metas = {v["version"]: v for v in tree["versions"]}
     assert metas["v002"]["parent"] == "v001" and metas["v003"]["parent"] == "v001", "分支"
     assert tree["base"] == "v003", "base = 最新封存"
+    # P4 扩:adds/dels 行差统计 + rolledBackTo/annotationResults 字段面
+    assert metas["v002"]["adds"] == 1 and metas["v002"]["dels"] == 1, "v002 与 v001 差一行"
+    assert metas["v001"]["adds"] is None, "v001 无 parent → null"
+    assert "rolledBackTo" in metas["v002"] and "annotationResults" in metas["v002"]
     assert client.get("/api/docs/no.such/versions/tree").status_code == 404
+
+
+def test_version_diff_api(client):
+    """GET …/diff?from&to(P4「查看差异」):unified 文本 + adds/dels 统计;坏版本 400/404。"""
+    inst = _spawn_doc(client)
+    client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})  # v001
+    client.post(f"/api/apps/{inst}/actions/doc.save",
+                json={"surface": "tab", "args": {"text": "# 概述\n二版新增行\n"}})
+    client.post(f"/api/apps/{inst}/actions/doc.snapshot", json={"surface": "tab"})  # v002
+    r = client.get("/api/docs/design.new_ui/diff", params={"from": "v001", "to": "v002"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "design.new_ui@v001" in body["diff"] and "design.new_ui@v002" in body["diff"]
+    assert "+二版新增行" in body["diff"]
+    assert body["adds"] == 1 and body["dels"] == 1, "首版行 → 二版新增行(1 增 1 删)"
+    assert client.get("/api/docs/design.new_ui/diff", params={"from": "v009", "to": "v002"}).status_code == 404
 
 
 class _FakeKernel:

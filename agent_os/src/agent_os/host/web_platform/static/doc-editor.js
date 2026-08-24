@@ -839,11 +839,21 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     cur.diffview.innerHTML =
       `<div class="doc-diff-head"><b>${esc(copy("platform.doc.diff.title").replace("{a}", g.baseVid ?? "base").replace("{b}", g.versionId))}</b>` +
       `<span class="pf-spacer"></span>` +
-      `<button class="btn wd-btn-primary" data-diff-accept="1">${esc(copy("platform.doc.accept"))} ${esc(g.versionId)}</button>` +
-      `<button class="btn" data-diff-rollback="1">${esc(copy("platform.doc.rollback"))}</button></div>` +
-      `<div class="doc-diff-summary">${esc(summary)}</div>` +
+      (g.readonly
+        ? `<button class="btn" data-diff-back="1">${esc(copy("platform.doc.hist.back"))}</button></div>`
+        : `<button class="btn wd-btn-primary" data-diff-accept="1">${esc(copy("platform.doc.accept"))} ${esc(g.versionId)}</button>` +
+          `<button class="btn" data-diff-rollback="1">${esc(copy("platform.doc.rollback"))}</button></div>`) +
+      (g.readonly ? "" : `<div class="doc-diff-summary">${esc(summary)}</div>`) +
       (srcCards ? `<div class="doc-diff-srcs">${srcCards}</div>` : "") +
       `<div class="doc-diff-body mono">${rows}</div>`;
+  }
+
+  /* 历史对比的「回到当前」(readonly diff):清 _lastGen 回预览 */
+  function _backFromReadonlyDiff() {
+    _lastGen = null;
+    setViewMode("preview");
+    _renderGenBtn();
+    renderStatus();
   }
 
   /* 采纳(v2.1 §5.5):切预览,当前版本推进(库已是新文;_lastGen 清,Diff 钮藏) */
@@ -902,10 +912,288 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     openBubble(anchor, block, { quote });
   }
 
-  /* 版本历史(P4 面板;本期:toast 提示 + 聚焦版本下拉) */
-  function _openHistory() {
-    _toast(copy("platform.doc.history.soon"));
-    cur?.host.querySelector("[data-rewind-version]")?.focus?.();
+  /* ── P4 批注列表(v2.1 §7):左栏 tab「💬 批注 (N)」;按状态分组
+     (pending/applied/ignored/outdated),按文档位置排序;行操作 编辑/删除/
+     定位/重新编辑;标题带 pending 计数。 ─────────────────────────── */
+  let _leftTab = "chat"; // chat | ann
+  const _ANN_GROUPS = ["pending", "applied", "ignored", "outdated"];
+
+  function _setLeftTab(tab) {
+    _leftTab = tab === "ann" ? "ann" : "chat";
+    for (const b of cur?.host.querySelectorAll?.("[data-doc-tab]") ?? []) {
+      b.dataset.on = b.dataset.docTab === _leftTab ? "1" : "0";
+    }
+    const showAnn = _leftTab === "ann";
+    if (cur?.chatLog) cur.chatLog.hidden = showAnn;
+    const chips = cur?.host.querySelector(".doc-chips");
+    if (chips) chips.hidden = showAnn;
+    const composer = cur?.host.querySelector(".doc-chat-composer");
+    if (composer) composer.hidden = showAnn;
+    if (cur?.annlist) cur.annlist.hidden = !showAnn;
+    if (showAnn) renderAnnList();
+  }
+
+  /* 批注行位置键(按文档位置排序:锚点行号 → 列号) */
+  function _annSortKey(anchor) {
+    const m = /^doc\.md#L(\d+)(?::C(\d+))?/.exec(anchor ?? "");
+    return m ? Number(m[1]) * 1000 + Number(m[2] ?? 0) : 1e9;
+  }
+
+  function renderAnnList() {
+    if (!cur?.annlist) return;
+    const entries = [...bubbles.values()];
+    if (cur.annN) cur.annN.textContent = String(_pendingCount());
+    if (!entries.length) {
+      cur.annlist.innerHTML = `<div class="pf-dim doc-ann-empty">${esc(copy("platform.doc.ann.empty"))}</div>`;
+      return;
+    }
+    const groups = Object.fromEntries(_ANN_GROUPS.map((g) => [g, []]));
+    for (const e of entries) (groups[e.inst.state.status ?? "pending"] ??= []).push(e);
+    cur.annlist.innerHTML = _ANN_GROUPS
+      .map((g) => {
+        const rows = groups[g]
+          .slice()
+          .sort((a, b) => _annSortKey(a.anchor) - _annSortKey(b.anchor))
+          .map((entry) => {
+            const st = entry.inst.state;
+            const createdTs = Date.parse(st.createdAt ?? "") / 1000;
+            const meta = [
+              entry.anchor.replace("doc.md#", ""),
+              createdTs ? relTime(createdTs) : "",
+              st.generation?.appliedByVersion
+                ? copy("platform.doc.ann.appliedin").replace("{v}", `v${st.generation.appliedByVersion}`)
+                : "",
+            ].filter(Boolean).join(" · ");
+            const acts = g === "pending"
+              ? `<button class="btn" data-ann-edit="${esc(entry.anchor)}">${esc(copy("w.bubble.edit"))}</button>` +
+                `<button class="btn" data-ann-del="${esc(entry.anchor)}">${esc(copy("w.bubble.del"))}</button>` +
+                `<button class="btn" data-ann-locate="${esc(entry.anchor)}">${esc(copy("platform.doc.ann.locate"))}</button>`
+              : `<button class="btn" data-ann-locate="${esc(entry.anchor)}">${esc(copy("platform.doc.ann.effect"))}</button>` +
+                `<button class="btn" data-ann-edit="${esc(entry.anchor)}">${esc(copy("platform.doc.ann.reedit"))}</button>`;
+            return (
+              `<div class="doc-ann-row" data-status="${esc(g)}">` +
+              `<div class="doc-ann-tx">${esc(String(st.content ?? "").slice(0, 60))}</div>` +
+              `<div class="doc-ann-meta mono">${esc(meta)}</div>` +
+              `<div class="doc-ann-acts">${acts}</div>` +
+              `</div>`
+            );
+          })
+          .join("");
+        return (
+          `<div class="doc-ann-group">` +
+          `<div class="doc-ann-ghead"><span class="w-bubble-status" data-status="${esc(g)}">${esc(copy(`w.bubble.status.${g}`))}</span>` +
+          `<span class="pf-dim">(${groups[g].length})</span></div>` +
+          rows +
+          `</div>`
+        );
+      })
+      .join("");
+  }
+
+  /* 列表行操作:定位(滚动到标记并开泡)/ 编辑、重新编辑(开泡进编辑态)/
+     删除(走垃圾桶同一链) */
+  function _annLocate(anchor) {
+    const entry = bubbles.get(anchor);
+    if (!entry) return;
+    const blk = [...cur.preview.children].find((c) => c.dataset?.anchor === entry.blockAnchor);
+    blk?.scrollIntoView?.();
+    openBubble(anchor, blk ?? cur.preview);
+  }
+
+  function _annEdit(anchor) {
+    const entry = bubbles.get(anchor);
+    _annLocate(anchor);
+    entry?.view?.live?.startEdit?.();
+  }
+
+  /* 版本历史(P4,v2.1 §6):右侧抽屉。数据 = GET versions/tree(P4 扩:每版本
+     带 rolledBackTo/annotationResults/adds/dels);版本卡四态(当前/预览中/
+     历史/已回滚),操作 = 查看(只读预览)/查看差异(P3 Diff 视图复用)/
+     回滚(确认框列后果,C2:restore + rolledBackTo,不删)。 */
+  let _histOpen = false;
+  let _histTree = null; // versions/tree 响应缓存(开抽屉时拉)
+  let _viewingVersion = null; // 只读预览中的版本(非 null 时 preview 显示它)
+  let _rollbackAsk = null; // 回滚确认框目标版本
+
+  async function _openHistory() {
+    if (!cur?.histDrawer) return;
+    _histOpen = true;
+    cur.histDrawer.hidden = false;
+    await _renderHistory();
+  }
+
+  function _closeHistory() {
+    _histOpen = false;
+    _rollbackAsk = null;
+    if (cur?.histDrawer) cur.histDrawer.hidden = true;
+  }
+
+  async function _renderHistory() {
+    if (!cur?.histList) return;
+    try {
+      const res = await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/versions/tree`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      _histTree = await res.json();
+    } catch (err) {
+      cur.histList.innerHTML = `<div class="pf-dim">${esc(err.message ?? String(err))}</div>`;
+      return;
+    }
+    const current = doc.versions?.[0] ?? _histTree.base ?? "";
+    const previewing = _lastGen?.versionId ?? null;
+    cur.histList.innerHTML = (_histTree.versions ?? [])
+      .map((v) => {
+        const state = v.version === current
+          ? "current"
+          : v.version === previewing
+            ? "previewing"
+            : v.rolledBackTo
+              ? "rolledback"
+              : "history";
+        const stateCopy = state === "current"
+          ? copy("platform.doc.hist.current")
+          : state === "previewing"
+            ? copy("platform.doc.hist.previewing")
+            : state === "rolledback"
+              ? `${copy("platform.doc.hist.rolledback")} → ${v.rolledBackTo}`
+              : "";
+        const ts = v.at ? relTime(Number(v.at)) : "";
+        const delta = v.adds != null
+          ? copy("platform.doc.hist.delta").replace("{a}", String(v.adds)).replace("{d}", String(v.dels))
+          : "";
+        const rc = { applied: 0, ignored: 0, partial: 0 };
+        for (const r of v.annotationResults ?? []) rc[r.status] = (rc[r.status] ?? 0) + 1;
+        const results = (v.annotationResults ?? []).length
+          ? copy("platform.doc.hist.results")
+              .replace("{a}", String(rc.applied)).replace("{i}", String(rc.ignored)).replace("{p}", String(rc.partial))
+          : "";
+        return (
+          `<div class="doc-hist-card" data-state="${esc(state)}" data-ver="${esc(v.version)}">` +
+          `<div class="doc-hist-top"><span class="doc-hist-dot">${state === "rolledback" ? "↩" : state === "history" ? "○" : "●"}</span>` +
+          `<b class="mono">${esc(v.version)}</b>` +
+          (stateCopy ? `<span class="doc-hist-state">${esc(stateCopy)}</span>` : "") +
+          (v.parent == null && !v.rolledBackTo ? `<span class="doc-hist-state">${esc(copy("platform.doc.hist.initial"))}</span>` : "") +
+          `<span class="pf-dim doc-hist-time">${esc(ts)}</span></div>` +
+          `<div class="doc-hist-meta">` +
+          (delta ? `<span class="mono">${esc(delta)}</span>` : "") +
+          (results ? `<span>${esc(results)}</span>` : "") +
+          `</div>` +
+          `<div class="doc-hist-acts">` +
+          `<button class="btn" data-hist-view="${esc(v.version)}">${esc(copy("platform.doc.hist.view"))}</button>` +
+          (v.parent ? `<button class="btn" data-hist-diff="${esc(v.version)}">${esc(copy("platform.doc.hist.diff"))}</button>` : "") +
+          (state !== "current" ? `<button class="btn" data-hist-rollback="${esc(v.version)}">${esc(copy("platform.doc.hist.rollback"))}</button>` : "") +
+          `</div></div>`
+        );
+      })
+      .join("");
+  }
+
+  /* 只读预览某版本(查看完整):preview 区只读渲染 + 顶条「回到当前」;
+     不动 currentText(回到当前即复原) */
+  async function _viewVersion(v) {
+    try {
+      const res = await fetch(`/platform/api/docs/${encodeURIComponent(doc.name)}/versions/${encodeURIComponent(v)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      _viewingVersion = v;
+      _closeHistory(); // 查看 = 回主区(抽屉挡预览,实测点击拦截抓出)
+      setViewMode("preview");
+      _renderViewingVersion(body.text ?? "");
+    } catch (err) {
+      _toast(err.message ?? String(err));
+    }
+  }
+
+  function _renderViewingVersion(text) {
+    if (!cur?.preview || _viewingVersion == null) return;
+    cur.preview.innerHTML =
+      `<div class="doc-viewing-bar"><span>${esc(copy("platform.doc.hist.viewing").replace("{v}", _viewingVersion))}</span>` +
+      `<button class="btn" data-hist-back="1">${esc(copy("platform.doc.hist.back"))}</button></div>` +
+      mdToHtml(text);
+    for (const b of cur.preview.querySelectorAll?.(".doc-para") ?? []) {
+      b.dataset.anchor = ""; // 只读:不挂批注交互(锚点面清空防误开泡)
+    }
+  }
+
+  function _backToCurrent() {
+    _viewingVersion = null;
+    setDocText(currentText); // 重渲当前全文(批注壳/标记/高亮随 relayout 复原)
+  }
+
+  /* 查看差异(P3 Diff 视图复用):任意版本 vs 父版本(readonly 形态,
+     无采纳/回滚——历史对比只读;来源卡区空) */
+  async function _viewDiffOf(v) {
+    const ver = (_histTree?.versions ?? []).find((x) => x.version === v);
+    if (!ver?.parent) return;
+    try {
+      const res = await fetch(
+        `/platform/api/docs/${encodeURIComponent(doc.name)}/diff?from=${encodeURIComponent(ver.parent)}&to=${encodeURIComponent(v)}`
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      _lastGen = {
+        newVersion: Number(String(v).slice(1)) || 0,
+        versionId: v,
+        baseVid: ver.parent,
+        results: [],
+        diff: body.diff ?? "",
+        readonly: true, // 历史对比:只读(不采纳不回滚)
+      };
+      _closeHistory(); // 查看差异 = 回主区(抽屉挡 diff 区)
+      setViewMode("diff");
+    } catch (err) {
+      _toast(err.message ?? String(err));
+    }
+  }
+
+  /* 回滚确认框(v2.1 §6.4:列后果;确认 → restore + rolledBackTo,不删) */
+  function _confirmRollback(v) {
+    _rollbackAsk = v;
+    if (!cur?.histDrawer) return;
+    const old = cur.histDrawer.querySelector(".doc-hist-confirm");
+    old?.remove?.();
+    const box = (cur.host.ownerDocument ?? globalThis.document).createElement("div");
+    box.className = "doc-hist-confirm";
+    const latest = doc.versions?.[0] ?? "";
+    box.innerHTML =
+      `<b>${esc(copy("platform.doc.hist.confirm.title"))}</b>` +
+      `<ul>` +
+      `<li>${esc(copy("platform.doc.hist.confirm.l1").replace("{v}", v))}</li>` +
+      `<li>${esc(copy("platform.doc.hist.confirm.l2").replace("{v2}", latest))}</li>` +
+      `<li>${esc(copy("platform.doc.hist.confirm.l3").replace("{v}", v))}</li>` +
+      `</ul>` +
+      `<div class="doc-hist-confirm-acts">` +
+      `<button class="btn" data-hist-cancel="1">${esc(copy("w.bubble.cancel"))}</button>` +
+      `<button class="btn wd-btn-primary" data-hist-go="${esc(v)}">${esc(copy("platform.doc.hist.confirm.go").replace("{v}", v))}</button>` +
+      `</div>`;
+    cur.histDrawer.appendChild(box);
+  }
+
+  async function _doRollback(v) {
+    const tab = getTabInstance?.();
+    const latest = doc.versions?.[0];
+    if (!tab?.instance || !latest || latest === v) return;
+    try {
+      const res = await fetch(
+        `/platform/api/apps/${encodeURIComponent(tab.instance)}/actions/doc.rewind`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            surface: "tab",
+            args: { version: v, rolled_back_from: latest },
+          }),
+        }
+      );
+      if (!res.ok) throw new Error((await res.json()).detail ?? `HTTP ${res.status}`);
+      _rollbackAsk = null;
+      _lastGen = null;
+      if (reload) await reload();
+      await _syncAnnotations();
+      await _renderHistory(); // 卡面随刷(最新版标 rolledBackTo)
+      renderStatus();
+    } catch (err) {
+      _toast(err.message ?? String(err));
+    }
   }
 
   /* D5 主对话:发送一轮(chat 端点;agent 直接改文档,changed=true → 右侧重拉) */
@@ -1043,6 +1331,9 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     if (diffTab) diffTab.hidden = !_lastGen;
     _renderGenBtn();
     renderStatus();
+    // P4:批注列表计数/tab 内容随刷(ann tab 开着时)
+    if (cur?.annN) cur.annN.textContent = String(_pendingCount());
+    if (_leftTab === "ann") renderAnnList();
   }
 
   /* D3 评审流(v4 改写):[评审] → review 端点(后端仍落旧流,兼容)→ 逐条
@@ -1136,6 +1427,17 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     renderBubbleBar();
   }
 
+  /* 全文替换 + 重渲(reload/_backToCurrent 共用;P4 提成闭包函数——
+     此前仅挂在 api 上,闭包内 _backToCurrent 误调不存在的 setText) */
+  function setDocText(text) {
+    currentText = text ?? "";
+    dirty = false;
+    inst.state.source = currentText;
+    const docInst = inst.child("doc");
+    if (docInst) docInst.state.source = currentText; // doc 子件 canonical 同步
+    refresh();
+  }
+
   /* view source(W6.7 用户裁决;C3 化:模式进 compound state.view,layout
      按 state 出块 chrome 或 doc slot——预览 = 块渲染 + 批注锚点(切割线不动),
      源码 = md-viewer 子件的 source 形态;切换不重取数据)。
@@ -1203,7 +1505,6 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     }
     // P3:生成 / 版本历史 / 状态栏 pending 跳转 / Diff 操作(v2.1 §4/§5)
     if (e.target.closest("[data-doc-generate]")) return _runGenerate();
-    if (e.target.closest("[data-doc-history]")) return _openHistory();
     if (e.target.closest("[data-doc-pending]")) {
       const first = [...bubbles.values()].find((en) => (en.inst.state.status ?? "pending") === "pending");
       if (first) {
@@ -1215,6 +1516,39 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     }
     if (e.target.closest("[data-diff-accept]")) return _acceptGen();
     if (e.target.closest("[data-diff-rollback]")) return _rollbackGen();
+    if (e.target.closest("[data-diff-back]")) return _backFromReadonlyDiff(); // P4:历史对比回当前
+    // P4:版本历史抽屉(唤出三入口:工具栏 🕘 / 状态栏版本号 / Ctrl+Shift+H;
+    // 操作:查看/查看差异/回滚/确认框/关闭)
+    if (e.target.closest("[data-doc-history]")) return _histOpen ? _closeHistory() : _openHistory();
+    if (e.target.closest("[data-doc-ver]")) return _openHistory();
+    if (e.target.closest("[data-history-close]")) return _closeHistory();
+    const hView = e.target.closest("[data-hist-view]")?.dataset.histView;
+    if (hView) return _viewVersion(hView);
+    const hDiff = e.target.closest("[data-hist-diff]")?.dataset.histDiff;
+    if (hDiff) return _viewDiffOf(hDiff);
+    const hRb = e.target.closest("[data-hist-rollback]")?.dataset.histRollback;
+    if (hRb) return _confirmRollback(hRb);
+    if (e.target.closest("[data-hist-cancel]")) {
+      _rollbackAsk = null;
+      cur?.histDrawer.querySelector(".doc-hist-confirm")?.remove?.();
+      return;
+    }
+    const hGo = e.target.closest("[data-hist-go]")?.dataset.histGo;
+    if (hGo) return _doRollback(hGo);
+    if (e.target.closest("[data-hist-back]")) return _backToCurrent();
+    // P4:左栏 tab + 批注列表行操作
+    const tabBtn = e.target.closest("[data-doc-tab]")?.dataset.docTab;
+    if (tabBtn) return _setLeftTab(tabBtn);
+    const aLocate = e.target.closest("[data-ann-locate]")?.dataset.annLocate;
+    if (aLocate) return _annLocate(aLocate);
+    const aEdit = e.target.closest("[data-ann-edit]")?.dataset.annEdit;
+    if (aEdit) return _annEdit(aEdit);
+    const aDel = e.target.closest("[data-ann-del]")?.dataset.annDel;
+    if (aDel) {
+      const entry = bubbles.get(aDel);
+      if (entry) return _deleteBubble(entry, aDel); // 与垃圾桶同一链(幂等)
+      return;
+    }
     const srcCard = e.target.closest("[data-diff-src]");
     if (srcCard) {
       // 来源批注卡 → 切预览 + 定位回标记(v2.1 §5.4)
@@ -1486,6 +1820,11 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
       verEl: viewHost.querySelector("[data-doc-ver]"),
       pendingEl: viewHost.querySelector("[data-doc-pending]"),
       chatPendingEl: viewHost.querySelector("[data-doc-chatpending]"),
+      // P4:版本历史抽屉 + 批注列表 tab
+      histDrawer: viewHost.querySelector("[data-doc-history-drawer]"),
+      histList: viewHost.querySelector("[data-history-list]"),
+      annlist: viewHost.querySelector("[data-doc-annlist]"),
+      annN: viewHost.querySelector("[data-doc-ann-n]"),
     };
     wireView(viewHost, els, mopts);
     const view = _baseMountView(els.preview, mopts);
@@ -1519,14 +1858,7 @@ export function createDocEditor(doc, { seedFlows = [], getTabInstance = null, re
     bubbles,
     compound: inst, // C3:compound 实例(测试面;children_snapshot/child_event 经此取)
     changedAnchors, // UX 批:本次挂载的变化块锚点集(测试面)
-    setText(text) {
-      currentText = text ?? "";
-      dirty = false;
-      inst.state.source = currentText;
-      const docInst = inst.child("doc");
-      if (docInst) docInst.state.source = currentText; // doc 子件 canonical 同步
-      refresh();
-    },
+    setText: setDocText, // reload/回当前共用(闭包函数,P4 _backToCurrent 同用)
     _unregister: unregApp, // app 级 provider 注销面(实例销毁路径留口)
     _rebindAppProvider(newPath) {
       unregApp?.(); // reparent 改址(C4.4):旧 path 注销,新 path 重注

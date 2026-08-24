@@ -153,6 +153,15 @@ export function mountBubble(
     _hint(msg || copy("w.bubble.fail"));
   };
 
+  /* 进入编辑态(P4 批注列表「编辑/重新编辑」入口;applied/ignored/outdated
+     重编提交后回 pending,v2.1 §1.2) */
+  widget.startEdit = () => {
+    widget.state.view = "composing";
+    widget.state.draft = widget.state.content;
+    render();
+    widget.focus();
+  };
+
   widget.open = () => {
     widget.emit("open", { anchor });
   };

@@ -321,9 +321,15 @@ export function docTabHtml(doc) {
   return (
     `<div class="pf-detail doc-editor">` +
     `<div class="doc-cols2">` +
-    // 左:doc 作用域主对话(说需求 → agent 直接改文档)
+    // 左:doc 作用域主对话(说需求 → agent 直接改文档);P4:tab 条(对话/批注列表)
     `<div class="doc-chat">` +
+    `<div class="doc-tabs">` +
+    `<button class="doc-tab" data-doc-tab="chat" data-on="1">${esc(copy("platform.doc.tab.chat"))}</button>` +
+    `<button class="doc-tab" data-doc-tab="ann" data-on="0">${esc(copy("platform.doc.tab.ann")).replace("{n}", `<span data-doc-ann-n="1">0</span>`)}</button>` +
+    `</div>` +
     `<div class="doc-chat-log" data-doc-chat-log="1" role="log"></div>` +
+    // P4:批注列表(v2.1 §7;按状态分组,行操作 编辑/删除/定位/重新编辑)
+    `<div class="doc-annlist" data-doc-annlist="1" hidden></div>` +
     // UX 批(2026-08-04):建议 chips(可点回填并发送)
     `<div class="doc-chips">` +
     `<button class="doc-chip" data-doc-chip="apply">${esc(copy("platform.doc.chip.apply"))}</button>` +
@@ -369,6 +375,13 @@ export function docTabHtml(doc) {
     `<div class="doc-preview" data-doc-preview="1"></div>` +
     // P3:Diff 视图容器(v2.1 §5;viewseg 第三态;宿主渲染)
     `<div class="doc-diffview" data-doc-diffview="1" hidden></div>` +
+    // P4:版本历史抽屉(v2.1 §6;右侧抽屉,工具栏/状态栏/Ctrl+Shift+H 唤出)
+    `<div class="doc-history" data-doc-history-drawer="1" hidden>` +
+    `<div class="doc-history-head"><b>📜 ${esc(copy("platform.doc.history"))}</b>` +
+    `<span class="pf-spacer"></span>` +
+    `<button class="btn doc-tool" data-history-close="1" aria-label="${esc(copy("w.bubble.close"))}">✕</button></div>` +
+    `<div class="doc-history-list" data-history-list="1"></div>` +
+    `</div>` +
     `<div class="doc-bubblebar" data-doc-bubblebar="1" aria-label="${esc(copy("platform.doc.bubblebar"))}"></div>` +
     `</div>` +
     `</div>` +

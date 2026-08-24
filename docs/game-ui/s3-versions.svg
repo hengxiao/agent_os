@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="720" viewBox="0 0 1100 720">
+  <defs>
+    <filter id="liftShadow2" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="6" dy="16" stdDeviation="12" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <marker id="arrowV2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0 0 L6 3 L0 6 z" fill="#3b9eff"/>
+    </marker>
+  </defs>
+  <rect width="1100" height="720" fill="#0b0e14"/>
+  <text x="40" y="36" font-size="16" fill="#e6ebf2" font-family="sans-serif" font-weight="bold">版本叠:回溯 = 整叠扇形展开,抽一页压到最上(历史不动)</text>
+
+  <!-- 扇形纸叠(绕底部轴心展开,像一手牌) -->
+  <!-- v001(最左,最旧) -->
+  <g transform="rotate(-26 380 590)">
+    <rect x="230" y="330" width="300" height="200" rx="5" fill="#e9e0c9" stroke="#c9bb99"/>
+    <rect x="484" y="344" width="32" height="32" rx="3" fill="#c0392b"/>
+    <text x="500" y="365" font-size="11" fill="#f5efdf" font-family="sans-serif" font-weight="bold" text-anchor="middle">v001</text>
+  </g>
+  <!-- v002(被抽起的一页:抬高 + 投影 + 亮边) -->
+  <g transform="rotate(-13 380 590)">
+    <rect x="230" y="330" width="300" height="200" rx="5" fill="#e9e0c9" stroke="#c9bb99"/>
+    <rect x="484" y="344" width="32" height="32" rx="3" fill="#c0392b"/>
+    <text x="500" y="365" font-size="11" fill="#f5efdf" font-family="sans-serif" font-weight="bold" text-anchor="middle">v002</text>
+    <text x="248" y="362" font-size="11" fill="#6b6555" font-family="serif">第二稿:加了反例</text>
+  </g>
+  <!-- v002 抽起的残影(目标姿态) -->
+  <g transform="rotate(-13 380 590) translate(0 -90)" filter="url(#liftShadow2)">
+    <rect x="230" y="330" width="300" height="200" rx="5" fill="#f5efdf" stroke="#3b9eff" stroke-width="1.6"/>
+    <rect x="484" y="344" width="32" height="32" rx="3" fill="#c0392b"/>
+    <text x="500" y="365" font-size="11" fill="#f5efdf" font-family="sans-serif" font-weight="bold" text-anchor="middle">v002</text>
+    <text x="248" y="362" font-size="12" fill="#2b2b2b" font-family="serif" font-weight="bold">第二稿:加了反例</text>
+  </g>
+  <!-- 抽起轨迹:从叠中位置到抬起残影 -->
+  <path d="M370 505 C 340 480, 312 465, 298 445" fill="none" stroke="#3b9eff" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#arrowV2)"/>
+  <text x="306" y="136" font-size="9" fill="#3b9eff" font-family="sans-serif">抽起 = 回溯到 v002(两击确认后走 doc.rewind)</text>
+
+  <!-- v003 -->
+  <g transform="rotate(0 380 590)">
+    <rect x="230" y="330" width="300" height="200" rx="5" fill="#e9e0c9" stroke="#c9bb99"/>
+    <rect x="484" y="344" width="32" height="32" rx="3" fill="#c0392b"/>
+    <text x="500" y="365" font-size="11" fill="#f5efdf" font-family="sans-serif" font-weight="bold" text-anchor="middle">v003</text>
+  </g>
+  <!-- v014(最近快照) -->
+  <g transform="rotate(13 380 590)">
+    <rect x="230" y="330" width="300" height="200" rx="5" fill="#efe6d0" stroke="#c9bb99"/>
+    <rect x="484" y="344" width="32" height="32" rx="3" fill="#c0392b"/>
+    <text x="500" y="365" font-size="11" fill="#f5efdf" font-family="sans-serif" font-weight="bold" text-anchor="middle">v014</text>
+  </g>
+  <!-- 工作稿(最右最上,无印) -->
+  <g transform="rotate(26 380 590)">
+    <rect x="230" y="330" width="300" height="200" rx="5" fill="#f5efdf" stroke="#d8cdb4"/>
+    <text x="248" y="362" font-size="13" fill="#2b2b2b" font-family="serif" font-weight="bold">工作稿(当前)</text>
+    <circle cx="500" cy="352" r="4" fill="#d9a03f"/>
+    <text x="510" y="356" font-size="9" fill="#8a7a45" font-family="sans-serif">dirty · 未存</text>
+    <text x="248" y="390" font-size="10" fill="#3a352c" font-family="serif">读信、贴签、盖印——都是手上的事。</text>
+  </g>
+
+  <!-- 右侧图例 -->
+  <rect x="800" y="80" width="270" height="310" rx="10" fill="#11151d" stroke="#263043"/>
+  <text x="822" y="112" font-size="12" fill="#e6ebf2" font-family="sans-serif" font-weight="bold">规则(不变量)</text>
+  <text x="822" y="140" font-size="10" fill="#9aa7ba" font-family="sans-serif">· 版本不可变:旧页永远压在下面</text>
+  <text x="822" y="162" font-size="10" fill="#9aa7ba" font-family="sans-serif">· 工作稿只有一份,永远在最上</text>
+  <text x="822" y="184" font-size="10" fill="#9aa7ba" font-family="sans-serif">· 回溯 = 把某页"临幕"压上工作稿</text>
+  <text x="822" y="206" font-size="10" fill="#9aa7ba" font-family="sans-serif">· 两击确认后才走 doc.rewind 管道</text>
+  <text x="822" y="228" font-size="10" fill="#9aa7ba" font-family="sans-serif">· 抽错页 = 抖一下,不动</text>
+  <text x="822" y="262" font-size="10" fill="#5d6b82" font-family="sans-serif">版本印:朱砂,页角,白文</text>
+  <text x="822" y="284" font-size="10" fill="#5d6b82" font-family="sans-serif">快照 = 盖章:当前稿压出新页进叠</text>
+  <text x="822" y="320" font-size="10" fill="#5d6b82" font-family="sans-serif">展开/收拢 = 扇形一扇即览全史</text>
+
+  <!-- 底注 -->
+  <text x="40" y="690" font-size="9" fill="#5d6b82" font-family="sans-serif">v001 → v014:版本链完整可查(rolledBackTo 留痕);工作稿 dirty 态 = 黄点双编码</text>
+</svg>

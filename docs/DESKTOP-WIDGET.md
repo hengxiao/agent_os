@@ -176,7 +176,8 @@ bubble)顺延 `/root/<app-id>/<bubble-id>`。全树寻址自此唯一。
 >   card 面只渲染不绑批注交互)+ 交互面 `cur` 收编全部宿主耦合(bubble 壳/
 >   工具条/批注栏归属);`inst.relayout` 覆写带壳挂回(desktop 扇出经
 >   live.update 也不掉壳)。打开路径:对话流 doc 卡「打开详情」→ 驱动
->   `openDocWindow`(fetch doc+bubbles → 工厂 → `_compoundId = 文档名` →
+>   `openDocWindow`(fetch doc+annotations(v4 起批注种子 = annotations 读取面,
+>   旧 bubbles 只读)→ 工厂 → `_compoundId = 文档名` →
 >   `attach_existing(slot=文档名)` → activate;同名聚焦不重复)。
 > - **hard link 真实用例**:窗口区 tab 面 = 完整编辑器(交互面),对话流
 >   doc 卡下挂同一 instance 的 card 面活视图(`link_view(surface:"card")` =

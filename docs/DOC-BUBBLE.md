@@ -17,10 +17,11 @@ doc-editor(compound,父,path=/doc/<文档名>,挂进 desktop 后 /root/<文档�
 
 切割线(W5.4 定案,C3/v3 均遵守):
 
-- **控件本体**(w-bubble):卡面四区(header/quote/log/composer)、发送队列、
-  滚底语义、折叠、未读分隔线、delete action;
-- **宿主壳**(doc-editor.js):浮出几何(定位/翻转/maxHeight)、标记(marker)、
-  未读游标、选区捕获、出海(所有后端调用)。
+- **控件本体**(w-bubble):两形态批注卡(composing 输入态/expanded 展示态)、
+  状态徽标、输入态硬规格(Enter 提交/Esc 取消/空抖动/500 字截断)、
+  delete action;消息流/队列/typing/pill/未读分隔线全部退役(P2);
+- **宿主壳**(doc-editor.js):浮出几何(定位/翻转/maxHeight)、标记(marker,
+  状态色环)、行内高亮(状态样式)、选区捕获、悬停 tooltip、出海(所有后端调用)。
 
 气泡 view 经 `link_view` 挂进壳内(§5 hard link:挂载点不限 slot 内),
 不进父 layout 占位;批注的 add/remove 走 `add_child`/`remove_child`(§4)。
@@ -42,11 +43,13 @@ doc-editor(compound,父,path=/doc/<文档名>,挂进 desktop 后 /root/<文档�
 - **行文级呈现**(v3.1):列范围锚点的文本包行内高亮 `.doc-hl`(--live 浅底 +
   底部 2px 细线,Notion 式;split text nodes 包 span;重渲后随 `_relayout` 重挂,
   幂等不叠包);行级锚点维持段落左条,不出行内高亮;
-- 持久化:DocStore 按 anchor-hash 文件名存消息流;点/列/行级锚点天然并存。
+- 持久化:DocStore `annotations/<anchor-hash>.json` 单条批注记录(旧
+  `bubbles/` 消息流只读不删,读时压缩迁移);点/列/行级锚点天然并存。
 
 ## 3. 生命周期状态机(v4 · P2 完成态)
 
 **卡形态**(hidden/composing/expanded 三态;preview = 宿主 tooltip):
+
 
 ```
                 右键(原位)/ 💬 锚点钮 / 批注栏点击
@@ -108,38 +111,6 @@ applied/ignored/outdated 均可**重新编辑回 pending**(参与下一轮生成
 - 重开(点标记/再右键):`link_view` 重挂(若 view 被摘)+ 几何重算
   (参考点每次现找块——首开 add_child 的基座 relayout 会重渲 preview,
   捕获的块引用会过期,P2 实测抓出)。
-
-## 4. 关键链路
-
-### 4.1 右键原位开泡(v3 用户裁决)
-
-1. `contextmenu` 落在预览段落块上(按 view 绑定,`cur.preview` 委托);
-2. 有选区且在块内 → `_selectionAnchor` 算列级锚点;否则 = 点击点所在行(行级);
-   quote = 选中文本或锚段摘录;
-3. `add_child("chat-bubble", {slot: anchor, state:{anchor, messages: 种子, newFrom…}})`
-   —— 批注 = 动态子件,path = `/root/<文档名>/<anchor>`;
-4. 宿主建浮出壳 `.doc-bubble-pop`,**按右键点的块内偏移定位**(offTop/offLeft,
-   不是段落开头);`link_view(body, {surface:"tab"})` 挂卡;
-5. `_fitBubble` 几何精算(§4.4);标记 `.doc-bubble-marker` 留在锚点行尾;
-6. seen 游标即记为已读;聚焦输入框。
-
-### 4.2 发送消息(v2 队列)
-
-1. composer Enter(Shift+Enter 换行)→ 控件**本地队列**:用户消息立即入流
-   (不等回包,连发不吞),在飞一条,串行 pump;
-2. `submit` 事件 → 父闸门 `on_child_event` 放行 → `child_event` 接管
-   (widget 不出海,出海在父级);
-3. 父 `_submitComment` → `POST /platform/api/docs/{name}/comment`
-   信封 `{anchor, text, cascade}` —— **cascade = context 级联的产物**(§5);
-4. 回复经 `receiveReply` 入流;失败行内红条 + 重试(不重复追加);
-5. 回复带 edits(替换建议)→ `editsMap` 存证,卡面出「采纳」→ apply 经 action 管道。
-
-### 4.3 点泡外收起 / 重开
-
-- 点泡外:壳藏 + 原位标记显(**草稿不丢**);判定在控件 data 面白名单
-  (卡面重渲会摘目标元素,DOM contains 判不住,须按 data 面判内);
-- 重开(点标记/再右键):`link_view` 重挂(若 view 被摘)+ 几何重算 + seen 前进;
-- Esc / 卡面 ✕ 同收起;**点外收起不删任何东西**。
 
 ### 4.4 几何算法(宿主壳 `_fitBubble`,v2/v3)
 

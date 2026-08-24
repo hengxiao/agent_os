@@ -198,12 +198,31 @@
 >   版本卡/查看差异切换/只读预览/列表分组/定位开泡/重新编辑回 pending;
 >   applied 行选择器限定组——.first 撞 pending 组编辑钮实测抓出)+ 2 截图。
 
-## 5. P5 —— 迁移、文档、验收
+## 5. P5 —— 迁移、文档、验收 ✅(2026-08-24 落地)
 
 - 迁移:既有对话式批注 → 首条用户消息压缩为 content(状态 pending),原流进 history;demo.test 数据清洗一次;
 - 文档:DOC-BUBBLE.md 重写为 v2 工作流(锚点/状态机/生成链);WIDGET-DESIGN.md §3.13 v4;DESKTOP-WIDGET.md 牵连核对;
 - 全量回归:stub + tests-ui + pytest + 端点矩阵;BUILD 戳 bump;
 - 外部验收:更新 BUBBLE-UX-TEST-BRIEF 为新工作流版(E 条目重排),交 WebBridge 复测。
+
+> **P5 实现注**(2026-08-24;BUILD 2026-08-24.1 不变,本期零产品代码):
+> - **迁移核对**:三文档 bubbles/ 全空(待迁 = 0)——P1 冒烟已实证 10 条
+>   旧流读时迁移全链(迁移 → generate → 状态写回);迁移机制本身由 pytest
+>   三例锁定(压缩/set 即迁移/migratedFrom 防复活);当前库内 3 条新记录
+>   全是 v2 原生(migratedFrom=0);旧流文件保留不删(既定);
+> - **文档收官**:DOC-BUBBLE 复审清理——§1 切割线/§2 持久化 v4 化,
+>   §4 重号节(老 4.1 右键/4.2 队列/4.3 旧点外)删除,结构复位
+>   (4.1 开泡/4.2 提交/4.3 点泡外/4.4 几何/4.5 删除 + 5.1 生成链/
+>   5.2 版本抽屉/5.3 批注列表);DESKTOP-WIDGET 牵连一处(openDocWindow
+>   种子源 bubbles → annotations);
+> - **外部验收任务书**:BUBBLE-UX-TEST-BRIEF 全改写为新工作流版
+>   (E1 右键输入框/E2 选区高亮+quote/E3 一行两条/E4 点外提交或取消/
+>   E5 悬停预览/E6 展开编辑删除/E7 生成钮四态/E8 生成→Diff/E9 采纳回滚/
+>   E10 版本抽屉/E11 批注列表;心智说明「无即时回复是设计」+ 已知边界);
+> - **全量回归**:stub 32 全绿;pytest 全套 994 passed(+10 skip/32 xfail);
+>   tests-ui(BASE=8391)全绿;端点矩阵 11 项全 200(/、/platform/、
+>   widget.html、compound.html、runs、skills、sessions、decisions、docs、
+>   annotations、versions/tree)。
 
 ## 6. 设计 §10 待决策事项的默认裁决(如不同意请指出)
 

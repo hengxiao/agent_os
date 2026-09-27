@@ -551,6 +551,11 @@ def create_app(
     ``Authorization: Bearer <token>``(或 ``?token=`` 供 EventSource 用——SSE
     的浏览器 API 不支持自定义头)。缺省 None = 无认证,**只可用于 loopback**;
     ``serve.py`` 在绑定非 loopback 且未给 token 时拒绝启动。
+
+    D3-lite(docs/DATA-AUTHZ.md §2.2):配置 ``[web.tokens]`` 后,命中映射的
+    Bearer token 额外解析为逐请求 principal(挂 ``request.state.principal``,
+    创建 run 时透传给 start_run);未命中/无 token 的请求维持单用户语义,
+    行为与引入映射前完全一致。
     """
     manager = RunManager(config_path, Path(artifacts_root), skillsets_dir=skillsets_dir)
     root = Path(artifacts_root)
@@ -562,10 +567,15 @@ def create_app(
 
     start_token_refresher()
 
-    if token:
+    if token or manager.has_token_map():
         @app.middleware("http")
         async def _require_token(request: Request, call_next):  # type: ignore[no-untyped-def]
-            """Bearer 令牌门(§4.5)。常量时间比对,避免按字符早退泄漏前缀。"""
+            """Bearer 令牌门(§4.5)+ D3-lite 逐请求身份映射(docs/DATA-AUTHZ.md §2.2)。
+
+            常量时间比对,避免按字符早退泄漏前缀。``[web.tokens]`` 命中的 token
+            映射为该 subject 的 principal(挂 ``request.state.principal``);
+            未命中/无 token → 不设 principal,单用户语义与引入映射前一致。
+            """
             supplied = ""
             header = request.headers.get("authorization", "")
             if header.startswith("Bearer "):
@@ -573,7 +583,13 @@ def create_app(
             elif "token" in request.query_params:
                 # EventSource 不能带自定义头,SSE 只能走 query 串
                 supplied = request.query_params["token"]
-            if not secrets.compare_digest(supplied, token):
+            if supplied:
+                # D3-lite:[web.tokens] 命中 → 逐请求身份;未命中回落静态 token 判定
+                principal = manager.token_principal(supplied)
+                if principal is not None:
+                    request.state.principal = principal
+                    return await call_next(request)
+            if token and not secrets.compare_digest(supplied, token):
                 return JSONResponse(
                     {"detail": "需要 Authorization: Bearer <token>(docs/RUNNERS.md §4.5)"},
                     status_code=401,
@@ -598,7 +614,7 @@ def create_app(
         return FileResponse(_STATIC_DIR / "index.html")
 
     @app.post("/api/runs")
-    async def post_run(body: RunBody) -> dict[str, Any]:
+    async def post_run(body: RunBody, request: Request) -> dict[str, Any]:
         # D6:skill_set 未知属请求非法(400),与"run 未开始"的 200+failed 归类不同
         if body.skill_set is not None and body.skill_set not in manager.skillsets():
             raise HTTPException(status_code=400, detail=f"未知 skill set: {body.skill_set!r}")
@@ -610,6 +626,8 @@ def create_app(
                 wait=body.wait,
                 overrides=overrides,
                 skill_set=body.skill_set,
+                # D3-lite:Bearer 映射的逐请求身份(未映射 → None,start_run 回落单用户)
+                principal=getattr(request.state, "principal", None),
             )
         except RunValidationError as e:
             return {"status": "failed", "error": str(e)}
@@ -1637,6 +1655,9 @@ def create_app(
 
         轮询会话内存态(_DEBUG_SSE_POLL):wait_paused 的 asyncio.Event 绑在
         run worker 循环上,SSE 循环不能 await,轮询是最简可靠方案(P3,简单优先)。
+        ``paused`` 按暂停点身份补发(last_pause 比较):poll 间隙内的
+        paused→running→paused 快循环观测不到 running 过渡,纯状态沿检测会
+        丢掉第二停。
         """
         try:
             session = manager.debug_session(sid)
@@ -1650,8 +1671,12 @@ def create_app(
             # 流可观测性(测试确定性面):生成器启动即标记,hits 基线对快照可见
             session.stream_attached = True
             yield _event("state", _debug_session_doc(session))
-            # prev_state 不取当前态:已暂停的会话在连接后立即补发 paused(迟到客户端)
+            # prev_state 不取当前态:已暂停的会话在连接后立即补发 paused(迟到客户端);
+            # last_pause 身份比较(_pause 每次换新 dict):poll 间隙内 paused→running
+            # →paused 的快循环(mock brain 毫秒级)观测不到 running 过渡,按暂停点
+            # 换对象补发,否则第二停永远不上流(D2 live 冒烟实测抓获)
             prev_state = ""
+            last_pause: dict[str, Any] | None = None
             hits = {bp.id: bp.hits for bp in session.breakpoints}
             session.stream_seen = hits  # 同一 dict:差分推进对快照实时可见
             idle = 0.0
@@ -1672,10 +1697,12 @@ def create_app(
                         )
                         emitted = True
                 state = session.state
-                if state == "paused" and prev_state != "paused":
+                point = session.pause_point if state == "paused" else None
+                if point is not None and point is not last_pause:
+                    last_pause = point
                     yield _event(
                         "paused",
-                        {"session_id": sid, "pause_point": _jsonable(session.pause_point)},
+                        {"session_id": sid, "pause_point": _jsonable(point)},
                     )
                     emitted = True
                 elif state != "paused" and prev_state == "paused":

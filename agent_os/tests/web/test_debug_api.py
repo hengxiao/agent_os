@@ -16,7 +16,8 @@
 - run 结束(finished/aborted)会话自动 detached;显式 ``DELETE`` 会话 detach
   放行,run 继续跑完;
 - SSE ``/stream``:``state``(连接快照)→ ``bp_hit``/``paused``/``resumed`` →
-  ``run_end``;已暂停的会话连接后立即补发 ``paused``。
+  ``run_end``;已暂停的会话连接后立即补发 ``paused``;poll 间隙内的
+  paused→running→paused 快循环按暂停点身份补发 ``paused``(不错过第二停)。
 
 停点断言的事实依据(n=3 的信号序列,与 tests/kernel/test_debug.py 同源):
 F1 step1 → invoke F2(base,一步即弹)→ F1 step2 内 pre:tool.call
@@ -508,6 +509,41 @@ def test_debug_sse_bp_hit_resumed_run_end(tmp_path):
     assert body.index("event: bp_hit") < body.index("event: resumed")
     assert "event: run_end" in body
     assert '"status": "done"' in body
+
+
+def test_debug_sse_rapid_repause_emits_paused(tmp_path, monkeypatch):
+    """快循环再暂停必补发 paused:poll 间隙内 paused→running→paused(mock
+    brain 毫秒级)观测不到 running 过渡——按暂停点身份(每次 _pause 换新
+    dict)补发,否则第二停永远不上流(D2 TUI live 冒烟实测抓获)。
+
+    确定性做法:monkeypatch 拉大 _DEBUG_SSE_POLL,resume→再暂停必然落在
+    同一个 poll 间隙内;stream_seen 差分基线推进与 paused 补发在同一轮
+    迭代,等基线即可(不盲睡)。
+    """
+    monkeypatch.setattr("agent_os.host.web.app._DEBUG_SSE_POLL", 1.0)
+    client = _client(tmp_path)
+    sid, run_id = _open_session(client, 3, breakpoints=[{"kind": "step"}])
+    point = _wait_pause(client, sid)  # F1 step1
+    bp_id = point["breakpoint_ids"][0]
+
+    holder: dict = {}
+    t = _consume_stream(client, sid, holder)
+    _wait_stream_attached(client, sid)
+    # continue → 同一 poll 间隙内再停 F2 step1(hits=2):paused 须按身份补发
+    _command(client, sid, "continue")
+    point2 = _wait_pause(client, sid, prev=point)
+    assert point2["signal"] == "pre:step"
+    _wait_stream_seen(client, sid, bp_id, 2)  # 补发与差分推进同轮迭代
+    # 收尾:摘断点 → continue → run 跑完 → run_end,流关闭
+    client.delete(f"/api/debug/sessions/{sid}/breakpoints/{bp_id}")
+    _command(client, sid, "continue")
+    assert wait_status(client, run_id)["status"] == "done"
+    t.join(timeout=PAUSE_TIMEOUT)
+    assert not t.is_alive(), "SSE 流未在 run 结束后关闭"
+
+    body = holder["body"]
+    assert body.count("event: paused") == 2  # 首停补发 + 快循环再停补发
+    assert "event: run_end" in body
 
 
 # ---------------------------------------------------------------------------

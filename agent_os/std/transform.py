@@ -22,6 +22,12 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+# 检索纯函数(BM25/RRF)的唯一实现在包内 agent_os.memory.rank(WS-A,M6 Memory 铺路:
+# std 检索技能与 MemoryService baseline 共用,STDLIB-CATALOG.md:215);别名引入,
+# 避免与下方同名 handler 冲突——handler 仍做输入校验,算法本体委托给共享模块。
+from agent_os.memory.rank import bm25_score as _bm25_score_pure
+from agent_os.memory.rank import rrf_merge as _rrf_merge_pure
+
 # ---------------------------------------------------------------------------
 # W2-1 extract_json — 从杂文本抠 JSON
 # ---------------------------------------------------------------------------
@@ -375,22 +381,10 @@ async def chunk_text(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 # ---------------------------------------------------------------------------
 # W2-9 bm25_score — 稀疏检索打分(无状态)
+#
+# 算法本体(tokenize/BM25 常量/打分循环)在 agent_os.memory.rank;此处仅保留
+# handler 薄壳:输入校验 + 委托,行为与签名不变(web_handlers.source_rank 直接复用)。
 # ---------------------------------------------------------------------------
-
-_BM25_K1 = 1.5
-_BM25_B = 0.75
-_TOKEN_RE = re.compile(r"[a-z0-9]+|[一-鿿]+")
-
-
-def _tokenize(text: str) -> list[str]:
-    """ASCII 词小写整词;CJK 连续段取字 bigram(单字取 unigram)——零依赖检索口径。"""
-    tokens: list[str] = []
-    for piece in _TOKEN_RE.findall(text.lower()):
-        if piece.isascii() or len(piece) == 1:
-            tokens.append(piece)
-        else:
-            tokens.extend(piece[i : i + 2] for i in range(len(piece) - 1))
-    return tokens
 
 
 async def bm25_score(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
@@ -399,37 +393,13 @@ async def bm25_score(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     docs = input.get("docs")
     if not isinstance(query, str) or not isinstance(docs, list):
         raise TypeError("query 必须是字符串,docs 必须是数组")
-    k = input.get("k")
-    query_terms = _tokenize(query)
-    doc_tokens = [(_tokenize(str(d.get("text") or "")), str(d.get("id"))) for d in docs]
-    n = len(doc_tokens)
-    avgdl = sum(len(t) for t, _ in doc_tokens) / n if n else 0.0
-    df: dict[str, int] = {}
-    for tokens, _ in doc_tokens:
-        for term in set(tokens):
-            df[term] = df.get(term, 0) + 1
-    ranked: list[dict[str, Any]] = []
-    for tokens, doc_id in doc_tokens:
-        tf: dict[str, int] = {}
-        for term in tokens:
-            tf[term] = tf.get(term, 0) + 1
-        dl = len(tokens)
-        score = 0.0
-        for term in query_terms:
-            if term not in tf:
-                continue
-            idf = math.log(1 + (n - df[term] + 0.5) / (df[term] + 0.5))
-            denom = tf[term] + _BM25_K1 * (1 - _BM25_B + _BM25_B * (dl / avgdl if avgdl else 0.0))
-            score += idf * (tf[term] * (_BM25_K1 + 1)) / denom
-        ranked.append({"id": doc_id, "score": round(score, 6)})
-    ranked.sort(key=lambda r: (-r["score"], r["id"]))
-    if k is not None:
-        ranked = ranked[: int(k)]
-    return {"ranked": ranked}
+    return {"ranked": _bm25_score_pure(query, docs, input.get("k"))}
 
 
 # ---------------------------------------------------------------------------
 # W2-10 rrf_merge — 多路检索融合
+#
+# 算法本体同在 agent_os.memory.rank(见 W2-9 上方说明);此处仅保留 handler 薄壳。
 # ---------------------------------------------------------------------------
 
 
@@ -439,17 +409,7 @@ async def rrf_merge(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     if not isinstance(lists, list) or any(not isinstance(lst, list) for lst in lists):
         raise TypeError("lists 必须是数组的数组")
     k = int(input.get("k") or 60)
-    if k <= 0:
-        raise ValueError(f"k 必须为正,得到: {k}")
-    scores: dict[str, float] = {}
-    first_seen: dict[str, int] = {}
-    for lst in lists:
-        for rank, item in enumerate(lst, start=1):
-            key = str(item)
-            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
-            first_seen.setdefault(key, len(first_seen))
-    ranked = sorted(scores, key=lambda item: (-scores[item], first_seen[item]))
-    return {"ranked": ranked}
+    return {"ranked": _rrf_merge_pure(lists, k)}
 
 
 # ---------------------------------------------------------------------------

@@ -154,3 +154,160 @@ def test_openai_compat_pinned_key_wins(monkeypatch):
     assert p.api_key == "pinned"
     monkeypatch.setenv("TEST_KEY_ENV", "other")
     assert p.api_key == "pinned"
+
+
+# ---------------------------------------------------------------------------
+# 流式(SSE):data: 逐行解至 [DONE];tool_calls 分片缓冲组装;usage 末 chunk
+# ---------------------------------------------------------------------------
+
+
+def _sse_payload(*events) -> bytes:
+    """事件 dict 序列 → SSE 字节流(字面量 ``"[DONE]"`` 原样发)。"""
+    return "".join(
+        f"data: {'[DONE]' if ev == '[DONE]' else json.dumps(ev, ensure_ascii=False)}\n\n"
+        for ev in events
+    ).encode()
+
+
+def _sse_client(payload: bytes, *, seen: dict | None = None) -> httpx.AsyncClient:
+    def handler(req: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen["body"] = json.loads(req.content)
+        return httpx.Response(200, content=payload, headers={"content-type": "text/event-stream"})
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def _stream_req() -> ChatRequest:
+    return ChatRequest(model="openai/gpt-x", messages=[Message(role=Role.USER, content="hi")])
+
+
+async def _collect(p: OpenAICompatibleProvider, req: ChatRequest):
+    return [c async for c in p.stream(req)]
+
+
+def test_stream_text_deltas_usage_and_done():
+    """文本 delta 按序透传;末 usage chunk(choices 空)携带 finish_reason;请求体带 stream 标记。"""
+    events = [
+        {"choices": [{"index": 0, "delta": {"role": "assistant", "content": "你"}}]},
+        {"choices": [{"index": 0, "delta": {"content": "好"}}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+        {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2}},
+        "[DONE]",
+    ]
+    seen: dict = {}
+    p = OpenAICompatibleProvider(
+        base_url="https://api.example.com/v1", api_key="k", client=_sse_client(_sse_payload(*events), seen=seen)
+    )
+    chunks = asyncio.run(_collect(p, _stream_req()))
+
+    assert [c.delta.content for c in chunks if c.delta and c.delta.content] == ["你", "好"]
+    assert all(c.delta.role is Role.ASSISTANT for c in chunks if c.delta)
+    final = chunks[-1]
+    assert final.finish_reason == "stop"
+    assert final.usage.prompt == 3 and final.usage.completion == 2
+    body = seen["body"]
+    assert body["stream"] is True
+    assert body["stream_options"] == {"include_usage": True}
+
+
+def test_stream_reasoning_content_deltas():
+    """reasoning_content 分片进 delta.reasoning;无 usage chunk 时 finish_reason 在 [DONE] 前兜底交付。"""
+    events = [
+        {"choices": [{"index": 0, "delta": {"reasoning_content": "先想"}}]},
+        {"choices": [{"index": 0, "delta": {"reasoning_content": "再想"}}]},
+        {"choices": [{"index": 0, "delta": {"content": "答"}}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+        "[DONE]",
+    ]
+    p = OpenAICompatibleProvider(
+        base_url="https://api.example.com/v1", api_key="k", client=_sse_client(_sse_payload(*events))
+    )
+    chunks = asyncio.run(_collect(p, _stream_req()))
+
+    assert [c.delta.reasoning for c in chunks if c.delta and c.delta.reasoning] == ["先想", "再想"]
+    assert [c.delta.content for c in chunks if c.delta and c.delta.content] == ["答"]
+    assert chunks[-1].finish_reason == "stop"  # 端点未回 usage chunk 的兜底
+    assert chunks[-1].usage is None
+
+
+def test_stream_tool_calls_shards_assembled_and_unmangled():
+    """tool_calls 分片按 index 缓冲(id/name 首帧、arguments JSON 分片),
+    只在末 chunk 交付完整 ToolCall;``__`` → ``.`` unmangle。"""
+    events = [
+        {"choices": [{"index": 0, "delta": {"tool_calls": [
+            {"index": 0, "id": "c1", "type": "function",
+             "function": {"name": "system__file__read", "arguments": '{"pa'}},
+            {"index": 1, "id": "c2", "type": "function",
+             "function": {"name": "skill__demo__fib", "arguments": '{"n"'}},
+        ]}}]},
+        {"choices": [{"index": 0, "delta": {"tool_calls": [
+            {"index": 1, "function": {"arguments": ": 5}"}},
+            {"index": 0, "function": {"arguments": 'th": "a.txt"}'}},
+        ]}}]},
+        {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]},
+        {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1}},
+        "[DONE]",
+    ]
+    p = OpenAICompatibleProvider(
+        base_url="https://api.example.com/v1", api_key="k", client=_sse_client(_sse_payload(*events))
+    )
+    chunks = asyncio.run(_collect(p, _stream_req()))
+
+    tool_chunks = [c for c in chunks if c.delta and c.delta.tool_calls]
+    assert len(tool_chunks) == 1, "分片只在末 chunk 交付一次,流式途中不透传"
+    tcs = tool_chunks[0].delta.tool_calls
+    assert [t.id for t in tcs] == ["c1", "c2"]
+    assert [t.name for t in tcs] == ["system.file.read", "skill.demo.fib"]
+    assert tcs[0].args == {"path": "a.txt"}
+    assert tcs[1].args == {"n": 5}
+    final = chunks[-1]
+    assert final.finish_reason == "tool_calls"
+    assert final.usage.prompt == 1 and final.usage.completion == 1
+
+
+def test_stream_error_status_reuses_map_error():
+    """HTTP ≥400 与 chat 同口径(_map_error):429→RATE_LIMIT(读 Retry-After)、5xx→UNAVAILABLE。"""
+    cases = [
+        (429, {"error": {"message": "rate limited"}}, {"Retry-After": "7"},
+         ProviderErrorKind.RATE_LIMIT, True, 7.0),
+        (500, {"error": {"message": "boom"}}, None, ProviderErrorKind.UNAVAILABLE, True, None),
+    ]
+    for status, payload, headers, kind, retryable, retry_after in cases:
+        client = httpx.AsyncClient(transport=_openai_response(payload, status, headers))
+        p = OpenAICompatibleProvider(base_url="https://api.example.com/v1", api_key="k", client=client)
+        with pytest.raises(ProviderError) as exc_info:
+            asyncio.run(_collect(p, _stream_req()))
+        err = exc_info.value
+        assert err.kind is kind, (status, err.kind)
+        assert err.retryable is retryable, (status, err.retryable)
+        if retry_after is not None:
+            assert err.retry_after == retry_after, (status, err.retry_after)
+
+
+def test_stream_truncated_without_done_raises_unavailable():
+    """中途断流(未见 [DONE] 流即结束)→ UNAVAILABLE(retryable),半截结果不可信。"""
+    events = [
+        {"choices": [{"index": 0, "delta": {"content": "半"}}]},
+        # 无 [DONE]:连接中途断开
+    ]
+    p = OpenAICompatibleProvider(
+        base_url="https://api.example.com/v1", api_key="k", client=_sse_client(_sse_payload(*events))
+    )
+    with pytest.raises(ProviderError) as exc_info:
+        asyncio.run(_collect(p, _stream_req()))
+    assert exc_info.value.kind is ProviderErrorKind.UNAVAILABLE
+    assert exc_info.value.retryable is True
+
+
+def test_stream_transport_error_maps_unavailable():
+    """连接层故障与 chat 同口径:Timeout/ConnectError → UNAVAILABLE(retryable)。"""
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    p = OpenAICompatibleProvider(base_url="https://api.example.com/v1", api_key="k", client=client)
+    with pytest.raises(ProviderError) as exc_info:
+        asyncio.run(_collect(p, _stream_req()))
+    assert exc_info.value.kind is ProviderErrorKind.UNAVAILABLE
+    assert exc_info.value.retryable is True

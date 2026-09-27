@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import copy
 import hashlib
+import inspect
 import json
 import os
 import signal
@@ -364,6 +365,7 @@ def http_fetch_tool(*, name: str = "system.net.http_fetch", transport: httpx.Asy
         permission=Permission.NET,
         timeout=30.0,
         untrusted_source=True,
+        data_domains=["net.*"],  # D2 数据层声明(docs/DATA-AUTHZ.md §3.1);未配置 [data] 时语义不变
         cost_hint="~1s,取决于网络与页面大小",
     )
     return _FunctionTool(http_fetch, spec)
@@ -414,6 +416,7 @@ def http_request_tool(*, name: str = "system.net.http_request", transport: httpx
         permission=Permission.NET,
         timeout=30.0,
         untrusted_source=True,
+        data_domains=["net.*"],  # D2 数据层声明(docs/DATA-AUTHZ.md §3.1);未配置 [data] 时语义不变
         cost_hint="~1s,取决于网络与页面大小",
     )
     return _FunctionTool(http_request, spec)
@@ -472,22 +475,91 @@ async def blob_get(
     }
 
 
-async def ask_user(question: str) -> str:
-    """向用户提问(User Communication 类,宿主注入回调,§8.3)。"""
-    raise NotImplementedError("M1")
+def _user_channel_not_assembled() -> ToolResult:
+    """未装配 user 通道的结构化错误(同 memory 工具"未装配"报 NOT_FOUND 先例,§2.3)。"""
+    return ToolResult(
+        ok=False,
+        error=ToolError(
+            kind=ToolErrorKind.NOT_FOUND,
+            message="user 通道未装配",
+            retryable=False,
+            hint="宿主经 LocalPythonToolRegistry.bind_user_channel(channel) 注入回调后再用",
+        ),
+    )
 
 
-async def notify_user(message: str) -> None:
-    """通知用户(User Communication 类,宿主注入回调,§8.3)。"""
-    raise NotImplementedError("M1")
+def ask_user_tool(*, name: str = "system.user.ask", registry: Any) -> Tool:
+    """构造 ``system.user.ask``(User Communication 类,§8.3):经宿主回调向用户提问并等待回答。
 
-
-async def python_exec(source: str, args: dict[str, Any] | None = None) -> Any:
-    """LLM 的"代码解释器"(§9.4):薄壳——校验参数后委托 SANDBOX Logic Kernel 执行,
-
-    结果走 §8.1 归一化流水线;``permission: EXEC``,受三层权限与 HumanApproval 闸门约束。
+    与 ask_supervisor 的分工:ask_supervisor 是**内核通道**(伪工具,内核拦截、
+    就地挂起、pending 落盘、resume 重问,docs/SUPERVISOR.md §2),技能主动请示用;
+    本工具是**工具面**形态——普通分发路径上的宿主回调(装配时经
+    ``bind_user_channel`` 注入,bind 模式同 bind_memory 先例;CLI 宿主可用
+    stdin/stderr 协议形态,同 _cli_supervisor 先例),无内核闸门/pending 语义,
+    断电后按未配对调用的通用规则结算(§3.1 中断配对)。未 bind → NOT_FOUND。
     """
-    raise NotImplementedError("M5")
+
+    async def ask_user(question: str, ctx: ToolContext | None = None) -> str | ToolResult:
+        """向宿主用户提问并等待回答,返回回答文本。
+
+        Use when 需要用户提供信息或做选择;Do not use when 请示权限/升级裁决
+        (走 ask_supervisor 内核通道)。宿主未装配 user 通道 → NOT_FOUND。
+        """
+        channel = getattr(registry, "_user_channel", None)
+        ask = getattr(channel, "ask", None) if channel is not None else None
+        if not callable(ask):
+            return _user_channel_not_assembled()
+        answer = ask(question)
+        if inspect.isawaitable(answer):  # 回调可同步可 async(同 registry 对 sync/async 函数的态度)
+            answer = await answer
+        return str(answer)
+
+    spec = derive_spec(
+        ask_user,
+        name=name,
+        # WRITE 档(不取 READ):等用户输入的交互既不可缓存也不可并行(STDLIB §8
+        # 门槛的 READ⇒cacheable+concurrent_safe 红利对它不成立);WRITE 起占帧
+        # 白名单(§W0-1)——能和用户对话的技能应在 manifest 里声明
+        permission=Permission.WRITE,
+        # 等用户输入远超常规工具耗时:注册表 spec.timeout 是硬闸门(§8.1),给足 1h;
+        # 宿主侧的超时/取消经 run 控制通道(stop/cancel)到达
+        timeout=3600.0,
+        cost_hint="取决于人(秒到分钟级)",
+    )
+    return _FunctionTool(ask_user, spec)
+
+
+def notify_user_tool(*, name: str = "system.user.notify", registry: Any) -> Tool:
+    """构造 ``system.user.notify``(User Communication 类,§8.3):经宿主回调单向通知用户。
+
+    单向语义:不等回答、无回答载荷;回调通道与 ``system.user.ask`` 同源
+    (``bind_user_channel`` 装配,未 bind → NOT_FOUND)。
+    """
+
+    async def notify_user(message: str, ctx: ToolContext | None = None) -> str | ToolResult:
+        """向宿主用户发一条单向通知(不等回答),返回确认串。
+
+        Use when 需要汇报进展/结果而不需要回答;Do not use when 需要用户作答
+        (用 system.user.ask)。宿主未装配 user 通道 → NOT_FOUND。
+        """
+        channel = getattr(registry, "_user_channel", None)
+        notify = getattr(channel, "notify", None) if channel is not None else None
+        if not callable(notify):
+            return _user_channel_not_assembled()
+        done = notify(message)
+        if inspect.isawaitable(done):
+            await done
+        return "已通知用户"
+
+    spec = derive_spec(
+        notify_user,
+        name=name,
+        # WRITE 档:对用户可见的单向副作用(同 system.user.ask 的档位判定)
+        permission=Permission.WRITE,
+        timeout=30.0,
+        cost_hint="~10ms(单向,不等回答)",
+    )
+    return _FunctionTool(notify_user, spec)
 
 
 def _parse_result(stdout: str) -> Any:
@@ -537,7 +609,7 @@ def python_exec_tool(kernel: LogicKernel) -> Tool:
             """KernelBuilder 装配钩子:注入信号总线(§9.5 监督信号)。"""
             self._signals = signals
 
-        def with_alias(self, alias: str) -> "PythonExecTool":
+        def with_alias(self, alias: str) -> PythonExecTool:
             """Return a copy registered under a different name (legacy alias support)."""
             from dataclasses import replace
 

@@ -362,6 +362,8 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
             await kernel._settle_pending_ask(frame)
             # pending 升权确认(docs/ESCALATION.md §3):重走升权闸门(重问/带答案重入)
             await kernel._settle_pending_escalation(frame)
+            # pending 工具确认(WS2,docs/DESIGN.md §8.2):重走 tool-confirm 闸门(清标志重问)
+            await kernel._settle_pending_tool_confirm(frame)
             _settle_unpaired_calls(kernel, frame)
             skill_obj = kernel.skills.get(frame.skill)
             try:
@@ -383,6 +385,10 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
         )
         raise
     finally:
-        # run 收尾:取消在跑的 ASYNC sidecar 任务(§5.3,与 run() 同构)
+        # run 收尾:取消在跑的 ASYNC sidecar 任务(§5.3)+ 回收本 run 登记表
+        # (_spawned 后台帧/telemetry 句柄/工具临时目录)——与 run() 的 finally
+        # 对称(WS3 缺口:resume 路径原先只关 sidecar,spawn/parallel 登记的
+        # 后台帧在 run 结束后滞留 _spawned)
         if kernel.sidecars is not None:
             await kernel.sidecars.close()
+        await kernel._release_run(run.run_id)

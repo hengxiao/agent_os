@@ -37,6 +37,7 @@ from agent_os.kernel.logic_router import LogicKernelRouter
 from agent_os.kernel.signals import InProcessSignalBus
 from agent_os.kernel.stack import FrameStack
 from agent_os.providers.manager import ProviderManager
+from agent_os.sidecars.builtins import HumanApproval
 from agent_os.sidecars.supervisor import SidecarSupervisor
 from agent_os.skills.manifest import validate_escalation_gates
 from agent_os.supervisor import SupervisorManager
@@ -57,6 +58,8 @@ class KernelBuilder:
         self._telemetry: Any = None
         self._memory: Any = None
         self._blackboard: Any = None
+        self._user_channel: Any = None
+        self._blob: Any = None
         self._supervisor: dict[str, Any] | None = None
         self._debug_controller: Any = None
         self._retry: dict[str, Any] = {}
@@ -93,6 +96,20 @@ class KernelBuilder:
         self._memory = service
         return self
 
+    def user_channel(self, channel: Any) -> KernelBuilder:
+        """注入宿主用户通道(M1,§8.3):``ask(question)``/``notify(message)`` 回调对象。
+
+        build 时经 ``tools.bind_user_channel`` 接线(bind 模式,同 memory);
+        缺省 = 工具在场但调用报"user 通道未装配"结构化错误。
+        """
+        self._user_channel = channel
+        return self
+
+    def blob(self, store: Any) -> KernelBuilder:
+        """注入 spill 的 blob store(M3):如文件版 FileBlobStore;缺省 = 进程内 InMemoryBlobStore。"""
+        self._blob = store
+        return self
+
     def blackboard(self, blackboard: Any) -> KernelBuilder:
         self._blackboard = blackboard
         return self
@@ -101,9 +118,9 @@ class KernelBuilder:
         self,
         handler: Any = None,
         *,
-        timeout_s: float = 120.0,
-        on_timeout: str = "fail",
-        default_answer: str = "",
+        timeout_s: float | None = None,
+        on_timeout: str | None = None,
+        default_answer: str | None = None,
     ) -> KernelBuilder:
         """注入 supervisor 调用方通道(docs/SUPERVISOR.md §2.3 handler 通道 / §6 配置;S1)。
 
@@ -112,6 +129,9 @@ class KernelBuilder:
         ``[supervisor]`` 段形态,handler 由宿主通道经同一 API 注入——S2:
         ``build_kernel(supervisor_handler=...)`` 的 Web 收件箱 / CLI 协议),
         此时 build 不装配 SupervisorManager。
+        策略字段缺省 None = 未显式配置:装配时先由 HumanApproval 策略(WS2,
+        闸门与 ask_supervisor 共用本通道)补缺,再落 SupervisorManager 默认值
+        (120s/fail/"")。
         """
         self._supervisor = {
             "handler": handler,
@@ -132,13 +152,19 @@ class KernelBuilder:
         return self
 
     def retry(
-        self, *, max_attempts: int | None = None, backoff_base: float | None = None
+        self,
+        *,
+        max_attempts: int | None = None,
+        backoff_base: float | None = None,
+        stream_idle_timeout: float | None = None,
     ) -> KernelBuilder:
         """ProviderManager 重试参数(docs/RUNNERS.md §2.1 ``[retry]``;None 保持 Manager 默认)。"""
         if max_attempts is not None:
             self._retry["max_attempts"] = max_attempts
         if backoff_base is not None:
             self._retry["backoff_base"] = backoff_base
+        if stream_idle_timeout is not None:
+            self._retry["stream_idle_timeout"] = stream_idle_timeout
         return self
 
     def debug_controller(self, controller: Any) -> KernelBuilder:
@@ -147,28 +173,27 @@ class KernelBuilder:
         return self
 
     def build(self) -> Kernel:
-        """组装 Kernel(注入信号总线 / FrameStack / Dispatcher / RunControl 等内核件)。
+        """组装 Kernel(注入信号总线 / FrameStack / RunControl 等内核件)。
 
-        本纵向切片的装配边界:memory 尚未接线,
-        传入了为避免静默丢弃直接拒绝(各自里程碑再做);缺省补 ContextManager
+        装配边界:缺省补 ContextManager
         (M3:RollingWindowCompressor + 状态注入 + pre/post:compress 信号,§7);
         logic_kernels 按 TrustLevel 索引装配为 LogicKernelRouter(§9.2);
         sidecars(M4)装配 RunControlImpl + SidecarSupervisor 并注册到总线(§5);
         telemetry(M5a)作为总线特权订阅者接入(§5.1:全量订阅,不算 sidecar);
         blackboard(M5b)接线到 kernel.blackboard(§12:StatusBoard 与帧间消息);
+        memory(M6)接线到 kernel.memory 并经 bind_memory 注入工具 registry
+        (§11.2:memory_search/memory_write 数据源,bind 模式同 bind_skills);
+        user_channel(M1,§8.3)经 bind_user_channel 注入工具 registry
+        (system.user.ask/notify 的宿主回调);
+        blob(M3)经 bind_blob 替换工具 registry 的 spill store(缺省进程内);
         supervisor(S1)有 handler 才装配 SupervisorManager 挂到 kernel.supervisor
         (docs/SUPERVISOR.md §2.3;仅预置策略字段时不装配,运行时按"未装配"报 not_found);
+        human_approval(WS2,docs/SUPERVISOR.md §10):sidecar 列表中的 HumanApproval
+        实例作策略载体传给 Kernel(EXEC 档工具过内核 tool-confirm 闸门),
+        其 timeout/on_timeout 补缺 supervisor 通道策略(显式配置优先);
         debug_controller(P1)给了就把它挂到信号总线(直接订阅,见 kernel/debug.py);
         装配期权限闸门(§6.1):manifest 声明的工具必须在注册表中,缺失即拒绝加载。
         """
-        unsupported: list[str] = []
-        if self._memory is not None:
-            unsupported.append("memory")
-        if unsupported:
-            raise NotImplementedError(
-                f"M0 纵向切片不接入 {', '.join(unsupported)}(后续里程碑);"
-                f"传入了会被静默丢弃,故直接拒绝"
-            )
         bus = InProcessSignalBus()
         providers = ProviderManager(list(self._providers), **self._retry)
         tools = self._tools if self._tools is not None else LocalPythonToolRegistry()
@@ -193,12 +218,37 @@ class KernelBuilder:
             for m in skills.manifests():
                 validate_escalation_gates(m, derive_skill_tier(m, tools, skills))
         sup_manager = None
+        # WS2(docs/SUPERVISOR.md §10):HumanApproval 已下沉为内核 tool-confirm 闸门,
+        # sidecar 列表里的实例仅作策略载体——取出传给 Kernel(EXEC 档工具过闸),
+        # 其 timeout/on_timeout 作为闸门共用 supervisor 通道的缺省(显式配置优先)
+        human_approval = next(
+            (s for s in self._sidecars if isinstance(s, HumanApproval)), None
+        )
         if self._supervisor is not None and self._supervisor["handler"] is not None:
             # docs/SUPERVISOR.md §2.3:装配级 handler 通道(S2 宿主通道——Web 收件箱 /
             # CLI 协议——经 build_kernel(supervisor_handler=...) 走同一注入入口)
-            sup_manager = SupervisorManager(self._supervisor["handler"], signals=bus, **{
+            sup_policy = {
                 k: self._supervisor[k] for k in ("timeout_s", "on_timeout", "default_answer")
-            })
+            }
+            if human_approval is not None:
+                if sup_policy["timeout_s"] is None:
+                    sup_policy["timeout_s"] = human_approval.timeout
+                if sup_policy["on_timeout"] is None:
+                    # on_timeout 映射到 Manager 既有两档语义:"deny"→"fail"(超时
+                    # 结构化错误,帧可降级);"allow"→"default_answer" 且兜底答案
+                    # "approve-once"(超时视为批准本次)
+                    if human_approval.on_timeout == "allow":
+                        sup_policy["on_timeout"] = "default_answer"
+                        if sup_policy["default_answer"] is None:
+                            sup_policy["default_answer"] = "approve-once"
+                    else:
+                        sup_policy["on_timeout"] = "fail"
+            sup_manager = SupervisorManager(
+                self._supervisor["handler"],
+                signals=bus,
+                # None = 未显式配置,落 SupervisorManager 默认值(120s/fail/"")
+                **{k: v for k, v in sup_policy.items() if v is not None},
+            )
         context = self._context or ContextManager.default(
             RollingWindowCompressor(),
             skills=skills,
@@ -213,6 +263,12 @@ class KernelBuilder:
             tools.bind_signals(bus)
         if skills is not None and hasattr(tools, "bind_skills"):
             tools.bind_skills(skills)  # §W1-5:system.skill.search 的技能数据源(bind 模式,同 system.python.exec)
+        if self._memory is not None and hasattr(tools, "bind_memory"):
+            tools.bind_memory(self._memory)  # M6 §11.2:system.memory.search/write 的数据源(bind 模式,同 bind_skills)
+        if self._user_channel is not None and hasattr(tools, "bind_user_channel"):
+            tools.bind_user_channel(self._user_channel)  # M1 §8.3:system.user.ask/notify 的宿主回调(bind 模式,同 bind_memory)
+        if self._blob is not None and hasattr(tools, "bind_blob"):
+            tools.bind_blob(self._blob)  # M3:spill 的 blob store(缺省 = 进程内 InMemoryBlobStore)
         if self._telemetry is not None:
             # §5.1:Telemetry 是总线的特权订阅者(全量订阅),不算 sidecar
             bus.subscribe("*", self._telemetry.record)
@@ -226,8 +282,10 @@ class KernelBuilder:
             signals=bus,
             telemetry=self._telemetry,
             blackboard=self._blackboard,
+            memory=self._memory,
             supervisor=sup_manager,
             stack=FrameStack(max_depth=self.config.max_depth),
+            human_approval=human_approval,
         )
         if self._sidecars:
             # §5.2/§5.3:RunControl 是 sidecar 操控运行的唯一通道;supervisor 统一托管

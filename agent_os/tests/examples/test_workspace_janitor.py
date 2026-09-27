@@ -284,7 +284,8 @@ def test_approve_run_grant_flow(tmp_path, manifest):
 
     async def handler(question):
         asked.append(question)
-        answer = "approve-run" if question.context["skill"] == "ops.plan.write" else "approve-once"
+        # WS2:tool-confirm 问题 context 无 "skill" 键(带的是 tool)——用 .get 兼容
+        answer = "approve-run" if question.context.get("skill") == "ops.plan.write" else "approve-once"
         return {"answer": answer, "decided_by": "user:test"}
 
     kernel, _ = _build(tmp_path, handler)
@@ -343,7 +344,7 @@ def test_deny_keeps_files(tmp_path, manifest):
     denied_signals = []
 
     async def handler(question):
-        if question.context["skill"] == "ops.cleanup.execute":
+        if question.context.get("skill") == "ops.cleanup.execute":  # WS2:tool-confirm 无 "skill" 键
             return {"answer": "deny", "decided_by": "user:test"}
         return {"answer": "approve-once", "decided_by": "user:test"}
 
@@ -462,7 +463,7 @@ def test_clean_context_invariant(tmp_path, manifest):
 def test_full_run_real_side_effects(tmp_path, manifest):
     """全批准端到端:陈旧文件真删、保留文件原样、计划两份落盘、进程真停。"""
     async def handler(question):
-        answer = "approve-run" if question.context["skill"] == "ops.plan.write" else "approve-once"
+        answer = "approve-run" if question.context.get("skill") == "ops.plan.write" else "approve-once"
         return {"answer": answer, "decided_by": "user:test"}
 
     kernel, _ = _build(tmp_path, handler)

@@ -15,6 +15,8 @@ __all__ = [
     "BLACKBOARD_WRITE",
     "BUDGET_EXCEEDED",
     "BUDGET_WARNING",
+    "DATA_ACCESS_DENIED",
+    "DATA_ACCESS_GRANTED",
     "POST_COMPRESS",
     "POST_CONTEXT_INLINE",
     "POST_FRAME_POP",
@@ -24,6 +26,7 @@ __all__ = [
     "POST_LOGIC_EXEC",
     "POST_SKILL_ESCALATE",
     "POST_SKILL_INVOKE",
+    "POST_SKILL_REGISTER",
     "POST_STEP",
     "POST_TOOL_CALL",
     "PRE_COMPRESS",
@@ -33,6 +36,7 @@ __all__ = [
     "PRE_LOGIC_EXEC",
     "PRE_SKILL_ESCALATE",
     "PRE_SKILL_INVOKE",
+    "PRE_SKILL_REGISTER",
     "PRE_STEP",
     "PRE_TOOL_CALL",
     "RUN_ABORTED",
@@ -69,6 +73,12 @@ POST_TOOL_CALL = "post:tool.call"
 PRE_SKILL_INVOKE = "pre:skill.invoke"
 POST_SKILL_INVOKE = "post:skill.invoke"
 
+#: 运行期注册(docs/DESIGN.md §6.2;WS-C):pre 同步可否决(registry 收到 Veto
+#: 中止不写盘——注册动作可被 HumanApproval/sidecar 拦截),post 成功落盘后观察
+#: (payload: name/version/kind/action)
+PRE_SKILL_REGISTER = "pre:skill.register"
+POST_SKILL_REGISTER = "post:skill.register"
+
 #: 升权确认(docs/ESCALATION.md §5;E2):pre 在确认请求发出时,post 在收到裁决
 #: (含 Grant 命中放行,decision="grant-run"),denied 专记拒绝——审计/重放可区分
 PRE_SKILL_ESCALATE = "pre:skill.escalate"
@@ -89,6 +99,12 @@ BLACKBOARD_WRITE = "blackboard.write"
 
 BUDGET_WARNING = "budget.warning"  # 80%
 BUDGET_EXCEEDED = "budget.exceeded"
+
+#: 数据层 authZ 审计(docs/DATA-AUTHZ.md §6;D2):denied 记拒绝
+#: ({subject, domain, sensitivity, tool},不含目标路径/URL 与域内内容);
+#: granted 记放行({subject, domains, tool},debug 级,消费方可关)
+DATA_ACCESS_DENIED = "data.access.denied"
+DATA_ACCESS_GRANTED = "data.access.granted"
 
 #: supervisor 裁决路由(docs/SUPERVISOR.md v2 §5;S1):ask/answer 成对渲染,timeout 记等待时长
 SUPERVISOR_ASK = "supervisor.ask"
@@ -113,6 +129,8 @@ SIGNAL_NAMES: tuple[str, ...] = (
     POST_TOOL_CALL,
     PRE_SKILL_INVOKE,
     POST_SKILL_INVOKE,
+    PRE_SKILL_REGISTER,
+    POST_SKILL_REGISTER,
     PRE_SKILL_ESCALATE,
     POST_SKILL_ESCALATE,
     SKILL_ESCALATION_DENIED,
@@ -125,6 +143,8 @@ SIGNAL_NAMES: tuple[str, ...] = (
     BLACKBOARD_WRITE,
     BUDGET_WARNING,
     BUDGET_EXCEEDED,
+    DATA_ACCESS_DENIED,
+    DATA_ACCESS_GRANTED,
     SUPERVISOR_ASK,
     SUPERVISOR_ANSWER,
     SUPERVISOR_TIMEOUT,

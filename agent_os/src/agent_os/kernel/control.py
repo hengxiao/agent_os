@@ -6,7 +6,9 @@
 语义:stop 置 run 中止标志(runner 在 ``pre:step`` safe point 检查并抛
 ``RunAborted``);pause 在 v1 同 stop,理由带 ``"paused: "`` 前缀;
 inject_message 向指定帧上下文追加 USER/INJECTED 消息;force_compress 在帧上
-置标志,runner 在 maintain 前检查并强制执行一次压缩(§7.1 外部强制触发)。
+置标志,runner 在 maintain 前检查并强制执行一次压缩(§7.1 外部强制触发);
+cancel_frame 级联取消目标帧所在子树(后台帧 task.cancel();调用链 prompt 帧
+置帧级 stop 标志,safe point 抛 ``SubtreeCancelled``),子树终态不杀 run。
 """
 
 from __future__ import annotations
@@ -58,6 +60,16 @@ class RunControlImpl:
             return
         frame.context.working[FORCE_COMPRESS_KEY] = True
 
+    async def cancel_frame(self, frame_id: str, reason: str) -> list[str]:
+        """子树级联取消:目标帧及其后代进入终态,**不**中止 run(§5.2 扩展)。
+
+        落地 ``Kernel.cancel_subtree``:在册后台帧 ``task.cancel()``(走 §3.1
+        中断配对路径),调用链上的 prompt 帧置帧级 stop 标志(下一个 ``pre:step``
+        safe point 抛 ``SubtreeCancelled``)。返回纳入取消的 frame_id 列表(ack);
+        幂等,重复调用不炸。
+        """
+        return await self._kernel.cancel_subtree(frame_id, reason)
+
     async def get_frame_tree(self, run_id: str) -> list[dict[str, Any]]:
         """该 run 帧树的嵌套 dict(frame_id/skill/depth/status/children)。"""
         frames = [f for f in self._kernel.stack.tree() if f.run_id == run_id]
@@ -81,6 +93,14 @@ class RunControlImpl:
     async def get_usage(self, run_id: str) -> Usage:
         """该 run 的记账快照(§2.3 Usage)。"""
         return self._kernel._runs[run_id].state.usage
+
+    async def get_subtree_usage(self, frame_id: str) -> Usage:
+        """该帧子树的记账汇总(WS2 读视图):目标帧及全部后代九字段求和。
+
+        委托 ``Kernel.subtree_usage``;未知帧返回零值 Usage(防御式,不崩 sidecar)。
+        只读,不改 ``account()`` 写入路径。
+        """
+        return self._kernel.subtree_usage(frame_id)
 
 
 #: 兼容别名(M0 骨架时期的类名,``agent_os.kernel`` 包导出路径不变)

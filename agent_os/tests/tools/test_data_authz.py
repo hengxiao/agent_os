@@ -10,6 +10,11 @@
   现状沙箱);默认拒绝只作用于已配置域(内置 fs.workdir=public +
   ``register_fs_domain`` 注册的域);
 - 身份不变量(§2.3):子帧/升权帧原样继承 principal;checkpoint 序列化往返。
+
+D2 续写(文件尾部,§3.1/§3.2/§6):``[data]`` 策略接线(build_kernel)、net 域
+URL 前缀判定、per-subject 白名单第二判据、审计信号 payload、``_authz`` 判据回写;
+以上 13 例为 D1 回归锚,语义逐字不动(``allow(whitelist=None)`` 即 D1 判定,
+由 3x3 矩阵锚定)。
 """
 
 from __future__ import annotations
@@ -19,14 +24,19 @@ import json
 import textwrap
 from pathlib import Path
 
+import httpx
+
 from agent_os.api.v1 import (
     CONFIDENTIAL,
+    DATA_ACCESS_DENIED,
+    DATA_ACCESS_GRANTED,
     INTERNAL,
     PUBLIC,
     ChatRequest,
     ChatResponse,
     ChatUsage,
     DataDomain,
+    DataPolicy,
     Message,
     Permission,
     Principal,
@@ -46,6 +56,7 @@ from agent_os.logic.inprocess import InProcessLogicKernel
 from agent_os.logic.python_sandbox import PythonSandboxLogicKernel
 from agent_os.providers.mock import MockProvider
 from agent_os.runtime.builder import KernelBuilder
+from agent_os.runtime.config import build_kernel
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.local_registry import LocalPythonToolRegistry
 
@@ -449,3 +460,282 @@ def test_checkpoint_principal_round_trip(tmp_path):
     assert result == {"done": True}
     restored = [f.principal for f in kernel2.stack.tree() if f.run_id == run_ids[0]]
     assert restored and all(p == principal for p in restored)
+
+
+# ---------------------------------------------------------------------------
+# D2:[data] 策略(§3.1/§3.2)——build_kernel 接线 + 白名单第二判据
+# ---------------------------------------------------------------------------
+
+
+def _kernel_cfg(data: dict) -> dict:
+    """带 [data] 段的 build_kernel 输入(本文件只取 ``kernel.tools`` 直接 dispatch,
+    不接 skills 子系统——fib 域声明 system.python.exec,挂上反而要多配 python_exec)。"""
+    return {
+        "run": {"model": "mock/fib", "compression": "off"},
+        "providers": {"mock": {"brain": "tests.helpers.brains:fib_brain"}},
+        "tools": {"builtins": True},
+        "data": data,
+    }
+
+
+def test_build_kernel_data_section_confidential_denies_low_clearance(tmp_path):
+    """[data] 段接线:confidential 已配置域对低 clearance principal 拒绝;
+    sensitivity 缺省 confidential(忘了配 = 最严,§3.1)。"""
+    (tmp_path / "s.txt").write_text("TOP-SECRET", encoding="utf-8")
+    kernel = build_kernel(
+        _kernel_cfg(
+            {
+                # sensitivity 缺省 → confidential;白名单配了也救不了 clearance 不够
+                "domains": [{"name": "fs.secret", "path_prefix": str(tmp_path)}],
+                "principals": {"user:t": {"domains": ["fs.*"]}},
+            }
+        )
+    )
+    tools = kernel.tools
+    assert tools._data_policy is not None, "[data] 段存在即应 bind"
+    ctx = _dispatch_ctx(_frame(_p(INTERNAL)), workdir=tmp_path)
+    result = asyncio.run(
+        tools.dispatch(ToolCall(id="c1", name="system.file.read", args={"path": "s.txt"}), ctx)
+    )
+    assert result.ok is False
+    assert result.error.kind is ToolErrorKind.DATA_ACCESS_DENIED
+    blob = f"{result.error.message} {result.error.hint}"
+    assert "fs.secret" in blob and "confidential" in blob
+    assert "s.txt" not in blob and "TOP-SECRET" not in blob  # 不泄路径与域内内容
+
+
+def test_build_kernel_whitelist_second_criterion(tmp_path):
+    """白名单第二判据(§3.2):clearance 够但域不在白名单 → 同样拒绝;
+    未配置 subject → 空表白名单 = 全拒(fail closed);配置且命中 → 放行。"""
+    (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+    kernel = build_kernel(
+        _kernel_cfg(
+            {
+                "domains": [
+                    {"name": "fs.shared", "sensitivity": "internal", "path_prefix": str(tmp_path)}
+                ],
+                "principals": {
+                    "user:full": {"domains": ["fs.*"]},
+                    "user:netside": {"domains": ["net.*"]},
+                },
+            }
+        )
+    )
+    tools = kernel.tools
+
+    def read_as(subject: str):
+        p = Principal(subject=subject, issuer="test", attrs={"clearance": CONFIDENTIAL})
+        ctx = _dispatch_ctx(_frame(p), workdir=tmp_path)
+        return asyncio.run(
+            tools.dispatch(ToolCall(id="c1", name="system.file.read", args={"path": "a.txt"}), ctx)
+        )
+
+    assert read_as("user:full").ok, "clearance 够 + 白名单命中 → 放行"
+    denied = read_as("user:netside")
+    assert denied.ok is False, "clearance 够但域不在白名单 → 拒绝"
+    assert denied.error.kind is ToolErrorKind.DATA_ACCESS_DENIED
+    denied2 = read_as("user:stranger")
+    assert denied2.ok is False, "未配置 subject → 空表白名单,全拒(fail closed)"
+    assert denied2.error.kind is ToolErrorKind.DATA_ACCESS_DENIED
+
+
+def test_allow_whitelist_glob_second_criterion():
+    """allow(whitelist):glob 匹配域名,任一命中即过;空表 = 全拒(fail closed);
+    白名单不放大 clearance。whitelist=None(缺省)与 D1 逐字一致,由上面 3x3 矩阵锚定。"""
+    d = DataDomain(name="fs.secret", sensitivity=INTERNAL)
+    assert allow(_p(CONFIDENTIAL), d, whitelist=["fs.*"])
+    assert allow(_p(CONFIDENTIAL), d, whitelist=["net.*", "fs.secret"])  # 任一命中即过
+    assert not allow(_p(CONFIDENTIAL), d, whitelist=["net.*"])  # clearance 够,白名单不命中
+    assert not allow(_p(CONFIDENTIAL), d, whitelist=[])  # 空表 fail closed
+    assert not allow(_p(PUBLIC), d, whitelist=["fs.*"])  # 白名单不放大 clearance
+
+
+def test_data_policy_whitelist_for_fail_closed():
+    """whitelist_for:配置原样返回;未配置 subject → 空表(fail closed)。"""
+    policy = DataPolicy(whitelists={"user:a": ("fs.*", "net.pub")})
+    assert policy.whitelist_for("user:a") == ("fs.*", "net.pub")
+    assert policy.whitelist_for("user:b") == ()
+
+
+# ---------------------------------------------------------------------------
+# D2:net 域(§3.1/§3.3)——URL 前缀判定 + 未配置按 confidential + D1 回归锚
+# ---------------------------------------------------------------------------
+
+
+def _net_tools(text: str = "ok-content") -> LocalPythonToolRegistry:
+    """带 MockTransport 的内置工具表(net 测试不碰真实网络,同 with_builtins 先例)。"""
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=text))
+    return LocalPythonToolRegistry.with_builtins(http_transport=transport)
+
+
+_NET_POLICY = DataPolicy(
+    domains={"net.pub": DataDomain(name="net.pub", sensitivity=PUBLIC)},
+    whitelists={"user:t": ("net.*",)},
+    boundaries={"net.pub": ("net", "https://api.example.com/")},
+)
+
+
+def _bind_net_policy(tools: LocalPythonToolRegistry) -> None:
+    """按 build_kernel 的装配形态接线:bind policy + 注册 URL 前缀边界。"""
+    tools.bind_data_policy(_NET_POLICY)
+    tools.register_net_domain(DataDomain(name="net.pub", sensitivity=PUBLIC), "https://api.example.com/")
+
+
+def test_net_domain_url_prefix_hit_granted():
+    """URL 前缀命中已配置 net 域 + clearance/白名单够 → 放行(fetch 真实执行)。"""
+    tools = _net_tools()
+    _bind_net_policy(tools)
+    # NET 档工具过数据闸后还有三层权限闸(§5.2 串联):帧白名单放行,隔离测数据闸语义
+    ctx = _dispatch_ctx(_frame(_p(PUBLIC)), allowed=["system.net.http_fetch"])
+    result = asyncio.run(
+        tools.dispatch(
+            ToolCall(id="c1", name="system.net.http_fetch", args={"url": "https://api.example.com/x"}),
+            ctx,
+        )
+    )
+    assert result.ok
+    assert "ok-content" in str(result.value)
+
+
+def test_net_url_unmatched_confidential_denied_without_leak():
+    """policy 在场(§3.1):URL 未命中任何已配置 net 域 → 按 confidential,
+    clearance 不够即拒;拒绝面不泄 URL(域名/敏感度/subject/clearance 之外零信息)。"""
+    tools = _net_tools()
+    _bind_net_policy(tools)
+    ctx = _dispatch_ctx(_frame(_p(INTERNAL)))
+    result = asyncio.run(
+        tools.dispatch(
+            ToolCall(
+                id="c1",
+                name="system.net.http_fetch",
+                args={"url": "https://other.example.org/s3cr3t-path"},
+            ),
+            ctx,
+        )
+    )
+    assert result.ok is False
+    assert result.error.kind is ToolErrorKind.DATA_ACCESS_DENIED
+    blob = f"{result.error.message} {result.error.hint}"
+    assert "net.unconfigured" in blob and "confidential" in blob
+    assert "other.example.org" not in blob and "s3cr3t-path" not in blob  # 不泄 URL
+
+
+def test_net_tool_without_policy_not_intercepted():
+    """回归锚(§8 D1 实现注 1):未 bind policy → net 工具不拦截,
+    注册了域也一样,行为与 D1 逐字一致(未配置 = 不启用数据层拦截)。"""
+    tools = _net_tools("d1-content")
+    tools.register_net_domain(
+        DataDomain(name="net.sec", sensitivity=CONFIDENTIAL), "https://sec.example.com/"
+    )
+    ctx = _dispatch_ctx(_frame(_p(PUBLIC)), allowed=["system.net.http_fetch"])
+    result = asyncio.run(
+        tools.dispatch(
+            ToolCall(id="c1", name="system.net.http_fetch", args={"url": "https://sec.example.com/a"}),
+            ctx,
+        )
+    )
+    assert result.ok
+    assert "d1-content" in str(result.value)
+
+
+# ---------------------------------------------------------------------------
+# D2:审计信号(§6)与 _authz 判据回写(§3.2)
+# ---------------------------------------------------------------------------
+
+
+class _FakeBus:
+    """最小信号总线:收集 emit 的 Signal(审计信号断言用;registry 只依赖 ``emit``)。"""
+
+    def __init__(self) -> None:
+        self.emitted: list = []
+
+    async def emit(self, sig) -> None:
+        self.emitted.append(sig)
+
+
+def test_data_access_denied_signal_exact_payload():
+    """拒绝 → data.access.denied,payload 恰为 {subject, domain, sensitivity, tool},
+    不含 URL/路径/域内内容(不泄漏)。"""
+    bus = _FakeBus()
+    tools = _net_tools()
+    tools.bind_signals(bus)
+    _bind_net_policy(tools)
+    ctx = _dispatch_ctx(_frame(_p(INTERNAL)))
+    result = asyncio.run(
+        tools.dispatch(
+            ToolCall(
+                id="c1",
+                name="system.net.http_fetch",
+                args={"url": "https://other.example.org/s3cr3t"},
+            ),
+            ctx,
+        )
+    )
+    assert result.ok is False
+    denied = [s for s in bus.emitted if s.name == DATA_ACCESS_DENIED]
+    assert len(denied) == 1
+    payload = denied[0].payload
+    assert payload == {
+        "subject": "user:t",
+        "domain": "net.unconfigured",
+        "sensitivity": CONFIDENTIAL,
+        "tool": "system.net.http_fetch",
+    }
+    assert "other.example.org" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_data_access_granted_signal_payload(tmp_path):
+    """放行 → data.access.granted,payload {subject, domains, tool}(同样不泄目标)。
+    bus 未装配 → 跳过发射:上面全部未 bind_signals 的用例即零破坏锚。"""
+    bus = _FakeBus()
+    (tmp_path / "a.txt").write_text("hi", encoding="utf-8")
+    tools = LocalPythonToolRegistry.with_builtins()
+    tools.bind_signals(bus)
+    tools.bind_data_policy(
+        DataPolicy(
+            domains={"fs.shared": DataDomain(name="fs.shared", sensitivity=INTERNAL)},
+            whitelists={"user:t": ("fs.*",)},
+            boundaries={"fs.shared": ("fs", str(tmp_path))},
+        )
+    )
+    tools.register_fs_domain(DataDomain(name="fs.shared", sensitivity=INTERNAL), tmp_path)
+    ctx = _dispatch_ctx(_frame(_p(CONFIDENTIAL)), workdir=tmp_path)
+    result = asyncio.run(
+        tools.dispatch(ToolCall(id="c1", name="system.file.read", args={"path": "a.txt"}), ctx)
+    )
+    assert result.ok
+    granted = [s for s in bus.emitted if s.name == DATA_ACCESS_GRANTED]
+    assert len(granted) == 1
+    payload = granted[0].payload
+    assert payload == {"subject": "user:t", "domains": ["fs.shared"], "tool": "system.file.read"}
+    assert "a.txt" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_authz_record_written_into_credentials(tmp_path):
+    """判据回写(§3.2):authZ 判定摘要写进 ``ctx.credentials["_authz"]``
+    ("_" 前缀与 WS1 用户凭证键防撞名);principal 未注入(单用户语义)时检查
+    不触及本调用 → 不落 "_authz"(零破坏)。"""
+    seen: list = []
+    tools = LocalPythonToolRegistry()
+
+    @tools.tool(name="peek", permission=Permission.READ, data_domains=["fs.*"])
+    def peek(path: str, ctx) -> str:
+        """捕获 credentials。Use when 测试判据回写;Do not use when 其他。"""
+        seen.append(dict(ctx.credentials))
+        return "ok"
+
+    tools.bind_data_policy(DataPolicy(whitelists={"user:t": ("fs.*",)}))
+    ctx = _dispatch_ctx(_frame(_p(CONFIDENTIAL)), workdir=tmp_path)
+    result = asyncio.run(tools.dispatch(ToolCall(id="c1", name="peek", args={"path": "x.txt"}), ctx))
+    assert result.ok
+    authz = seen[0]["_authz"]
+    assert authz["allowed"] is True
+    assert authz["domains"] == [{"name": "fs.workdir", "sensitivity": PUBLIC}]
+
+    # principal 为 None(v1 单用户语义):数据层不触及 → credentials 无 "_authz"
+    ctx2 = _dispatch_ctx(_frame(None), workdir=tmp_path)
+    result2 = asyncio.run(
+        tools.dispatch(ToolCall(id="c2", name="peek", args={"path": "x.txt"}), ctx2)
+    )
+    assert result2.ok
+    assert "_authz" not in seen[1]

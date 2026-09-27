@@ -119,6 +119,11 @@ class ToolSpec:
     # —— 数据层 authZ(docs/DATA-AUTHZ.md §3.1;additive)——
     #: 本工具会碰的数据域(如 ["fs.*"]);缺省 [] = 不碰数据,dispatch 跳过数据层检查
     data_domains: list[str] = field(default_factory=list)
+    # —— 凭证注入(WS1;additive)——
+    #: 本工具声明需要的凭证 key 列表(如 ["github"]);缺省 [] = 不要凭证,
+    #: dispatch 不向 ToolContext.credentials 注入任何键。值来自宿主配置的凭证
+    #: 作用域([credentials] 段,env 变量名动态解析),按声明键过滤注入
+    credentials: list[str] = field(default_factory=list)
 
 
 #: Permission → 缺省副作用档(docs/ESCALATION.md §2.1):EXEC 是任意命令,按最坏情况

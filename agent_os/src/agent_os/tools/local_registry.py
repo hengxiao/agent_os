@@ -12,7 +12,16 @@ system.file.read/system.file.write/system.file.edit/system.shell.exec 共用的�
 工具按调用序弹出记录值返回而不执行(host replay 的接线留后续里程碑);§W1-4:
 ``_run_states`` 是 run 级工具状态表(todo 清单等,同 run_id 跨帧共享,checkpoint
 随档持久见 kernel.checkpoint);§W1-5:``bind_skills`` 注入 SkillRegistry 引用,
-作 skill_search 的技能数据源(装配钩子,同 bind_signals 先例)。
+作 skill_search 的技能数据源(装配钩子,同 bind_signals 先例);M6:``bind_memory``
+注入 MemoryService,作 memory_search/memory_write 数据源(同 bind_skills 先例)。WS1:
+``bind_credentials`` 注入凭证作用域解析器(签名 ``(principal, declared_keys)``),
+dispatch 按 ``spec.credentials`` 声明键现解析注入 ``ToolContext.credentials``
+(未声明/未 bind → 空 dict;泄露纪律:值不进帧/checkpoint,错误消息只带键名)。
+D2(docs/DATA-AUTHZ.md §3/§6):``bind_data_policy`` 注入 [data] 策略后,数据闸
+按域族分派(fs=路径前缀/net=URL 前缀,``register_net_domain`` 最长前缀优先),
+"未配置域 = confidential" 生效,per-subject 域白名单并入 ``allow()`` 第二判据;
+放行/拒绝经留存的信号总线发 ``data.access.granted``/``data.access.denied``
+审计信号,放行判据回写 ``ToolContext.credentials["_authz"]``。
 §W4-3:构造器注册 ``fetch_page``(std/web 工具面,实现与注册时机说明见
 tools/std_web.py)。
 """
@@ -20,6 +29,7 @@ tools/std_web.py)。
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import inspect
 import shutil
 import tempfile
@@ -36,9 +46,13 @@ if TYPE_CHECKING:
 import jsonschema
 
 from agent_os.api.v1 import (
+    CONFIDENTIAL,
+    DATA_ACCESS_DENIED,
+    DATA_ACCESS_GRANTED,
     PUBLIC,
     DataDomain,
     Permission,
+    Signal,
     Tool,
     ToolCall,
     ToolContext,
@@ -93,9 +107,24 @@ class LocalPythonToolRegistry:
         self._run_states: dict[str, dict[str, Any]] = {}
         #: §W1-5 skill_search 的技能数据源(KernelBuilder 装配时经 bind_skills 注入)
         self._skills: Any = None
+        #: M6 memory_search/memory_write 的 MemoryService 数据源(装配时经 bind_memory 注入)
+        self._memory: Any = None
+        #: M1 system.user.ask/system.user.notify 的宿主回调通道(装配时经 bind_user_channel 注入)
+        self._user_channel: Any = None
         #: 数据域边界表(docs/DATA-AUTHZ.md §3.1;D1):(路径前缀, 域),最长前缀优先;
         #: 空表 = 只有内置默认域 fs.workdir(public),其余路径按现状沙箱不拦截
         self._fs_domains: list[tuple[Path, DataDomain]] = []
+        #: net 数据域边界表(D2):(URL 前缀, 域),最长前缀优先,同 fs
+        self._net_domains: list[tuple[str, DataDomain]] = []
+        #: [data] 配置策略(D2;``bind_data_policy`` 装配钩子注入):
+        #: None = D1 语义(未配置不拦截);在场 = "解析失败/未命中按 confidential"
+        #: + per-subject 域白名单并入 allow() 第二判据(§3.1/§3.2)
+        self._data_policy: Any = None
+        #: 信号总线引用(D2 审计信号 emit 用;``bind_signals`` 装配时留存,None = 跳过发射)
+        self._signals_bus: Any = None
+        #: 凭证作用域解析器(WS1;``bind_credentials`` 装配钩子注入;
+        #: None = 空作用域,dispatch 注入空 credentials,零破坏)
+        self._credentials_resolver: Any = None
         # §W4-3 std/web:fetch_page 构造器注册(为什么不在 with_builtins:
         # 见 tools/std_web.py 模块 docstring 的 §6.1 闸门联动说明)
         from agent_os.tools.std_web import fetch_page_tool
@@ -168,15 +197,61 @@ class LocalPythonToolRegistry:
         return self._run_states
 
     def bind_signals(self, bus: Any) -> None:
-        """KernelBuilder 装配钩子:给提供 ``bind()`` 的工具(如 system.python.exec)接信号总线。"""
+        """KernelBuilder 装配钩子:给提供 ``bind()`` 的工具(如 system.python.exec)接信号总线。
+
+        总线引用同时留存给 D2 数据层审计信号(``_check_data_access`` 拒绝/放行时
+        emit;未走本钩子的嵌入方 = None,跳过发射,零破坏)。
+        """
+        self._signals_bus = bus
         for tool in self._tools.values():
             bind = getattr(tool, "bind", None)
             if callable(bind):
                 bind(bus)
 
+    def bind_data_policy(self, policy: Any) -> None:
+        """装配钩子(D2,同 bind_signals/bind_credentials 先例):注入 [data] 数据策略。
+
+        注入后数据闸语义切换(docs/DATA-AUTHZ.md §3.1/§3.3):目标解析失败/未命中
+        已配置域 → 按 confidential(fail closed);per-subject 域白名单并入
+        ``allow()`` 第二判据。缺省(未 bind)= D1 逐字语义:未配置不拦截。
+        """
+        self._data_policy = policy
+
     def bind_skills(self, skills: Any) -> None:
         """KernelBuilder 装配钩子(§W1-5):注入 SkillRegistry 引用,作 skill_search 数据源。"""
         self._skills = skills
+
+    def bind_memory(self, service: Any) -> None:
+        """装配钩子(M6,同 bind_skills 先例):注入 MemoryService,作 memory_search/memory_write 数据源。
+
+        缺省(未 bind)= 工具在场但按"未装配 memory 子系统"报结构化错误,行为与引入前一致。
+        """
+        self._memory = service
+
+    def bind_user_channel(self, channel: Any) -> None:
+        """装配钩子(M1,同 bind_memory 先例):注入宿主用户通道,作 system.user.ask/notify 的回调。
+
+        channel 形态:带 ``ask(question: str)`` 与 ``notify(message: str)`` 方法的宿主对象
+        (同步/async 均可;CLI 宿主可用 stdin/stderr 协议形态,同 _cli_supervisor 先例)。
+        缺省(未 bind)= 工具在场但按"user 通道未装配"报结构化错误,行为与引入前一致。
+        """
+        self._user_channel = channel
+
+    def bind_blob(self, store: Any) -> None:
+        """装配钩子(M3,同 bind_memory 先例):替换 spill 的 blob store(如文件版 FileBlobStore)。
+
+        缺省 = 进程内 InMemoryBlobStore(run 结束即弃,§8.4)。
+        """
+        self._blob = store
+
+    def bind_credentials(self, resolver: Any) -> None:
+        """装配钩子(WS1,同 bind_signals/bind_skills 先例):注入凭证作用域解析器。
+
+        resolver 签名 ``(principal, declared_keys) -> dict[str, str]``;
+        ``principal`` 为 D3 per-principal 凭证留协议面,v1 实现可忽略。
+        缺省(未 bind)= 空作用域:dispatch 恒注入空 ``credentials``,行为与引入前一致。
+        """
+        self._credentials_resolver = resolver
 
     async def dispatch(self, call: ToolCall, frame_ctx: ToolDispatchContext) -> ToolResult:
         """§8.1 分发流水线(本切片实现到超时执行为止;信号由内核 runner 收发):
@@ -184,7 +259,8 @@ class LocalPythonToolRegistry:
         schema 校验(fail fast,禁止"智能纠正")→ 数据层 authZ(docs/DATA-AUTHZ.md §3.3,
         未配置不拦截)→ 三层权限(帧白名单 ∩ RunConfig 上限;
         工具自报等级随 spec;§W0-1 起 READ 档不占帧白名单)→ 构造 ToolContext
-        (§W0-1 workdir/read_paths 分区注入;principal 随帧透传)→ ``wait_for`` 超时执行 → 结果归一化。
+        (§W0-1 workdir/read_paths 分区注入;principal 随帧透传;
+        WS1 按 spec.credentials 声明键注入凭证)→ ``wait_for`` 超时执行 → 结果归一化。
         """
         tool = self._tools.get(call.name)
         if tool is None:
@@ -210,7 +286,7 @@ class LocalPythonToolRegistry:
             )
         # 数据层 authZ(docs/DATA-AUTHZ.md §5.2 双闸串联):在三层权限交集**之前**——
         # 数据闸管"碰不碰得到",权限闸管"允不允许",各自独立失败
-        denied = self._check_data_access(call, spec, frame_ctx)
+        denied, authz = await self._check_data_access(call, spec, frame_ctx)
         if denied is not None:
             return denied
         # §W0-1:READ 档工具不占帧白名单(只读无副作用,fs 边界由 resolve_work_path 分区保证);
@@ -249,6 +325,19 @@ class LocalPythonToolRegistry:
             if frame_ctx.workdir is not None
             else self._workdir(frame_ctx.frame.run_id)
         )
+        # WS1 凭证注入:按 spec.credentials 声明键从作用域现解析(resolver 每次
+        # 现读 env,防 token 过期);只注入声明的键,作用域缺该键/env 缺席 → 键不出现;
+        # 未声明或未 bind resolver → 空 dict(零破坏)。泄露纪律:值只进 ToolContext,
+        # 不进帧上下文/checkpoint/telemetry;工具错误消息只带键名,不回显值
+        credentials = (
+            self._credentials_resolver(frame_ctx.frame.principal, spec.credentials)
+            if self._credentials_resolver is not None and spec.credentials
+            else {}
+        )
+        if authz is not None:
+            # D2 判据回写(docs/DATA-AUTHZ.md §3.2):authZ 判定结果(判定的域/敏感度/
+            # 放行与否)随 credentials 给工具自省;"_" 前缀命名空间与 WS1 用户凭证键防撞名
+            credentials = {**credentials, "_authz": authz}
         ctx = ToolContext(
             run_id=frame_ctx.frame.run_id,
             frame_id=frame_ctx.frame.frame_id,
@@ -256,7 +345,7 @@ class LocalPythonToolRegistry:
             workdir=workdir,
             read_paths=[str(p.expanduser().resolve()) for p in frame_ctx.read_paths],
             blob=self._blob,
-            credentials={},
+            credentials=credentials,
         )
         try:
             result = await asyncio.wait_for(tool(call.args, ctx), timeout=spec.timeout)
@@ -286,12 +375,18 @@ class LocalPythonToolRegistry:
         return ToolResult(ok=True, value=result)
 
     def register_fs_domain(self, domain: DataDomain, path_prefix: str | Path) -> None:
-        """注册 fs 数据域边界(宿主 API;agent-os.toml ``[data]`` 配置段接线属 D2)。
+        """注册 fs 数据域边界(宿主 API;agent-os.toml ``[data]`` 配置段接线见
+        runtime/config.py ``build_kernel``,D2)。
 
         最长前缀优先(注册即排序),嵌套域(如 fs.shared ⊂ workdir)按更具体者判。
         """
         self._fs_domains.append((Path(path_prefix).expanduser().resolve(), domain))
         self._fs_domains.sort(key=lambda item: len(str(item[0])), reverse=True)
+
+    def register_net_domain(self, domain: DataDomain, url_prefix: str) -> None:
+        """注册 net 数据域边界(D2;URL 前缀,最长前缀优先,同 :meth:`register_fs_domain`)。"""
+        self._net_domains.append((url_prefix, domain))
+        self._net_domains.sort(key=lambda item: len(item[0]), reverse=True)
 
     def _resolve_fs_domain(self, path: Path, workdir: Path) -> DataDomain | None:
         """路径 → 数据域:宿主注册域(已按最长前缀排序)优先;其后内置默认域
@@ -303,52 +398,142 @@ class LocalPythonToolRegistry:
             return DataDomain(name="fs.workdir", sensitivity=PUBLIC)
         return None
 
-    def _check_data_access(
-        self, call: ToolCall, spec: ToolSpec, frame_ctx: ToolDispatchContext
-    ) -> ToolResult | None:
-        """数据层 authZ(docs/DATA-AUTHZ.md §3.3;D1 仅 fs 域):拒绝 → DATA_ACCESS_DENIED,放行 → None。
+    def _resolve_net_domain(self, url: str) -> DataDomain | None:
+        """URL → 数据域(D2):宿主注册域按最长前缀匹配;未命中 → None。"""
+        for prefix, domain in self._net_domains:
+            if url.startswith(prefix):
+                return domain
+        return None
 
-        D1 兼容策略(§8 D1 实现注):工具未声明 ``data_domains``、principal 未注入
-        (v1 单用户语义)、目标落不进任何已配置域——三种情况都不拦截,行为与引入
-        本系统前完全一致("未配置 = 不启用数据层拦截");**默认拒绝只作用于已配置域**
-        (内置 fs.workdir=public + ``register_fs_domain`` 注册的域)。拒绝消息只带
-        域名/敏感度/clearance,不回显路径与域内内容(不泄漏)。
+    async def _emit_data_signal(
+        self, name: str, frame_ctx: ToolDispatchContext, payload: dict[str, Any]
+    ) -> None:
+        """数据层审计信号(docs/DATA-AUTHZ.md §6;D2):总线未装配(未走 bind_signals)跳过。"""
+        bus = self._signals_bus
+        if bus is None:
+            return
+        await bus.emit(
+            Signal(
+                name=name,
+                run_id=frame_ctx.frame.run_id,
+                frame_id=frame_ctx.frame.frame_id,
+                payload=payload,
+            )
+        )
+
+    async def _check_data_access(
+        self, call: ToolCall, spec: ToolSpec, frame_ctx: ToolDispatchContext
+    ) -> tuple[ToolResult | None, dict[str, Any] | None]:
+        """数据层 authZ(docs/DATA-AUTHZ.md §3.3):``(拒绝 ToolResult, None)`` 或
+        ``(None, 判据回写 dict)``;检查不触及本调用 → ``(None, None)``。
+
+        D1 兼容策略(§8 D1 实现注;``_data_policy`` 未 bind 时逐字保持):工具未声明
+        ``data_domains``、principal 未注入(v1 单用户语义)、目标落不进任何已配置域
+        ——三种情况都不拦截,行为与引入本系统前完全一致("未配置 = 不启用数据层拦截");
+        **默认拒绝只作用于已配置域**。D2(``bind_data_policy`` 注入 [data] 策略后)
+        恢复原文语义:**解析失败/未命中的域按 confidential**(§3.1/§3.3),且
+        per-subject 域白名单并入 ``allow()`` 第二判据(§3.2,clearance 够但域不在
+        白名单同样拒绝)。拒绝消息只带域名/敏感度/clearance,不回显路径/URL 与
+        域内内容(不泄漏);放行/拒绝各发一条审计信号(§6,总线未装配则跳过)。
         """
         if not spec.data_domains:
-            return None
+            return None, None
         principal = frame_ctx.frame.principal
         if principal is None:
-            return None
-        if "fs.*" not in spec.data_domains:
-            return None  # db/net 域的声明与判定属 D2
-        raw = call.args.get("path")
-        if not isinstance(raw, str):
-            return None  # 无路径参数可解析(D1:按未配置语义,不拦截)
-        workdir = (
-            str(frame_ctx.workdir.expanduser().resolve())
-            if frame_ctx.workdir is not None
-            else self._workdir(frame_ctx.frame.run_id)
+            return None, None
+        policy = self._data_policy
+        # 按声明域族分派目标解析:fs.* 走路径前缀,net.* 走 URL 前缀;其余族
+        # (db.* 等,D2 机制就位)在 policy 在场时按声明模式匹配已注册域,过同一 allow 判定
+        domains: list[DataDomain] = []
+        if "fs.*" in spec.data_domains:
+            raw = call.args.get("path")
+            if not isinstance(raw, str):
+                return None, None  # 无路径参数可解析(D1:按未配置语义,不拦截)
+            workdir = (
+                str(frame_ctx.workdir.expanduser().resolve())
+                if frame_ctx.workdir is not None
+                else self._workdir(frame_ctx.frame.run_id)
+            )
+            resolved = resolve_work_path(
+                workdir, [str(p.expanduser().resolve()) for p in frame_ctx.read_paths], raw
+            )
+            if isinstance(resolved, ToolResult):
+                return None, None  # 越界路径由工具自身按沙箱语义报错(resolve_work_path),数据层不重复判
+            domain = self._resolve_fs_domain(resolved, Path(workdir))
+            if domain is None:
+                if policy is None:
+                    return None, None  # D1:未配置域不拦截
+                # D2(§3.1):未配置域按 confidential——忘了配 = 最严,不是最松
+                domain = DataDomain(name="fs.unconfigured", sensitivity=CONFIDENTIAL)
+            domains.append(domain)
+        if "net.*" in spec.data_domains and policy is not None:
+            url = call.args.get("url")
+            if not isinstance(url, str):
+                return None, None  # 无 URL 参数可解析(同 fs,不拦截)
+            domain = self._resolve_net_domain(url)
+            if domain is None:
+                # D2(§3.1):未命中已配置域按 confidential——忘了配 = 最严,不是最松
+                domain = DataDomain(name="net.unconfigured", sensitivity=CONFIDENTIAL)
+            domains.append(domain)
+        # policy 缺席时 net 声明不判(D1 逐字:net 判定属 D2,net 工具行为与引入前一致)
+        declared_rest = [d for d in spec.data_domains if d not in ("fs.*", "net.*")]
+        if declared_rest and policy is not None:
+            matched = [
+                domain
+                for pattern in declared_rest
+                for domain in policy.domains.values()
+                if fnmatch.fnmatchcase(domain.name, pattern)
+            ]
+            # 声明的域未在 [data] 注册 = 解析失败 → 按 confidential(§3.3)
+            domains.extend(
+                matched
+                or [DataDomain(name=pattern, sensitivity=CONFIDENTIAL) for pattern in declared_rest]
+            )
+        # policy 缺席时其余族声明同样不判(D1 只判 fs.*;skills.*/drafts.* 等平台声明维持现状)
+        if not domains:
+            return None, None
+        whitelist = policy.whitelist_for(principal.subject) if policy is not None else None
+        for domain in domains:
+            if not allow(principal, domain, whitelist=whitelist):
+                await self._emit_data_signal(
+                    DATA_ACCESS_DENIED,
+                    frame_ctx,
+                    {
+                        "subject": principal.subject,
+                        "domain": domain.name,
+                        "sensitivity": domain.sensitivity,
+                        "tool": call.name,
+                    },
+                )
+                return (
+                    ToolResult(
+                        ok=False,
+                        error=ToolError(
+                            kind=ToolErrorKind.DATA_ACCESS_DENIED,
+                            message=(
+                                f"数据域 {domain.name}(敏感度 {domain.sensitivity})拒绝 "
+                                f"{principal.subject}(clearance {clearance_of(principal)})访问"
+                            ),
+                            retryable=False,
+                            hint="数据层 authZ 拒绝:需要更高 clearance 的 principal(本消息不含域内任何内容)",
+                        ),
+                    ),
+                    None,
+                )
+        await self._emit_data_signal(
+            DATA_ACCESS_GRANTED,
+            frame_ctx,
+            {
+                "subject": principal.subject,
+                "domains": [d.name for d in domains],
+                "tool": call.name,
+            },
         )
-        resolved = resolve_work_path(
-            workdir, [str(p.expanduser().resolve()) for p in frame_ctx.read_paths], raw
-        )
-        if isinstance(resolved, ToolResult):
-            return None  # 越界路径由工具自身按沙箱语义报错(resolve_work_path),数据层不重复判
-        domain = self._resolve_fs_domain(resolved, Path(workdir))
-        if domain is None or allow(principal, domain):
-            return None
-        return ToolResult(
-            ok=False,
-            error=ToolError(
-                kind=ToolErrorKind.DATA_ACCESS_DENIED,
-                message=(
-                    f"数据域 {domain.name}(敏感度 {domain.sensitivity})拒绝 "
-                    f"{principal.subject}(clearance {clearance_of(principal)})访问"
-                ),
-                retryable=False,
-                hint="数据层 authZ 拒绝:需要更高 clearance 的 principal(本消息不含域内任何内容)",
-            ),
-        )
+        record = {
+            "allowed": True,
+            "domains": [{"name": d.name, "sensitivity": d.sensitivity} for d in domains],
+        }
+        return None, record
 
     def release_run(self, run_id: str) -> None:
         """run 收尾:删掉该 run 的临时工作目录并忘掉登记。
@@ -384,18 +569,25 @@ class LocalPythonToolRegistry:
         各工具 cost_hint 写量级(声明不强制)。
         §W1(STDLIB-CATALOG):system.time.now 声明 ``replayable``(replay 语义见 dispatch);system.task.todo_* 双工具
         持 run 级状态(``run_states``);system.skill.search 的 skills 数据源由 KernelBuilder
-        经 ``bind_skills`` 注入(未装配时只检索工具面)。
+        经 ``bind_skills`` 注入(未装配时只检索工具面);M6:system.memory.search/system.memory.write
+        的 MemoryService 经 ``bind_memory`` 注入(未装配时调用报"未配置 memory 子系统"结构化错误);
+        WS-C:system.skill.register(§6.2 运行期注册,WRITE·confirm=True)的目标 skills registry
+        同样经 ``bind_skills`` 注入(未 bind 或不支持 register 时调用报"未装配"结构化错误)。
+        M1:system.user.ask/system.user.notify(§8.3 User Communication)的宿主回调经
+        ``bind_user_channel`` 注入(未 bind 调用报"user 通道未装配"结构化错误,同 memory 先例)。
         Phase 3(library-design-plan §4.2/§4.4):system.file.stat(读/写决策前探查)/system.file.delete
         (高危,confirm=True,仅文件与空目录)/system.file.mkdir(parents/exist_ok,幂等)/
         system.net.http_request(非 GET 通用 HTTP,与 http_fetch 共用执行体);新工具无旧名,不设别名。
         """
         from agent_os.tools.builtins import (
+            ask_user_tool,
             blob_get,
             fs_edit,
             fs_read,
             fs_write,
             http_fetch_tool,
             http_request_tool,
+            notify_user_tool,
             shell_exec,
         )
         from agent_os.tools.std import (
@@ -404,7 +596,10 @@ class LocalPythonToolRegistry:
             fs_mkdir,
             fs_search,
             fs_stat,
+            memory_search_tool,
+            memory_write_tool,
             now,
+            skill_register_tool,
             skill_search_tool,
             todo_read_tool,
             todo_update_tool,
@@ -504,6 +699,22 @@ class LocalPythonToolRegistry:
         reg.register_alias("todo_read", "system.task.todo_read")
         reg.register(skill_search_tool(name="system.skill.search", registry=reg))
         reg.register_alias("skill_search", "system.skill.search")
+        # M6(§11.2):工具面常驻,MemoryService 由 KernelBuilder 经 bind_memory 注入
+        # (未装配时调用报结构化错误,同 skill_search 未 bind 只检索工具面的先例)
+        reg.register(memory_search_tool(name="system.memory.search", registry=reg))
+        reg.register_alias("memory_search", "system.memory.search")
+        reg.register(memory_write_tool(name="system.memory.write", registry=reg))
+        reg.register_alias("memory_write", "system.memory.write")
+        # §6.2(WS-C):工具面常驻,confirm=True 过内核 tool-confirm 闸门;目标 skills
+        # registry 由 KernelBuilder 经 bind_skills 注入(与 skill_search 同一数据源;
+        # 未 bind 或 registry 不支持 register 时调用报"未装配"结构化错误,同 memory
+        # 工具先例);新工具无旧名,不设别名(Phase 3 先例)
+        reg.register(skill_register_tool(name="system.skill.register", registry=reg))
+        # M1(§8.3 User Communication):工具面常驻,宿主回调通道由 KernelBuilder 经
+        # bind_user_channel 注入(未 bind 时调用报"user 通道未装配"结构化错误,
+        # 同 memory 工具先例);新工具无旧名,不设别名
+        reg.register(ask_user_tool(name="system.user.ask", registry=reg))
+        reg.register(notify_user_tool(name="system.user.notify", registry=reg))
         # —— Phase 3 补齐(library-design-plan §4.2/§4.4;新工具无旧名,不设别名)——
         reg.tool(
             name="system.file.stat",

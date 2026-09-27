@@ -123,9 +123,34 @@ def usage_panel(run_dir: str | Path) -> dict[str, Any]:
     """产物目录 → ``{"run": {...九字段}, "frames": [...]}``(§4.4 usage 面板按帧分列)。
 
     数据源只有 checkpoint.json:run 级为九字段 Usage 全量,帧级为
-    ``USAGE_FRAME_KEYS`` 子集 + frame_id/skill/depth/status。
+    ``USAGE_FRAME_KEYS`` 子集 + frame_id/skill/depth/status。``subtree`` 列为
+    WS2 子树汇总:沿帧条目的 ``parent_id`` 链接 DFS,同字段子集求和(含帧自身;
+    与 ``Kernel.subtree_usage`` 同口径,计费字段累计语义)。纯 JSON 字段扩展,
+    前端渲染不动,按需取用。
     """
     checkpoint = read_checkpoint(run_dir)
+    raw = checkpoint.get("frames") or []
+    by_id = {f.get("frame_id"): f for f in raw}
+    children: dict[Any, list[Any]] = {}
+    for f in raw:
+        children.setdefault(f.get("parent_id"), []).append(f.get("frame_id"))
+
+    def _subtree_sums(frame_id: Any) -> dict[str, Any]:
+        """沿 parent_id 邻接 DFS,``USAGE_FRAME_KEYS`` 逐字段求和(含帧自身)。"""
+        sums: dict[str, Any] = {k: 0 for k in USAGE_FRAME_KEYS}
+        seen = {frame_id}
+        queue = [frame_id]
+        while queue:
+            fid = queue.pop()
+            usage = (by_id.get(fid) or {}).get("usage") or {}
+            for k in USAGE_FRAME_KEYS:
+                sums[k] += usage.get(k, 0)
+            for child_id in children.get(fid, []):
+                if child_id not in seen:
+                    seen.add(child_id)
+                    queue.append(child_id)
+        return sums
+
     frames = [
         {
             "frame_id": f.get("frame_id"),
@@ -133,7 +158,8 @@ def usage_panel(run_dir: str | Path) -> dict[str, Any]:
             "depth": f.get("depth"),
             "status": f.get("status"),
             **{k: (f.get("usage") or {}).get(k, 0) for k in USAGE_FRAME_KEYS},
+            "subtree": _subtree_sums(f.get("frame_id")),
         }
-        for f in checkpoint.get("frames") or []
+        for f in raw
     ]
     return {"run": (checkpoint.get("run") or {}).get("usage") or {}, "frames": frames}

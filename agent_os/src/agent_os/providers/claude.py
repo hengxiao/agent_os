@@ -18,6 +18,7 @@ OpenAICompatibleProvider(§4.3"值得独立实现"):
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncIterator
 from typing import Any
@@ -97,7 +98,140 @@ class ClaudeProvider:
         return self._map_response(resp.json())
 
     async def stream(self, req: ChatRequest) -> AsyncIterator[ChatChunk]:
-        raise NotImplementedError("M5")
+        """Anthropic SSE 流式(§4.1):``stream=True`` + Messages 事件序列。
+
+        ``message_start``(input usage)→ ``content_block_start/delta/stop``(text/
+        thinking 即时透传;signature_delta 按块累计进 ``meta["signature"]``;tool_use 的
+        input_json 分片按块累计、stop 时解析为完整 ToolCall(unmangle)一次交付)→
+        ``message_delta``(stop_reason + output usage)→ ``message_stop``(交付终 chunk)。
+        ``ping``/``error`` 旁路;流提前结束(未见 ``message_stop``)/传输层错误 →
+        UNAVAILABLE(retryable)。
+        """
+        headers = {
+            "x-api-key": self.api_key or "",
+            "anthropic-version": self.anthropic_version,
+            "content-type": "application/json",
+        }
+        body = {**self._request_body(req), "stream": True}
+        try:
+            if self._client is not None:
+                async with self._client.stream(
+                    "POST", f"{self.base_url}/v1/messages", json=body, headers=headers
+                ) as resp:
+                    async for chunk in self._stream_chunks(resp):
+                        yield chunk
+            else:
+                async with (
+                    httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client,
+                    client.stream(
+                        "POST", f"{self.base_url}/v1/messages", json=body, headers=headers
+                    ) as resp,
+                ):
+                    async for chunk in self._stream_chunks(resp):
+                        yield chunk
+        except httpx.TransportError as e:
+            # 连接/读超时、中途断流(ReadError/RemoteProtocolError 均归此类)
+            raise ProviderError(
+                ProviderErrorKind.UNAVAILABLE, f"{type(e).__name__}: {e}", retryable=True
+            ) from e
+
+    async def _stream_chunks(self, resp: httpx.Response) -> AsyncIterator[ChatChunk]:
+        """单个 SSE 响应 → ChatChunk 序列(``async with client.stream`` 内消费)。"""
+        if resp.status_code >= 400:
+            await resp.aread()  # 流式响应须先读体,_map_error 才能取 error.message
+            raise self._map_error(resp)
+        stopped = False
+        stop_reason: str | None = None
+        blocks: dict[int, dict[str, Any]] = {}  # index → 块级累计(type/id/name/signature/json)
+        usage = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
+        async for line in resp.aiter_lines():
+            if not line.startswith("data:"):
+                continue  # event:/注释/空行旁路(每事件单行 data,类型在 payload 内)
+            try:
+                data = json.loads(line[5:].strip())
+            except ValueError:
+                continue  # 畸形行跳过,不中断整流
+            kind = data.get("type")
+            if kind == "message_start":
+                u = ((data.get("message") or {}).get("usage")) or {}
+                usage["input"] = u.get("input_tokens", 0)
+                usage["output"] = u.get("output_tokens", 0)
+                usage["cache_read"] = u.get("cache_read_input_tokens", 0)
+                usage["cache_write"] = u.get("cache_creation_input_tokens", 0)
+            elif kind == "content_block_start":
+                block = data.get("content_block") or {}
+                btype = block.get("type")
+                if btype in ("text", "thinking", "tool_use"):
+                    blocks[data.get("index", 0)] = {
+                        "type": btype,
+                        "id": block.get("id", ""),
+                        "name": block.get("name", ""),
+                        "signature": "",
+                        "json": "",
+                    }
+            elif kind == "content_block_delta":
+                block = blocks.get(data.get("index", 0))
+                if block is None:
+                    continue
+                delta = data.get("delta") or {}
+                dtype = delta.get("type")
+                if dtype == "text_delta":
+                    yield ChatChunk(delta=Message(role=Role.ASSISTANT, content=delta.get("text", "")))
+                elif dtype == "thinking_delta":
+                    yield ChatChunk(delta=Message(role=Role.ASSISTANT, reasoning=delta.get("thinking", "")))
+                elif dtype == "signature_delta":
+                    block["signature"] += delta.get("signature", "")
+                elif dtype == "input_json_delta":
+                    block["json"] += delta.get("partial_json", "")
+            elif kind == "content_block_stop":
+                block = blocks.pop(data.get("index", 0), None)
+                if block is None:
+                    continue
+                if block["type"] == "tool_use":
+                    # 分片累计的 input_json 在 stop 时解析;unmangle 回点分 canonical
+                    yield ChatChunk(
+                        delta=Message(
+                            role=Role.ASSISTANT,
+                            tool_calls=[
+                                ToolCall(
+                                    id=block["id"],
+                                    name=unmangle_name(block["name"]),
+                                    args=_parse_partial_json(block["json"]),
+                                )
+                            ],
+                        )
+                    )
+                elif block["type"] == "thinking" and block["signature"]:
+                    # 与 _map_response 同形态:signature 存 meta["signature"] 供 round-trip
+                    yield ChatChunk(
+                        delta=Message(role=Role.ASSISTANT, meta={"signature": block["signature"]})
+                    )
+            elif kind == "message_delta":
+                delta = data.get("delta") or {}
+                if delta.get("stop_reason"):
+                    stop_reason = delta["stop_reason"]
+                u = data.get("usage") or {}
+                if u.get("output_tokens") is not None:
+                    usage["output"] = u["output_tokens"]
+            elif kind == "message_stop":
+                stopped = True
+                break
+            # ping/error 等其余事件旁路
+        if not stopped:
+            # 流提前结束(未见 message_stop)= 截断:半截结果不可信,按可重试故障上抛
+            raise ProviderError(
+                ProviderErrorKind.UNAVAILABLE, "SSE 流截断(未收到 message_stop)", retryable=True
+            )
+        # usage 从 message_start/message_delta 汇聚进终 ChatChunk
+        yield ChatChunk(
+            finish_reason=stop_reason,
+            usage=ChatUsage(
+                prompt=usage["input"],
+                completion=usage["output"],
+                cache_read=usage["cache_read"],
+                cache_write=usage["cache_write"],
+            ),
+        )
 
     # ------------------------------------------------------------------
     # 请求序列化(契约 → Anthropic 格式)
@@ -222,6 +356,20 @@ class ClaudeProvider:
         if status == 529 or status >= 500:
             return ProviderError(ProviderErrorKind.UNAVAILABLE, message, retryable=True)
         return ProviderError(ProviderErrorKind.INVALID, f"HTTP {status}: {message}", retryable=False)
+
+
+def _parse_partial_json(raw: str) -> dict[str, Any]:
+    """流式 tool_use 的 ``input_json`` 分片累计串 → args;解析失败按空调用处理
+
+    (与 openai_compatible._parse_arguments 同一容忍口径,错误观察交由 schema 校验)。
+    """
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 __all__ = ["DEFAULT_BASE_URL", "ClaudeProvider"]

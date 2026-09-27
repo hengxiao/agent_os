@@ -94,11 +94,13 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from agent_os.api.v1 import (
+    CONFIDENTIAL,
     PRE_TOOL_CALL,
     RUN_STARTED,
     Allow,
     Message,
     Mode,
+    Principal,
     RunControl,
     Signal,
     web_single_user_principal,
@@ -109,7 +111,12 @@ from agent_os.host.shared.runrecord import STATUS_FAILED
 from agent_os.kernel.debug import RESUME_COMMANDS as DEBUG_RESUME_COMMANDS
 from agent_os.kernel.debug import DebugController
 from agent_os.kernel.errors import AgentOSError
-from agent_os.runtime.config import build_kernel, load_config, load_skillsets
+from agent_os.runtime.config import (
+    build_kernel,
+    load_config,
+    load_skillsets,
+    web_token_map,
+)
 
 #: rerun 等 stop verdict 落地的兜底(秒):超时按 best-effort 收尾,不悬挂
 _RERUN_STOP_TIMEOUT = 10.0
@@ -455,6 +462,33 @@ class RunManager:
         """本宿主的单用户 principal(docs/SKILL-DEV.md §1.2:promote 记录的 promoted_by)。"""
         return self._principal()
 
+    def token_principal(self, token: str) -> Any:
+        """D3-lite 多用户映射(docs/DATA-AUTHZ.md §2.2):``[web.tokens]`` token → subject。
+
+        命中 → 该 subject 的 Principal(issuer=``api-token``;clearance 同单用户
+        confidential——token 即认证凭证,逐域收束由 ``[data.principals]`` 白名单表达);
+        未命中 → None(调用方回落单用户语义)。配置每次现读,token 表改动即生效,
+        与 ``_assemble_kernel`` 每 run 重读同旨;读取/解析失败不拖垮请求
+        (退化为无映射,同 :meth:`_principal` 先例)。
+        """
+        if not token:
+            return None
+        try:
+            table = web_token_map(load_config(self._config_path))
+        except Exception:  # noqa: BLE001 — 映射解析失败退化为无映射,不阻断请求
+            return None
+        subject = table.get(token)
+        if subject is None:
+            return None
+        return Principal(subject=subject, issuer="api-token", attrs={"clearance": CONFIDENTIAL})
+
+    def has_token_map(self) -> bool:
+        """装配期一探:``[web.tokens]`` 是否配置(决定 app 是否装 Bearer 映射中间件)。"""
+        try:
+            return bool(web_token_map(load_config(self._config_path)))
+        except Exception:  # noqa: BLE001 — 同上:失败按无映射,不阻断装配
+            return False
+
     def assemble_lab_kernel(self, overlay: Any) -> Any:
         """装配"生产 + 草稿层"内核(docs/SKILL-DEV.md §1.1;L3):Lab test-run/G4 专用。
 
@@ -483,6 +517,7 @@ class RunManager:
         overrides: dict[str, Any] | None = None,
         skill_set: str | None = None,
         supervisor_handler: Any = None,
+        principal: Any = None,
         debug_session: Any = None,
         replay_script: Any = None,
         kernel_patcher: Any = None,
@@ -496,6 +531,8 @@ class RunManager:
         (内存态 + meta.json/result.json)带 ``skill_set``(全局 run 记 ``"default"``)。
         ``supervisor_handler``(S2):run 级注入的 supervisor 通道(§2.3 选择顺序
         第一级;REST 层传不了可调用,供嵌入方程序化调用),缺省见 :meth:`_assemble_kernel`。
+        ``principal``(D3-lite,docs/DATA-AUTHZ.md §2.2):请求级身份(Bearer 映射的
+        多用户 principal);缺省 None → :meth:`_principal` 单用户部署者,行为与引入前一致。
         ``debug_session``(P3):给了就把共享 DebugController 挂到本 run 内核的
         总线上(订阅序:hub ``_fan`` 之后、``_cap`` 之前——暂停前信号已落
         hub/trace,且本方法返回时会话已绑定 run)。
@@ -562,7 +599,9 @@ class RunManager:
                 kernel.signals.subscribe(RUN_STARTED, _cap)
                 record = execute_run(
                     kernel, skill, input, artifacts_root=self._artifacts_root, host="web",
-                    principal=self._principal(),  # 数据层身份(docs/DATA-AUTHZ.md §2.2)
+                    # 数据层身份(docs/DATA-AUTHZ.md §2.2):D3-lite 请求级身份优先,
+                    # 缺省回落单用户部署者(行为与引入前逐字一致)
+                    principal=principal or self._principal(),
                 )
                 record["skill_set"] = tag
                 self._tag_artifacts(record["run_id"], tag)

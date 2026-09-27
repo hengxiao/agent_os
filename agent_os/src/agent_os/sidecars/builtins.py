@@ -235,9 +235,13 @@ class CodeScanner:
 
 
 class HumanApproval:
-    """§5.4:订阅 ``pre:tool.call``(EXEC 级);挂起等待人工批准,超时走可配默认
+    """§5.4 策略载体(WS2):人工裁决已下沉为内核 tool-confirm 闸门
 
-    (如"超时拒绝");高风险可叠加模型审批。"""
+    (docs/SUPERVISOR.md §10;SYNC 2s fail-closed 契约装不下"等人"的长阻塞,
+    sidecar 不再拦人)。本类保留为策略载体:KernelBuilder 装配时把实例传给
+    Kernel——``spec.confirm`` 之外,EXEC 档工具也过闸;``timeout``/``on_timeout``
+    在装配期映射为闸门共用 supervisor 通道的缺省超时与兜底策略(见
+    KernelBuilder.build)。"""
 
     name: ClassVar[str] = "human_approval"
     subscriptions: ClassVar[list[SignalPattern]] = ["pre:tool.call"]
@@ -249,5 +253,5 @@ class HumanApproval:
         self.timeout = timeout
         self.on_timeout = on_timeout
 
-    async def on_signal(self, sig: Signal, ctl: RunControl) -> Verdict:
-        raise NotImplementedError("M4")
+    async def on_signal(self, sig: Signal, ctl: RunControl) -> None:
+        return None  # 非阻塞弃权(仲裁视 None 为 Allow):裁决在内核 tool-confirm 闸门

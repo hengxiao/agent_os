@@ -43,7 +43,7 @@ path = "examples/workspace_janitor/skills.yaml"
 ```
 
 ```bash
-agent-os run --config demo.toml --skill ops.scan.workspace \
+agent-os run ops.scan.workspace --config demo.toml \
   --input '{"scratch_dir": "/tmp/janitor-demo/scratch", "pid": <pid>}'
 ```
 

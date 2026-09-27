@@ -49,7 +49,13 @@ from agent_os.logic.inprocess import InProcessLogicKernel
 from agent_os.logic.python_sandbox import PythonSandboxLogicKernel
 from agent_os.providers.mock import MockProvider
 from agent_os.runtime.builder import KernelBuilder
-from agent_os.sidecars import BudgetGuard, LoopDetector, StallDetector, ToolGuard
+from agent_os.sidecars import (
+    BudgetGuard,
+    HumanApproval,
+    LoopDetector,
+    StallDetector,
+    ToolGuard,
+)
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.builtins import python_exec_tool
 from agent_os.tools.local_registry import LocalPythonToolRegistry
@@ -293,6 +299,18 @@ def test_sync_sidecar_fail_closed(tmp_path):
     kernel = _build(tmp_path, _CrashySidecar(), brain=always_final_brain)
     with pytest.raises(RunAborted, match="fail-closed"):
         run(kernel)
+
+
+# ---------------------------------------------------------------------------
+# HumanApproval(WS2 下沉,docs/SUPERVISOR.md §10)
+# ---------------------------------------------------------------------------
+
+
+def test_human_approval_abstains():
+    """on_signal 非阻塞弃权(返回 None,仲裁视为 Allow):人工裁决已下沉为内核
+    tool-confirm 闸门,本类仅作策略载体——SYNC 2s fail-closed 装不下"等人"。"""
+    sig = Signal(name="pre:tool.call", run_id="r", payload={"tool": "system.shell.exec"})
+    assert asyncio.run(HumanApproval().on_signal(sig, None)) is None
 
 
 # ---------------------------------------------------------------------------

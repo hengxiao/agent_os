@@ -15,19 +15,27 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import textwrap
 from typing import Any, ClassVar
 
 import pytest
 
 from agent_os.api.v1 import (
     Allow,
+    ChatRequest,
+    ChatResponse,
+    ChatUsage,
+    FrameStatus,
+    Message,
     Mode,
     Role,
     Signal,
     Source,
+    ToolCall,
 )
 from agent_os.kernel.control import FORCE_COMPRESS_KEY
-from agent_os.kernel.errors import RunAborted
+from agent_os.kernel.errors import RunAborted, SubtreeCancelled
 from agent_os.providers.mock import MockProvider
 from tests.helpers.brains import fib_brain
 from tests.helpers.kernels import FIB_SKILLS_YAML, assemble
@@ -192,3 +200,103 @@ def test_get_usage_snapshot():
     kernel, _ = _kernel_with(probe)
     asyncio.run(kernel.run("demo.fib", {"n": 2}))
     assert probe.notes and probe.notes[0].steps >= 1
+
+
+# ---------------------------------------------------------------------------
+# cancel_frame(子树级联取消,WS1)
+# ---------------------------------------------------------------------------
+
+CHAIN_YAML = """
+skills:
+  - name: test.chain
+    version: 1.0.0
+    kind: prompt
+    inputs:
+      type: object
+      properties: { k: { type: integer, minimum: 1 } }
+      required: [k]
+    outputs:
+      type: object
+      properties: { k: { type: integer } }
+      required: [k]
+    permissions: { tools: [], skills: [test.chain] }
+    model: { prefer: ["mock/x"] }
+    limits: { max_steps: 10 }
+    prompt: CHAIN
+"""
+
+
+def _chain_brain(req: ChatRequest) -> ChatResponse:
+    """k>1 且尚无工具结果 → 调 skill.test.chain(k-1);否则给最终答案(容错错误观察)。"""
+    k = None
+    for m in req.messages:
+        if m.role is Role.USER:
+            k = json.loads(m.content)["k"]
+            break
+    tool_msgs = [m for m in req.messages if m.role is Role.TOOL]
+    if k and k > 1 and not tool_msgs:
+        return ChatResponse(
+            message=Message(
+                role=Role.ASSISTANT,
+                tool_calls=[
+                    ToolCall(id=f"chain-{k}", name="skill.test.chain", args={"k": k - 1})
+                ],
+            ),
+            finish_reason="tool_calls",
+            usage=ChatUsage(prompt=1, completion=1),
+        )
+    return ChatResponse(
+        message=Message(role=Role.ASSISTANT, content=json.dumps({"k": k})),
+        finish_reason="stop",
+        usage=ChatUsage(prompt=1, completion=1),
+    )
+
+
+def _chain_kernel(probe: _Probe, tmp_path):
+    """三级递归链(k=3 → 2 → 1)的最小内核。"""
+    from agent_os.api.v1 import Permission, RunConfig, ToolPolicy
+
+    config = RunConfig(
+        model="mock/x",
+        tool_policy=ToolPolicy(max_permission=Permission.EXEC),
+        compression="off",
+    )
+    p = tmp_path / "skills.yaml"
+    p.write_text(textwrap.dedent(CHAIN_YAML), encoding="utf-8")
+    return assemble(config, MockProvider(_chain_brain), p, sidecars=(probe,))
+
+
+def test_cancel_frame_collects_subtree_and_run_survives(tmp_path):
+    """cancel_frame 置帧级 stop 标志、DFS 收齐子树;子树终态(SubtreeCancelled)
+    不杀 run——根帧拿到 interrupted 错误观察后正常跑到终态。"""
+    box: dict[str, Any] = {}
+
+    async def act(sig, ctl, notes):
+        if sig.payload.get("depth") == 3:
+            leaf_id = sig.payload["frame_id"]
+            mid_id = box["kernel"].stack.get(leaf_id).parent_id
+            notes.append((mid_id, leaf_id, await ctl.cancel_frame(mid_id, "剪枝测试")))
+
+    probe = _Probe("post:frame.push", act, once=False)
+    kernel = _chain_kernel(probe, tmp_path)
+    box["kernel"] = kernel
+    result = asyncio.run(kernel.run("test.chain", {"k": 3}))
+
+    # run 到正常终态:根帧未被取消,子树取消折叠为 interrupted 错误观察
+    assert result == {"k": 3}
+    assert kernel._stop_flags == {}, "子树取消不得升级成 run 级 stop"
+
+    assert probe.notes, "未在 depth-3 压栈时触发取消"
+    mid_id, leaf_id, ack = probe.notes[0]
+    assert set(ack) == {mid_id, leaf_id}, "子树 DFS 应收齐目标帧及其全部后代"
+    # 帧级 stop 标志:同点检查抛 SubtreeCancelled 的数据源
+    assert kernel._frame_stop_flags[mid_id] == "剪枝测试"
+    assert kernel._frame_stop_flags[leaf_id] == "剪枝测试"
+    # 子树终态:两帧均以 SubtreeCancelled 失败弹栈(不是 RunAborted)
+    for fid in (mid_id, leaf_id):
+        frame = kernel.stack.get(fid)
+        assert frame is not None and frame.status is FrameStatus.FAILED
+        assert isinstance(frame.error, SubtreeCancelled)
+        assert not isinstance(frame.error, RunAborted)
+    roots = [f for f in kernel.stack.tree() if f.parent_id is None]
+    assert len(roots) == 1 and roots[0].status is FrameStatus.DONE

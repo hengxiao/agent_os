@@ -13,15 +13,32 @@
                    importlib 加载后调用 ``func(registry)``(加载/注册失败抛 ConfigError);
                    声明即授权,RunConfig 权限上限同步提到 EXEC(同 system.python.exec)
     [skills]     → LocalFileSkillRegistry
-    [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加)
+    [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加);
+                   human_approval(WS2)= true 或 { timeout, on_timeout }:
+                   装配 HumanApproval 策略,EXEC 档工具过内核 tool-confirm 闸门
     [supervisor] → timeout_s / on_timeout / default_answer(docs/SUPERVISOR.md §6;TOML
                    写不了可调用 handler——此处只加载策略字段,handler 由宿主经
                    build_kernel(supervisor_handler=...) 注入,S2:Web 收件箱
                    默认通道 / CLI stderr 协议)
     [telemetry]  → JsonlTelemetrySink(目录自动创建)
-    [retry]      → ProviderManager 的 max_attempts / backoff_base
+    [memory]     → M6 记忆子系统(docs/DESIGN.md §11.2):dir = "./memory"
+                   (LocalFileMemoryService 根目录);段存在才接线,缺段完全不 bind
+                   (同 [credentials] 先例;接线后 system.memory.search/write 可用)
+    [blob]       → M3 spill 文件存储(§8.4/§7.2):dir = "./blobs"(FileBlobStore
+                   根目录);段存在才接线,缺段 = 进程内 InMemoryBlobStore(零破坏)
+    [retry]      → ProviderManager 的 max_attempts / backoff_base / stream_idle_timeout
+                   (流式 idle 看门狗秒数,缺段保持 Manager 默认 30s)
     [prices]     → 每模型每百万 token 单价({input, output, cache_read?});
                    缺它则 usage.cost 恒 0,max_cost/BudgetGuard 不会触发(装配期告警)
+    [credentials]→ WS1 凭证作用域:{凭证名 = {env = "VAR_NAME"}},只存 env 变量名
+                   不落盘明文;段存在才 bind 到工具 registry(dispatch 按工具声明注入)
+    [data]       → D2 数据层 authZ(docs/DATA-AUTHZ.md §3):domains = [{name,
+                   sensitivity?(缺省 confidential), path_prefix|url_prefix 恰一}];
+                   [data.principals."<subject>"] domains = [glob 域名] 白名单。
+                   段存在才 bind_data_policy + 注册域边界;缺席完全不 bind
+                   (D1"未配置不拦截"语义逐字不动)
+    [web.tokens] → D3-lite 多用户映射:{ "<token>" = "user:<login>" }(host/web
+                   Bearer 门命中映射 → 逐用户 Principal;解析见 web_token_map)
 
 两个错误归类的锚点:配置文件缺失/畸形/provider 装配失败抛 :class:`ConfigError`
 (宿主归退出码 4);技能清单/权限闸门问题由 KernelBuilder 抛 SkillLoadError(归 2)。
@@ -37,27 +54,42 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-from agent_os.api.v1 import Permission, RunConfig, ToolPolicy
+from agent_os.api.v1 import (
+    CONFIDENTIAL,
+    DataDomain,
+    DataPolicy,
+    Permission,
+    RunConfig,
+    ToolPolicy,
+)
 from agent_os.logic import (
     DockerPythonSandboxLogicKernel,
     DockerUnavailableError,
     InProcessLogicKernel,
     PythonSandboxLogicKernel,
 )
+from agent_os.memory.local_file import LocalFileMemoryService
 from agent_os.providers.claude import ClaudeProvider
 from agent_os.providers.kimi import KimiProvider
 from agent_os.providers.mock import MockProvider
 from agent_os.providers.openai_compatible import OpenAICompatibleProvider
 from agent_os.runtime.builder import KernelBuilder
-from agent_os.sidecars.builtins import BudgetGuard, LoopDetector, ToolGuard
+from agent_os.sidecars.builtins import (
+    BudgetGuard,
+    HumanApproval,
+    LoopDetector,
+    ToolGuard,
+)
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.telemetry.jsonl_exporter import JsonlTelemetrySink
+from agent_os.tools.blob import FileBlobStore
 from agent_os.tools.builtins import python_exec_tool
 from agent_os.tools.local_registry import LocalPythonToolRegistry
 
 _log = logging.getLogger("agent_os.runtime.config")
 
-#: ``[run]`` 支持的字段(逐字对齐 §2.4 RunConfig 标量字段;workdir/read_paths 见 §W0-1)
+#: ``[run]`` 支持的字段(逐字对齐 §2.4 RunConfig 标量字段;workdir/read_paths 见 §W0-1;
+#: stream = WS2 流式消费开关,缺省开,caps 不支持自动回落 chat)
 _RUN_FIELDS = (
     "model",
     "max_depth",
@@ -71,11 +103,42 @@ _RUN_FIELDS = (
     "workdir",
     "read_paths",
     "checkpoint_interval",
+    "stream",
 )
 
 
 class ConfigError(RuntimeError):
     """配置缺失/畸形/装配失败(docs/RUNNERS.md §3.3 退出码 4:宿主/基础设施错误)。"""
+
+
+class CredentialScope:
+    """凭证作用域(WS1):``[credentials]`` 段解析产物,凭证名 → env 变量名。
+
+    不落盘明文:配置只存 env 变量名;动态解析——每次调用现读 ``os.environ``,
+    不做装配期快照(15 分钟 OAuth token 续期后下一调用即生效,同
+    providers/openai_compatible.py 动态 key 先例)。可作 resolver 直接传给
+    ``LocalPythonToolRegistry.bind_credentials``。
+    """
+
+    def __init__(self, table: dict[str, str]) -> None:
+        self._table = dict(table)
+
+    def __call__(self, principal: Any, declared_keys: Iterable[str]) -> dict[str, str]:
+        """按工具声明键现读 env,返回 ``{凭证名: 值}``。
+
+        ``principal`` 为 D3 per-principal 凭证留的协议面,v1 忽略。
+        作用域未配置的声明键、或 env 变量缺席 → 该键不出现(工具按
+        ``ctx.credentials.get(key)`` 判缺凭证;泄露纪律:错误消息只带键名,不回显值)。
+        """
+        out: dict[str, str] = {}
+        for key in declared_keys:
+            env = self._table.get(key)
+            if env is None:
+                continue  # 作用域未配置该键
+            value = os.environ.get(env)
+            if value is not None:
+                out[key] = value
+        return out
 
 
 def load_config(path: str | Path) -> dict[str, Any]:
@@ -134,9 +197,22 @@ def _providers(cfg: dict[str, Any]) -> list[Any]:
     if unknown:
         raise ConfigError(f"[providers] 含未知 provider: {unknown}")
     if "kimi" in cfg:
-        providers.append(KimiProvider())
+        kc = cfg["kimi"] or {}
+        unknown = sorted(set(kc) - {"base_url", "api_key"})
+        if unknown:
+            raise ConfigError(f"[providers.kimi] 含未知字段: {unknown}(支持: ['api_key', 'base_url'])")
+        providers.append(
+            # api_key 缺省不传:保持 KimiProvider 的动态 env 解析(token_refresh 续期即生效),
+            # 显式给才钉死(见 kimi.py 类注)
+            KimiProvider(**{k: kc[k] for k in ("base_url", "api_key") if k in kc})
+        )
     if "anthropic" in cfg:
-        providers.append(ClaudeProvider())
+        ac = cfg["anthropic"] or {}
+        known = {"api_key", "base_url", "default_max_tokens", "anthropic_version"}
+        unknown = sorted(set(ac) - known)
+        if unknown:
+            raise ConfigError(f"[providers.anthropic] 含未知字段: {unknown}(支持: {sorted(known)})")
+        providers.append(ClaudeProvider(**{k: ac[k] for k in known if k in ac}))
     if "openai" in cfg:
         oc = cfg["openai"] or {}
         # api_key_env 交给 provider 动态解析(每次调用现读;token_refresh 续期即生效),
@@ -191,9 +267,119 @@ def _prices(cfg: dict[str, Any]) -> dict[str, dict[str, float]]:
     return table
 
 
+def _credentials(cfg: dict[str, Any]) -> CredentialScope:
+    """``[credentials]`` → :class:`CredentialScope`(凭证名 → env 变量名;不落盘明文)。
+
+    值必须是 ``{ env = "VAR_NAME" }`` 形态;非法形态/未知键直接报错——
+    凭证名拼错会静默拿不到注入,宁可装配期炸掉(同 ``_prices`` 严格先例)。
+    """
+    table: dict[str, str] = {}
+    for name, raw in cfg.items():
+        if not isinstance(raw, dict):
+            raise ConfigError(f"[credentials] {name!r} 应为表(如 {{ env = \"GITHUB_TOKEN\" }})")
+        unknown = sorted(set(raw) - {"env"})
+        if unknown:
+            raise ConfigError(f"[credentials] {name!r} 含未知字段: {unknown}(支持: ['env'])")
+        env = raw.get("env")
+        if not isinstance(env, str) or not env:
+            raise ConfigError(f"[credentials] {name!r} 的 env 须为非空字符串(env 变量名,不落盘明文)")
+        table[name] = env
+    return CredentialScope(table)
+
+
+def _data_policy(cfg: dict[str, Any]) -> DataPolicy:
+    """``[data]`` 段 → :class:`DataPolicy`(D2;docs/DATA-AUTHZ.md §3.1/§3.2)。
+
+    形态::
+
+        [data]
+        domains = [ { name, sensitivity?, path_prefix?|url_prefix? }, ... ]
+        [data.principals."<subject>"]
+        domains = ["fs.*", "net.public"]
+
+    ``name`` 必填;``sensitivity`` 缺省 confidential(忘了配 = 最严,§3.1);
+    ``path_prefix``/``url_prefix`` 恰居其一(域边界二选一);白名单值为 glob
+    域名模式表。非法形态/未知键 → ConfigError——域边界拼错会静默失去拦截,
+    宁可装配期炸掉(同 ``_prices``/``_credentials`` 严格先例)。
+    """
+    unknown = sorted(set(cfg) - {"domains", "principals"})
+    if unknown:
+        raise ConfigError(f"[data] 含未知字段: {unknown}(支持: ['domains', 'principals'])")
+    domains: dict[str, DataDomain] = {}
+    boundaries: dict[str, tuple[str, str]] = {}
+    raw_domains = cfg.get("domains") or []
+    if not isinstance(raw_domains, list):
+        raise ConfigError(f"[data] domains 应为表数组,得到: {raw_domains!r}")
+    for raw in raw_domains:
+        if not isinstance(raw, dict):
+            raise ConfigError(f"[data] domains 每项应为表,得到: {raw!r}")
+        unknown = sorted(set(raw) - {"name", "sensitivity", "path_prefix", "url_prefix"})
+        if unknown:
+            raise ConfigError(
+                f"[data] domains 项含未知字段: {unknown}"
+                f"(支持: ['name', 'path_prefix', 'sensitivity', 'url_prefix'])"
+            )
+        name = raw.get("name")
+        if not isinstance(name, str) or not name:
+            raise ConfigError(f"[data] domains 项的 name 须为非空字符串,得到: {name!r}")
+        if name in domains:
+            raise ConfigError(f"[data] domains 域名重复: {name!r}")
+        sensitivity = raw.get("sensitivity", CONFIDENTIAL)
+        if not isinstance(sensitivity, str) or not sensitivity:
+            raise ConfigError(f"[data] 域 {name!r} 的 sensitivity 须为非空字符串")
+        path_prefix, url_prefix = raw.get("path_prefix"), raw.get("url_prefix")
+        if (path_prefix is None) == (url_prefix is None):
+            raise ConfigError(f"[data] 域 {name!r} 的 path_prefix/url_prefix 须恰居其一")
+        prefix = path_prefix if path_prefix is not None else url_prefix
+        if not isinstance(prefix, str) or not prefix:
+            raise ConfigError(f"[data] 域 {name!r} 的边界前缀须为非空字符串")
+        domains[name] = DataDomain(name=name, sensitivity=sensitivity)
+        boundaries[name] = ("fs", path_prefix) if path_prefix is not None else ("net", url_prefix)
+    whitelists: dict[str, tuple[str, ...]] = {}
+    raw_principals = cfg.get("principals") or {}
+    if not isinstance(raw_principals, dict):
+        raise ConfigError(f"[data.principals] 应为表,得到: {raw_principals!r}")
+    for subject, raw in raw_principals.items():
+        if not isinstance(raw, dict):
+            raise ConfigError(f'[data.principals."{subject}"] 应为表(如 {{ domains = ["fs.*"] }})')
+        unknown = sorted(set(raw) - {"domains"})
+        if unknown:
+            raise ConfigError(
+                f'[data.principals."{subject}"] 含未知字段: {unknown}(支持: [\'domains\'])'
+            )
+        patterns = raw.get("domains")
+        if not isinstance(patterns, list) or not all(isinstance(p, str) and p for p in patterns):
+            raise ConfigError(
+                f'[data.principals."{subject}"] 的 domains 须为非空字符串数组(glob 域名模式)'
+            )
+        whitelists[str(subject)] = tuple(patterns)
+    return DataPolicy(domains=domains, whitelists=whitelists, boundaries=boundaries)
+
+
+def web_token_map(cfg: dict[str, Any]) -> dict[str, str]:
+    """``[web.tokens]`` → ``{token: subject}``(D3-lite 多用户映射;docs/DATA-AUTHZ.md §2.2)。
+
+    值须为非空字符串 subject(如 ``"user:alice"``);非表/非法形态 → ConfigError
+    (token 表拼错会静默退回单用户——认证面宁可装配期炸掉,同 ``_credentials`` 先例)。
+    """
+    raw = (cfg.get("web") or {}).get("tokens") or {}
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[web.tokens] 应为表({{ \"<token>\" = \"user:<login>\" }}),得到: {raw!r}")
+    table: dict[str, str] = {}
+    for token, subject in raw.items():
+        if not isinstance(subject, str) or not subject:
+            raise ConfigError(
+                f"[web.tokens] {token!r} 的映射值须为非空字符串 subject(如 \"user:alice\")"
+            )
+        table[str(token)] = subject
+    return table
+
+
 def _sidecars(cfg: dict[str, Any]) -> list[Any]:
     sidecars: list[Any] = []
-    unknown = sorted(set(cfg) - {"budget_guard", "loop_detector", "tool_guard_rules"})
+    unknown = sorted(
+        set(cfg) - {"budget_guard", "loop_detector", "tool_guard_rules", "human_approval"}
+    )
     if unknown:
         raise ConfigError(f"[sidecars] 含未知 sidecar: {unknown}")
     if "budget_guard" in cfg:
@@ -222,6 +408,34 @@ def _sidecars(cfg: dict[str, Any]) -> list[Any]:
                 )
             rules.append((str(rule[0]), str(rule[1]), str(rule[2])))
         sidecars.append(ToolGuard(rules=rules))
+    if "human_approval" in cfg:
+        # WS2(docs/SUPERVISOR.md §10):人工裁决已下沉为内核 tool-confirm 闸门;
+        # 本键装配 HumanApproval 策略载体(EXEC 档工具也过闸)。值 = true(缺省
+        # 策略)或表;on_timeout 语义:deny=超时拒绝(policy fail),allow=超时
+        # 兜底批准本次(default_answer=approve-once;装配期映射见 KernelBuilder.build)
+        ha = cfg["human_approval"]
+        if ha is True:
+            ha = {}
+        if not isinstance(ha, dict):
+            raise ConfigError(
+                f"[sidecars] human_approval 应为 true 或表"
+                f'(如 {{ timeout = 600, on_timeout = "deny" }}),得到: {ha!r}'
+            )
+        unknown_ha = sorted(set(ha) - {"timeout", "on_timeout"})
+        if unknown_ha:
+            raise ConfigError(
+                f"[sidecars] human_approval 含未知字段: {unknown_ha}"
+                f"(支持: ['on_timeout', 'timeout'])"
+            )
+        on_timeout = ha.get("on_timeout", "deny")
+        if on_timeout not in ("deny", "allow"):
+            raise ConfigError(
+                f"[sidecars] human_approval.on_timeout 应为 'deny' | 'allow',"
+                f"得到: {on_timeout!r}"
+            )
+        sidecars.append(
+            HumanApproval(timeout=float(ha.get("timeout", 600)), on_timeout=on_timeout)
+        )
     return sidecars
 
 
@@ -258,6 +472,30 @@ def build_kernel(
         if tools_cfg.get("builtins", False)
         else LocalPythonToolRegistry()
     )
+    cred_cfg = cfg.get("credentials")
+    if cred_cfg is not None:
+        # WS1:[credentials] 段存在才接线;缺席完全不 bind(dispatch 注入空 credentials,零破坏)
+        registry.bind_credentials(_credentials(cred_cfg))
+    data_cfg = cfg.get("data")
+    if data_cfg is not None:
+        # D2:[data] 段存在才接线(bind policy + 注册域边界);缺席完全不 bind,
+        # registry 维持 D1"未配置不拦截"语义逐字不动(docs/DATA-AUTHZ.md §8 实现注 1)
+        policy = _data_policy(data_cfg)
+        if not policy.domains and not policy.whitelists:
+            # 空 [data] 段 = 绑空策略:fail-closed 语义下,带 principal 的调用对声明了
+            # data_domains 的工具全被拒(域未配置按 confidential + subject 白名单空表)。
+            # 行为不变,装配期提示是否有意(空段更可能是漏配)
+            _log.warning(
+                "[data] 段为空(无 domains 无 principals):数据策略按 fail-closed 绑定,"
+                "带身份的调用对全部声明 data_domains 的工具访问都会被拒;"
+                "若属漏配请补 domains/principals,若无意启用数据层请删除空 [data] 段"
+            )
+        registry.bind_data_policy(policy)
+        for name, (kind, prefix) in policy.boundaries.items():
+            if kind == "fs":
+                registry.register_fs_domain(policy.domains[name], prefix)
+            else:
+                registry.register_net_domain(policy.domains[name], prefix)
     if tools_cfg.get("python_orchestrate", False):
         # 编排伪工具(docs/CODE-ORCHESTRATION.md):显式开启;声明即授权,权限上限提到 EXEC
         run_cfg.orchestrate = True
@@ -317,6 +555,28 @@ def build_kernel(
     telemetry_dir = (cfg.get("telemetry") or {}).get("dir")
     if telemetry_dir:
         builder.telemetry(JsonlTelemetrySink(telemetry_dir))
+    memory_cfg = cfg.get("memory")
+    if memory_cfg is not None:
+        # M6:[memory] 段存在才接线(同 [credentials] 先例);缺席完全不 bind。
+        # 严格未知字段(同 _prices/_credentials):dir 拼错会静默写到别的目录
+        unknown_mem = sorted(set(memory_cfg) - {"dir"})
+        if unknown_mem:
+            raise ConfigError(f"[memory] 含未知字段: {unknown_mem}(支持: ['dir'])")
+        mem_dir = memory_cfg.get("dir") or "./memory"
+        if not isinstance(mem_dir, str):
+            raise ConfigError(f"[memory] dir 须为字符串路径,得到: {mem_dir!r}")
+        builder.memory(LocalFileMemoryService(mem_dir))
+    blob_cfg = cfg.get("blob")
+    if blob_cfg is not None:
+        # M3:[blob] 段存在才接线(同 [memory] 先例);缺段 = 进程内 InMemoryBlobStore(零破坏)。
+        # 严格未知字段(同 _prices/_credentials):dir 拼错会静默落到内存版,spill 不持久
+        unknown_blob = sorted(set(blob_cfg) - {"dir"})
+        if unknown_blob:
+            raise ConfigError(f"[blob] 含未知字段: {unknown_blob}(支持: ['dir'])")
+        blob_dir = blob_cfg.get("dir")
+        if not isinstance(blob_dir, str) or not blob_dir:
+            raise ConfigError(f"[blob] dir 须为非空字符串路径,得到: {blob_dir!r}")
+        builder.blob(FileBlobStore(blob_dir))
     prices = _prices(cfg.get("prices") or {})
     builder.prices(prices)
     if not prices:
@@ -329,8 +589,16 @@ def build_kernel(
         )
     retry = cfg.get("retry") or {}
     if retry:
+        # 严格未知字段(同 _prices/_credentials):超时时长拼错会静默失去看门狗调节
+        unknown_retry = sorted(set(retry) - {"max_attempts", "backoff_base", "stream_idle_timeout"})
+        if unknown_retry:
+            raise ConfigError(
+                f"[retry] 含未知字段: {unknown_retry}"
+                f"(支持: ['backoff_base', 'max_attempts', 'stream_idle_timeout'])"
+            )
         builder.retry(
             max_attempts=retry.get("max_attempts"),
             backoff_base=retry.get("backoff_base"),
+            stream_idle_timeout=retry.get("stream_idle_timeout"),
         )
     return builder.build()

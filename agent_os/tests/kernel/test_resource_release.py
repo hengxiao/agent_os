@@ -101,3 +101,60 @@ def test_release_is_idempotent_and_survives_failure(tmp_path):
 
     # 二次回收(幂等)
     asyncio.run(kernel._release_run("nonexistent-run"))
+
+
+def test_release_run_isolated_per_run(tmp_path):
+    """跨 run 隔离(WS1):run A 的 _release_run 只取消本 run 桶的后台帧,
+    不杀共享 kernel 上 run B 的在跑后台帧(并发 run 回归)。"""
+    kernel = _kernel(tmp_path)
+
+    async def main():
+        task_a = asyncio.create_task(asyncio.sleep(60))
+        task_b = asyncio.create_task(asyncio.sleep(60))
+        kernel._spawned.setdefault("run-a", {})["frame-a"] = ("parent-a", task_a)
+        kernel._spawned.setdefault("run-b", {})["frame-b"] = ("parent-b", task_b)
+
+        await kernel._release_run("run-a")
+        assert task_a.cancelled(), "本 run 桶的后台帧应被取消"
+        assert not task_b.done(), "run A 收尾不得误杀 run B 的在跑后台帧"
+        assert "run-a" not in kernel._spawned and "run-b" in kernel._spawned
+
+        await kernel._release_run("run-b")
+        assert task_b.cancelled()
+        assert kernel._spawned == {}, "两个 run 桶都应已回收"
+
+    asyncio.run(main())
+
+
+def test_resume_releases_spawned_registrations(tmp_path):
+    """resume 收尾与 run() 对称(WS3 缺口):finally 必须调 _release_run——
+    resume 路径里 spawn/parallel 登记的后台帧在 run 结束后不得滞留 _spawned。"""
+    from agent_os.api.v1 import RUN_STARTED, Signal
+    from tests.helpers.brains import PowerCut, power_cut_brain
+    from tests.helpers.kernels import fib_kernel
+
+    kernel1 = fib_kernel(power_cut_brain(cut_at=4))
+    started: list[Signal] = []
+
+    async def rec(sig: Signal) -> None:
+        started.append(sig)
+
+    kernel1.signals.subscribe(RUN_STARTED, rec)
+    with pytest.raises(PowerCut):
+        asyncio.run(kernel1.run("demo.fib", {"n": 5}))
+    run_id = started[0].run_id
+    ckpt = tmp_path / "ckpt.json"
+    kernel1.checkpoint(run_id, str(ckpt))
+
+    kernel2 = fib_kernel(fib_brain)  # 新内核从 checkpoint 恢复
+
+    async def main():
+        # 模拟 resume 期间 spawn/parallel 登记的后台帧(run_id 与 checkpoint 相同)
+        task = asyncio.create_task(asyncio.sleep(60))
+        kernel2._spawned.setdefault(run_id, {})["frame-x"] = ("parent-x", task)
+        result = await kernel2.resume(str(ckpt))
+        assert result == {"seq": [0, 1, 1, 2, 3]}
+        assert kernel2._spawned == {}, "resume 收尾未回收 _spawned(WS3 缺口)"
+        assert task.cancelled(), "滞留的后台帧任务应被取消"
+
+    asyncio.run(main())

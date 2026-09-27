@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-__all__ = ["EntryRef", "MemoryEntry", "MemoryService", "Principal", "Provenance"]
+__all__ = ["EntryRef", "MemoryEntry", "MemoryPrincipal", "MemoryService", "Principal", "Provenance"]
 
 
 @dataclass
@@ -18,10 +18,19 @@ class Principal:
     """调用方身份(user/tenant)。与 :class:`~agent_os.api.v1.tools.ToolContext` 的
 
     ``principal`` 预留槽位呼应(§2.2,v1 恒 None)。
+
+    注意:与数据层 ``agent_os.api.v1.principal.Principal``(subject/issuer/attrs)
+    同名不同型;平铺命名空间 ``agent_os.api.v1`` 里的 ``Principal`` 是数据层那个
+    (re-export 顺序在后者覆盖前者),memory 侧请用别名 ``MemoryPrincipal``。
     """
 
     user: str | None = None
     tenant: str | None = None
+
+
+#: 消歧别名(M6):平铺 re-export 后数据层 Principal 覆盖本模块 Principal,
+#: memory 实现/工具侧一律以 ``MemoryPrincipal`` 引用本型,避免静默拿错契约。
+MemoryPrincipal = Principal
 
 
 @dataclass

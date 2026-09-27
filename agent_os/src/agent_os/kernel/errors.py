@@ -14,6 +14,7 @@ __all__ = [
     "OutputValidationError",
     "RunAborted",
     "SkillLoadError",
+    "SubtreeCancelled",
     "ToolDispatchError",
 ]
 
@@ -28,6 +29,18 @@ class RunAborted(AgentOSError):
 
 class BudgetExceeded(RunAborted):
     """超 RunConfig 预算(§3.1 步骤 7):语义上就是 run 中止,故继承 RunAborted。"""
+
+
+class SubtreeCancelled(AgentOSError):
+    """子树级联取消(RunControl.cancel_frame):目标帧及其后代进入终态,**不**中止 run。
+
+    语义分界:run stop(:class:`RunAborted`)杀整个 run;subtree cancel 只终结
+    目标子树——在册后台帧被 ``task.cancel()``(CancelledError 走 §3.1 中断配对
+    路径),调用链上的 prompt 帧在 ``pre:step`` safe point 抛本异常;``wait_frame``
+    对被取消的后台帧原样上抛本异常,交 code 技能处理(可捕获恢复;未捕获则该
+    code 帧失败,仍不殃及 run)。故意不继承 RunAborted:分支/子树取消不得触发
+    run 级中止状态。
+    """
 
 
 class MaxDepthExceeded(AgentOSError):

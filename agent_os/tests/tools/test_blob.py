@@ -113,3 +113,80 @@ def test_blob_get_registered_and_pages_through_spill():
     assert rest.value["truncated"] is False
     assert not missing.ok and missing.error.kind is ToolErrorKind.NOT_FOUND
     assert missing.error.hint, "错误须带可执行的下一步建议(§W0-3)"
+
+
+# ---------------------------------------------------------------------------
+# FileBlobStore(M3):root 目录下按内容寻址落盘,ref 形态与内存版一致
+# ---------------------------------------------------------------------------
+
+
+def test_file_blob_put_get_roundtrip(tmp_path):
+    """put 落盘并返回 ``blob://<run_id>/<sha>`` ref;get 取回同一份字节。"""
+    from agent_os.tools.blob import FileBlobStore
+
+    store = FileBlobStore(str(tmp_path / "blobs"))
+
+    async def main():
+        ref = await store.put(b"hello file blob", "run-1")
+        return ref, await store.get(ref)
+
+    ref, data = asyncio.run(main())
+    assert ref.startswith("blob://run-1/")
+    sha = ref.rsplit("/", 1)[1]
+    assert len(sha) == 64, "ref 形态须与内存版一致(sha256 hex)"
+    assert data == b"hello file blob"
+    assert (tmp_path / "blobs" / "run-1" / sha).is_file(), "内容须按 <root>/<run_id>/<sha> 落盘"
+
+
+def test_file_blob_content_addressed_dedup_and_paging(tmp_path):
+    """内容寻址天然去重;offset/limit 分页语义同内存版。"""
+    from agent_os.tools.blob import FileBlobStore
+
+    store = FileBlobStore(str(tmp_path / "blobs"))
+
+    async def main():
+        r1 = await store.put(b"0123456789", "run-1")
+        r2 = await store.put(b"0123456789", "run-1")
+        return r1, r2, await store.get(r1, offset=3, limit=4)
+
+    r1, r2, window = asyncio.run(main())
+    assert r1 == r2, "同内容同 ref(去重)"
+    assert window == b"3456"
+
+
+def test_file_blob_unknown_ref_raises_key_error(tmp_path):
+    """未知 ref → KeyError(同内存版;blob_get 工具据此报 NOT_FOUND)。"""
+    from agent_os.tools.blob import FileBlobStore
+
+    store = FileBlobStore(str(tmp_path / "blobs"))
+    with pytest.raises(KeyError):
+        asyncio.run(store.get("blob://run-x/" + "0" * 64))
+
+
+def test_file_blob_rejects_traversal_and_malformed_ref(tmp_path):
+    """目录逃逸拒绝(白名单校验):含 ``..``/``/`` 的段、非 sha 段、畸形 ref 一律 KeyError。"""
+    from agent_os.tools.blob import FileBlobStore
+
+    store = FileBlobStore(str(tmp_path / "blobs"))
+    evil = [
+        "blob://../escape/" + "0" * 64,  # run_id 段含 ..
+        "blob://run-1/.." ,  # sha 段逃逸
+        "blob://run-1/" + "0" * 64 + "/extra",  # 多段
+        "blob://run-1/nothex",  # 非 sha256 hex
+        "not-a-blob-uri",
+        "blob:///" + "0" * 64,  # 空 run_id
+    ]
+    for ref in evil:
+        with pytest.raises(KeyError):
+            asyncio.run(store.get(ref))
+
+
+def test_file_blob_put_rejects_unsafe_run_id(tmp_path):
+    """put 的 run_id 同样过白名单(run_id 进文件路径,放开 ``.`` 即开逃逸口子)。"""
+    from agent_os.tools.blob import FileBlobStore
+
+    store = FileBlobStore(str(tmp_path / "blobs"))
+    with pytest.raises(ValueError):
+        asyncio.run(store.put(b"x", ".."))
+    with pytest.raises(ValueError):
+        asyncio.run(store.put(b"x", "a/b"))

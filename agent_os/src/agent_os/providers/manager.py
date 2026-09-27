@@ -3,7 +3,8 @@
 前缀路由(``"anthropic/claude-sonnet-4"`` → provider 前缀)+ 指数退避(仅 retryable,
 上限 ``max_attempts`` 次,尊重 ``retry_after``)+ 每 provider 令牌桶限流
 (``rate_limits={name: (rate_per_sec, burst)}``,无配置不限流)。
-流式带 idle watchdog(``stream_idle_timeout`` 秒无新 chunk → 杀流重试);
+流式带 idle watchdog(``stream_idle_timeout`` 秒无新 chunk → 杀流)+ 提交点语义
+(首 chunk 产出前停滞可重试,产出后不再重试、直接上抛);
 ``fallbacks={model: [backup, ...]}`` 在某 model 重试耗尽后按链切换,
 切换时请求归一化(剥离前一家专有内容,§4.2)。
 预留:usage 细分记账发信号(``post:llm.response``)。
@@ -19,6 +20,7 @@ from agent_os.api.v1 import (
     ChatChunk,
     ChatRequest,
     ChatResponse,
+    ChatUsage,
     Provider,
     ProviderError,
     ProviderErrorKind,
@@ -97,12 +99,17 @@ class ProviderManager:
         此时 ``RunConfig.max_cost`` 与 BudgetGuard 形同虚设,故装配期会告警
         (见 ``runtime.config``),不在此静默假装有护栏。
         """
-        usage = resp.usage
-        if usage is None or usage.cost:
-            return resp
+        if resp.usage is not None:
+            self._cost_usage(model, resp.usage)
+        return resp
+
+    def _cost_usage(self, model: str, usage: ChatUsage) -> None:
+        """``_apply_cost`` 的 usage 级形态;chat 回包与 stream 终 chunk 共用(§4.2)。"""
+        if usage.cost:
+            return
         price = self.price_for(model)
         if not price:
-            return resp
+            return
         per_mtok = 1_000_000.0
         usage.cost = round(
             (usage.prompt * price.get("input", 0.0)
@@ -113,7 +120,6 @@ class ProviderManager:
             / per_mtok,
             8,
         )
-        return resp
 
     def register(self, provider: Provider) -> None:
         """注册 provider(前缀路由键 = provider.name,§4.2)。"""
@@ -187,13 +193,12 @@ class ProviderManager:
         raise AssertionError("unreachable")  # pragma: no cover
 
     async def stream(self, req: ChatRequest) -> AsyncIterator[ChatChunk]:
-        """流式 + idle watchdog(N 秒无新 chunk 判定停滞 → 杀流重试,§4.2)。
+        """流式 + idle watchdog + **提交点(commit)语义**(§4.2)。
 
-        逐 chunk ``wait_for`` 取:间隔超 ``stream_idle_timeout`` → 取消该流并记
-        ``ProviderError(UNAVAILABLE, retryable=True)``,与 provider 显式抛出的
-        retryable 错误走同一套退避/``max_attempts``;非 retryable 直接上抛;
-        重试耗尽按 fallback 链切换(同 chat)。单次尝试的 chunk 先缓冲,流完整
-        走通才向下游产出——中途停滞重试不会把半截流泄给消费方。
+        首 chunk 向下游产出前是 TTFT 窗口:窗内停滞(``stream_idle_timeout`` 秒无新
+        chunk → 杀流)与 retryable 错误走 chat 同款退避重试;首 chunk 一经产出即
+        提交——本次尝试不再重试(半截重复内容不能泄给消费方),此后 idle 超时/断流
+        直接上抛。重试耗尽按 fallback 链切换(同 chat)。
         """
         chain = self._chain(req.model)
         for i, model in enumerate(chain):
@@ -204,10 +209,16 @@ class ProviderManager:
             for attempt in range(1, self.max_attempts + 1):
                 if bucket is not None:
                     await bucket.acquire()
+                committed = False  # 首 chunk 产出即提交:提交后的错误不再进重试
                 try:
-                    chunks = await self._stream_collect(provider, attempt_req)
+                    async for chunk in self._stream_attempt(provider, attempt_req):
+                        committed = True
+                        if chunk.usage is not None:
+                            self._cost_usage(model, chunk.usage)  # 流式终 chunk 同价折算(§4.2)
+                        yield chunk
+                    return
                 except ProviderError as e:
-                    if not e.retryable:
+                    if committed or not e.retryable:
                         raise
                     if attempt >= self.max_attempts:
                         exhausted = e
@@ -216,18 +227,16 @@ class ProviderManager:
                     if e.retry_after is not None:
                         delay = max(delay, e.retry_after)
                     await asyncio.sleep(delay)
-                else:
-                    for chunk in chunks:
-                        yield chunk
-                    return
             if exhausted is not None and i == len(chain) - 1:
                 raise exhausted
 
-    async def _stream_collect(
+    async def _stream_attempt(
         self, provider: Provider, req: ChatRequest
-    ) -> list[ChatChunk]:
-        """单次流式尝试:缓冲消费 provider.stream;idle 超时杀流并抛 UNAVAILABLE(retryable)。"""
-        chunks: list[ChatChunk] = []
+    ) -> AsyncIterator[ChatChunk]:
+        """单次流式尝试:逐 chunk ``wait_for``;idle 超时杀流并抛 UNAVAILABLE(retryable)。
+
+        是否重试由调用方按提交点判定(已向下游产出过 chunk 的错误直接上抛)。
+        """
         ait = provider.stream(req)
         try:
             while True:
@@ -236,8 +245,8 @@ class ProviderManager:
                         ait.__anext__(), timeout=self.stream_idle_timeout
                     )
                 except StopAsyncIteration:
-                    return chunks
-                chunks.append(chunk)
+                    return
+                yield chunk
         except TimeoutError:
             aclose = getattr(ait, "aclose", None)
             if aclose is not None:

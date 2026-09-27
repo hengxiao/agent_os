@@ -7,6 +7,7 @@
   "call": {"name","args"}|null, "message"}``;veto/工具错误从 checkpoint 帧上下文的
   错误观察(ok=false 工具结果,按帧入栈序)定位,aborted 取 result.json 的 error;
 - ``GET /api/runs/{id}/usage``:run 汇总 + 按帧分列(九字段 Usage 子集);
+  帧行带 ``subtree`` 子树汇总(WS2,沿 checkpoint parent_id 求和,含帧自身);
 - ``POST /api/runs/{id}/stop``:RunControl.stop,run 在下一个 safe point 中止;
 - ``POST /api/runs/{id}/resume``:从该 run 的 checkpoint.json 恢复;
 - ``POST /api/skills/reload``:热重载技能文件;
@@ -22,6 +23,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_os.host.web.rca import USAGE_FRAME_KEYS
 from tests.helpers.brains import reset_cut_brain
 from tests.helpers.config import write_config
 from tests.helpers.kernels import FIB_SKILLS_YAML as SKILLS_YAML
@@ -105,6 +107,22 @@ def test_usage_endpoint_per_frame(tmp_path):
     assert len(usage["frames"]) == 2
     by_depth = sorted(usage["frames"], key=lambda f: f.get("depth", 0))
     assert by_depth[0]["steps"] == 3 and by_depth[1]["steps"] == 1
+
+
+def test_usage_endpoint_subtree_rollup(tmp_path):
+    """WS2:每帧行带 subtree 子树汇总(沿 checkpoint parent_id 求和,含帧自身)。"""
+    client = _client(tmp_path, brain="tests.helpers.brains:fib_brain")
+    r = client.post("/api/runs", json={"skill": "demo.fib", "input": {"n": 3}, "wait": True})
+    run_id = r.json()["run_id"]
+    usage = client.get(f"/api/runs/{run_id}/usage").json()
+    assert len(usage["frames"]) == 2
+    by_depth = sorted(usage["frames"], key=lambda f: f.get("depth", 0))
+    root, child = by_depth
+    # 根帧子树 = 全 run 记账(root 3 步 + 子帧 1 步);叶帧子树 = 自身
+    assert root["subtree"]["steps"] == usage["run"]["steps"] == 4
+    assert root["subtree"]["prompt_tokens"] == usage["run"]["prompt_tokens"]
+    assert child["subtree"]["steps"] == 1 and child["subtree"]["prompt_tokens"] == 1
+    assert set(root["subtree"]) == set(USAGE_FRAME_KEYS)
 
 
 # ---------------------------------------------------------------------------

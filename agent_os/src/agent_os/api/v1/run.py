@@ -50,6 +50,10 @@ class RunConfig:
     read_paths: list[str] = field(default_factory=list)  # 只读挂载(如源码目录,可在 workdir 之外)
     # —— Debugger P5 周期 checkpoint(additive;0=关,N=每 N 步覆盖写"最近现场")——
     checkpoint_interval: int = 0
+    # —— 流式消费(WS2;additive;缺省开)——
+    # provider caps 不支持流式(如 MockProvider 未配 stream_scripts)时自动回落
+    # 一次性 chat,行为与引入本开关前逐字一致(双保险:开关 + caps 门控)
+    stream: bool = True
 
 
 class RunStatus(Enum):

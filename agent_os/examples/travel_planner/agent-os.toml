@@ -28,7 +28,7 @@ builtins = true                   # system.file.read/system.file.write/system.fi
 module = "travel_tools:register"  # project.travel_planner.wiki_search/project.travel_planner.wiki_fetch(真实 Wikivoyage API,NET 档)
 
 [skills]
-path = "/home/hengx/agent_os/agent_os/examples/travel_planner/skills.yaml"
+path = "/home/hengxiao/agent_os/agent_os/examples/travel_planner/skills.yaml"
 
 [supervisor]
 timeout_s = 120                   # handler 由 CLI 宿主注入(stderr 协议);此处只配策略

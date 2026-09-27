@@ -17,9 +17,22 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from agent_os.api.v1 import Checkpoint, Exporter, Signal
+
+
+def _signal_line(sig: Signal) -> dict[str, Any]:
+    """信号 → JSONL 行 dict(schema ``agent_os.trace/1``;sink 与 exporter 共用同一格式)。"""
+    return {
+        "v": 1,
+        "type": "signal",
+        "name": sig.name,
+        "run_id": sig.run_id,
+        "frame_id": sig.frame_id,
+        "ts": sig.ts,
+        "payload": sig.payload,
+    }
 
 
 class JsonlTelemetrySink:
@@ -37,6 +50,8 @@ class JsonlTelemetrySink:
         Path(traces_dir).mkdir(parents=True, exist_ok=True)
         #: run_id → 行缓冲文件句柄(懒打开,首行写版本头)
         self._files: dict[str, IO[str]] = {}
+        #: run_id → 已 append 信号条数(snapshot 的 seq 数据源;WAL 持久前缀长度)
+        self._seq: dict[str, int] = {}
 
     def register_exporter(self, exporter: Exporter) -> None:
         """JSONL(baseline)/ OTLP / RL-trajectory(§10.1)。"""
@@ -60,18 +75,10 @@ class JsonlTelemetrySink:
 
     async def record(self, sig: Signal) -> None:
         """追加一行信号(总线特权订阅者入口,§5.1);随后转发注册的 exporters。"""
-        line = {
-            "v": 1,
-            "type": "signal",
-            "name": sig.name,
-            "run_id": sig.run_id,
-            "frame_id": sig.frame_id,
-            "ts": sig.ts,
-            "payload": sig.payload,
-        }
         self._file_for(sig.run_id).write(
-            json.dumps(line, ensure_ascii=False, default=repr) + "\n"
+            json.dumps(_signal_line(sig), ensure_ascii=False, default=repr) + "\n"
         )
+        self._seq[sig.run_id] = self._seq.get(sig.run_id, 0) + 1
         for exporter in self.exporters:
             await exporter.export(sig)
 
@@ -103,20 +110,44 @@ class JsonlTelemetrySink:
             await exporter.close()
 
     async def snapshot(self, run_id: str) -> Checkpoint:
-        """检查点快照语义在 ``Kernel.checkpoint``(M5a 不实现于此)。"""
-        raise NotImplementedError("M5")
+        """WAL 视角的快照(§10.1):返回本 run 已 append 落盘的信号条数(seq)。
+
+        决策(最小诚实):帧树等可重建状态不在 sink 侧重复实现——那是
+        ``Kernel.checkpoint``(kernel/checkpoint.py)的职责(§10.2:轨迹即全部状态,
+        JSONL 本身就是可重放的完整检查点);这里只承诺"截至调用时已落盘的持久
+        前缀长度",``state`` 恒空。
+        """
+        return Checkpoint(run_id=run_id, seq=self._seq.get(run_id, 0), state={})
 
 
 class JsonlExporter:
-    """``agent_os.api.v1.Exporter`` 协议实现(M5):JSONL 行格式落盘。"""
+    """``agent_os.api.v1.Exporter`` 协议实现(M5):全部 run 的信号汇聚追加到单个文件。
+
+    sink 的 WAL 本体按 run 分文件;本 exporter 是 §10.1 注册制插件位的 baseline
+    形态(中央聚合/导出场景:多 run 交错进同一 ``path``),行格式与 sink 同
+    schema(``agent_os.trace/1``,首行版本头),行缓冲 + close 时 fsync。
+    """
 
     name: str = "jsonl"
 
     def __init__(self, path: str) -> None:
         self.path = path
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        self._fh: IO[str] = open(  # noqa: SIM115 — 生命周期随 sink.close()(同 sink 句柄先例)
+            target, "a", encoding="utf-8", buffering=1
+        )
+        if self._fh.tell() == 0:
+            self._fh.write(
+                json.dumps({"v": 1, "type": "header", "schema": JsonlTelemetrySink.SCHEMA}) + "\n"
+            )
 
     async def export(self, sig: Signal) -> None:
-        raise NotImplementedError("M5")
+        self._fh.write(json.dumps(_signal_line(sig), ensure_ascii=False, default=repr) + "\n")
 
     async def close(self) -> None:
-        raise NotImplementedError("M5")
+        if self._fh.closed:
+            return  # close 幂等(sink.close 可能对同一 exporter 重复调用)
+        self._fh.flush()
+        os.fsync(self._fh.fileno())
+        self._fh.close()

@@ -194,7 +194,10 @@ class LogicContext(Protocol):
 
     ``invoke`` / ``call_tool`` / ``spawn`` 全部回到内核分发路径:白名单、信号、
     记账一样不少;``spawn``/``wait`` 为 §3.4 后台帧原语(父帧不挂起,join 退化为
-    读终态);``board`` 为黑板命名空间代理(§12,无黑板时为 None)。
+    读终态);``parallel`` 为 §3.4 fork/join 扇出原语(批内故障隔离,按分支序结算);
+    ``cancel`` 为 §5.2 子树级联取消的编排面(§3.4 配套,不杀 run);
+    ``frame_status`` 为帧状态/子树记账读视图(W5-WS1);
+    ``board`` 为黑板命名空间代理(§12,无黑板时为 None)。
     """
 
     frame_id: str
@@ -216,4 +219,23 @@ class LogicContext(Protocol):
 
     async def wait(self, frame_id: str) -> Any:
         """§3.4:join 退化为读终态;子帧失败原样上抛。"""
+        ...
+
+    async def parallel(self, branches: list[dict[str, Any]], **kw: Any) -> list[dict[str, Any]]:
+        """§3.4 fork/join 扇出:批内故障隔离,按分支序返回
+        ``[{"ok", "value", "error", "frame_id"}]``;``kw`` 含 mode(``all_settled``/
+        ``first_success``)/max_concurrency/settle_timeout。"""
+        ...
+
+    async def cancel(self, frame_id: str, reason: str = "") -> list[str]:
+        """§5.2 子树级联取消(§3.4 配套):目标帧及全部后代进入终态,**不**杀 run
+        (:class:`SubtreeCancelled` 语义);ack 幂等,返回含目标自身的全部取消 id,
+        未知帧返回空表。"""
+        ...
+
+    async def frame_status(self, frame_id: str) -> dict[str, Any]:
+        """帧状态查询(W5-WS1):返回 ``{"frame_id", "status", "skill", "usage"}``——
+        ``status`` 为 FrameStatus 值(``"running"``/``"done"``/``"failed"``/...),
+        ``usage`` 为子树汇总九字段 dict(``steps``/``prompt_tokens``/.../``total_ms``);
+        未知帧返回 ``status=None``(``skill=None``、usage 零值)的同形字典,不抛异常。"""
         ...

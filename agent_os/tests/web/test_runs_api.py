@@ -114,6 +114,42 @@ def test_sse_stream_replays_and_closes(tmp_path):
     assert "event: end" in body
 
 
+def test_sse_stream_includes_llm_chunks(tmp_path, monkeypatch):
+    """流式锚点(WS2):provider caps 支持流式时,SSE 回放出现 post:llm.chunk 行。
+
+    配置装配的 MockProvider 只接 brain(无 stream_scripts);测试经 monkeypatch
+    换成带流式脚本的 MockProvider,fib(2) 一次 LLM 调用即终态。
+    """
+    from agent_os.api.v1 import ChatChunk, ChatUsage
+    from agent_os.providers.mock import MockProvider
+
+    scripts = [
+        [
+            ('{"seq": ', 0.0),
+            ("[0, 1]}", 0.0),
+            ChatChunk(finish_reason="stop", usage=ChatUsage(prompt=1, completion=1)),
+        ]
+    ]
+    real_mock = MockProvider
+
+    def _factory(brain=None, **kw):
+        return real_mock(brain, stream_scripts=[list(script) for script in scripts])
+
+    monkeypatch.setattr("agent_os.runtime.config.MockProvider", _factory)
+    client = _client(tmp_path)
+    run_id = run_and_wait(client, "demo.fib", {"n": 2})
+    body = ""
+    with client.stream("GET", f"/api/runs/{run_id}/stream") as r:
+        assert r.status_code == 200
+        for chunk in r.iter_text():
+            body += chunk
+            if "event: end" in body:
+                break
+    assert "post:llm.chunk" in body
+    assert "post:llm.response" in body  # 汇回后段:恰好一次的响应信号不受影响
+    assert "event: end" in body
+
+
 def test_index_page_served(tmp_path):
     client = _client(tmp_path)
     r = client.get("/")

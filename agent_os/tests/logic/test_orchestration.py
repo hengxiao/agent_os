@@ -447,3 +447,69 @@ result = {"ok": r["ok"], "kind": r["error"]["kind"]}
     out = _run(_kernel(tmp_path, script))["value"]
     assert out["result"]["ok"] is False
     assert out["result"]["kind"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# W5-WS1 帧控制面:ctx.cancel / ctx.frame_status 经 syscall 桥(§2.2 kind 路由)
+# ---------------------------------------------------------------------------
+
+#: Usage 九字段(§14.1 冻结清单;frame_status 响应形态锚)
+USAGE_KEYS = sorted(
+    [
+        "steps",
+        "prompt_tokens",
+        "completion_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "thinking_tokens",
+        "cost",
+        "ttft_ms",
+        "total_ms",
+    ]
+)
+
+
+def test_orchestration_script_ctx_cancel_frame_status(tmp_path):
+    """编排脚本(_SyncCtx)经 syscall 桥调 cancel/frame_status:kind 路由两端注册,
+    响应形态(未知帧 → 空 ack / ``status=None`` 同形字典)端到端成立;计入调用限额。"""
+    script = """
+st = ctx.frame_status("no-such-frame")
+ack = ctx.cancel("no-such-frame", "脚本测试")
+result = {"status": st["status"], "ack": ack, "usage_keys": sorted(st["usage"].keys())}
+"""
+    out = _run(_kernel(tmp_path, script))["value"]
+    assert out["result"]["status"] is None and out["result"]["ack"] == []
+    assert out["result"]["usage_keys"] == USAGE_KEYS
+    assert out["calls"] == 2 and out["failed"] == []
+
+
+SANDBOX_PROBE_YAML = """
+skills:
+  - name: test.sbx_probe
+    version: 1.0.0
+    kind: code
+    handler: tests.helpers.code_skills:sandbox_cancel_probe
+    logic: { mode: sandbox }
+    inputs: { type: object, properties: {} }
+    outputs: { type: object }
+    permissions: { tools: [], skills: [] }
+"""
+
+
+def test_sandbox_code_skill_ctx_cancel_frame_status(tmp_path):
+    """SANDBOX 档 code 技能(_AsyncCtx)经同一 syscall 桥调到 cancel/frame_status——
+    与 TRUSTED 档契约对齐(§5);真实帧语义由 tests/kernel/test_ctx_cancel_status.py 覆盖。
+    """
+    config = RunConfig(
+        model="mock/x",
+        tool_policy=ToolPolicy(max_permission=Permission.EXEC),
+        compression="off",
+    )
+    kernel = assemble(
+        config,
+        orchestrating_brain("result = 1"),
+        _yaml(tmp_path, SANDBOX_PROBE_YAML),
+        tools=sandbox_tools(),
+    )
+    result = asyncio.run(kernel.run("test.sbx_probe", {}))
+    assert result == {"ack": [], "status": None, "usage_keys": USAGE_KEYS}

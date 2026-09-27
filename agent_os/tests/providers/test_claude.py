@@ -187,6 +187,149 @@ def test_error_mapping():
 
 
 # ---------------------------------------------------------------------------
+# 流式(SSE):Anthropic 事件序列;thinking+signature ⇄ reasoning+meta["signature"];
+# tool_use input_json 分片按块累计、stop 时解析;usage 汇聚进终 chunk
+# ---------------------------------------------------------------------------
+
+
+def _sse_payload(*events) -> bytes:
+    """事件 dict 序列 → SSE 字节流(Anthropic 无 [DONE],message_stop 收尾)。"""
+    return "".join(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n" for ev in events).encode()
+
+
+def _sse_client(payload: bytes, *, seen: dict | None = None) -> httpx.AsyncClient:
+    def handler(req: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen["body"] = json.loads(req.content)
+        return httpx.Response(200, content=payload, headers={"content-type": "text/event-stream"})
+
+    return _client(handler)
+
+
+def _stream_req() -> ChatRequest:
+    return ChatRequest(model="anthropic/m", messages=[Message(role=Role.USER, content="q")])
+
+
+async def _collect(p: ClaudeProvider, req: ChatRequest):
+    return [c async for c in p.stream(req)]
+
+
+_MESSAGE_START = {
+    "type": "message_start",
+    "message": {"id": "msg_1", "usage": {
+        "input_tokens": 20, "output_tokens": 1,
+        "cache_read_input_tokens": 15, "cache_creation_input_tokens": 4,
+    }},
+}
+
+
+def test_stream_event_sequence_text_and_usage():
+    """message_start(input usage)→ text delta 按序透传 → message_delta(stop+output usage)
+    → message_stop 交付终 chunk;ping/error 旁路;请求体带 stream=True。"""
+    events = [
+        _MESSAGE_START,
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {"type": "ping"},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "答案"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "是 42"}},
+        {"type": "error", "error": {"type": "ping_missing", "message": "旁路不炸"}},  # error 事件旁路
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 9}},
+        {"type": "message_stop"},
+    ]
+    seen: dict = {}
+    p = ClaudeProvider(api_key="k", client=_sse_client(_sse_payload(*events), seen=seen))
+    chunks = asyncio.run(_collect(p, _stream_req()))
+
+    assert [c.delta.content for c in chunks if c.delta and c.delta.content] == ["答案", "是 42"]
+    final = chunks[-1]
+    assert final.delta is None
+    assert final.finish_reason == "end_turn"
+    # usage 从 message_start/message_delta 汇聚(与 _map_response 同口径)
+    assert final.usage.prompt == 20 and final.usage.completion == 9
+    assert final.usage.cache_read == 15 and final.usage.cache_write == 4
+    assert seen["body"]["stream"] is True
+
+
+def test_stream_thinking_signature_block():
+    """thinking_delta → delta.reasoning 按序透传;signature_delta 按块累计,
+    块 stop 时经 delta.meta["signature"] 交付(与 _map_response 同形态,供 round-trip)。"""
+    events = [
+        _MESSAGE_START,
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "先推"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "理"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "sig-"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "abc"}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 5}},
+        {"type": "message_stop"},
+    ]
+    p = ClaudeProvider(api_key="k", client=_sse_client(_sse_payload(*events)))
+    chunks = asyncio.run(_collect(p, _stream_req()))
+
+    assert [c.delta.reasoning for c in chunks if c.delta and c.delta.reasoning] == ["先推", "理"]
+    sig_chunks = [c for c in chunks if c.delta and c.delta.meta.get("signature")]
+    assert len(sig_chunks) == 1
+    assert sig_chunks[0].delta.meta["signature"] == "sig-abc"
+    # 推理文本分片不携带 signature(形态对齐 _map_response:reasoning 与 meta 分离)
+    assert all(not c.delta.meta for c in chunks if c.delta and c.delta.reasoning)
+
+
+def test_stream_tool_use_input_json_assembly():
+    """tool_use 的 input_json 分片按块累计,content_block_stop 时解析 + unmangle,
+    完整 ToolCall 一次交付;stop_reason=tool_use → finish_reason。"""
+    events = [
+        _MESSAGE_START,
+        {"type": "content_block_start", "index": 0,
+         "content_block": {"type": "tool_use", "id": "tu_1", "name": "system__file__read"}},
+        {"type": "content_block_delta", "index": 0,
+         "delta": {"type": "input_json_delta", "partial_json": '{"path":'}},
+        {"type": "content_block_delta", "index": 0,
+         "delta": {"type": "input_json_delta", "partial_json": ' "a.txt"}'}},
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 7}},
+        {"type": "message_stop"},
+    ]
+    p = ClaudeProvider(api_key="k", client=_sse_client(_sse_payload(*events)))
+    chunks = asyncio.run(_collect(p, _stream_req()))
+
+    tool_chunks = [c for c in chunks if c.delta and c.delta.tool_calls]
+    assert len(tool_chunks) == 1, "分片途中不透传,stop 时一次交付"
+    tc = tool_chunks[0].delta.tool_calls[0]
+    assert tc.id == "tu_1"
+    assert tc.name == "system.file.read"
+    assert tc.args == {"path": "a.txt"}
+    assert chunks[-1].finish_reason == "tool_use"
+    assert chunks[-1].usage.completion == 7
+
+
+def test_stream_error_status_529_maps_unavailable():
+    """HTTP ≥400 与 chat 同口径(_map_error):529(overloaded)→ UNAVAILABLE(retryable)。"""
+    client = _client(lambda req: httpx.Response(529, json={"error": {"message": "overloaded"}}))
+    p = ClaudeProvider(api_key="k", client=client)
+    with pytest.raises(ProviderError) as exc_info:
+        asyncio.run(_collect(p, _stream_req()))
+    assert exc_info.value.kind is ProviderErrorKind.UNAVAILABLE
+    assert exc_info.value.retryable is True
+
+
+def test_stream_truncated_without_message_stop_raises_unavailable():
+    """中途断流(未见 message_stop 流即结束)→ UNAVAILABLE(retryable),半截结果不可信。"""
+    events = [
+        _MESSAGE_START,
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "半"}},
+        # 无 message_stop:连接中途断开
+    ]
+    p = ClaudeProvider(api_key="k", client=_sse_client(_sse_payload(*events)))
+    with pytest.raises(ProviderError) as exc_info:
+        asyncio.run(_collect(p, _stream_req()))
+    assert exc_info.value.kind is ProviderErrorKind.UNAVAILABLE
+    assert exc_info.value.retryable is True
+
+
+# ---------------------------------------------------------------------------
 # 真实接口冒烟(无 key 自动 skip)
 # ---------------------------------------------------------------------------
 

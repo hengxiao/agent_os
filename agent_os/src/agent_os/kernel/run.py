@@ -11,7 +11,8 @@ from agent_os.api.v1 import Run as RunContract
 
 
 class Run:
-    """内核侧 Run 句柄:持有契约层 :class:`Run` 状态 + 控制标志(safe point,§3.1)。"""
+    """内核侧 Run 句柄:持有契约层 :class:`Run` 状态(safe point 的 pause/stop
+    标志由 runner 集中管理,见 ``kernel/runner.py``)。"""
 
     def __init__(self, run_id: str = "", config: RunConfig | None = None) -> None:
         self.state = RunContract(run_id=run_id, config=config or RunConfig())
@@ -30,7 +31,3 @@ class Run:
     @property
     def usage(self) -> Usage:
         return self.state.usage
-
-    def check_control_flags(self) -> None:
-        """每步循环开头的 safe point 检查(§3.1):pause/stop 标志 + 取消传播。"""
-        raise NotImplementedError("M0")

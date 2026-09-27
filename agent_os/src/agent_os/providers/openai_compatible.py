@@ -102,7 +102,121 @@ class OpenAICompatibleProvider:
         return self._map_response(resp.json())
 
     async def stream(self, req: ChatRequest) -> AsyncIterator[ChatChunk]:
-        raise NotImplementedError("M1")
+        """SSE 流式(§4.1):``stream=True`` + ``stream_options.include_usage``。
+
+        逐行解 ``data:`` 至 ``[DONE]``:content/reasoning_content delta 即时透传;
+        tool_calls 分片按 index 缓冲,finish 时组装为完整 ToolCall(unmangle)一次交付——
+        流式只透传文本/推理;usage 末 chunk(choices 空)连同暂存的 finish_reason 交付。
+        流提前结束(未见 ``[DONE]``)/传输层错误 → UNAVAILABLE(retryable)。
+        """
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        body = {
+            **self._request_body(req),
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        try:
+            if self._client is not None:
+                async with self._client.stream(
+                    "POST", f"{self.base_url}/chat/completions", json=body, headers=headers
+                ) as resp:
+                    async for chunk in self._stream_chunks(resp):
+                        yield chunk
+            else:
+                async with (
+                    httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client,
+                    client.stream(
+                        "POST", f"{self.base_url}/chat/completions", json=body, headers=headers
+                    ) as resp,
+                ):
+                    async for chunk in self._stream_chunks(resp):
+                        yield chunk
+        except httpx.TransportError as e:
+            # 连接/读超时、中途断流(ReadError/RemoteProtocolError 均归此类)
+            raise ProviderError(
+                ProviderErrorKind.UNAVAILABLE,
+                f"{type(e).__name__}: {e}",
+                retryable=True,
+            ) from e
+
+    async def _stream_chunks(self, resp: httpx.Response) -> AsyncIterator[ChatChunk]:
+        """单个 SSE 响应 → ChatChunk 序列(``async with client.stream`` 内消费)。"""
+        if resp.status_code >= 400:
+            await resp.aread()  # 流式响应须先读体,_map_error 才能取 error.message
+            raise self._map_error(resp)
+        done = False
+        finish_reason: str | None = None
+        tool_parts: dict[int, dict[str, str]] = {}  # index → {id, name, arguments 分片}
+        tool_delivered = False
+        async for line in resp.aiter_lines():
+            if not line.startswith("data:"):
+                continue  # event:/注释/空行旁路(OpenAI 每事件单行 data)
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                done = True
+                break
+            try:
+                data = json.loads(payload)
+            except ValueError:
+                continue  # 畸形行跳过,不中断整流
+            usage = data.get("usage")
+            if usage:
+                # 末 chunk(choices 空):usage + 暂存的 finish_reason 一并交付
+                yield ChatChunk(
+                    finish_reason=finish_reason,
+                    usage=ChatUsage(
+                        prompt=usage.get("prompt_tokens", 0),
+                        completion=usage.get("completion_tokens", 0),
+                    ),
+                )
+                finish_reason = None
+            for choice in data.get("choices") or []:
+                delta = choice.get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    yield ChatChunk(delta=Message(role=Role.ASSISTANT, content=content))
+                reasoning = delta.get("reasoning_content")
+                if reasoning:
+                    yield ChatChunk(delta=Message(role=Role.ASSISTANT, reasoning=reasoning))
+                for tc in delta.get("tool_calls") or []:
+                    part = tool_parts.setdefault(tc.get("index") or 0, {"id": "", "name": "", "arguments": ""})
+                    part["id"] = part["id"] or (tc.get("id") or "")
+                    func = tc.get("function") or {}
+                    part["name"] = part["name"] or (func.get("name") or "")
+                    part["arguments"] += func.get("arguments") or ""
+                if choice.get("finish_reason"):
+                    finish_reason = choice["finish_reason"]
+                    if tool_parts and not tool_delivered:
+                        # 只在末 chunk 交付完整 ToolCall(分片缓冲组装 + unmangle 回点分 canonical)
+                        yield self._tool_calls_chunk(tool_parts)
+                        tool_delivered = True
+        if tool_parts and not tool_delivered:
+            yield self._tool_calls_chunk(tool_parts)  # finish 帧缺席的兜底(正常不触发)
+        if finish_reason is not None:
+            # 端点未回 usage chunk(include_usage 未兑现)时,finish_reason 在此兜底交付
+            yield ChatChunk(finish_reason=finish_reason)
+        if not done:
+            # 流提前结束(未见 [DONE])= 截断:半截结果不可信,按可重试故障上抛
+            raise ProviderError(
+                ProviderErrorKind.UNAVAILABLE, "SSE 流截断(未收到 [DONE])", retryable=True
+            )
+
+    @staticmethod
+    def _tool_calls_chunk(tool_parts: dict[int, dict[str, str]]) -> ChatChunk:
+        """缓冲的 tool_calls 分片 → 完整 ToolCall 序列的单个 delta chunk。"""
+        return ChatChunk(
+            delta=Message(
+                role=Role.ASSISTANT,
+                tool_calls=[
+                    ToolCall(
+                        id=part["id"],
+                        name=unmangle_name(part["name"]),
+                        args=_parse_arguments(part["arguments"]),
+                    )
+                    for _, part in sorted(tool_parts.items())
+                ],
+            )
+        )
 
     # ------------------------------------------------------------------
     # 请求序列化(契约 → OpenAI 格式)

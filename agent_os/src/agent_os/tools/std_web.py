@@ -124,6 +124,7 @@ def fetch_page_tool(*, name: str = "common.web.fetch_page", registry: LocalPytho
             permission=Permission.NET,
             timeout=45.0,
             untrusted_source=True,
+            data_domains=["net.*"],  # D2 数据层声明(docs/DATA-AUTHZ.md §3.1);未配置 [data] 时语义不变
             cost_hint="~1s 起,取决于网络与页面大小",
         ),
     )

@@ -27,8 +27,10 @@ class MockProvider:
 
     ``script``:list 按序弹出,或 callable ``(ChatRequest) -> ChatResponse``
     (返回协程亦可)。每次 ``chat`` 录制请求到 ``recorded``。
-    ``stream_scripts``:每项是一段 ``[(text, delay), ...]`` 流式脚本,
-    每次 ``stream`` 调用按序弹出一段(``stream_attempts`` 计数)。
+    ``stream_scripts``:每项是一段流式脚本,每次 ``stream`` 调用按序弹出一段
+    (``stream_attempts`` 计数);脚本项为 ``(text, delay)`` 或 ``ChatChunk``
+    (后者原样产出,用于尾随终 chunk 携带 finish_reason/usage 记账锚点)。
+    配了 ``stream_scripts`` 时 ``capabilities()`` 报 ``supports_streaming=True``。
     """
 
     name: str = "mock"
@@ -38,7 +40,7 @@ class MockProvider:
         script: list[ChatResponse] | Callable[[ChatRequest], ChatResponse] | None = None,
         *,
         name: str | None = None,
-        stream_scripts: list[list[tuple[str, float]]] | None = None,
+        stream_scripts: list[list[tuple[str, float] | ChatChunk]] | None = None,
     ) -> None:
         if name is not None:
             self.name = name
@@ -48,7 +50,8 @@ class MockProvider:
         self.stream_attempts = 0
 
     def capabilities(self) -> ProviderCaps:
-        return ProviderCaps(supports_tools=True)
+        # 流式能力按 stream_scripts 配置上报:未配则 False,caps 门控调用方自然回落
+        return ProviderCaps(supports_tools=True, supports_streaming=self.stream_scripts is not None)
 
     async def chat(self, req: ChatRequest) -> ChatResponse:
         self.recorded.append(req)
@@ -65,7 +68,8 @@ class MockProvider:
         return self.script.pop(0)
 
     async def stream(self, req: ChatRequest) -> AsyncIterator[ChatChunk]:
-        """流式脚本(M5):每段 ``[(text, delay), ...]`` 逐项 sleep 后 yield chunk。
+        """流式脚本(M5):每段逐项产出——``(text, delay)`` 先 sleep 再 yield 文本 chunk;
+        ``ChatChunk`` 项原样 yield(可选尾随终 chunk:finish_reason/usage 记账锚点)。
 
         未配 ``stream_scripts`` 保持 NotImplementedError;脚本耗尽(列表取空)→
         ``ProviderError(UNAVAILABLE, retryable=True)``(与 chat 耗尽口径一致,可进重试)。
@@ -79,6 +83,10 @@ class MockProvider:
                 "MockProvider 流式脚本已耗尽",
                 retryable=True,
             )
-        for text, delay in self.stream_scripts.pop(0):
+        for item in self.stream_scripts.pop(0):
+            if isinstance(item, ChatChunk):
+                yield item
+                continue
+            text, delay = item
             await asyncio.sleep(delay)
             yield ChatChunk(delta=Message(role=Role.ASSISTANT, content=text))

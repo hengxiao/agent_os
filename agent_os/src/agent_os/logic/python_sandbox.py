@@ -65,6 +65,8 @@ _DEFAULT_WALL_TIME = 30.0
 #: 读一行 JSON 响应(阻塞语义,沙箱侧无其他工作)。同一传输层派生两种 ctx——
 #: ``_SyncCtx`` 给编排脚本(LLM 写直线代码,无 async 样板),``_AsyncCtx`` 给
 #: code 技能 handler(``await ctx.call_tool(...)``,与 TRUSTED 档契约逐字一致)。
+#: kind 路由:``tool``/``skill`` 走内核 ``_dispatch_call`` 闸门;``cancel``/
+#: ``frame_status``(W5-WS1 帧控制面)直委托内核读/控视图(同名 ctx 方法,§9.3)。
 _SYSCALL_PRELUDE = """\
 import json, os, socket
 
@@ -96,6 +98,18 @@ class _SyncCtx:
             raise RuntimeError((r.get("error") or {}).get("message") or ("子技能 %s 失败" % skill))
         return r["value"]
 
+    def cancel(self, frame_id, reason=""):
+        r = self._t.call("cancel", frame_id, {"reason": reason})
+        if not r["ok"]:
+            raise RuntimeError((r.get("error") or {}).get("message") or ("帧 %s 取消失败" % frame_id))
+        return r["value"]
+
+    def frame_status(self, frame_id):
+        r = self._t.call("frame_status", frame_id, {})
+        if not r["ok"]:
+            raise RuntimeError((r.get("error") or {}).get("message") or ("帧 %s 状态查询失败" % frame_id))
+        return r["value"]
+
 
 class _AsyncCtx(_SyncCtx):
     async def call_tool(self, tool, args):
@@ -103,6 +117,12 @@ class _AsyncCtx(_SyncCtx):
 
     async def invoke(self, skill, input):
         return _SyncCtx.invoke(self, skill, input)
+
+    async def cancel(self, frame_id, reason=""):
+        return _SyncCtx.cancel(self, frame_id, reason)
+
+    async def frame_status(self, frame_id):
+        return _SyncCtx.frame_status(self, frame_id)
 
 
 def _make_ctx(cls):

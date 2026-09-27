@@ -13,6 +13,8 @@
 - `dev.yaml` → `common.dev.*` / `web.yaml` → `common.web.*`
 - `research.yaml` → `common.research.*` / `memory.yaml` → `common.memory.*`
 - `learn.yaml` → `common.learn.*`
+- `combinators.yaml` → `common.task.*` 编排组合子(`race_first` + 私有批帧
+  `race_batch` + `subagent_cancel`/`subagent_status`;handler `combinators_handlers`)
 
 **不做 `common.web.search`**:搜索需要 provider 配置(API key/引擎选择),
 属于 `external.*` 范畴,不进零依赖的 std;调研技能以显式 URL(fetch_page)

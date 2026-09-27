@@ -9,33 +9,47 @@ YAML 加载,命名空间固定 ``local``;不做版本约束求解(单版本,依�
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
+import re
+import sys
+import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 import yaml
 
 from agent_os.api.v1 import (
+    POST_SKILL_REGISTER,
+    PRE_SKILL_REGISTER,
     FrameContext,
     Message,
     Provenance,
     Role,
+    Signal,
     Skill,
     SkillArtifact,
     SkillCall,
     SkillFrame,
+    SkillKind,
     SkillManifest,
     SkillRef,
     SkillSchema,
     Source,
+    Veto,
 )
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.skills.loader import materialize
 from agent_os.skills.manifest import INLINE_DEPS_MAX, parse_manifest, validate_manifest
 
 _log = logging.getLogger("agent_os.skills")
+
+#: register() 命名闸门(docs/DESIGN.md §6.2;WS-C):gate.py G1 同款层级命名正则
+#: (点分 ≥2 段小写 snake_case)——运行期产物与草稿走同一命名面,fail 即拒
+_REGISTER_NAME_RE = re.compile(r"[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+")
 
 #: 迁移期旧扁平名 → 新点分层次名 的兼容映射(docs/NAMING.md §4)。
 #: 用于解析清单时把旧 permissions.skills 引用自动转正,以及按旧名查找技能时给出警告。
@@ -163,8 +177,21 @@ class LocalFileSkillRegistry:
 
     namespace: str = "local"
 
-    def __init__(self, path: str | list[str] = "./skills.yaml") -> None:
+    def __init__(
+        self,
+        path: str | list[str] = "./skills.yaml",
+        *,
+        tools: Any = None,
+        bus: Any = None,
+    ) -> None:
         self.path = path
+        #: register() 可选增强闸(§6.2;WS-C):tools registry 注入时合成草稿跑
+        #: validate_draft(strict_refs=True) 的 G1-G3;None = 跳过(同 Lab G4 无
+        #: runner 时 skip 哲学——嵌入路径不强制)
+        self._tools = tools
+        #: register() 信号总线(pre:skill.register 可否决 / post:skill.register
+        #: 观察;None = 不发射,行为与引入前一致)
+        self._bus = bus
         self._skills: dict[str, Skill] = {}
         self._mtime: float | None = None  # 上次成功加载时的源文件 mtime 最大值(reload 变更检测)
         self._loaded = False
@@ -285,9 +312,195 @@ class LocalFileSkillRegistry:
         return build_child_frame(target, call, parent)
 
     async def register(self, artifact: SkillArtifact, provenance: Provenance) -> SkillRef:
-        """运行期写入路径(§6.2):默认不信任——code 强制 SANDBOX、CodeScanner 扫描、
+        """运行期写入路径(docs/DESIGN.md §6.2;WS-C):默认不信任的信任管线。
 
-        发信号可被 HumanApproval 拦截、manifest 权限从严;publish 前经重放 + evaluator 验证门。
-        v1 最小实现:system.file.write 写技能包文件 + reload(),契约形状先行。
+        落点顺序(闸门 fail 即 GateError;除 code handler 落盘外,拒绝都发生在
+        ``_atomic_write`` 之前 = 生产零变化):
+        1. 纯函数闸门(必过):层级命名正则 fail(gate.py G1 同款)、
+           ``_g5_findings(prompt)`` fail;description lint 只 warn 记 provenance(§6.1 lint);
+        2. 归一化 artifact → 生产条目 dict:version 缺省 ``gate.default_version``
+           (同名续 bump patch);prompt 技能指令体内联;code 技能源码落
+           ``<skills.yaml 同级>/generated_handlers/<mod>.py``(mod = name 点转
+           下划线——带点文件名不是合法模块路径),entry 写 handler dotted path,
+           logic **一律强制** ``{"mode": "sandbox"}``(§6.2 默认不信任:artifact
+           自带的 trusted 声明直接覆盖,不允许自我提权);
+        3. 可选增强闸(构造期注入 tools 时):合成草稿跑
+           ``validate_draft(strict_refs=True)`` 取 G1-G3,fail 即拒;未注入跳过
+           (同 Lab G4 无 runner 时 skip 哲学——嵌入路径不强制);
+        4. ``pre:skill.register``(bus 注入时):任一 sidecar Veto → 中止不写盘;
+        5. 先证后换:``package._atomic_write``(staging 全流水线证明 + 原子 rename +
+           单次 reload;目录/多文件形态明确报错——单文件限制同包提交);
+        6. provenance 落盘 ``<skills.yaml>.register.jsonl``(全字段 + version +
+           action + 闸门结果,draft_store.record_promotion 先例);
+        7. ``post:skill.register``(成功观察),返回 SkillRef。
+
+        明确不做(v1 边界):semver ^/~ 依赖求解、DirectorySkillSource 写路径、
+        文件监听自动热重载、完整重放 + evaluator 验证门(§6.2 验证门降级为可选
+        smoke_runner 注入哲学,不在本方法内)。
         """
-        raise NotImplementedError("M6")
+        # 延迟 import 防环:local_file → gate → draft_store → compound → local_file
+        from agent_os.skills.draft_store import _manifest_to_dict
+        from agent_os.skills.gate import (
+            GateError,
+            _g5_findings,
+            default_version,
+            validate_draft,
+        )
+        from agent_os.skills.package import _atomic_write
+
+        manifest = artifact.manifest
+        name = manifest.name or ""
+        gate_notes: dict[str, Any] = {}  # 闸门结果(provenance 记录面)
+
+        # —— 形态前置:写路径只支持单文件 skills.yaml(目录/多文件形态属 v1 明确不做项)——
+        if not isinstance(self.path, str) or Path(self.path).is_dir():
+            raise SkillLoadError(
+                "register() 目前只支持单文件 skills.yaml"
+                "(目录/多文件形态的写路径属 v1 明确不做项,同 package._atomic_write 限制)"
+            )
+
+        # —— 1. 纯函数闸门(必过)——
+        if not _REGISTER_NAME_RE.fullmatch(name):
+            raise GateError(f"register 拒绝: name {name!r} 不合层级命名规范(gate.py G1 同款)")
+        prompt_text = artifact.prompt or manifest.prompt or ""
+        g5 = _g5_findings(prompt_text)
+        gate_notes["g5"] = "fail" if g5 else "pass"
+        if g5:
+            raise GateError(f"register 拒绝: {g5[0]['message']}")
+        desc = manifest.description or ""
+        gate_notes["description_lint"] = (
+            "pass" if len(desc) >= 10 and "Use when" in desc else "warn"
+        )
+        if gate_notes["description_lint"] == "warn":
+            _log.warning(
+                "register: 技能 %s description 应含 'Use when / Do not use when'"
+                " 触发条件(§6.1 lint,warn 不阻断,记 provenance)",
+                name,
+            )
+
+        # —— 2. 归一化 artifact → 生产条目 dict ——
+        entry = _manifest_to_dict(manifest)
+        entry["version"] = manifest.version or default_version(self, name)
+        version = entry["version"]
+        code_mod = ""
+        if manifest.kind is SkillKind.CODE:
+            if not (artifact.code or "").strip():
+                raise SkillLoadError(
+                    f"register 拒绝: code 技能 {name} 的 artifact.code 为空(§6.3 handler 必须有源码)"
+                )
+            code_mod = name.replace(".", "_")
+            entry["handler"] = f"generated_handlers.{code_mod}:run"
+            entry["logic"] = {"mode": "sandbox"}  # §6.2:一律强制,覆盖 artifact 自带声明
+        else:
+            if (artifact.code or "").strip():
+                _log.warning(
+                    "register: prompt 技能 %s 附带 code,已忽略(code 仅 code 技能生效)", name
+                )
+            if prompt_text:
+                entry["prompt"] = prompt_text  # 单文件形态:指令体内联(§6.3)
+        try:
+            self.get(SkillRef(name=name))
+            action = "replaced"
+        except SkillLoadError:
+            action = "appended"
+
+        # —— 3. 可选增强闸(tools 注入时跑 G1-G3;未注入跳过)——
+        if self._tools is not None:
+            draft = {
+                "name": name,
+                "manifest": {k: v for k, v in entry.items() if k != "prompt"},
+                "prompt": entry.get("prompt") or "",
+            }
+            report = validate_draft(draft, production=self, tools=self._tools, strict_refs=True)
+            gate_notes["g1_g3"] = {g: report["gates"][g]["status"] for g in ("g1", "g2", "g3")}
+            fails = [
+                f["message"]
+                for g in ("g1", "g2", "g3")
+                for f in report["gates"][g]["findings"]
+                if f["level"] == "fail"
+            ]
+            if fails:
+                raise GateError(f"register 增强闸拒绝({name}): {fails[0]}")
+        else:
+            gate_notes["g1_g3"] = "skip(tools 未注入)"
+
+        # —— 4. pre:skill.register(Veto → 中止不写盘)——
+        if self._bus is not None:
+            verdicts = await self._bus.emit(
+                Signal(
+                    name=PRE_SKILL_REGISTER,
+                    run_id=provenance.run_id or "",
+                    payload={
+                        "name": name,
+                        "version": version,
+                        "kind": manifest.kind.value,
+                        "action": action,
+                        "note": provenance.note,
+                    },
+                )
+            )
+            veto = next((v for v in verdicts if isinstance(v, Veto)), None)
+            if veto is not None:
+                raise GateError(
+                    f"register 被否决(pre:skill.register): {veto.reason or 'sidecar Veto'}"
+                )
+
+        # —— 5. 先证后换:code handler 落盘(失败止步于此,yaml 未动)+ 原子写 yaml ——
+        if manifest.kind is SkillKind.CODE:
+            self._write_generated_handler(code_mod, artifact.code or "")
+        _atomic_write(self, {name: entry})
+
+        # —— 6. provenance 落盘(追加;draft_store.record_promotion 先例)——
+        target = Path(self.path)
+        record = {
+            "run_id": provenance.run_id,
+            "task": provenance.task,
+            "note": provenance.note,
+            "detail": provenance.detail,
+            "name": name,
+            "version": version,
+            "kind": manifest.kind.value,
+            "action": action,
+            "gates": gate_notes,
+            "at": time.time(),
+        }
+        with target.with_name(target.name + ".register.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        # —— 7. post:skill.register(成功观察)——
+        if self._bus is not None:
+            await self._bus.emit(
+                Signal(
+                    name=POST_SKILL_REGISTER,
+                    run_id=provenance.run_id or "",
+                    payload={
+                        "name": name,
+                        "version": version,
+                        "kind": manifest.kind.value,
+                        "action": action,
+                    },
+                )
+            )
+        return SkillRef(name=name, version=version)
+
+    def _write_generated_handler(self, mod: str, code: str) -> None:
+        """code 技能源码落 ``<skills.yaml 同级>/generated_handlers/<mod>.py`` 并保证可 lazy import。
+
+        skills.yaml 所在目录插入 sys.path(已在前则不动),``generated_handlers``
+        落 ``__init__.py`` 成正规包;写后 ``invalidate_caches`` + 弹出本模块与
+        父包的 sys.modules 缓存——同名再 register 时下次惰性解析拿到新代码
+        (loader 惰性 import 见 skills/loader.py;handler 模块是进程级共享,
+        换代码对下次解析生效,在跑帧不回溯)。
+        """
+        skills_dir = Path(self.path).resolve().parent
+        pkg = skills_dir / "generated_handlers"
+        pkg.mkdir(exist_ok=True)
+        init = pkg / "__init__.py"
+        if not init.exists():
+            init.write_text("", encoding="utf-8")
+        (pkg / f"{mod}.py").write_text(code, encoding="utf-8")
+        if str(skills_dir) not in sys.path:
+            sys.path.insert(0, str(skills_dir))
+        importlib.invalidate_caches()
+        sys.modules.pop(f"generated_handlers.{mod}", None)
+        sys.modules.pop("generated_handlers", None)

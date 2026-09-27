@@ -9,6 +9,8 @@ max_steps = 200
 max_cost = 2.0
 max_wall_time = 1800
 compression = "hierarchical"          # off = 消融档(裸模型基线)
+# stream = false                      # 关掉流式消费(缺省 true:caps 支持走 stream chunk 循环,逐 chunk
+                                      # 发 post:llm.chunk 并记 ttft/total;caps 不支持自动回落 chat)
 
 # —— Provider 区(取消注释启用;API key 走环境变量,不写进文件)——
 # Kimi(Moonshot):export MOONSHOT_API_KEY=sk-...(国内站需另传 base_url,见 runtime/config.py)
@@ -27,7 +29,7 @@ compression = "hierarchical"          # off = 消融档(裸模型基线)
 # brain = "my_tests.brains:fib_brain"
 
 [tools]
-builtins = true                       # system.file.read/system.file.write/system.file.edit/system.shell.exec/system.net.http_fetch
+builtins = true                       # 内置工具面(22 件规范名:system.file.*/shell/net/blob/time/task/skill/memory/user 等,旧扁平名留别名)
 python_exec = "docker"                # docker(推荐,需本机 docker)| subprocess | off (对应 system.python.exec)
 
 [skills]
@@ -37,6 +39,8 @@ path = "./skills.yaml"
 budget_guard = { max_cost = 2.0 }
 loop_detector = { threshold = 3, max_strikes = 2 }
 # tool_guard_rules = [["system.shell.exec", "rm\\s+-rf", "禁止危险命令"]]
+# human_approval = true                 # WS2:EXEC 档工具过内核 tool-confirm 闸门(supervisor.ask,kind="tool-confirm")
+# human_approval = { timeout = 300, on_timeout = "deny" }   # 或表:审批超时秒数 + 超时兜底(deny|allow)
 
 [telemetry]
 dir = ".agent-os/traces"
@@ -44,3 +48,34 @@ dir = ".agent-os/traces"
 [retry]
 max_attempts = 3
 backoff_base = 0.5
+stream_idle_timeout = 30.0            # 流式停滞 watchdog 秒数:N 秒无新 chunk 杀流(提交点语义:
+                                      # 首 chunk 产出前可退避重试,产出后错误直接上抛)
+
+# —— 凭证作用域(WS1;值只存 env 变量名,不落盘明文)——
+# 工具 ToolSpec.credentials 声明键 → dispatch 每次现读 env 注入(env 缺席的键不出现)
+# [credentials]
+# github = { env = "GITHUB_TOKEN" }
+
+# —— 数据层 authZ(D2,docs/DATA-AUTHZ.md §3;段缺席 = D1"未配置不拦截"语义逐字不动)——
+# 注意:段存在即接线,空段 = 绑定空 policy(principals 白名单 fail closed 全拒),启用前务必配齐
+# [data]
+# domains = [                           # 表数组:name 必填;sensitivity 缺省 confidential(忘了配 = 最严)
+#   { name = "fs.shared", sensitivity = "internal", path_prefix = "/srv/shared" },   # path_prefix|url_prefix 恰居其一
+#   { name = "net.public", sensitivity = "public", url_prefix = "https://api.example.com/" },
+# ]
+# [data.principals."user:alice"]        # per-subject 域白名单(glob 域名模式)
+# domains = ["fs.*", "net.public"]
+
+# —— D3-lite 多用户映射(Bearer token → subject;命中 → Principal(issuer="api-token"),未命中/缺席 → 单用户逐字不变)——
+# [web.tokens]
+# "tok-alice-xxx" = "user:alice"
+
+# —— Memory 子系统(M6,docs/DESIGN.md §11;段存在才接线,缺段完全不 bind)——
+# [memory]
+# dir = "./memory"                      # LocalFileMemoryService 根目录(每条目一 Markdown + frontmatter);
+                                        # 接线后 system.memory.search/write 经 bind_memory 装配(未装配调 NOT_FOUND)
+
+# —— spill 文件存储(M3,docs/DESIGN.md §8.4/§7.2;段存在才接线,缺段 = 进程内 InMemoryBlobStore)——
+# [blob]
+# dir = "./blobs"                       # FileBlobStore 根目录(<root>/<run_id>/<sha256> 内容寻址落盘,
+                                        # run_id/sha 白名单防目录逃逸)

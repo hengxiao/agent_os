@@ -12,8 +12,9 @@ clearance/sensitivity 共用三级全序:``public < internal < confidential``,
 
 from __future__ import annotations
 
+import fnmatch
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "INTERNAL",
     "PUBLIC",
     "DataDomain",
+    "DataPolicy",
     "Principal",
     "allow",
     "clearance_of",
@@ -54,25 +56,57 @@ class DataDomain:
     sensitivity: str = PUBLIC
 
 
+@dataclass(frozen=True)
+class DataPolicy:
+    """``[data]`` 配置段的解析产物(D2,§3.1/§3.2):域名表 + per-subject 域白名单。
+
+    ``boundaries`` 是给宿主的注册输入(域名 → (``"fs"``|``"net"``, 前缀)),
+    契约本身不持边界(同 :class:`DataDomain` 注);``whitelist_for`` 对未配置
+    subject 返回空表——fail closed:忘了配 = 哪个域都不许,与"未配置域 =
+    confidential"(§3.1)同旨。
+    """
+
+    domains: Mapping[str, DataDomain] = field(default_factory=dict)
+    whitelists: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    boundaries: Mapping[str, tuple[str, str]] = field(default_factory=dict)
+
+    def whitelist_for(self, subject: str) -> tuple[str, ...]:
+        """subject 的域白名单(glob 模式表);未配置 → 空表(fail closed)。"""
+        return tuple(self.whitelists.get(subject, ()))
+
+
 def clearance_of(principal: Principal) -> str:
     """principal 的 clearance;缺省按最低档(public)——fail closed,身份没说清不放大。"""
     return str(principal.attrs.get("clearance") or PUBLIC)
 
 
-def allow(principal: Principal | None, domain: DataDomain, action: str = "read") -> bool:
+def allow(
+    principal: Principal | None,
+    domain: DataDomain,
+    action: str = "read",
+    *,
+    whitelist: Iterable[str] | None = None,
+) -> bool:
     """授权判定(§3.2,默认拒绝):``clearance(principal) >= sensitivity(domain)``。
 
     ``principal is None`` → True(v1 单用户语义:宿主未注入身份 = 数据层未启用,
     行为与引入本系统前完全一致);未知 clearance 按 public、未知 sensitivity 按
-    confidential 计(两个方向都 fail closed)。per-subject 域白名单是 §3.2 的
-    第二判据,依赖宿主配置段,属 D2;``action`` 参数为协议面占位(读类语义),
-    D1 不参与判定。
+    confidential 计(两个方向都 fail closed)。``whitelist``(D2,§3.2 第二判据,
+    glob 域名模式):非 None 时并入判定——clearance 够但域不匹配任一模式同样拒绝;
+    None(缺省)时行为与 D1 逐字一致。``action`` 参数为协议面占位(读类语义),
+    不参与判定。
     """
     if principal is None:
         return True
     have = _LEVEL_RANK.get(clearance_of(principal), 0)
     need = _LEVEL_RANK.get(domain.sensitivity, _LEVEL_RANK[CONFIDENTIAL])
-    return have >= need
+    if have < need:
+        return False
+    if whitelist is not None and not any(
+        fnmatch.fnmatchcase(domain.name, pattern) for pattern in whitelist
+    ):
+        return False
+    return True
 
 
 def _local_user() -> str:

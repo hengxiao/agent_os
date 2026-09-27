@@ -7,11 +7,11 @@
 ## 现场演示(真实模型 + 真实互联网)
 
 ```bash
-cd /home/hengx/agent_os/agent_os
-export MOONSHOT_API_KEY=sk-...        # Kimi key(kimi/kimi-k2-thinking)
+cd /home/hengxiao/agent_os/agent_os
+export MOONSHOT_API_KEY=sk-...        # Kimi Code key(缺省模型 openai/kimi-for-coding)
 
 # 观众出题:"带老人去西安 3 天,预算 3000"
-PYTHONPATH=examples/travel_planner .venv/bin/agent-os run plan_trip \
+PYTHONPATH=examples/travel_planner .venv/bin/agent-os run project.travel_planner.plan_trip \
   --input '{"request": "想带老人从上海去西安玩 3 天 2 夜,预算 3000 元,节奏别太赶"}' \
   --config examples/travel_planner/agent-os.toml --json
 ```
@@ -27,7 +27,7 @@ PYTHONPATH=examples/travel_planner .venv/bin/agent-os run plan_trip \
 `brains.py:travel_brain` 跑同一条技能流,同输入同输出:
 
 ```bash
-cd /home/hengx/agent_os/agent_os
+cd /home/hengxiao/agent_os/agent_os
 .venv/bin/pytest tests/examples/test_travel_planner.py -q
 ```
 

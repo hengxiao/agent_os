@@ -5,6 +5,9 @@
 ``invoke`` 直接返回子帧结果值(失败抛 AgentOSError 子类),``call_tool`` 返回
 ``{"ok", "value", "error"}`` 字典(与工具结果消息同构,权限拒绝折叠为字典不抛)。
 ``spawn`` / ``wait`` 为 §3.4 后台帧原语(委托 kernel.spawn_frame/wait_frame);
+``parallel`` 为 §3.4 fork/join 原语(委托 kernel.parallel_invoke);
+``cancel`` 为 §5.2 子树级联取消的编排面(委托 kernel.cancel_subtree);
+``frame_status`` 为帧状态/子树记账读视图(W5-WS1,委托 kernel.frame_status_payload);
 ``board`` 为黑板命名空间代理(§12):按 manifest.permissions.blackboard 白名单
 逐次仲裁后透传 kernel.blackboard,无黑板时为 None。
 ``chat``(§W4-3 扩展)直连 ProviderManager:code 技能自驾驶多轮对话用
@@ -144,3 +147,26 @@ class KernelLogicContext:
     async def wait(self, frame_id: str) -> Any:
         """join 退化为读终态(§3.4);子帧失败原样上抛,由本 code 技能处理。"""
         return await self._kernel.wait_frame(frame_id)
+
+    async def parallel(self, branches: list[dict[str, Any]], **kw: Any) -> list[dict[str, Any]]:
+        """parallel_invoke fork/join(§3.4 第三原语):委托 kernel.parallel_invoke。
+
+        批形态错/白名单外分支抛 SkillLoadError(与 spawn 同形);分支级失败折叠为
+        该分支 ``{"ok": False, ...}`` 条目不抛;``kw`` 透传 mode/max_concurrency/
+        settle_timeout。
+        """
+        return await self._kernel.parallel_invoke(self._frame, branches, **kw)
+
+    async def cancel(self, frame_id: str, reason: str = "") -> list[str]:
+        """子树级联取消(§5.2 的 §3.4 编排面):委托 kernel.cancel_subtree。
+
+        SubtreeCancelled 语义——目标帧及后代进入终态,**不**杀 run;ack 幂等,
+        返回含目标自身的全部取消 id,未知帧返回空表(不抛)。
+        """
+        return await self._kernel.cancel_subtree(frame_id, reason)
+
+    async def frame_status(self, frame_id: str) -> dict[str, Any]:
+        """帧状态查询(W5-WS1):委托 kernel.frame_status_payload(stack 读帧 +
+        subtree_usage 子树汇总);未知帧返回 ``status=None`` 的同形字典,不抛。
+        """
+        return self._kernel.frame_status_payload(frame_id)

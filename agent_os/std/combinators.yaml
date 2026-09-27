@@ -1,0 +1,208 @@
+skills:
+- name: common.task.race_first
+  version: 1.0.0
+  kind: code
+  description: '首个成功分支胜出:一批候选分支并发竞速,首个成功锁定后广播取消其余、等
+    ack、幂等结算一次(内核 parallel_invoke first_success 模式;技能面 = 私有批帧
+    race_batch + budget 软闸)。Use when 同一任务有多条等价路径要竞速取先到结果(多检索源
+    /多策略求解),如 branches=[{''skill'': ''a.b'', ''input'': {...}}] → {winner: {...},
+    cancelled: [...]};Do not use when 需要全部结果(编排脚本直调 ctx.parallel 的
+    all_settled)或分支间有依赖顺序(depends_on 归编排脚本表达)。budget 是**软语义**:
+    watchdog 轮询批帧子树 usage(ctx.frame_status),超限经 ctx.cancel 取消批帧并返回
+    部分结果(partial=true)——检查间隔内可超、best-effort,内核强制留后续立项。分支
+    白名单静态:出厂 skills 白名单为空,调用方复制专化填入分支技能(STDLIB §4.5,
+    运行期通配拒绝)。返回 {winner, cancelled, partial, usage}。'
+  inputs:
+    type: object
+    properties:
+      branches:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          properties:
+            skill:
+              type: string
+              description: 分支技能名(须在批帧的特化白名单内)
+            input:
+              type: object
+              description: 分支入参(缺省 {})
+          required:
+          - skill
+        description: 竞速分支 [{skill, input}],至少一条
+      budget:
+        type: object
+        properties:
+          max_steps:
+            type: integer
+            minimum: 0
+            description: 批帧子树 steps 软上限(超过即取消批帧)
+          max_tokens:
+            type: integer
+            minimum: 0
+            description: 批帧子树 tokens 软上限(prompt/completion/thinking/缓存读写五字段求和)
+        description: 软预算(可选);两项任一超限即停并返回部分结果
+      settle_timeout:
+        type: number
+        description: 胜方锁定后等败方取消 ack 的秒数(缺省 5.0)
+    required:
+    - branches
+  outputs:
+    type: object
+    properties:
+      winner:
+        type:
+        - object
+        - 'null'
+        description: 胜方 {skill, value, frame_id};全败或预算取消为 null
+      cancelled:
+        type: array
+        items:
+          type: object
+          properties:
+            skill:
+              type:
+              - string
+              - 'null'
+              description: 分支技能名(预算路径取帧实际技能)
+            frame_id:
+              type:
+              - string
+              - 'null'
+              description: 分支帧 id(预检折叠的分支为 null)
+            error:
+              type:
+              - object
+              - 'null'
+              description: 失败/取消的结构化错误(内核分支条目原样透传)
+        description: 败方/被取消条目;完整结算时按分支序,budget 路径为批帧子树取消 ack
+      partial:
+        type: boolean
+        description: budget 软超限提前取消为 true;完整结算(含全败)为 false
+      usage:
+        type: object
+        description: 批帧子树记账九字段汇总(steps/tokens/cost/耗时)
+    required:
+    - winner
+    - cancelled
+    - partial
+    - usage
+  permissions:
+    skills:
+    - common.task.race_batch
+  handler: combinators_handlers:race_first
+- name: common.task.race_batch
+  version: 1.0.0
+  kind: code
+  description: 'race_first 的私有批帧:把 branches 原样交给 ctx.parallel(first_success)
+    跑完并返回分支条目;独立成帧让外层 watchdog 有单一的批帧可寻址(子树 usage 聚合读、
+    ctx.cancel 级联取消一次到位)。Use when 已被 common.task.race_first 编排调用;Do not
+    use when 直接调用——竞速语义(取消/ack/幂等结算 + budget 软闸)请用
+    common.task.race_first。分支白名单出厂为空表,由调用方复制专化填入。'
+  inputs:
+    type: object
+    properties:
+      branches:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          properties:
+            skill:
+              type: string
+              description: 分支技能名
+            input:
+              type: object
+              description: 分支入参(缺省 {})
+          required:
+          - skill
+        description: 竞速分支 [{skill, input}],至少一条
+      settle_timeout:
+        type: number
+        description: 胜方锁定后等败方取消 ack 的秒数(缺省 5.0)
+    required:
+    - branches
+  outputs:
+    type: object
+    properties:
+      results:
+        type: array
+        description: 内核 parallel_invoke 分支条目 [{ok, value, error, frame_id}],按分支序
+    required:
+    - results
+  permissions: {}
+  handler: combinators_handlers:race_batch
+- name: common.task.subagent_cancel
+  version: 1.0.0
+  kind: code
+  description: '取消一个后台帧及其整个子树(WRITE 语义;§5.2 级联取消的技能面封装):目标帧
+    及后代进入终态,**不**杀 run;ack 幂等——已终态帧跳过、重复调用不炸、未知帧返回空表
+    不报错。Use when 要停掉在跑的后台子代理/分支(竞速败方、超预算的批帧),如
+    {''frame_id'': ''...''} → {''cancelled'': [id...]};Do not use when 想中止整个
+    run(那是 run 级 stop)或只想读状态(用 common.task.subagent_status)。副作用限于本
+    run 帧树、不触外部世界(推导档 none);被取消帧自身已发生的副作用归其自身档位管。'
+  inputs:
+    type: object
+    properties:
+      frame_id:
+        type: string
+        description: 目标帧 id(spawn/parallel 返回的 frame_id)
+      reason:
+        type: string
+        description: 取消原因(入帧错误消息,可缺省)
+    required:
+    - frame_id
+  outputs:
+    type: object
+    properties:
+      cancelled:
+        type: array
+        items:
+          type: string
+        description: 纳入取消的 frame_id 列表(含目标自身;未知帧为空表)
+    required:
+    - cancelled
+  permissions: {}
+  handler: combinators_handlers:subagent_cancel
+- name: common.task.subagent_status
+  version: 1.0.0
+  kind: code
+  description: '读一个帧的瞬时状态与子树记账(READ 语义,只读):status 取帧状态
+    pending/running/suspended/done/failed,usage 为该帧子树九字段求和(含全部后代)。
+    Use when 要观察后台帧进度或汇总其资源消耗,如 {''frame_id'': ''...''} → {''status'':
+    ''running'', ''usage'': {...}};Do not use when 想停它(用 common.task.subagent_cancel)
+    或想缓存结果——状态是瞬时值,每次调用重新读帧树,缓存即过期。未知帧返回
+    status=null 的同形字典(usage 零值),不报错。'
+  inputs:
+    type: object
+    properties:
+      frame_id:
+        type: string
+        description: 目标帧 id
+    required:
+    - frame_id
+  outputs:
+    type: object
+    properties:
+      frame_id:
+        type: string
+        description: 回显目标帧 id
+      status:
+        type:
+        - string
+        - 'null'
+        description: 帧状态(pending/running/suspended/done/failed);未知帧为 null
+      skill:
+        type:
+        - string
+        - 'null'
+        description: 帧技能名;未知帧为 null
+      usage:
+        type: object
+        description: 子树记账九字段汇总(未知帧为零值)
+    required:
+    - frame_id
+    - status
+    - usage
+  permissions: {}
+  handler: combinators_handlers:subagent_status

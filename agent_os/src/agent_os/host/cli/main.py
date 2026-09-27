@@ -86,6 +86,10 @@ async def _cli_supervisor(question: Question) -> dict[str, Any]:
 #: §5/S3 ``supervisor.ask`` 信号通道标签(SupervisorManager 读取)
 _cli_supervisor.supervisor_channel = "cli"
 
+# TODO(M1 接线):system.user.ask/system.user.notify 的宿主通道尚未接到 CLI——
+# 装配形态已就位(LocalPythonToolRegistry.bind_user_channel / KernelBuilder.user_channel),
+# CLI 通道可用与 _cli_supervisor 同构的 stdin/stderr 协议实现 ask/notify 回调后,
+# 在 _build_kernel 装配链上注入;未接线前调用两工具按"user 通道未装配"报 NOT_FOUND。
 
 def _build_kernel(
     config: str,

@@ -31,7 +31,6 @@ SKELETON_MODULES = [
     "agent_os.kernel",
     "agent_os.kernel.runner",
     "agent_os.kernel.stack",
-    "agent_os.kernel.dispatch",
     "agent_os.kernel.signals",
     "agent_os.kernel.control",
     "agent_os.kernel.run",
@@ -78,14 +77,20 @@ def test_importable(mod: str) -> None:
 
 def test_flat_reexport() -> None:
     from agent_os.api import v1
+    from agent_os.api.v1 import memory as memory_mod
 
     for name in (
         "Message", "SkillFrame", "FrameContext", "Usage", "Provider", "ChatRequest",
         "Tool", "ToolSpec", "ToolContext", "ToolResult", "SkillManifest", "Sidecar",
         "Signal", "RunControl", "ContextManager", "Compressor", "LogicKernel",
         "TelemetrySink", "MemoryService", "Blackboard", "Envelope", "RunConfig",
+        "MemoryPrincipal",
     ):
         assert hasattr(v1, name), f"agent_os.api.v1 缺少 re-export: {name}"
+    # 同名消歧(M6):平铺命名空间的 Principal 是数据层形态(subject/issuer/attrs);
+    # memory 形态(user/tenant)只经 MemoryPrincipal 别名到达
+    assert v1.Principal is not v1.MemoryPrincipal
+    assert v1.MemoryPrincipal is memory_mod.Principal
 
 
 def test_default_instantiation() -> None:
@@ -109,6 +114,7 @@ def test_default_instantiation() -> None:
 def test_frozen_fields_present() -> None:
     """§14.1 v1 契约冻结清单逐项落地。"""
     from agent_os.api.v1 import (
+        ChatChunk,
         Envelope,
         Message,
         Permission,
@@ -122,7 +128,7 @@ def test_frozen_fields_present() -> None:
         signals,
     )
 
-    # ToolContext.principal 与 credentials
+    # ToolContext.principal 与 credentials(WS1:未声明凭证/未 bind 作用域时仍恒空)
     ctx = ToolContext()
     assert hasattr(ctx, "principal") and ctx.principal is None
     assert hasattr(ctx, "credentials") and ctx.credentials == {}
@@ -153,6 +159,7 @@ def test_frozen_fields_present() -> None:
         assert hasattr(spec, f), f"ToolSpec 缺预留字段: {f}"
     assert spec.confirm is False
     assert spec.concurrency_safe is False  # 默认否(fail-safe)
+    assert spec.credentials == []  # WS1:缺省不声明凭证,dispatch 注入空 dict
 
     # 权限粒度递增
     assert Permission.READ < Permission.WRITE < Permission.NET < Permission.EXEC
@@ -165,11 +172,22 @@ def test_frozen_fields_present() -> None:
     # pre:frame.pop 信号名(弹栈前同步可否决)
     assert signals.PRE_FRAME_POP == "pre:frame.pop"
     assert signals.POST_LLM_CHUNK == "post:llm.chunk"
+    # ChatChunk 流式分片字段冻结(§4.1;WS2 消费侧载体)
+    chunk = ChatChunk()
+    assert chunk.delta is None and chunk.finish_reason is None and chunk.usage is None
     assert signals.BLACKBOARD_PUBLISH == "blackboard.publish"
     assert signals.BLACKBOARD_WRITE == "blackboard.write"
+    # 运行期注册信号(§6.2;WS-C):pre 可否决 / post 观察;目录全集 33 → 35
+    assert signals.PRE_SKILL_REGISTER == "pre:skill.register"
+    assert signals.POST_SKILL_REGISTER == "post:skill.register"
+    assert signals.PRE_SKILL_REGISTER in signals.SIGNAL_NAMES
+    assert signals.POST_SKILL_REGISTER in signals.SIGNAL_NAMES
+    assert len(signals.SIGNAL_NAMES) == 35
 
     # compression: "off" 消融档存在(默认值是 hierarchical,档位语义见 §7.1)
     assert RunConfig(compression="off").compression == "off"
+    # stream 流式消费开关(WS2 additive;缺省开,caps 不支持自动回落 chat)
+    assert RunConfig().stream is True
 
     # Envelope 冻结
     env = Envelope()
@@ -223,8 +241,8 @@ def test_fake_structural_conformance() -> None:
     assert isinstance(_FakeProvider(), Provider)
 
 
-def test_skeletons_raise_milestones() -> None:
-    """骨架就位:链式组装返回 builder 自身,build() 报里程碑号。"""
+def test_full_chain_builds_with_memory(tmp_path) -> None:
+    """链式组装返回 builder 自身;build() 装配成功(M6 起 memory 接线,不再报里程碑号)。"""
     from agent_os.api.v1 import RunConfig
     from agent_os.blackboard import LocalBlackboard
     from agent_os.logic import InProcessLogicKernel, PythonSandboxLogicKernel
@@ -234,14 +252,16 @@ def test_skeletons_raise_milestones() -> None:
     from agent_os.sidecars import BudgetGuard, LoopDetector
     from agent_os.telemetry import JsonlTelemetrySink
 
+    memory = LocalFileMemoryService(str(tmp_path / "memory"))
     builder = (
         KernelBuilder(RunConfig())
         .providers(MockProvider())
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
         .sidecars(BudgetGuard(max_cost=2.0), LoopDetector())
-        .telemetry(JsonlTelemetrySink("./traces"))
-        .memory(LocalFileMemoryService("./memory"))
+        .telemetry(JsonlTelemetrySink(str(tmp_path / "traces")))
+        .memory(memory)
         .blackboard(LocalBlackboard())
     )
-    with pytest.raises(NotImplementedError, match="M0"):
-        builder.build()
+    kernel = builder.build()
+    assert kernel.memory is memory, "memory(M6)应接线到 kernel.memory"
+    assert kernel.tools._memory is memory, "memory 应经 bind_memory 注入工具 registry(§11.2)"

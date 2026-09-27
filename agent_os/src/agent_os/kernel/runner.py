@@ -1,11 +1,16 @@
 """内核 runner(docs/DESIGN.md §3.1 语义伪码的落点;M0 单帧 runner,M2 调用栈/压栈挂起,
 M4 verdict 仲裁与 sidecar 接线,M5a checkpoint/resume 断电恢复,
-S1 ask_supervisor 拦截/就地挂起/回答注入与 resume 重问,docs/SUPERVISOR.md v2 §2/§4)。
+S1 ask_supervisor 拦截/就地挂起/回答注入与 resume 重问,docs/SUPERVISOR.md v2 §2/§4;
+WS2 tool-confirm 两阶段闸门,docs/DESIGN.md §8.2 + docs/SUPERVISOR.md §10;
+WS3 parallel_invoke fork/join,docs/DESIGN.md §3.4 第三原语)。
 
 agent loop 顺序:safe point(run 中止标志)→ pre:step 检查点(verdict 仲裁,§5.2)
-→ 强制压缩检查 → context.maintain/build → providers.chat →
+→ 强制压缩检查 → context.maintain/build → providers.chat(RunConfig.stream 开且
+provider caps 支持流式时改走 stream chunk 循环:逐 chunk 发 post:llm.chunk、
+safe point 同款取消查表、ttft/total 计时入账;否则回落 chat 原路径)→
 终止判断(outputs 校验 + verifier)→ 分发(pre:tool.call 可 Veto/Modify/Stop;
-工具走 Tool Registry,``skill.*`` 压栈)→ post:step(调用签名列表)→
+confirm/EXEC 工具过 tool-confirm 闸门挂起等人审;工具走 Tool Registry,
+``skill.*`` 压栈)→ post:step(调用签名列表)→
 记账与预算检查。弹栈前 ``pre:frame.pop`` 同步可否决(§3.1 pop())。
 
 硬失败传播边界(§3.2):MaxDepthExceeded / RunAborted(含 BudgetExceeded)不可被
@@ -16,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import hashlib
 import inspect
 import json
@@ -32,6 +38,7 @@ from agent_os.api.v1 import (
     ORCHESTRATE_TOOL,
     POST_FRAME_POP,
     POST_FRAME_PUSH,
+    POST_LLM_CHUNK,
     POST_LLM_RESPONSE,
     POST_LOGIC_EXEC,
     POST_SKILL_ESCALATE,
@@ -50,20 +57,24 @@ from agent_os.api.v1 import (
     RUN_FINISHED,
     RUN_STARTED,
     SKILL_ESCALATION_DENIED,
+    TIER_IRREVERSIBLE,
     TIER_REVERSIBLE,
     Allow,
+    ChatRequest,
+    ChatResponse,
     ChatUsage,
     EscalationRequest,
     ExecRequest,
     ForceCompress,
     FrameContext,
+    FrameStatus,
     Grant,
     InjectMessage,
     LogicError,
     Message,
     Modify,
     Pause,
-    ResourceLimits,
+    Permission,
     Role,
     RunConfig,
     RunStatus,
@@ -79,8 +90,11 @@ from agent_os.api.v1 import (
     ToolCall,
     ToolErrorKind,
     ToolResult,
+    ToolSpec,
     TrustLevel,
+    Usage,
     Veto,
+    derive_side_effect,
     derive_skill_tier,
     derive_tools_tier,
     tier_exceeds,
@@ -97,17 +111,22 @@ from agent_os.kernel.errors import (
     OutputValidationError,
     RunAborted,
     SkillLoadError,
+    SubtreeCancelled,
     ToolDispatchError,
 )
 from agent_os.kernel.logic_context import KernelLogicContext
 from agent_os.kernel.run import Run
 from agent_os.kernel.stack import FrameStack
+from agent_os.logic.limits import exec_limits
 from agent_os.tools.local_registry import ToolDispatchContext
 
 _log = logging.getLogger("agent_os.kernel")
 
 #: 最终答案 outputs 校验连败上限(§3.2 恢复环路语义:输出修复循环独立熔断)
 _OUTPUT_VALIDATION_MAX_FAILURES = 2
+
+#: parallel_invoke 分支协程返回哨兵:depends_on 前置分支失败,本分支未启动
+_DEP_FAILED = object()
 
 #: 单次沙箱执行的 syscall 默认上限(docs/CODE-ORCHESTRATION.md §4;manifest
 #: ``limits.max_tool_calls`` 可覆盖)。限额是内核策略,故在此计数与拒绝——
@@ -130,6 +149,16 @@ def _check_output(manifest: SkillManifest, content: str) -> tuple[Any, str | Non
 
 def _error_payload(kind: ToolErrorKind, message: str, hint: str | None = None) -> dict[str, Any]:
     return {"kind": kind.value, "message": message, "retryable": False, "hint": hint or ""}
+
+
+def _cancelled_payload(message: str, hint: str | None = None) -> dict[str, Any]:
+    """分支取消的结构化错误载荷(parallel_invoke,§3.4)。
+
+    kind="cancelled" 是批级终态(first_success 败方/depends_on 未启动/子树取消),
+    不是工具分发失败,故不占 ToolErrorKind 枚举——与 interrupted 的"分发中断"
+    语义区分(后者是 §3.1 中断配对占位)。
+    """
+    return {"kind": "cancelled", "message": message, "retryable": False, "hint": hint or ""}
 
 
 def _result_payload(result: ToolResult) -> dict[str, Any]:
@@ -175,6 +204,7 @@ class Kernel:
         blackboard: Any = None,  # Blackboard(§12)
         supervisor: Any = None,  # SupervisorManager(docs/SUPERVISOR.md §2.3;S1 handler 通道)
         stack: FrameStack | None = None,
+        human_approval: Any = None,  # HumanApproval 策略载体(WS2 下沉,docs/SUPERVISOR.md §10;None=关)
     ) -> None:
         self.config = config or RunConfig()
         self.providers = providers
@@ -189,15 +219,25 @@ class Kernel:
         self.blackboard = blackboard
         self.supervisor = supervisor
         self.stack = stack or FrameStack(max_depth=self.config.max_depth)
+        #: HumanApproval 策略载体(WS2):在场时 EXEC 档工具也过 tool-confirm 闸门
+        #: (``_confirm_tool_call``);其 timeout/on_timeout 已在装配期映射为
+        #: supervisor 通道的缺省策略(见 KernelBuilder.build)
+        self.human_approval = human_approval
         self._runs: dict[str, Run] = {}
         #: run 中止标志表(dict[run_id, reason];RunControl.stop/pause 置位,
         #: runner 在 pre:step safe point 检查并抛 RunAborted,§3.1/§5.2)
         self._stop_flags: dict[str, str] = {}
+        #: 帧级 stop 标志表(dict[frame_id, reason];RunControl.cancel_frame 经
+        #: cancel_subtree 置位;safe point 同点检查,命中抛 SubtreeCancelled——
+        #: 子树终态,不杀 run;仅 prompt 帧在 safe point 消费,code 帧不检查)
+        self._frame_stop_flags: dict[str, str] = {}
         #: RunControl 句柄(装配 sidecars 时由 KernelBuilder 注入;pre:step 的
         #: InjectMessage/ForceCompress verdict 经它落地)
         self.ctl: Any = None
-        #: spawn 后台帧登记表(§3.4):frame_id → 子帧后台任务;wait_frame 在此 join
-        self._spawned: dict[str, asyncio.Task[Any]] = {}
+        #: spawn 后台帧登记表(§3.4):run_id → {frame_id → (parent_frame_id, 后台任务)};
+        #: wait_frame 在此 join;按 run 分桶使 _release_run 只回收本 run(跨 run 隔离),
+        #: parent_frame_id 供 cancel_subtree 补帧树压栈前的竞态窗口
+        self._spawned: dict[str, dict[str, tuple[str, asyncio.Task[Any]]]] = {}
 
     # ------------------------------------------------------------------
     # §13 生命周期入口
@@ -269,13 +309,13 @@ class Kernel:
         宿主跑够多 run 会 fd 耗尽 + /tmp 塞满。子系统未提供对应方法时静默跳过
         (契约层没强制这些方法,duck-typing 探测)。
         """
-        # 后台帧(§3.4):run 已结算,残留任务不该继续记账进已结算的 usage
-        for frame_id, task in list(self._spawned.items()):
+        # 后台帧(§3.4):run 已结算,残留任务不该继续记账进已结算的 usage;
+        # 只回收本 run 桶——共享 kernel 的并发 run 不得跨 run 误杀
+        for frame_id, (_parent_id, task) in list(self._spawned.pop(run_id, {}).items()):
             if not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
-            self._spawned.pop(frame_id, None)
         for subsystem, method in ((self.telemetry, "close_run"), (self.tools, "release_run")):
             fn = getattr(subsystem, method, None)
             if fn is None:
@@ -400,6 +440,11 @@ class Kernel:
             reason = self._stop_flags.get(frame.run_id)
             if reason is not None:
                 raise RunAborted(reason)
+            # 帧级 stop 标志(cancel_subtree 置位):子树终态,抛 SubtreeCancelled——
+            # 分支取消不杀 run,与上面的 run 中止严格分界(§5.2 cancel_frame)
+            frame_reason = self._frame_stop_flags.get(frame.frame_id)
+            if frame_reason is not None:
+                raise SubtreeCancelled(frame_reason)
             verdicts = await self.signals.emit(
                 self._sig(PRE_STEP, frame, {"step": frame.usage.steps + 1})
             )
@@ -409,7 +454,7 @@ class Kernel:
             await self.context.maintain(frame)
             req = await self.context.build(frame)
             await self.signals.emit(self._sig(PRE_LLM_REQUEST, frame, {"model": req.model}))
-            resp = await self.providers.chat(req)
+            resp = await self._llm_call(frame, req)
             # dict 形 tool_calls 归一化为 ToolCall(§4.1 契约形态;mock/第三方 provider
             # 可能回 dict)——在进帧上下文前统一,分发/调用签名/检查点只处理一种形态
             resp.message.tool_calls = [
@@ -430,7 +475,7 @@ class Kernel:
                 )
             )
             frame.context.messages.append(resp.message)
-            self.account(frame, resp.usage)
+            self.account(frame, resp.usage, ttft_ms=resp.ttft_ms, total_ms=resp.total_ms)
             if not resp.message.tool_calls:
                 result, error = _check_output(manifest, resp.message.content)
                 if error is None:
@@ -463,6 +508,20 @@ class Kernel:
                     }
                     frame.context.messages.append(self._tool_message(call, payload))
                     raise
+                except (RunAborted, MaxDepthExceeded, SubtreeCancelled):
+                    # 硬失败(§3.2:预算/强停/深度兜底)与子树取消终态不可被单帧
+                    # 吞成 INTERNAL 错误观察,照常弹栈
+                    raise
+                except Exception as e:  # noqa: BLE001 — 分发边界故意兜底:意外异常归一化为错误观察,run 存活
+                    payload = {
+                        "ok": False,
+                        "value": None,
+                        "error": _error_payload(
+                            ToolErrorKind.INTERNAL, f"工具分发异常: {type(e).__name__}: {e}"
+                        ),
+                    }
+                    frame.context.messages.append(self._tool_message(call, payload))
+                    continue
                 frame.context.messages.append(self._tool_message(call, payload))
             # post:step:本步调用签名列表(LoopDetector/StallDetector 的观察面,§5.4)
             await self.signals.emit(
@@ -483,6 +542,96 @@ class Kernel:
                 frame,
                 {"status": "running", "step": frame.usage.steps, "skill": str(frame.skill)},
             )
+
+    # ------------------------------------------------------------------
+    # WS2 流式消费:chunk 循环 + post:llm.chunk + ttft/total 计时
+    # ------------------------------------------------------------------
+
+    async def _llm_call(self, frame: SkillFrame, req: ChatRequest) -> ChatResponse:
+        """LLM 调用入口:流式优先,双保险回落一次性 ``chat``。
+
+        ``RunConfig.stream`` 开(缺省)且 provider caps 报 ``supports_streaming``
+        时走 :meth:`_stream_call`;否则(开关关闭,或 caps 不支持——如 MockProvider
+        未配 ``stream_scripts``)回落 ``chat``,与原路径逐字一致。
+        """
+        provider = self.providers.resolve(req.model)
+        if self.config.stream and provider.capabilities().supports_streaming:
+            return await self._stream_call(frame, req)
+        return await self.providers.chat(req)
+
+    async def _stream_call(self, frame: SkillFrame, req: ChatRequest) -> ChatResponse:
+        """流式 chunk 循环(§4.1 ``stream``;WS2 消费侧):组装成与 chat 同形态的回包。
+
+        - 每 chunk 发 ``post:llm.chunk``(仅 ASYNC 观察;``_sig`` 基底 +
+          ``{model, seq, text}``,text 取 ``delta.content``,seq 从 0 递增);
+        - 取消与 safe point 同点语义:逐 chunk 查 ``_stop_flags``/``_frame_stop_flags``
+          (纯 dict 读),命中抛 RunAborted/SubtreeCancelled——组装缓冲随之丢弃,
+          半截 assistant 消息不 append(§7.4 配对不变量安全);
+        - 计时:``time.monotonic()`` 记 t0,首 chunk 记 ttft、流尽记 total,
+          落在 ``ChatResponse.ttft_ms/total_ms``,由 :meth:`account` 两级累加;
+        - 组装:content/reasoning 逐 chunk 拼接,tool_calls 收齐(provider 侧已把
+          分片缓冲成完整 ToolCall 一次交付),meta 合并,usage/finish_reason 取终
+          chunk(终 chunk 缺席时 usage 归零值,与 chat 的缺省形态一致);
+        - 中止/取消/异常经 finally ``aclose()`` 关流,生成器收尾不泄漏悬挂流
+          (CancelledError 穿透时 WS1 provider 侧已关 response)。
+        """
+        t0 = time.monotonic()
+        ttft_ms = 0
+        seq = 0
+        contents: list[str] = []
+        reasonings: list[str] = []
+        tool_calls: list[ToolCall] = []
+        meta: dict[str, Any] = {}
+        usage: ChatUsage | None = None
+        finish_reason = ""
+        stream = self.providers.stream(req)
+        try:
+            async for chunk in stream:
+                # safe point 同款查表(纯 dict 读,§5.2):流中 stop/cancel 立即生效
+                reason = self._stop_flags.get(frame.run_id)
+                if reason is not None:
+                    raise RunAborted(reason)
+                frame_reason = self._frame_stop_flags.get(frame.frame_id)
+                if frame_reason is not None:
+                    raise SubtreeCancelled(frame_reason)
+                if seq == 0:
+                    ttft_ms = int((time.monotonic() - t0) * 1000)
+                delta = chunk.delta
+                text = ""
+                if delta is not None:
+                    text = delta.content or ""
+                    if text:
+                        contents.append(text)
+                    if delta.reasoning:
+                        reasonings.append(delta.reasoning)
+                    tool_calls.extend(delta.tool_calls)
+                    meta.update(delta.meta)
+                if chunk.finish_reason:
+                    finish_reason = chunk.finish_reason
+                if chunk.usage is not None:
+                    usage = chunk.usage
+                await self.signals.emit(
+                    self._sig(POST_LLM_CHUNK, frame, {"model": req.model, "seq": seq, "text": text})
+                )
+                seq += 1
+        finally:
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                await aclose()
+        total_ms = int((time.monotonic() - t0) * 1000)
+        return ChatResponse(
+            message=Message(
+                role=Role.ASSISTANT,
+                content="".join(contents),
+                tool_calls=tool_calls,
+                reasoning="".join(reasonings) if reasonings else None,
+                meta=meta,
+            ),
+            finish_reason=finish_reason,
+            usage=usage or ChatUsage(),
+            ttft_ms=ttft_ms,
+            total_ms=total_ms,
+        )
 
     # ------------------------------------------------------------------
     # §9.4 code 技能帧:Logic Kernel 是唯一执行点(§9)
@@ -516,9 +665,7 @@ class Kernel:
             # SANDBOX 档:ctx 经 syscall 通道跨进程构造(docs/CODE-ORCHESTRATION.md §2.2),
             # 与 TRUSTED 档契约逐字一致——同一 handler 两档运行行为等价
             dispatch_fn=None if trusted else self._syscall_dispatcher(frame, manifest),
-            limits=ResourceLimits(
-                wall_time=timeout, cpu_time=timeout, memory_mb=256, stdout_bytes=100_000
-            ),
+            limits=exec_limits(manifest_timeout=timeout),  # §9.1 三级取紧(调用方缺省)
         )
         await self.signals.emit(self._sig(PRE_LOGIC_EXEC, frame, {"trust": trust}))
         result = await kernel.execute(req)
@@ -581,6 +728,19 @@ class Kernel:
             raise RunAborted(f"paused: {verdict.reason}")
         if isinstance(verdict, Modify):
             call.args.update(verdict.patch)  # pre 可改参数(§5.1)
+        # WS2 tool-confirm 闸门(docs/DESIGN.md §8.2 两阶段语义;docs/SUPERVISOR.md §10):
+        # spec.confirm 或(HumanApproval 策略在场且 EXEC 档)→ 挂起等人工裁决。
+        # 位置在白名单与 pre:tool.call 仲裁(含 Modify 改参)之后、分发之前——
+        # 人审的就是要执行的(同 docs/ESCALATION.md §3 原则 1);fail-closed 靠显式
+        # 返回错误载荷,不抛异常(帧 loop 的分发兜底会把异常吞成 INTERNAL)
+        spec = self._tool_spec(call.name)
+        if spec is not None and (
+            spec.confirm
+            or (self.human_approval is not None and spec.permission is Permission.EXEC)
+        ):
+            denied = await self._confirm_tool_call(call, frame, spec)
+            if denied is not None:
+                return denied
         result = await self.tools.dispatch(
             call,
             ToolDispatchContext(
@@ -679,6 +839,9 @@ class Kernel:
 
         脚本以**调用帧的身份**执行——可调集合 = 该帧 manifest 白名单 ∩ RunConfig
         上限,ToolGuard/信号/记账全部沿用,**无权限提升**(docs/CODE-ORCHESTRATION.md §2.3)。
+        帧控制面 syscall(kind=``cancel``/``frame_status``,W5-WS1)不是工具分发,
+        不进 ``_dispatch_call``:直委托内核读/控视图(``cancel_subtree``/
+        ``frame_status_payload``),寻址范围限于本 run 帧树,同样无权限提升。
         """
         counter = stats if stats is not None else {"calls": 0, "failed": []}
         limit = (
@@ -701,6 +864,12 @@ class Kernel:
                     ),
                 }
             counter["calls"] += 1
+            # 帧控制面(kind=cancel/frame_status):name 为目标 frame_id,args 带 reason
+            if kind == "cancel":
+                ids = await self.cancel_subtree(name, str(args.get("reason") or ""))
+                return {"ok": True, "value": ids, "error": None}
+            if kind == "frame_status":
+                return {"ok": True, "value": self.frame_status_payload(name), "error": None}
             target = f"skill.{name}" if kind == "skill" else name
             payload = await self._dispatch_call(
                 ToolCall(id=f"{frame.frame_id[:8]}#{counter['calls']}", name=target, args=dict(args)),
@@ -771,15 +940,28 @@ class Kernel:
         dispatch = self._syscall_dispatcher(frame, manifest, stats)
 
         timeout = call.args.get("timeout")
-        wall = float(timeout) if timeout else 60.0
+        try:
+            wall = float(timeout) if timeout else None
+        except (TypeError, ValueError):
+            # 模型生成的 timeout 可能是非数值(如 "abc"),折为错误观察而非炸 run
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(
+                    ToolErrorKind.INVALID_ARGS, f"timeout 参数无法解析为数值: {timeout!r}"
+                ),
+            }
         req = ExecRequest(
             source=source,
             args={},
             ctx=None,  # 沙箱侧 ctx 由驱动脚本经 syscall 通道构造(§2.2)
             dispatch_fn=dispatch,
-            limits=ResourceLimits(
-                wall_time=wall, cpu_time=wall, memory_mb=256, stdout_bytes=100_000
-            ),
+            limits=exec_limits(
+                manifest_timeout=(
+                    manifest.limits.timeout if manifest.limits and manifest.limits.timeout else None
+                ),
+                caller_timeout=wall,
+            ),  # §9.1 三级取紧:调用方不能放松 skill 声明的上限;未设字段回填内核默认
         )
         verdicts = await self.signals.emit(
             self._sig(
@@ -899,6 +1081,18 @@ class Kernel:
             value = await self.run_frame(child)
         except (MaxDepthExceeded, RunAborted):
             raise  # 硬失败不可被帧吞掉,沿栈上抛(§3.2)
+        except SubtreeCancelled as e:
+            # 子树取消(§5.2 cancel_frame):被调子帧所在子树已终态——折叠为父帧的
+            # interrupted 错误观察(分支取消不杀 run,恢复策略交父帧/模型);若父帧
+            # 自身也在取消子树内,它自己的帧级 stop 标志会在下个 safe point 终结它
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(
+                    ToolErrorKind.INTERRUPTED,
+                    f"子技能 {name} 所在子树已取消: {e}",
+                ),
+            }
         except Exception as e:  # noqa: BLE001 — 帧边界故意兜底:任意子帧失败折叠为父帧错误观察(§3.2)
             _log.warning("子技能 %s 帧失败,转为父帧错误观察: %r", name, e)
             return {
@@ -1124,22 +1318,176 @@ class Kernel:
         return False
 
     # ------------------------------------------------------------------
+    # docs/DESIGN.md §8.2 + docs/SUPERVISOR.md §10:tool-confirm 两阶段闸门(WS2)——
+    # 不可幂等/高危工具(spec.confirm;HumanApproval 策略在场的 EXEC 档)强制挂起
+    # 等人工裁决;闭环复用 supervisor 通道(同 _confirm_escalation 先例)
+    # ------------------------------------------------------------------
+
+    def _tool_spec(self, name: str) -> ToolSpec | None:
+        """查工具 spec(闸门触发判定用);注册表不持该工具/不具 get 接口 → None
+        (分发层自行报未注册错误,闸门不越俎代庖)。"""
+        get = getattr(self.tools, "get", None)
+        if get is None:
+            return None
+        try:
+            return getattr(get(name), "spec", None)
+        except KeyError:
+            return None
+
+    async def _confirm_tool_call(
+        self, call: ToolCall, frame: SkillFrame, spec: ToolSpec
+    ) -> dict[str, Any] | None:
+        """tool-confirm 闸门:Grant 命中直接放行;否则 pending 落盘 → supervisor 裁决 → 三态。
+
+        与 ``_confirm_escalation`` 同构(确认由内核发起,不由 LLM):
+
+        - approve-run 短路:run 档 Grant 命中(粒度按工具名,复用 docs/ESCALATION.md
+          §4 台账与 ``_consume_grant`` 双保险:run 档只对 reversible 生效)→ 放行;
+        - approve-once → 放行本次(不登记 Grant,重试必再撞闸,防"磨到批准");
+          approve-run(仅 reversible 档提供,irreversible/none 每一次都必须过
+          人眼——同 L3 永不批量授权)→ 登记 run 档 Grant(tier 快照,随 run 死亡,
+          checkpoint 持久)后放行;
+        - deny → PERMISSION_DENIED 错误观察(与白名单拒绝同形,模型看到"人拒绝了");
+        - 无 supervisor 通道且无 Grant 命中 → fail-closed 拒绝(同升权先例:
+          高危操作无人可审等于无人把关)。
+
+        偏差说明(WS2 最小实现):内核批准即 confirmation token——批准后在同一
+        调用上放行;不做字面"dry run 返回 token 注入 args 二次调用"(§8.2 契约
+        未定义 token 格式)。
+        """
+        tier = derive_side_effect(spec)
+        if self._consume_grant(frame, call.name, tier) is not None:
+            return None  # approve-run 短路:本 run 内同工具已获批量授权
+        if self.supervisor is None:
+            return {
+                "ok": False,
+                "value": None,
+                "error": _error_payload(
+                    ToolErrorKind.PERMISSION_DENIED,
+                    f"工具 {call.name} 需要人工确认,但未装配 supervisor 确认通道",
+                    hint="用 KernelBuilder.supervisor(handler) 注入调用方通道(docs/SUPERVISOR.md §2.3)",
+                ),
+            }
+        options = (
+            ["approve-once", "approve-run", "deny"]
+            if tier == TIER_REVERSIBLE
+            else ["approve-once", "deny"]
+        )
+        question_id = f"tc-{uuid.uuid4().hex[:12]}"
+        # pending 落盘(checkpoint 随帧序列化;resume 凭 call_id 重走本闸门,§10.2)
+        frame.context.working["_pending_tool_confirm"] = {
+            "kind": "tool-confirm",
+            "question_id": question_id,
+            "call_id": call.id,
+            "tool": call.name,
+            "args": dict(call.args),
+            "side_effect": tier,
+            "options": list(options),
+            "asked_at": time.time(),
+        }
+        outcome = await self.supervisor.ask(
+            frame,
+            {
+                "question_id": question_id,
+                # kind="tool-confirm":与 question/escalation 在信号流与收件箱里可区分
+                # (additive 自由字符串,不加新信号名)
+                "kind": "tool-confirm",
+                "question": (
+                    f"工具确认:{frame.skill.name} 帧请求执行 {call.name}"
+                    f"(副作用档 {tier}),批准本次执行?"
+                ),
+                "context": {
+                    "tool": call.name,
+                    "args": dict(call.args),
+                    "side_effect": tier,
+                },
+                "options": list(options),
+                "urgency": "high" if tier == TIER_IRREVERSIBLE else "normal",
+            },
+        )
+        # 仅正常闭环(含超时/兜底)才清 pending;异常(断电/取消)保留,供 resume 重问
+        frame.context.working.pop("_pending_tool_confirm", None)
+        if outcome.get("ok") is False:
+            return {"ok": False, "value": None, "error": outcome["error"]}
+        answer = str(outcome["answer"])
+        decided_by = str(outcome["decided_by"])
+        if answer in ("approve-once", "approve-run"):
+            if answer == "approve-run":
+                # 登记 run 档 Grant(复用升权台账:Grant.skill 字段承载工具名);
+                # approve-once 不登记,下次同调用必须重新过人眼
+                self._register_run_grant(
+                    frame,
+                    Grant(
+                        skill=call.name,
+                        tier=tier,
+                        scope="run",
+                        decided_by=decided_by,
+                        decided_at=time.time(),
+                    ),
+                )
+            return None
+        return {
+            "ok": False,
+            "value": None,
+            "error": _error_payload(
+                ToolErrorKind.PERMISSION_DENIED,
+                f"工具 {call.name} 的执行被拒绝(decided_by: {decided_by})",
+                hint="可改道完成,或请求用户批准后重试",
+            ),
+        }
+
+    async def _settle_pending_tool_confirm(self, frame: SkillFrame) -> bool:
+        """resume 结算 pending 工具确认(WS2):重走 tool-confirm 闸门(清标志重问)。
+
+        与 ``_settle_pending_escalation`` 同旨,在 ``_settle_unpaired_calls``
+        之前调用:挂起在确认闸门的工具调用不是"分发到一半断电",不得落入
+        interrupted 占位——重入 ``_dispatch_call`` 会再次挂起等裁决,批准后当场
+        分发,配对原子性闭合。已配对的只清标志。编排 syscall 路径的挂起(call_id
+        是沙箱合成 id,不在消息流里)在此只清标志:resume 后编排调用本体落入
+        interrupted 占位,由 LLM 重发编排时自然重过闸门(同 spawn 先例)。
+        """
+        pending = frame.context.working.pop("_pending_tool_confirm", None)
+        if pending is None:
+            return False
+        call_id = pending.get("call_id")
+        messages = frame.context.messages
+        for index, msg in enumerate(messages):
+            if msg.role is not Role.ASSISTANT:
+                continue
+            for call in msg.tool_calls:
+                if call.id != call_id:
+                    continue
+                if call.name.startswith("skill.") or call.name.startswith("skill__"):
+                    continue  # skill 调用归 _settle_pending_escalation
+                if call.name in (ORCHESTRATE_TOOL, ASK_SUPERVISOR_TOOL):
+                    continue  # 伪工具各有结算通道,不归本闸门
+                if _last_tool_message(messages, index, call.id) is not None:
+                    return False  # 已结算:只清 pending 标志
+                manifest = self.skills.get(frame.skill).manifest
+                payload = await self._dispatch_call(call, frame, manifest)
+                messages.append(self._tool_message(call, payload))
+                return True
+        return False
+
+    # ------------------------------------------------------------------
     # §3.4 spawn 后台帧:父帧不挂起,子帧独立预算后台运行;join 退化为读终态
     # ------------------------------------------------------------------
 
-    async def spawn_frame(self, parent: SkillFrame, skill: str, input: dict[str, Any]) -> str:
-        """spawn 后台帧(§3.4):白名单/深度/升权检查与 invoke 一致,返回子帧 frame_id。
-
-        子帧经 ``asyncio.create_task`` 后台运行并登记在 ``self._spawned``;
-        PRE/POST_SKILL_INVOKE 信号与 invoke 一致,payload 加 ``"background": True``。
-        升权(docs/ESCALATION.md §3):构成升权时在本调用点挂起等裁决(父帧不停),
-        拒绝/参数不合以 SkillLoadError 上抛(与白名单拒绝同形,交 code 技能处理)。
-        """
+    def _spawn_whitelist_check(self, parent: SkillFrame, skill: str) -> None:
+        """spawn 管线首段:白名单检查(parallel_invoke 逐分支复用;拒绝抛 SkillLoadError)。"""
         parent_manifest = self.skills.get(parent.skill).manifest
         if skill not in parent_manifest.permissions.skills:
             raise SkillLoadError(
                 f"子技能 {skill} 不在技能 {parent_manifest.name} 的 skills 白名单"
             )
+
+    async def _spawn_gate(self, parent: SkillFrame, skill: str, input: dict[str, Any]) -> str:
+        """spawn 管线前置段:PRE 信号 → 深度兜底 → 升权闸,返回被调 skill 推导档。
+
+        深度超限抛 MaxDepthExceeded(硬失败);升权确认 await 发生在本调用点,
+        拒绝/参数不合抛 SkillLoadError(与 spawn_frame 同形)。parallel_invoke
+        起批前的逐分支串行预检复用本段。
+        """
         await self.signals.emit(
             self._sig(PRE_SKILL_INVOKE, parent, {"skill": skill, "background": True})
         )
@@ -1172,11 +1520,15 @@ class Kernel:
             if denied is not None:
                 # spawn 无 tool result 观察通道(不走 LLM 分发),与白名单拒绝同形上抛
                 raise SkillLoadError((denied.get("error") or {}).get("message") or f"升权调用 {skill} 被拒绝")
-        child = self.skills.make_frame(SkillCall(name=skill, args=dict(input)), parent)
-        # 子帧继承被调 skill 推导档(与 _invoke_skill 同旨),后代调用的升权判定才有基准
-        child.tier = target_tier
-        task = asyncio.create_task(self.run_frame(child))
-        self._spawned[child.frame_id] = task
+        return target_tier
+
+    async def _spawn_register(
+        self, parent: SkillFrame, child: SkillFrame, skill: str, task: asyncio.Task[Any]
+    ) -> None:
+        """spawn 管线登记段(§3.4):入 ``_spawned`` run 分桶 + POST 信号(parallel_invoke 复用)。"""
+        # 按 run 分桶登记(含父帧 id):_release_run 只回收本 run,cancel_subtree
+        # 经 parent_frame_id 补帧树压栈前的竞态窗口
+        self._spawned.setdefault(child.run_id, {})[child.frame_id] = (parent.frame_id, task)
         # spawn-and-forget 的子帧异常由 StatusBoard 记录(failed);提前 retrieve,
         # 避免无人 wait 时事件循环 "exception was never retrieved" 噪音——
         # wait_frame 的 await 仍会原样上抛,语义不变
@@ -1186,14 +1538,466 @@ class Kernel:
                 POST_SKILL_INVOKE, parent, {"skill": skill, "ok": True, "background": True}
             )
         )
+
+    async def spawn_frame(self, parent: SkillFrame, skill: str, input: dict[str, Any]) -> str:
+        """spawn 后台帧(§3.4):白名单/深度/升权检查与 invoke 一致,返回子帧 frame_id。
+
+        子帧经 ``asyncio.create_task`` 后台运行并登记在 ``self._spawned``;
+        PRE/POST_SKILL_INVOKE 信号与 invoke 一致,payload 加 ``"background": True``。
+        升权(docs/ESCALATION.md §3):构成升权时在本调用点挂起等裁决(父帧不停),
+        拒绝/参数不合以 SkillLoadError 上抛(与白名单拒绝同形,交 code 技能处理)。
+        """
+        self._spawn_whitelist_check(parent, skill)
+        target_tier = await self._spawn_gate(parent, skill, input)
+        child = self.skills.make_frame(SkillCall(name=skill, args=dict(input)), parent)
+        # 子帧继承被调 skill 推导档(与 _invoke_skill 同旨),后代调用的升权判定才有基准
+        child.tier = target_tier
+        task = asyncio.create_task(self.run_frame(child))
+        await self._spawn_register(parent, child, skill, task)
         return child.frame_id
 
     async def wait_frame(self, frame_id: str) -> Any:
-        """join 退化为读终态(§3.4):子帧失败把异常原样上抛,交给 code 技能处理。"""
-        task = self._spawned.get(frame_id)
-        if task is None:
+        """join 退化为读终态(§3.4):子帧失败把异常原样上抛,交给 code 技能处理。
+
+        子帧被级联取消(cancel_subtree,§5.2)时抛 :class:`SubtreeCancelled`——
+        分支终态不是 run 中止,是否捕获恢复由 code 技能决定。
+        """
+        entry = self._spawned_entry(frame_id)
+        if entry is None:
             raise SkillLoadError(f"未知的后台帧 {frame_id}(未 spawn 或已回收)")
-        return await task
+        task = entry[1]
+        try:
+            return await task
+        except asyncio.CancelledError:
+            if task.cancelled():
+                raise SubtreeCancelled(f"后台帧 {frame_id} 所属子树已取消") from None
+            raise  # 是等待方自身被取消(等待中的帧被 cancel),原样上抛
+
+    def _spawned_entry(self, frame_id: str) -> tuple[str, asyncio.Task[Any]] | None:
+        """跨 run 桶查后台帧登记项(frame_id 全局唯一);不在册返回 None。"""
+        for bucket in self._spawned.values():
+            entry = bucket.get(frame_id)
+            if entry is not None:
+                return entry
+        return None
+
+    # ------------------------------------------------------------------
+    # §3.4 parallel_invoke:fork/join 扇出(第三原语,WS3)——
+    # 批内故障隔离 + first-success 锁定 + 级联取消 + 幂等结算一次
+    # ------------------------------------------------------------------
+
+    async def parallel_invoke(
+        self,
+        parent: SkillFrame,
+        branches: list[dict[str, Any]],
+        *,
+        mode: str = "all_settled",
+        max_concurrency: int | None = None,
+        settle_timeout: float = 5.0,
+    ) -> list[dict[str, Any]]:
+        """parallel_invoke fork/join 扇出(§3.4 第三原语):按分支序返回
+        ``[{"ok", "value", "error", "frame_id"}]``。
+
+        - **起批前串行预检**:逐分支复用 spawn 管线前置段
+          (``_spawn_whitelist_check`` + ``_spawn_gate``——白名单/PRE 信号/深度
+          兜底/升权闸,升权确认 await 发生在本调用点)。批形态错(branches 非
+          list、分支缺 skill、depends_on 越界/成环、mode/max_concurrency 非法)
+          与白名单外分支 → 抛 SkillLoadError(与 spawn_frame 一致);深度超限抛
+          MaxDepthExceeded(硬失败,不折叠);单分支参数不合 schema/升权被拒等
+          **分支级**预检失败折叠为该分支 ``ok=False`` 条目(批内故障隔离);
+        - **all_settled(默认)**:结构化 gather——普通分支异常折叠为该分支
+          ``{"ok": False, "error": {...}}``,永不上抛;``depends_on`` 前置失败 →
+          依赖分支标 ``{"ok": False, "error": {"kind": "cancelled"}}`` 且不启动;
+        - **first_success**:done-flag 保证只赢一次;胜方锁定后对其余在跑分支
+          ``cancel_subtree`` 级联取消,``asyncio.wait(timeout=settle_timeout)``
+          等 ack;**幂等结算** = 父侧唯一 join 点——胜方结果取一次、败方丢弃
+          (同批完成的胜者也丢弃,返回列表恰一个 ``ok=True``);分支 usage 已
+          实时入 run 记账,不可回滚——与"进行中的副作用既成事实"的既定语义
+          一致(§3.2/_release_run 同旨);全败 → 返回全部分支错误条目,不挂死;
+        - **硬失败边界(§3.2)**:RunAborted/BudgetExceeded/MaxDepthExceeded
+          不折叠——先取消所有在跑分支并等 ack,再沿栈上抛炸 run;批自身被取消
+          (CancelledError)同样先取消所有分支任务、等 ack、再上抛;
+        - **max_concurrency**:asyncio.Semaphore 包住每分支 run_frame;
+        - **concurrency_safe 闸**(§3.4"工具须声明 concurrency_safe 才批内并发"
+          的首个强制消费):code 分支的 manifest permissions.tools 含未声明
+          ``concurrency_safe``/``concurrent_safe``(双拼写任一)的工具(注册表
+          查无 spec 按未声明,fail-safe)→ 该分支**串行降级**(占满全部并发
+          额度、独占执行窗;fail-safe 不拒绝,日志可观察);prompt 分支豁免
+          (帧隔离);cacheable 缓存层不做;
+        - **checkpoint/resume**:与 spawn 同形——批不做检查点配对,在跑批断电
+          不恢复;code 父帧 resume 时整体重跑、批整体重发,调用方须保证幂等
+          (同 spawn 的"resume 重走闸门重发"先例,§10.2)。
+        """
+        # ---- 批形态预检(非法即 SkillLoadError,与 spawn_frame 的白名单拒绝同形)----
+        if mode not in ("all_settled", "first_success"):
+            raise SkillLoadError(f"parallel_invoke 的 mode 非法: {mode!r}")
+        if not isinstance(branches, list):
+            raise SkillLoadError(
+                f"parallel_invoke 的 branches 应为 list,得到: {type(branches).__name__}"
+            )
+        if max_concurrency is not None and (
+            not isinstance(max_concurrency, int)
+            or isinstance(max_concurrency, bool)
+            or max_concurrency < 1
+        ):
+            raise SkillLoadError(f"max_concurrency 须为 >= 1 的整数,得到: {max_concurrency!r}")
+        specs: list[dict[str, Any]] = []
+        for index, branch in enumerate(branches):
+            if not isinstance(branch, dict):
+                raise SkillLoadError(
+                    f"分支 {index} 形态错:应为 dict,得到 {type(branch).__name__}"
+                )
+            skill = branch.get("skill")
+            if not isinstance(skill, str) or not skill:
+                raise SkillLoadError(f"分支 {index} 形态错:缺 skill 名")
+            raw_input = branch.get("input")
+            branch_input = {} if raw_input is None else raw_input
+            if not isinstance(branch_input, dict):
+                raise SkillLoadError(f"分支 {index} 形态错:input 应为 dict")
+            raw_deps = branch.get("depends_on")
+            deps = [] if raw_deps is None else raw_deps
+            if not isinstance(deps, list) or any(
+                not isinstance(d, int)
+                or isinstance(d, bool)
+                or d < 0
+                or d >= len(branches)
+                or d == index
+                for d in deps
+            ):
+                raise SkillLoadError(
+                    f"分支 {index} 形态错:depends_on 应为 [0, {len(branches)}) 内非自身的下标列表"
+                )
+            specs.append(
+                {
+                    "skill": skill,
+                    "input": dict(branch_input),
+                    "depends_on": list(dict.fromkeys(deps)),
+                }
+            )
+        # depends_on 成环即批形态错(Kahn:逐轮摘入度 0 节点,摘不完则有环)
+        indegree = {i: set(spec["depends_on"]) for i, spec in enumerate(specs)}
+        resolved = 0
+        ready = [i for i, deps in indegree.items() if not deps]
+        while ready:
+            node = ready.pop()
+            resolved += 1
+            for i, deps in indegree.items():
+                if node in deps:
+                    deps.discard(node)
+                    if not deps:
+                        ready.append(i)
+        if resolved != len(specs):
+            raise SkillLoadError("parallel_invoke 的 depends_on 存在环")
+        if not specs:
+            return []
+
+        # ---- 逐分支串行预检 + 统一 make_frame(spawn 管线前置段复用)----
+        n = len(specs)
+        results: list[dict[str, Any] | None] = [None] * n
+        branch_frames: dict[int, SkillFrame] = {}
+        for index, spec in enumerate(specs):
+            skill = spec["skill"]
+            # 白名单外 → 抛 SkillLoadError(与 spawn_frame 一致,交 code 技能处理)
+            self._spawn_whitelist_check(parent, skill)
+            try:
+                target_tier = await self._spawn_gate(parent, skill, spec["input"])
+                child = self.skills.make_frame(
+                    SkillCall(name=skill, args=dict(spec["input"])), parent
+                )
+            except SkillLoadError as e:
+                # 批内故障隔离:分支级预检失败(参数不合 schema/升权被拒)折叠为该
+                # 分支错误条目,不拖垮独立分支与父帧;MaxDepthExceeded 是硬失败,不在此列
+                results[index] = {
+                    "ok": False,
+                    "value": None,
+                    "error": _error_payload(ToolErrorKind.INVALID_ARGS, str(e)),
+                    "frame_id": None,
+                }
+                continue
+            # 子帧继承被调 skill 推导档(与 spawn_frame 同旨)
+            child.tier = target_tier
+            branch_frames[index] = child
+
+        # ---- concurrency_safe 闸(§3.4):code 分支含未声明并发安全的工具 → 串行降级 ----
+        cap = max_concurrency if max_concurrency is not None else max(1, len(branch_frames))
+        semaphore = asyncio.Semaphore(cap)
+        permits: dict[int, int] = {}
+        for index, child in branch_frames.items():
+            unsafe = self._parallel_unsafe_tool(child)
+            if unsafe is None:
+                permits[index] = 1
+            else:
+                # 占满全部并发额度 = 独占执行窗(串行降级):fail-safe 不拒绝,日志可观察
+                permits[index] = cap
+                _log.warning(
+                    "parallel_invoke:分支 %d(%s)的工具 %s 未声明 concurrency_safe,"
+                    "该分支串行降级(独占执行窗)",
+                    index,
+                    child.skill,
+                    unsafe,
+                )
+
+        # ---- 统一 create_task + 登记 run 分桶(spawn 登记段复用);depends_on 走事件闸 ----
+        events = [asyncio.Event() for _ in range(n)]
+        for index, entry in enumerate(results):
+            if entry is not None:
+                events[index].set()  # 预检已折叠的分支:依赖者立即可见终态
+        tasks: dict[int, asyncio.Task[Any]] = {}
+        for index, child in branch_frames.items():
+            task = asyncio.create_task(
+                self._parallel_branch(
+                    child,
+                    semaphore,
+                    permits[index],
+                    specs[index]["depends_on"],
+                    events,
+                    results,
+                )
+            )
+            await self._spawn_register(parent, child, specs[index]["skill"], task)
+            tasks[index] = task
+
+        # ---- 父侧唯一 join 点:按完成序结算,结果按分支序落位 ----
+        task_index = {task: index for index, task in tasks.items()}
+        pending: set[asyncio.Task[Any]] = set(task_index)
+        won: int | None = None  # first_success 胜方下标(done-flag,只赢一次)
+        settle_deadline: float | None = None  # 胜方锁定后等败方 ack 的截止点
+        try:
+            while pending:
+                wait_timeout = (
+                    None
+                    if settle_deadline is None
+                    else max(0.0, settle_deadline - time.monotonic())
+                )
+                done, pending = await asyncio.wait(
+                    pending, return_when=asyncio.FIRST_COMPLETED, timeout=wait_timeout
+                )
+                if not done:
+                    # settle_timeout:first_success 败方取消 ack 未到——超时后幂等
+                    # 结算一次,不再等(§3.4);未 ack 任务弃置,由 _release_run 兜底
+                    for task in pending:
+                        index = task_index[task]
+                        task.cancel()
+                        results[index] = self._parallel_cancelled(
+                            branch_frames[index], "settle_timeout 内未收到取消 ack,败方结果弃置"
+                        )
+                        events[index].set()
+                    pending = set()
+                    break
+                for task in done:
+                    index = task_index[task]
+                    child = branch_frames[index]
+                    try:
+                        value = task.result()
+                    except asyncio.CancelledError:
+                        results[index] = self._parallel_cancelled(child, "分支子树已取消")
+                    except SubtreeCancelled as e:
+                        results[index] = self._parallel_cancelled(child, str(e))
+                    except (RunAborted, MaxDepthExceeded):
+                        raise  # 硬失败不折叠(§3.2):交外层取消整批后沿栈上抛
+                    except Exception as e:  # noqa: BLE001 — 批内故障隔离:普通分支异常折叠(§3.4)
+                        results[index] = {
+                            "ok": False,
+                            "value": None,
+                            "error": _error_payload(
+                                ToolErrorKind.INTERNAL,
+                                f"{type(e).__name__}: {e}",
+                                hint=getattr(e, "hint", ""),
+                            ),
+                            "frame_id": child.frame_id,
+                        }
+                    else:
+                        if value is _DEP_FAILED:
+                            results[index] = self._parallel_cancelled(
+                                child, "depends_on 前置分支失败,本分支未启动"
+                            )
+                        elif won is not None:
+                            # first_success 同批完成的败方:结果丢弃(幂等结算一次)
+                            results[index] = self._parallel_cancelled(
+                                child, "first_success 胜方已锁定,结果丢弃"
+                            )
+                        else:
+                            results[index] = {
+                                "ok": True,
+                                "value": value,
+                                "error": None,
+                                "frame_id": child.frame_id,
+                            }
+                    events[index].set()
+                    if mode == "first_success" and won is None and results[index]["ok"]:
+                        won = index
+                        # 胜方锁定:其余在跑分支级联取消,settle_timeout 等 ack
+                        cancels = [
+                            asyncio.create_task(
+                                self.cancel_subtree(
+                                    branch_frames[loser].frame_id, "first_success 已锁定胜方"
+                                )
+                            )
+                            for loser, loser_task in tasks.items()
+                            if loser != index and not loser_task.done()
+                        ]
+                        if cancels:
+                            _, cancels_pending = await asyncio.wait(
+                                cancels, timeout=settle_timeout
+                            )
+                            for cancel_task in cancels_pending:
+                                cancel_task.cancel()  # 超时弃等;分支 cancel 已发出
+                            for cancel_task in cancels:
+                                with contextlib.suppress(asyncio.CancelledError, Exception):
+                                    await cancel_task  # retrieve,防 never-retrieved 噪音
+                        settle_deadline = time.monotonic() + settle_timeout
+        except asyncio.CancelledError:
+            # 批自身被取消:先取消所有分支任务、等 ack、再上抛
+            await self._parallel_cancel_all(branch_frames, tasks, "parallel_invoke 批被取消")
+            raise
+        except (RunAborted, MaxDepthExceeded):
+            # 硬失败(§3.2):先取消所有在跑分支并等 ack,再沿栈上抛炸 run
+            await self._parallel_cancel_all(branch_frames, tasks, "parallel_invoke 批内硬失败")
+            raise
+        # 结算收尾:所有路径都应已落位;未结算分支兜一个内部错误条目(理论不可达)
+        settled: list[dict[str, Any]] = []
+        for index, entry in enumerate(results):
+            if entry is None:
+                entry = {
+                    "ok": False,
+                    "value": None,
+                    "error": _error_payload(ToolErrorKind.INTERNAL, "分支未结算"),
+                    "frame_id": (
+                        branch_frames[index].frame_id if index in branch_frames else None
+                    ),
+                }
+            settled.append(entry)
+        return settled
+
+    async def _parallel_branch(
+        self,
+        child: SkillFrame,
+        semaphore: asyncio.Semaphore,
+        permits: int,
+        depends_on: list[int],
+        events: list[asyncio.Event],
+        results: list[dict[str, Any] | None],
+    ) -> Any:
+        """单分支执行体:depends_on 事件闸 → 并发额度 → run_frame。
+
+        前置分支任一失败 → 返回 ``_DEP_FAILED``(本分支不启动,join 点标 cancelled);
+        串行降级分支占满全部额度(独占执行窗,concurrency_safe 闸);额度在 dep 闸
+        之后获取——等待前置分支不占并发位。
+        """
+        for dep in depends_on:
+            await events[dep].wait()
+        if any(not results[dep]["ok"] for dep in depends_on):
+            return _DEP_FAILED
+        acquired = 0
+        try:
+            for _ in range(permits):
+                await semaphore.acquire()
+                acquired += 1
+            return await self.run_frame(child)
+        finally:
+            for _ in range(acquired):
+                semaphore.release()
+
+    def _parallel_unsafe_tool(self, child: SkillFrame) -> str | None:
+        """concurrency_safe 闸(§3.4):code 分支的 tools 白名单含未声明
+        ``concurrency_safe``/``concurrent_safe``(双拼写任一)的工具 → 返回首个
+        未声明工具名(调用方据此串行降级);prompt 分支豁免(帧隔离),返回 None。
+
+        注册表查无 spec 按未声明处理(fail-safe)。
+        """
+        manifest = self.skills.get(child.skill).manifest
+        if manifest.kind is not SkillKind.CODE:
+            return None
+        for name in manifest.permissions.tools:
+            spec = self._tool_spec(name)
+            if spec is None or not (spec.concurrency_safe or spec.concurrent_safe):
+                return name
+        return None
+
+    @staticmethod
+    def _parallel_cancelled(child: SkillFrame, message: str) -> dict[str, Any]:
+        """分支取消条目(kind="cancelled":first_success 败方/depends_on 未启动/子树取消)。"""
+        return {
+            "ok": False,
+            "value": None,
+            "error": _cancelled_payload(message),
+            "frame_id": child.frame_id,
+        }
+
+    async def _parallel_cancel_all(
+        self,
+        branch_frames: dict[int, SkillFrame],
+        tasks: dict[int, asyncio.Task[Any]],
+        reason: str,
+    ) -> None:
+        """取消整批在跑分支并等 ack;ack 阶段的异常一律吞掉——调用方正在上抛途中。"""
+        for index, task in tasks.items():
+            if task.done():
+                continue
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self.cancel_subtree(branch_frames[index].frame_id, reason)
+
+    # ------------------------------------------------------------------
+    # §5.2 cancel_frame:子树级联取消——目标帧及其后代进入终态,不中止 run
+    # ------------------------------------------------------------------
+
+    def _collect_subtree(self, frame_id: str) -> list[str]:
+        """沿帧树邻接表 DFS 收集目标帧及全部后代的 frame_id(含目标自身)。
+
+        邻接数据两源并集:``stack.children_of``(已压栈帧)+ ``_spawned`` 的
+        parent_frame_id 登记(后台帧压栈前的竞态窗口,spawn 返回与 run_frame
+        压栈之间没有同步点)。
+        """
+        seen = {frame_id}
+        queue = [frame_id]
+        while queue:
+            fid = queue.pop()
+            for child in self.stack.children_of(fid):
+                if child.frame_id not in seen:
+                    seen.add(child.frame_id)
+                    queue.append(child.frame_id)
+            for bucket in self._spawned.values():
+                for child_id, (parent_id, _task) in bucket.items():
+                    if parent_id == fid and child_id not in seen:
+                        seen.add(child_id)
+                        queue.append(child_id)
+        return list(seen)
+
+    async def cancel_subtree(self, frame_id: str, reason: str) -> list[str]:
+        """子树级联取消(§5.2 RunControl.cancel_frame 的内核侧落地)。
+
+        - 在册后台帧:``task.cancel()`` —— CancelledError 走 §3.1 中断配对路径
+          (占位 tool_result 已保证 §7.4 配对原子性),随后 await 等终态(ack);
+        - 调用链上的帧:置帧级 stop 标志,prompt 帧在 ``pre:step`` safe point 抛
+          :class:`SubtreeCancelled`(code 帧不检查标志,经 wait/invoke 边界的
+          子帧终态错误自然收尾);
+        - 幂等:已终态的后台帧跳过 cancel,重复调用不炸;未知帧记日志并返回空表。
+
+        返回纳入取消的 frame_id 列表(含目标自身,作 ack)。
+        """
+        if self.stack.get(frame_id) is None and self._spawned_entry(frame_id) is None:
+            _log.warning("cancel_subtree:帧 %s 不存在,请求被丢弃", frame_id)
+            return []
+        ids = self._collect_subtree(frame_id)
+        tasks: list[asyncio.Task[Any]] = []
+        for fid in ids:
+            entry = self._spawned_entry(fid)
+            if entry is not None:
+                task = entry[1]
+                if not task.done():
+                    task.cancel()
+                tasks.append(task)
+            else:
+                # 非后台帧:帧级 stop 标志(仅 prompt 帧在 safe point 消费;对已
+                # 终态帧置标志无害——frame_id 唯一,不会再被检查)
+                self._frame_stop_flags[fid] = reason
+        current = asyncio.current_task()
+        for task in tasks:
+            if task is current:
+                continue  # 自取消(SYNC sidecar 在被取消帧的信号里发起):不在自身任务内 await 自身
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        return ids
 
     # ------------------------------------------------------------------
     # §12.2 StatusBoard:帧状态滚动写入 status 命名空间(后台帧的滚动状态通道)
@@ -1227,8 +2031,19 @@ class Kernel:
     # §3.1 步骤 7:记账与预算检查
     # ------------------------------------------------------------------
 
-    def account(self, frame: SkillFrame, usage: ChatUsage | None) -> None:
-        """帧/run 两级记账与预算检查(§3.1 步骤 7;超预算抛 BudgetExceeded 沿栈上抛)。"""
+    def account(
+        self,
+        frame: SkillFrame,
+        usage: ChatUsage | None,
+        *,
+        ttft_ms: int = 0,
+        total_ms: int = 0,
+    ) -> None:
+        """帧/run 两级记账与预算检查(§3.1 步骤 7;超预算抛 BudgetExceeded 沿栈上抛)。
+
+        ``ttft_ms``/``total_ms``(WS2 流式计时):与 tokens 同点两级累加(求和口径
+        见 :meth:`subtree_usage`);chat 路径恒 0,行为与引入前一致。
+        """
         frame.usage.steps += 1
         run = self._runs.get(frame.run_id)
         if run is not None:
@@ -1242,6 +2057,11 @@ class Kernel:
                 target.cache_write_tokens += usage.cache_write
                 target.thinking_tokens += usage.thinking
                 target.cost += usage.cost
+        if ttft_ms or total_ms:
+            targets = [frame.usage] + ([run.state.usage] if run is not None else [])
+            for target in targets:
+                target.ttft_ms += ttft_ms
+                target.total_ms += total_ms
         if run is not None and run.state.usage.steps > self.config.max_steps:
             raise RunAborted(
                 f"run 总步数 {run.state.usage.steps} 超过 max_steps={self.config.max_steps}"
@@ -1250,6 +2070,73 @@ class Kernel:
             raise BudgetExceeded(
                 f"run 成本 {run.state.usage.cost:.4f} 超过 max_cost={self.config.max_cost}"
             )
+
+    def subtree_usage(self, frame_id: str) -> Usage:
+        """子树记账读视图(WS2):目标帧及全部后代的九字段 Usage 求和。
+
+        子树收集复用 :meth:`_collect_subtree`(WS1;栈邻接 + ``_spawned`` 竞态窗口
+        并集);只读视图,不改 ``account()`` 写入路径——帧/run 双写语义不变,父帧
+        usage 仍不含子帧,聚合发生在读取侧。
+
+        聚合口径:steps/tokens/cost 求和(计费口径,与 run 级记账对账一致);时间
+        字段 ttft_ms/total_ms 同样**求和**——语义是"子树资源占用累计"而非墙钟
+        时长(嵌套帧的 total_ms 本就重叠,父帧墙钟含子帧,求和是资源消耗口径;
+        ttft_ms 求和为首 token 延迟累计,取均值会随子树规模稀释、不利于定位慢帧)。
+
+        未知 frame_id:记日志并返回零值 Usage(与 inject_message/cancel_subtree
+        同旨的防御式语义——读视图不崩调用方)。
+
+        明确不做(WS2 边界):组合子 budget 强制(需 account() 沿祖先链累加 +
+        子树级中止,留待 budget 参数工具面);SkillLimits.max_steps 执行点(单列)。
+        """
+        if self.stack.get(frame_id) is None and self._spawned_entry(frame_id) is None:
+            _log.warning("subtree_usage:帧 %s 不存在,返回零值 Usage", frame_id)
+            return Usage()
+        total = Usage()
+        for fid in self._collect_subtree(frame_id):
+            frame = self.stack.get(fid)
+            if frame is None:
+                # _spawned 竞态窗口内尚未压栈的后台帧:无 SkillFrame 可读,usage 为零
+                continue
+            u = frame.usage
+            total.steps += u.steps
+            total.prompt_tokens += u.prompt_tokens
+            total.completion_tokens += u.completion_tokens
+            total.cache_read_tokens += u.cache_read_tokens
+            total.cache_write_tokens += u.cache_write_tokens
+            total.thinking_tokens += u.thinking_tokens
+            total.cost += u.cost
+            total.ttft_ms += u.ttft_ms
+            total.total_ms += u.total_ms
+        return total
+
+    def frame_status_payload(self, frame_id: str) -> dict[str, Any]:
+        """帧状态读视图(W5-WS1):``LogicContext.frame_status`` 与 syscall 桥共用数据源。
+
+        返回 ``{"frame_id", "status", "skill", "usage"}``:``status`` 取
+        :class:`FrameStatus` 值(``"running"``/``"done"``/...),``usage`` 为
+        :meth:`subtree_usage` 的九字段 dict(asdict)。防御式语义与
+        ``cancel_subtree``/``subtree_usage`` 同旨——未知帧返回 ``status=None``
+        (``skill=None``、usage 零值)的同形字典,不抛;spawn 竞态窗口(已登记
+        未压栈的后台帧)视如 ``"pending"``,usage 为零值(尚无 SkillFrame 可读)。
+        """
+        frame = self.stack.get(frame_id)
+        if frame is None:
+            status = (
+                FrameStatus.PENDING.value if self._spawned_entry(frame_id) is not None else None
+            )
+            return {
+                "frame_id": frame_id,
+                "status": status,
+                "skill": None,
+                "usage": dataclasses.asdict(Usage()),
+            }
+        return {
+            "frame_id": frame_id,
+            "status": frame.status.value,
+            "skill": frame.skill.name,
+            "usage": dataclasses.asdict(self.subtree_usage(frame_id)),
+        }
 
 
 async def run_frame(frame: SkillFrame, kernel: Kernel) -> Any:

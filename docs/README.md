@@ -44,10 +44,31 @@
 - [SKILL-DEV.md](SKILL-DEV.md) — Skill Lab 设计方案:草稿存储/编辑器/五关闸门/promote/测试面板/Agent 助手(L1-L5 已实现)。
 - [SKILL-PACKAGES.md](SKILL-PACKAGES.md) — 能力包设计报告:包 = 根技能依赖闭包,闭包 API/包视图/原子提交/助手包级化/set 落盘(P1-P4 已实现)。
 - [SKILL-PACKAGES-V2.md](SKILL-PACKAGES-V2.md) — 能力包详细设计:业界对照与四方案,推荐路线(两闭包/两阶段严格性/plan/先证后换,P2 按此实现)。
-- [LAB-ITERATION.md](LAB-ITERATION.md) — Lab 迭代工作流 spec:访谈初始化 → 首稿 → 批注式迭代 → 版本回溯(spec,未实现)。
+- [LAB-ITERATION.md](LAB-ITERATION.md) — Lab 迭代工作流 spec:访谈初始化 → 首稿 → 批注式迭代 → 版本回溯(spec v0.2;功能样板已实现:边注存储/版本快照 rewind/iterate 生成端点/lab.cand.write/Flow C 前端;包级 `.packages` 布局、访谈初始化与 judge 属 V1+ 未做)。
 - [WEB-PLATFORM.md](WEB-PLATFORM.md) — Web Platform(方案 A 对话中枢)技术档案:会话模型/产物卡协议/意图编排/卡片动作白名单(后端骨架已实现,前端下一步)。
 - [APP-MODEL.md](APP-MODEL.md) — App 化 UI 模型:app/双表面/exec 三态/shell as app/§14 寻址/§16 cascade(M1-M5 已实现)。
 - [WIDGETS.md](WIDGETS.md) — 基础 Widget 库设计:widget 协议/注册表/W-text 至 W-chart 十二控件(W1-W4 已实现)。
 - [DOC-EDITOR.md](DOC-EDITOR.md) — 文档编辑器(doc app kind):doc_store/双表面编辑器/段落气泡/评审气泡雨/NOTES 接点/导出(D1-D4 已实现;含架构实弹测试报告终版)。
 - [LAB-ITERATION-FLOWS.md](LAB-ITERATION-FLOWS.md) — 迭代交互流对比报告:三栏批注 / 对话驱动 / diff+边注 三方案对比与选型指引(静态原型见 `agent_os/src/agent_os/host/web/static/proto/`)。
+- [FLOWS-EVAL.md](FLOWS-EVAL.md) — 二十个使用流程评测目录:评分表 + F01-F20 流程定义(驱动脚本 `scripts/flow_eval.py`),附循环 1 三轮实测记录与缺陷清单(B1-B7)。
+- [FLOWS-OPTIMIZATION.md](FLOWS-OPTIMIZATION.md) — 二十流程评测的优化目标与项目计划:循环 2 目标 O1-O7、循环 3 节点 N1-N7 与测试库定义(循环 4 记录:N1-N7 已全部落地)。
+- [PLAN-ANNOTATION-WORKFLOW-V2.md](PLAN-ANNOTATION-WORKFLOW-V2.md) — 批注批处理工作流 v2 执行计划(P1-P5 已落地):Annotation 单条模型与状态机、generate 批处理端点、reanchor 三策略、批注卡简化、Diff 视图与版本历史面板。
 - [AGENTIC-UI.md](AGENTIC-UI.md) — Agentic 时代 UI/UX 重设计:"人是操作员 vs 指挥者"诊断、三套方案(A 对话中枢 / B 任务中心 / C 活动流工作台)、逐部分流程再造、推荐路线(C 先做 → B 概念 → A 主干)。
+
+## Widget 与桌面
+
+- [WIDGET-ARCH.md](WIDGET-ARCH.md) — Widget 基座重构计划(W5):渲染与逻辑分离,widget 从装饰器改为自渲染组件(渲染纯函数化、逻辑不碰 DOM)。
+- [WIDGET-DESIGN.md](WIDGET-DESIGN.md) — Widget 视觉与交互终稿(验收基准;效果图见 `docs/widgets/design/*.svg`),逐控件验收清单。
+- [COMPOUND-WIDGET.md](COMPOUND-WIDGET.md) — Compound Widget 协议:层级组装体系(子 widget/渲染组合/连接/context 下发/动态生灭/多视图 hard link),根是 desktop widget。
+- [DESKTOP-WIDGET.md](DESKTOP-WIDGET.md) — Desktop Widget 设计(C4):层级体系的根 compound;platform 壳迁为 desktop,app = 动态子件,任务栏/图标/窗口为子件的 card/tab 面。
+- [DOC-BUBBLE.md](DOC-BUBBLE.md) — Text ↔ Bubble 交互协议(实然文档):v4 批注卡(pending/applied/ignored/outdated 状态机,annotations 端点,generate 批处理),逐节标注代码出处。
+
+## 游戏引擎 UI(Godot)
+
+- [GAME-UI-DOC.md](GAME-UI-DOC.md) — 游戏引擎 Doc Editor 阅览与展现设计(信件模型;示例图见 `docs/game-ui/*.svg`)。
+- [GAME-UI-FLOWS.md](GAME-UI-FLOWS.md) — 信件版使用流定义:Godot 信件宿主的全部用户流(每个用户行为的流程/所见/进度/可知性)。
+
+## 终端 TUI
+
+- [TUI-DOC.md](TUI-DOC.md) — 终端 TUI Doc Editor 设计稿(第四宿主·终端信件模型):使用原则(信纸不可直改)、内核 Python 对译 + cell buffer 呈现层、KeymapPack(vim/emacs 双群体)、动效/主题终端映射、里程碑 T1-T5(T1-T3 已实现)。
+- [TUI-DEBUG.md](TUI-DEBUG.md) — 终端 TUI Agent 调试器设计稿(GDB 操作模型·以 skill 调用栈为基础):常驻命令窗 + GDB 命令方言(裸 Enter 重复/C-c pause/kill 两段确认)、GDB TUI 式窗口布局(轨迹窗/调用栈/断点表/命令窗)、DebugSource 分层(Online/Offline/Demo)、SSE→queue→主循环 drain 的 live 注入纪律、里程碑 D1-D5。

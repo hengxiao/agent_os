@@ -33,3 +33,9 @@ agent_os/src/agent_os/host/web/static/tests-ui/__pycache__/
 
 # UI 测试截图产物
 agent_os/src/agent_os/host/web/static/tests-ui/.shots/
+
+# 根级前端工具链依赖(scripts/ 的 svg 生成工具)
+node_modules/
+# 实例数据备份与临时文件
+instance/_data-backup-*/
+*.bak

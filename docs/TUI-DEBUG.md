@@ -33,6 +33,7 @@ TUI 调试器(本文)──────────┘   ← 同一组端点,零
 |---|---|---|
 | CLI REPL | 无服务内嵌、脚本化(stdin 喂命令) | CI/回归、无 web 环境 |
 | Web 调试台 | 浏览器三栏 + 鼠标 gutter | 图形环境、长会话检视 |
+| Web 控制台(#/debug/<sid>/console) | 浏览器内 GDB 命令语言,与 TUI 同方言 | 图形环境、键盘流 |
 | **TUI 调试器(本文)** | 有服务全屏、GDB 命令语言 | SSH/终端肌肉记忆、键盘流 |
 
 ### 使用原则(锁死)
@@ -557,3 +558,60 @@ D5(主题打磨)已落地,§10 五个里程碑全收。测试:tests/tui 217 例�
 watchpoint/条件断点、`enable/disable` 真端点未做(命令照收诚实拒绝);
 独立检视器常驻窗未做(p/x 进命令窗);多会话并行窗、鼠标交互未做;
 agent 面 act 收口未做(走 CLI/API)。
+
+## 17. 实现注(Web 控制台,2026-09-28)
+
+GDB 风格调试控制台(`#/debug/<sid>/console`)已落地:**后端零改动,纯前端**;
+命令方言与 TUI 同表逐语义移植(§5),停止行/错误语式逐字对齐 theme.py
+dbg.* copy(§6),布局照 §7 四窗(顶条 + 左栏栈/断点 + 右大窗轨迹 + 底部命令窗)。
+
+**文件清单**:
+
+- `host/web/static/js/components/debug-commands.js`(282 行,纯函数,node 直测):
+  命令表 COMMAND_SPECS(help/apropos 从表生成)、`parse`/`parseBpSpec`
+  (spec 四形态 `b fs_*`/`b skill:fib`/`b step`/`b error`/`b *N`)、唯一前缀缩写 +
+  歧义候选、REPEATABLE 裸 Enter 白名单、`stopLine`/`infoBLines`/`btLines`/
+  `frameRowLine` 与 MSG 文案(§6 逐字);
+- `host/web/static/js/components/debug-console.js`(1091 行,页面模块,照
+  debug-view.js 结构):openDebugConsole/closeDebugConsole 幂等 + consoleClick
+  委托;数据面零新通道(快照 + signals + frames + 调试 SSE,断线 toast +
+  2s 轮询回退,ticker 常驻刷轨迹按信号数变化才重绘);kill 两段确认、
+  ↑↓ 历史、裸 Enter 重复全在命令窗输入行(真实 `<input>`);
+- `host/web/static/js/app.js`:路由 `debug-console`(seg[2]==="console")+
+  开/关接线 + 点击委托两行;
+- `host/web/static/css/app.css`:`.dbc-*` 四窗网格与命令窗样式(色只消费
+  语义 token,组件零主题分支);
+- 入口:debug-view.js 控制条加「控制台」链接、debug-home.js 会话行加
+  「控制台」链接(既有行为不变);
+- 测试:`static/tests/debug-console.test.mjs`(222 行,解析器单测)+
+  `static/tests/smoke-debug-console.test.mjs`(572 行,dom-stub 冒烟九段)。
+
+**裁决与留口**:
+
+1. **断点界面编号 num 是客户端显示号**(REST 只有 bp_id;TUI D2 注 5 同款):
+   页面层 `bpNums` 映射按首见顺序分配,删后不复用,GDB 习惯。
+2. **技能名短形两步叠加**:`shortSkillName` 先剥命名空间/版本
+   (`local:fib@1.0.0` → `fib`,web util.js 语义)再剥点号尾段
+   (`demo.fib` → `fib`,trace_rows short_skill 语义)——两种命名习惯都得到
+   §6 例句的 `(fib)`。
+3. **诚实人话(不造假)**:run 收但指向 `#/debug` 首页表单(console 不做开
+   会话表单);`enable/disable` 回 `Not supported: delete and re-add.`;
+   `until`/`b *N` 回「REST 断点端点只有 kind/match」人话(TUI live 同款,
+   D2 注 6);`session` 读 localStorage 账本(与 debug-home 同键),
+   `session <SID>` = attach 切换(消逝会话吃诚实 404);`q` = 回
+   `#/debug/<sid>` 三栏视图(会话保留,不 detach)。
+4. **干预回声即放行明示**(§6):`args patched: {…}(提交即放行)` /
+   `injected -> frame f-xxx (skill)(注入即放行)`;非法 JSON/停错点本地拦,
+   不打后端(`Cannot set args: not paused at pre:tool.call.` 两源统一)。
+5. **停止行/终态去重**:`ppReported` 指纹保证同一停点只打一次停止行
+   (SSE 与轮询路径同过);run_end/轮询 detached 同过 `ended` 闸门,
+   `Run finished: <status>` 只打一次 + 输入禁用 + 终态横幅。
+6. **留口**:轨迹长轨迹折叠/虚拟窗口未进控制台(debug-view 既有行语言全量
+   渲染,体量同调试台);独立检视器常驻窗不做(p/x/info 输出进命令窗,
+   §11 同款);主题 copy 表未收编 dbg.* web 侧文案(v1 照 debug-view 先例
+   直接写文案,六主题 copy 表留后续)。
+
+**测试数字**:新增前端测试 2 个文件全绿(解析器 8 组断言 + 冒烟 9 段);
+`static/tests` 全量回归 34 个 .test.mjs 零失败(含 themes-contract 焦点环
+契约——`.dbc-input` 不抑制 outline);`agent_os` pytest 1480 passed /
+10 skipped / 39 xfailed 保持绿。ruff 不涉及(零 Python 改动)。

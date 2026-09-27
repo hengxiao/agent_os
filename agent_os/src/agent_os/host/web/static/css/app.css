@@ -2841,6 +2841,131 @@ th.is-sorted .us-sort { color: var(--live); }
 .dh-sess-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dh-sess-run { color: var(--fg-2); font-size: var(--text-xs); }
 
+/* ── GDB 风格调试控制台(#/debug/<sid>/console;docs/TUI-DEBUG.md §7 布局的
+   web 镜像):顶条 + 左栏(调用栈/断点)+ 右大窗(轨迹)+ 底部命令窗。
+   色只消费语义 token(与 .dbg-* 同族:--debug-paused-bg / --debug-bp / sig-*),
+   组件零主题分支。 */
+.dbc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  height: 100%;
+  min-height: 0;
+}
+.dbc-cols {
+  display: flex;
+  gap: var(--s3);
+  flex: 1;
+  min-height: 0;
+}
+.dbc-panel {
+  background: var(--bg-1);
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+  overflow-y: auto;
+  min-height: 0;
+  padding: var(--s2);
+}
+.dbc-left {
+  width: var(--wb-tree-w);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  min-height: 0;
+}
+.dbc-stack { flex: 1; }
+.dbc-bps { flex: 1; }
+.dbc-trace { flex: 1; min-width: 0; }
+.dbc-bar-links {
+  display: flex;
+  gap: var(--s2);
+  margin-left: auto;
+}
+
+/* 调用栈行:#N 编号 + ▶ 当前帧 + 彩虹轨缩进 + skill + 帧短码
+   (选中/当前高亮复用 .dbg-frame 语义色) */
+.dbc-frame {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  min-height: 24px;
+  padding: 1px var(--s2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.dbc-frame:hover { background: var(--bg-3); }
+.dbc-frame[aria-selected="true"] { background: var(--bg-2); }
+.dbc-frame[data-current="true"] {
+  background: var(--debug-paused-bg);
+  box-shadow: inset var(--stroke-strong) 0 0 var(--warn);
+}
+.dbc-frame-num { color: var(--trace-arrow); font-size: var(--text-xs); width: var(--s6); flex-shrink: 0; }
+
+/* 断点窗:info b 表(等宽列,GDB info b 习惯)+ 行尾 ✕ 删除 */
+.dbc-bp-head {
+  padding: var(--s1) var(--s2);
+  color: var(--fg-2);
+  font-size: var(--text-2xs);
+  white-space: pre;
+}
+.dbc-bp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: 1px var(--s2);
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs);
+}
+.dbc-bp-row:hover { background: var(--bg-3); }
+.dbc-bp-cells { flex: 1; min-width: 0; overflow: hidden; white-space: pre; color: var(--fg-1); }
+
+/* 底部命令窗(§7:多行滚动输出 + (adb) 输入行;高度占比固定,内部纵向 flex) */
+.dbc-cmd {
+  flex-shrink: 0;
+  height: calc(var(--s8) * 3.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.dbc-out {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s2) var(--s3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--fg-1);
+}
+.dbc-line { white-space: pre-wrap; word-break: break-word; }
+.dbc-line[data-kind="cmd"] { color: var(--fg-0); font-weight: 600; }
+.dbc-line[data-kind="stop"] { color: var(--warn); }
+.dbc-line[data-kind="err"] { color: var(--danger); }
+.dbc-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  border-top: var(--stroke) solid var(--line);
+  padding: var(--s2) var(--s3);
+  flex-shrink: 0;
+}
+.dbc-prompt { color: var(--live); font-weight: 600; font-size: var(--text-xs); }
+.dbc-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-0);
+  font-size: var(--text-xs);
+  padding: 0;
+}
+.dbc-input:disabled { color: var(--fg-2); }
+
 /* ── 打印样式(§6.3:RCA 页可打印贴 issue)──────────────────────
    隐藏侧栏 / TopBar / 按钮;Workbench 三栏转单栏(帧树摘要 → 时间线 →
    检视器,DOM 序即此序);Banner 保留(§4.4 异常摘要是打印核心)。 */

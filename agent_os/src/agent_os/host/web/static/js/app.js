@@ -21,6 +21,11 @@ import {
   openDebugView,
 } from "./components/debug-view.js";
 import {
+  closeDebugConsole,
+  consoleClick,
+  openDebugConsole,
+} from "./components/debug-console.js";
+import {
   openInbox,
   pollInbox,
   renderInboxBadge,
@@ -78,9 +83,10 @@ function parseRoute(hash) {
     return { name: "lab", runId: null, draft: seg[1] ?? null, set };
   }
   if (seg[0] === "debug") {
-    return seg[1]
-      ? { name: "debug-session", sessionId: seg[1], runId: null, set }
-      : { name: "debug-home", runId: null, set };
+    if (!seg[1]) return { name: "debug-home", runId: null, set };
+    // GDB 风格调试控制台(docs/TUI-DEBUG.md §5 的 web 镜像):#/debug/<sid>/console
+    if (seg[2] === "console") return { name: "debug-console", sessionId: seg[1], runId: null, set };
+    return { name: "debug-session", sessionId: seg[1], runId: null, set };
   }
   return { name: "runs", runId: null, set };
 }
@@ -253,6 +259,7 @@ function renderMain() {
   if (route.name !== "tools") closeToolsView();
   if (route.name !== "debug-home") closeDebugHome();
   if (route.name !== "debug-session") closeDebugView(); // 离开调试台:SSE/轮询收尾
+  if (route.name !== "debug-console") closeDebugConsole(); // 离开命令控制台:同理收尾
   if (route.name !== "lab") closeLab(); // 离开 Lab:丢弃页面状态(草稿在服务端,随时可回)
   if (route.name !== "lab-iterate") closeIterate(); // 离开迭代模式同理(版本/批注在服务端)
   if (route.name === "skills") {
@@ -269,6 +276,10 @@ function renderMain() {
   }
   if (route.name === "debug-session") {
     openDebugView(main, route.sessionId); // P4 调试台
+    return;
+  }
+  if (route.name === "debug-console") {
+    openDebugConsole(main, route.sessionId); // GDB 风格命令控制台(docs/TUI-DEBUG.md §5)
     return;
   }
   if (route.name === "lab") {
@@ -393,11 +404,13 @@ document.addEventListener("click", (e) => {
       return;
     }
     if (debugClick(e, action)) return; // P4 调试台动作(dbg-cmd/dbg-gutter/dbg-bp-* 等)
+    if (consoleClick(e, action)) return; // GDB 控制台动作(dbc-bp-del/dbc-retry/dbg-gutter)
     workbenchClick(e, action); // workbench 自有 data-action(ft-toggle/tl-toggle/wb-* 等)
     return;
   }
   if (workbenchClick(e, null)) return; // workbench 行点击(帧树/时间线)
   if (debugClick(e, null)) return; // P4 调试台行点击(调用栈/轨迹行)
+  if (consoleClick(e, null)) return; // GDB 控制台栈行点击(.dbc-frame = frame N)
   const item = e.target.closest(".run-item");
   if (item) location.hash = `#/runs/${encodeURIComponent(item.dataset.id)}`;
 });

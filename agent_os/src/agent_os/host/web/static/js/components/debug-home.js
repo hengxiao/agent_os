@@ -425,6 +425,10 @@ async function refreshSessions() {
     const open = $el("a", "btn btn-mini", "打开");
     open.href = `#/debug/${encodeURIComponent(k.session_id)}`;
     row.appendChild(open);
+    const con = $el("a", "btn btn-mini", "控制台"); // GDB 风格命令控制台(#/debug/<sid>/console)
+    con.href = `#/debug/${encodeURIComponent(k.session_id)}/console`;
+    con.title = "GDB 风格命令控制台(docs/TUI-DEBUG.md §5 方言)";
+    row.appendChild(con);
     if (doc.state !== "detached") {
       const end = $el("button", "btn btn-mini", "结束");
       end.title = "DELETE 会话:detach 放行,run 继续跑完";

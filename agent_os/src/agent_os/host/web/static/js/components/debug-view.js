@@ -431,6 +431,8 @@ function renderBar() {
         `<button class="btn dbg-cmd" data-action="dbg-cmd" data-cmd="${cmd}"` +
         ` data-tip="${esc(tip)}" title="${esc(tip)}"${paused ? "" : " disabled"}>${label}</button>`).join("") +
     `</div>` +
+    `<a class="btn btn-mini dbg-console-link" href="#/debug/${encodeURIComponent(sid)}/console"` +
+    ` title="GDB 风格命令控制台(docs/TUI-DEBUG.md §5 方言)">控制台</a>` +
     `<a class="btn btn-mini dbg-home-link" href="#/debug" title="返回调试首页">会话列表</a>` +
     (dbg.doc?.rerunnable
       ? `<button class="btn btn-mini dbg-rerun" data-action="dbg-rerun"` +

@@ -1,0 +1,14 @@
+{
+  "name": "AgentOS.UI.Apps",
+  "rootNamespace": "AgentOS.UI.Apps",
+  "references": [
+    "AgentOS.UI.Kernel",
+    "UnityEngine.UIElementsModule",
+    "Newtonsoft.Json"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "autoReferenced": true,
+  "noEngineReferences": false
+}

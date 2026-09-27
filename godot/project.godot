@@ -1,0 +1,17 @@
+; Godot 4 工程配置(Agent OS Godot 宿主;docs/ 设计文稿见仓库 docs/)
+config_version=5
+
+[application]
+
+config/name="Agent OS"
+run/main_scene="res://main.tscn"
+
+[display]
+
+window/size/viewport_width=1440
+window/size/viewport_height=900
+
+[gui]
+
+; 内置 CJK 字体(系统无中文字体;emoji 无字形 → 批注标记用汉字「注」)
+theme/default_font="res://fonts/NotoSansSC-Regular.otf"

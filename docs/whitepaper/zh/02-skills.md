@@ -1,6 +1,6 @@
 # Skills:注册表、加载与内联
 
-> 章次:02 · 状态:注册表/加载流水线/内联(merge v1)**已实现**;`register()` 运行期写入与版本约束求解为**契约预留(未实现)**;capsule/directed/code 免帧三档为**已设计未实现** · 依据:`agent_os/src/agent_os/skills/{local_file,manifest,loader}.py`、`agent_os/src/agent_os/context/manager.py`、`agent_os/src/agent_os/api/v1/skills.py`、`docs/DESIGN.md` §6、`docs/SKILL-INLINING.md`
+> 章次:02 · 状态:注册表/加载流水线/内联(merge v1)/`register()` 运行期写入(2026-09-27)**已实现**;版本约束求解为**契约预留(未实现)**;capsule/directed/code 免帧三档为**已设计未实现** · 依据:`agent_os/src/agent_os/skills/{local_file,manifest,loader}.py`、`agent_os/src/agent_os/context/manager.py`、`agent_os/src/agent_os/api/v1/skills.py`、`docs/DESIGN.md` §6、`docs/SKILL-INLINING.md`
 
 ## 1. 概述
 
@@ -103,7 +103,7 @@ discover ─→ parse ─→ validate ─→ resolve deps ─→ materialize ─
 1. **无校验、无记账、无观测。** merge 技能的 `inputs/outputs` 无运行期硬校验;成本融入父帧的步,无独立 usage 归因;"内联能力没起作用"在运行期没有锚点可查——没有帧、没有信号、没有校验,排查手段只有关消融对照与看 SYSTEM 快照(SKILL-INLINING.md §7)。这是设计明确接受的代价,也是纯度闸门把适用面收窄到"短小说明书"的原因。
 2. **语义不等价。** 执行主体是父模型,被调方的 `model.prefer` 失效;on/off 两档不承诺产出等价,消融仅用于调试与离线质量/成本评测,不作 CI 等价断言(SKILL-INLINING.md §9)。
 3. **版本约束求解未实现。** DESIGN.md §6.1 的 `<namespace>:<name>@<semver>` 与 `^`/`~` 语义是契约;基线实现单版本、依赖只查存在(`local_file.py:3-4`)。同名多版本共存、按约束解析都还没有。
-4. **`register()` 未实现(M6)。** 运行期写入路径(Agent 自写技能的信任管线)只有冻结签名,调用即 `NotImplementedError`(`local_file.py:287-293`);v1 的最小替代是写文件 + `reload()`。
+4. **`register()` 留尾(M6 后段)。** 运行期写入路径已实现(`local_file.py:314-484`,2026-09-27):命名正则 + G5 注入卫生闸门 fail 即拒、code 技能 logic 无条件钳 sandbox、可选 validate_draft G1-G3、`pre:skill.register` 可 Veto、原子写先证后换、provenance 落 `register.jsonl`;消费面 `system.skill.register` 工具(WRITE,confirm=True)经内核 tool-confirm 闸门兑现"注册动作可被 HumanApproval 拦截"(DESIGN.md §6.2)。仍明确不做:semver `^`/`~` 依赖求解、目录形态(DirectorySkillSource)写路径、文件监听自动热重载、完整重放 + evaluator 验证门。
 5. **指令冲突无仲裁。** 多个 merge 技能(或与调用方自身 prompt)指令矛盾时没有任何检测与仲裁,靠条数 lint + code review(SKILL-INLINING.md §15 开放问题 1)。
 6. **膨胀阈值是经验拍值。** 500 字符 / 3 条均非按 token 估算口径推导,设计稿自承"纯拍脑袋"(SKILL-INLINING.md §15 开放问题 3)。
 7. **纯度闸门的代价:不可组合。** merge 技能不能声明任何 skills 依赖,不存在内联链/传递展开;能力稍复杂(需要一次工具调用)就必须退回压帧形态。

@@ -167,7 +167,8 @@ Run(进程)
 
 契约:`ChatProvider` 协议(chat/stream/usage/tokenizer)+
 `ProviderManager`(内核侧门面,负责路由、token 估算口径统一)。
-基线:`OpenAICompatibleProvider`(覆盖主流厂商)与
+基线:`OpenAICompatibleProvider`(覆盖主流厂商;Kimi 适配器为其
+预配置子类)、`ClaudeProvider`(Anthropic Messages 独立适配器)与
 `MockProvider`(测试与 replay 脚本执行)。token 估算优先使用 provider
 精确 tokenizer,否则统一估算器——Context 子系统依赖同一估算,口径唯一。
 
@@ -225,9 +226,13 @@ options 校验不合带 `previous_error` 重问。裁决请求是结构化数据
 
 ### 4.8 Memory 与 Blackboard
 
-Memory:跨 run 记忆与知识,检索层做权限过滤(与数据 authZ 同判据)。
-Blackboard:run 内帧间状态与消息的共享内存,并发控制,供 fork/join
-并行的帧交换中间结果。两者都是契约先行,基线最小可用。
+Memory:跨 run 记忆与知识,检索层做权限过滤(与数据 authZ 同判据)——
+契约已冻结,基线 `LocalFileMemoryService` 已实现(2026-09-27,`memory/
+local_file.py`:每条目一 Markdown + frontmatter,principal 过滤 → freshness →
+BM25;`[memory] dir` 配置段接线,`system.memory.search/write` 工具常驻)。
+Blackboard:run 内帧间状态与
+消息的共享内存,并发控制,供 fork/join 并行的帧交换中间结果;
+`LocalBlackboard`(CAS + pub/sub)为已实现基线。
 
 ## 5. 信任与安全模型
 
@@ -344,17 +349,26 @@ skill 的开发闭环:DraftStore 草稿层(与生产物理分离)→ 七组全�
 | 状态不可隔离 | 帧模型 + 干净 context 不变量 + inline 纯度闸门 | 已实现(含测试断言) |
 | 质量不可保证 | 五关提交闸门 + 分档生产标准 + Skill Lab | 已实现(L1-L5) |
 | 运行不可观测 | 信号目录 + 调试器 + RCA | 已实现 |
-| skill 自写信任链 | SkillArtifact/Provenance | 契约预留(M6,未实现) |
+| skill 自写信任链 | SkillArtifact/Provenance + register() 验证门 | 已实现(M6,2026-09-27) |
 
 ## 8. 现状与路线
 
-截至 v1.0(2026-08):内核九子系统全部落地并有基线实现;升权系统
-E1/E2 已实现(含 spawn 闸、Web 升权卡片);数据层 authZ D1 已实现
-(单用户无感,嵌入宿主/多用户可显式生效);Skill Lab L1-L5 全部落地;
-Web 六主题全部通过契约测试;测试基线 Python 812 例 + 前端 24 个
-测试文件全绿。已设计未实现:E3 余项(审计面板)、D2/D3(数据域
-配置段/派生链/多用户)、M6(信任管线)、动效播放层(主题契约
-测试第 5 项)、多文件 skill_set 归并、handler 源码进生产。
+截至 v1.0(2026-08;M6 两项 2026-09-27 落地):内核九子系统均有契约落点
+与可用基线实现(Memory baseline `LocalFileMemoryService` 与技能运行期
+`register()` 写入路径已落地,后者带验证门、`pre:skill.register` 否决与
+`system.skill.register` 确认闸);升权系统
+E1/E2 已实现(含 spawn 闸、Web 升权卡片);数据层 authZ D1/D2 已实现
+(单用户无感,嵌入宿主/多用户可显式生效;D2 域配置段、per-subject
+白名单、net/db 域判定与 data.access.* 审计信号,D3-lite `[web.tokens]`
+多用户映射);凭证注入(WS1)与 confirm 两阶段闸门(WS2,HumanApproval
+已下沉)已实现;§3.4 并发三原语齐备(`parallel_invoke` fork/join 落地,
+配套子树级联取消与子树记账读视图);Skill Lab L1-L5 全部落地;
+Web 六主题全部通过契约测试;测试基线 Python 1448 例(pytest 收集,
+1399 passed)+ 前端 32 个测试文件全绿。已设计未实现:E3 余项(审计面板)、
+D3 余项(派生链最弱一环、EscalationRequest 数据面)、M6 余项(沙箱回调
+通道、spill/summarize/narrate 高级策略、蒸馏 sidecar、register() 的 semver
+求解/目录写路径/热重载/完整重放+evaluator 门)、
+动效播放层(主题契约测试第 5 项)、多文件 skill_set 归并、handler 源码进生产。
 
 路线原则:契约先行、基线可换、闸门守出口;每一项新能力先回答
 "它的仲裁点在哪、它的确定性如何保证、它的测试在哪"。

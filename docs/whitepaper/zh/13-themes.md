@@ -38,8 +38,8 @@
 │   —— 组件代码中禁止出现任何主题 id(契约测试第 6 项静态扫描)   │
 ├──────────────────────────────────────────────────────────────┤
 │ 契约层(js/themes.js)                                          │
-│   CONTRACT_TOKENS(43 个变量,themes.js:25-40)                  │
-│   COPY_KEYS(以 classic 表为准,69 键,themes.js:43)             │
+│   CONTRACT_TOKENS(50 个变量,themes.js:25-48)                  │
+│   COPY_KEYS(以 classic 表为准,436 键,themes.js:50)             │
 │   动效名 × 5:bp-hit / step / resume / run-done / intervene    │
 │   注册校验:css 未加载或缺 token → 不注册 + console.warn        │
 ├──────────────────────────────────────────────────────────────┤
@@ -53,28 +53,28 @@
 
 ### 4.2 token 契约与注册校验
 
-每个主题必须在 `[data-theme="<id>"]` 规则下给契约全集 43 个变量全部赋值:基底 9(`--bg-0..3`、`--line`、`--line-strong`、`--fg-0..2`)、状态 5、信号 6、权限 4、排版 19(字体 2 + 字号 6 + 间距 7 + 圆角 4),一个不能少(`themes.js:25-40`;清单即 WEB-UI.md §3 的既有语义变量)。注册时 `sheetTokens()` 从已加载样式表中提取该主题的声明块(`themes.js:108-129`),缺变量或 css 未加载则拒绝注册并 `console.warn`(`themes.js:133-153`)——"防半成品主题上线"(`DEBUG-UI-THEMES.md:45`)。node 测试环境无 `styleSheets` API 时跳过运行时校验,完整性由契约测试直接解析 css 源断言(`themes.js:6-8`),两条校验路径共享同一份契约清单。
+每个主题必须在 `[data-theme="<id>"]` 规则下给契约全集 50 个变量全部赋值:基底 9(`--bg-0..3`、`--line`、`--line-strong`、`--fg-0..2`)、Widget 面板 2(`--log-bg`/`--log-fg`)、状态 5、批注状态 4(`--ann-*`)、焦点环 1(`--focus-ring`)、信号 6、权限 4、排版 19(字体 2 + 字号 6 + 间距 7 + 圆角 4),一个不能少(`themes.js:25-48`;清单以 WEB-UI.md §3 的既有语义变量为底,后经 WIDGET-DESIGN/批注/WEB-A11Y 增补)。注册时 `sheetTokens()` 从已加载样式表中提取该主题的声明块(`themes.js:115-140`),缺变量或 css 未加载则拒绝注册并 `console.warn`(`themes.js:142-159`)——"防半成品主题上线"(`DEBUG-UI-THEMES.md:45`)。node 测试环境无 `styleSheets` API 时跳过运行时校验,完整性由契约测试直接解析 css 源断言(`themes.js:6-8`),两条校验路径共享同一份契约清单。
 
 **取舍:拒绝注册,而不是运行时补缺。** 缺失的 token 没有合理兜底——用 classic 的值补会让主题出现"一块不像自己"的区域,比整个不可用更糟。宁可整个主题不上线(`DEBUG-UI-THEMES.md:144`:"宁可回落,不半成品")。
 
 ### 4.3 文案契约:翻译层而非替换层
 
-`COPY_KEYS` 以 classic 表为准(69 键,覆盖状态短语、空态、确认、Skill Lab、升权卡片等,`js/copy/classic.js`),各主题表必须同 key 覆盖。组件经 `copy(key)` 取值,查询走三级回落:**有效主题 → classic → key 原文**(`themes.js:245-251`)。核心规则是**技术文本豁免**:错误原文、状态原文、工具参数永远直读,不进文案表(`DEBUG-UI-THEMES.md:50-51`);主题文案是"翻译层"——例如 moe 的中止文案是 `先到这里喵(aborted)`,原文以括号并列(`smoke-theme.test.mjs:262` 有断言)。
+`COPY_KEYS` 以 classic 表为准(436 键,覆盖状态短语、空态、确认、Skill Lab、升权卡片等,`js/copy/classic.js`),各主题表必须同 key 覆盖。组件经 `copy(key)` 取值,查询走三级回落:**有效主题 → classic → key 原文**(`themes.js:257-264`)。核心规则是**技术文本豁免**:错误原文、状态原文、工具参数永远直读,不进文案表(`DEBUG-UI-THEMES.md:50-51`);主题文案是"翻译层"——例如 moe 的中止文案是 `先到这里喵(aborted)`,原文以括号并列(`smoke-theme.test.mjs:262` 有断言)。
 
-**取舍:文案缺 key 只告警不拒注册**(`themes.js:147-150`),与 token 缺即拒形成不对称。理由:缺文案有 classic 兜底,页面不破;缺 token 无兜底,样式破洞。两种缺失的后果不同,闸门强度也不同。
+**取舍:文案缺 key 只告警不拒注册**(`themes.js:156-158`),与 token 缺即拒形成不对称。理由:缺文案有 classic 兜底,页面不破;缺 token 无兜底,样式破洞。两种缺失的后果不同,闸门强度也不同。
 
 ### 4.4 切换、持久化与 scope 回落
 
 ```
-启动 initTheme():URL(?theme=) > localStorage > classic(themes.js:223-232)
+启动 initTheme():URL(?theme=) > localStorage > classic(themes.js:236-247)
                   URL 命中同时写入持久化——深链接分享"同款气质"
 切换 applyTheme():requestedId → localStorage(agent-os.theme)
                   → hash ?theme= 同步(replaceState,不触发路由;classic 省略参数)
-                  → resolveEffective(page):scope 未验收 → 强制 classic(themes.js:168-173)
+                  → resolveEffective(page):scope 未验收 → 强制 classic(themes.js:177-181)
                   → <html data-theme="<effective>"> → CSS 变量级联,全站即时生效
 ```
 
-实现上有意区分 `requestedId`(用户选择,持久化对象)与 `effectiveId`(当前页实际生效,`themes.js:161-162`):scope 回落不覆盖用户选择,回到已验收页面时原选择自动恢复。路由变化时 `syncTheme()` 重解析(`app.js:339`)。TopBar 切换器是纯数据驱动:遍历注册表渲染,每项带三色 swatch(从主题 css 读 `--bg-0`/`--fg-0`/`--live`,`themes.js:254-260`)。
+实现上有意区分 `requestedId`(用户选择,持久化对象)与 `effectiveId`(当前页实际生效,`themes.js:170-171`):scope 回落不覆盖用户选择,回到已验收页面时原选择自动恢复。路由变化时 `syncTheme()` 重解析(`app.js:352`)。TopBar 切换器是纯数据驱动:遍历注册表渲染,每项带三色 swatch(从主题 css 读 `--bg-0`/`--fg-0`/`--live`,`themes.js:266-273`)。
 
 **取舍:`data-theme` 属性 + CSS 级联,而不是 JS 换肤。** 切换不需要重渲染任何组件,组件对主题完全无感知;这也让"无构建、零依赖"约束自然成立。代价是主题能力被限制在 CSS 变量能表达的范围内——但 §4.2 的契约恰好就是这个范围,约束与能力自洽。
 
@@ -82,7 +82,7 @@
 
 mascot 实现为独立层而非组件内分支:组件只在固定槽位调用 `mascotHtml(expr)`(如 `debug-view.js:441` 的控制条槽位),层自己读当前主题的 `mascot` 声明——`null` 主题(classic/terminal/blueprint/ink)下返回空串,组件无任何 if(`mascot.js:164-177`)。层内部是 `MASCOTS` 注册表:每个 mascot = { name, exprs, sprite },精灵是纯 SVG `<symbol>` 精灵表,色彩全部走主题 css 的类规则,SVG 内零色值(`mascot.js:21-22`)。表情映射 `mascotStateFor` 从会话快照推导(running/paused/done/failed,`mascot.js:12-19`),两个 mascot 共用同一映射函数。
 
-`pixel` 的 `sprite8` 是这一抽象的**第二实例**——同一 `MascotLayer` 接口、另一套 8-bit 精灵表,证明层是可换的(`DEBUG-UI-THEMES.md:117`,`smoke-theme.test.mjs:424-436` 有断言)。
+`pixel` 的 `sprite8` 是这一抽象的**第二实例**——同一 `MascotLayer` 接口、另一套 8-bit 精灵表,证明层是可换的(`DEBUG-UI-THEMES.md:117`,`smoke-theme.test.mjs:434-443` 有断言)。
 
 ### 4.6 六主题目录
 
@@ -95,25 +95,26 @@ mascot 实现为独立层而非组件内分支:组件只在固定槽位调用 `m
 | `ink` | 水墨(宣纸 + 单一朱砂强调色) | 朱砂印章状态;墨线暂停指示;文言腔 | 无 |
 | `pixel` | 8-bit 复古游戏 | 预算条=HP/MP;断点=checkpoint 旗;`LEVEL CLEAR!` | sprite8 |
 
-(`DEBUG-UI-THEMES.md §3.1-3.6`;六主题均 `scope: "app-wide"`,`themes.js:48-104`。)
+(`DEBUG-UI-THEMES.md §3.1-3.6`;六主题均 `scope: "app-wide"`,`themes.js:56-109`。)
 
 ### 4.7 动效档案(已设计,播放层未实现)
 
-契约规定组件只调用具名动效(`bp-hit`/`step`/`resume`/`run-done`/`intervene`),主题为每个名字声明档位:`full`/`subtle`/`instant`,`prefers-reduced-motion` 强制 `instant`(`DEBUG-UI-THEMES.md:55-57`)。**实现现状:注册表中六个主题的五个动效名全部登记为 `subtle`**(`themes.js:54` 等),动效播放层尚未落地,契约测试第 5 项(动效降级断言)待补(`DEBUG-UI-THEMES.md:141`、执行摘要 §8)。各主题 css 内仅有零星 `@keyframes`(moe 呼吸/入场、terminal 扫描线等),不走具名动效通道。
+契约规定组件只调用具名动效(`bp-hit`/`step`/`resume`/`run-done`/`intervene`),主题为每个名字声明档位:`full`/`subtle`/`instant`,`prefers-reduced-motion` 强制 `instant`(`DEBUG-UI-THEMES.md:55-57`)。**实现现状:注册表中六个主题的五个动效名全部登记为 `subtle`**(`themes.js:61` 等),动效播放层尚未落地,契约测试第 5 项(动效降级断言)待补(`DEBUG-UI-THEMES.md:141`、执行摘要 §8)。各主题 css 内仅有零星 `@keyframes`(moe 呼吸/入场、terminal 扫描线等),不走具名动效通道。
 
 ## 5. 效果与验证(效果)
 
-**契约测试** `tests/themes-contract.test.mjs`(node 直跑,不依赖浏览器)遍历注册表逐主题断言五组性质:
+**契约测试** `tests/themes-contract.test.mjs`(node 直跑,不依赖浏览器)遍历注册表逐主题断言六组性质:
 
-1. **token 完整性**:43 个契约变量在 css 源中全部定义且非空(`themes-contract.test.mjs:94-100`);
-2. **对比度**:程序化 WCAG 相对亮度计算,关键配对(正文/状态色/信号权限色 × 基底,共 30 对)≥ 4.5:1,弱化层级 4 对 ≥ 3:1(`themes-contract.test.mjs:77-114`)——主题作者改色即时报红;
-3. **双编码**:状态元素同时带颜色钩子(`data-status`/`data-on`)与文字/图标通道(状态文字/●/▶),不依赖色觉单通道(`themes-contract.test.mjs:116-135`);
-4. **文案键完整**:copy 表覆盖 69 键全量(`themes-contract.test.mjs:137-139`);
-5. **组件无分支**:静态扫描 `js/components/`,禁止主题 id 字面量、`data-theme` 属性、按主题 id 比较(`themes-contract.test.mjs:142-162`;`terminal` 因与图标名撞词只禁比较形态)。
+1. **token 完整性**:50 个契约变量在 css 源中全部定义且非空(`themes-contract.test.mjs:94-100`);
+2. **对比度**:程序化 WCAG 相对亮度计算,关键配对(正文/状态色/信号权限色 × 基底,共 30 对)≥ 4.5:1,深面板正文(`--log-fg` × `--log-bg`)1 对 ≥ 4.5:1,弱化层级 4 对 ≥ 3:1(`themes-contract.test.mjs:77-122`)——主题作者改色即时报红;
+3. **双编码**:状态元素同时带颜色钩子(`data-status`/`data-on`)与文字/图标通道(状态文字/●/▶),不依赖色觉单通道(`themes-contract.test.mjs:125-145`);
+4. **文案键完整**:copy 表覆盖 436 键全量(`themes-contract.test.mjs:146-148`);
+5. **组件无分支**:静态扫描 `js/components/`,禁止主题 id 字面量、`data-theme` 属性、按主题 id 比较(`themes-contract.test.mjs:161-181`;`terminal` 因与图标名撞词只禁比较形态);
+6. **焦点环**:对比度(`--focus-ring` 对四层基底)≥ 3:1,宽度/偏移/目标尺寸为策略常量、主题不得覆盖(`themes-contract.test.mjs:150-160、:183-247`)。
 
 **冒烟测试** `tests/smoke-theme.test.mjs` 覆盖运行时行为 12 组场景:注册负例(css 未加载的 ghost 主题不注册、注册表不被污染)、启动解析优先级(URL > localStorage > classic,URL 命中写持久化)、未知主题回落 classic、切换器渲染与联动、四主题文案腔调(terminal `[halted](paused)`、blueprint `APPROVED(done)`、ink `驻(paused)`、pixel `CLEAR!`)、MascotLayer 随主题出现/消失、调试台集成(moe 下控制条出现 Mochi 且暂停点技术原文并列)、scope 回落(合成 scoped 主题验证机制),以及 css 源级断言(moe 表情映射、六主题背景图案母题)。
 
-整体基线:前端 24 个测试文件全绿(执行摘要 §8),其中主题系统占 2 个。`classic` 抽离做到行为零变化(值逐字搬自 `tokens.css`);swatch 取色直连真实 css(如 moe = `#fff5f7`/`#5c3d47`/`#c2245c`,`smoke-theme.test.mjs:150`)。
+整体基线:前端 32 个测试文件全绿,其中主题系统占 2 个。`classic` 抽离做到行为零变化(值逐字搬自 `tokens.css`);swatch 取色直连真实 css(如 moe = `#fff5f7`/`#5c3d47`/`#c2245c`,`smoke-theme.test.mjs:150`)。
 
 **涟漪效应**:萌系策划从"第二个页面"自我降格为主题目录中的一员(`DEBUG-UI-MOE.md` 文头 v0.2);文案契约超出了调试台——Skill Lab 与升权收件箱的文案同样走 copy 表(`lab.*`、`escalation.*` 键),主题系统实际成了全站 UI 文案的唯一出口;`sprite8` 证明 mascot 抽象可换后,"主题 = 气质包,mascot 只是可选资产"的判据成立(`DEBUG-UI-THEMES.md:61`)。T4 分期原拟逐页验收后再开放 `scope`,实际 T1.1 即全站开放——依据正是组件零分支 + 契约全集校验使"缺一块"在结构上不可能(`DEBUG-UI-THEMES.md:146-149`)。
 
@@ -135,4 +136,4 @@ mascot 实现为独立层而非组件内分支:组件只在固定槽位调用 `m
 - 测试:`agent_os/src/agent_os/host/web/static/tests/themes-contract.test.mjs`(契约五组断言)、`.../tests/smoke-theme.test.mjs`(运行时 12 组场景)
 - 相关章节:第 00 章 §6.3(执行摘要中的定位)
 
-> 资料矛盾附注(以代码为准):① `DEBUG-UI-MOE.md` §3 的色板初值(奶油底 `#fdf6f0`、`--ok: #5ec9a7` 等)已被 T1.2 sakura 重构替换,`moe.css:13` 注明"原 beige 奶油底 #fdf6f0 系退役",实际值为 `--bg-0: #fff5f7`、`--ok: #1b7355`(压明度保 4.5:1);② `DEBUG-UI-THEMES.md` §2.1 的文字清单未列 `--line-strong`/`--text-2xs`/`--s1-5`/`--r-conn`,而 `CONTRACT_TOKENS`(`themes.js:25-40`)包含它们——契约变量以代码清单为准,共 43 个。
+> 资料矛盾附注(以代码为准):① `DEBUG-UI-MOE.md` §3 的色板初值(奶油底 `#fdf6f0`、`--ok: #5ec9a7` 等)已被 T1.2 sakura 重构替换,`moe.css:13` 注明"原 beige 奶油底 #fdf6f0 系退役",实际值为 `--bg-0: #fff5f7`、`--ok: #1b7355`(压明度保 4.5:1);② `DEBUG-UI-THEMES.md` §2.1 的文字清单未列 `--line-strong`/`--text-2xs`/`--s1-5`/`--r-conn`,而 `CONTRACT_TOKENS`(`themes.js:25-48`)包含它们——契约变量以代码清单为准,共 50 个(另含其后增补的 Widget 面板 `--log-bg`/`--log-fg`、批注状态 `--ann-*` 四件与焦点环 `--focus-ring`)。

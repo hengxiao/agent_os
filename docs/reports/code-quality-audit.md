@@ -5,6 +5,36 @@
 > 标 ⚠️待验 的是审查者结论但我尚未复现。
 > 日期:2026-07-27。代码规模:引擎 11k 行 Python + 6k 行 JS,std 1.7k,测试 9.5k,文档 3k。
 
+> ---
+> **截至 2026-08-24 的复核**(基线 HEAD `36f0587`;1036 收集 = 994 passed + 10 skip + 32 xfailed;src ≈ 2.4 万行 / tests ≈ 2.1 万行 / std ≈ 4.3k 行)。
+> 本报告是带日期的历史审计,正文结论保持原样;以下条目经代码复核**已关闭或部分关闭**:
+>
+> - **§2.1 沙箱**:① env 白名单(`python_sandbox.py:148-164` `_ENV_ALLOWLIST`,宿主 `*_API_KEY` 不进子进程)与 ② cwd 临时目录隔离(`:297-310`)已落地,commit `6ced3d3`;③ 模块 docstring 已改写为"✅/❌ 逐项,勿多信一项"的诚实清单(`:7-15`);④ 默认后端仍是 off/subprocess 未切 Docker,但 Docker 档已可供 `[tools] python_exec = "docker"` 选用(`logic/docker_sandbox.py`:`--network none`/`--read-only`/`--cap-drop ALL`)。**遗留**:subprocess 档网络与文件系统仍不隔离(docstring 自述 ❌),"沙箱边界零锚点"(§3.1)的隔离等级在 subprocess 档下降了但仍有缺口。
+> - **§2.2 syscall 桥吞硬失败**:已修——`_HARD_FAILURES = (RunAborted, MaxDepthExceeded)` 单独 re-raise(`python_sandbox.py:57,231`),硬失败经 `hard_failure` 出口传出(`:332-337`)。
+> - **§2.3 测试绿色有条件**:已修——commit `e63779e` 消除 `sys.modules["brains"]` 撞名并删除生产文件里的跨示例 shim;`tests/examples/` 改用专属模块名加载(`test_support_desk.py:58`、`test_travel_planner.py:95`)。测试总数 506 → 1036 收集。
+> - **§3.4 resume 判完成**:已修——恢复主循环改按 `frame.status is FrameStatus.DONE` 跳过(`kernel/checkpoint.py:358`),合法返回 null 的 DONE 帧不再被重跑。
+> - **§7.1 A Web 零鉴权**:已修——`serve.py` 新增 `--token`,绑定非 loopback 且无 token 直接拒绝启动(`serve.py:51-70`);`app.py:544-576` Bearer 中间件(常量时间比对,SSE 走 `?token=`)。
+> - **§7.1 B 注入包裹自闭合**:已修——`std_web.py:47-60` 在反转义后以 `_BOUNDARY_RE` 对边界二次中和。
+> - **§7.1 E blob_get**:已注册(`tools/builtins.py:422`、`local_registry.py:393/462-463`);`FileBlobStore` 仍 M3 stub(`tools/blob.py:40/43`)。
+> - **§7.2 cost 死开关**:已修——`providers/manager.py:93-107` `_apply_cost` 按 `[prices]` 单价表折算 `usage.cost`;未配单价表时装配期显式 warning(`runtime/config.py:320-328`)。
+> - **§7.4 `[providers.*]` 子键**:部分修——未知 provider 键现抛 ConfigError(`config.py:133-135`),`[providers.openai]` 的 `base_url`/`api_key_env` 生效(`:141-149`);但 `[providers.kimi]`/`[providers.anthropic]` 段内子键仍不被读取(`:137-140` 无参构造)。
+>
+> 以下条目经抽查**仍成立**(未关闭):§2.1 遗留的 subprocess 网络隔离;§3.2 std `verifier` 出现次数仍为 0(grep `std/*.yaml` 无命中);§3.3 编排缺陷(`_run_orchestration` 的 `float(timeout)` 仍会让 ValueError 逃逸出帧,`runner.py:455-464` 只捕 CancelledError;嵌套配额仍各自独立计数);§3.4 的 Docker 忽略 `dispatch_fn`(`docker_sandbox.py` 全文无 `dispatch_fn` 引用)、`pre:step` Veto 即中止语义(`runner.py:324-329`)、取消不杀进程组(无 `start_new_session`/`killpg`);§7.1 C(32 个 code 技能仍零 `mode: sandbox`,`hash_digest` 仍不过 `resolve_work_path`)与 D(`files_handlers.py:147` 仍 `errors="replace"`);§7.2 docker 静默降级(`config.py:158` docstring 自述"回退 subprocess 并记 warning")与 CodeScanner/StallDetector 配置键(`_sidecars` 仍只认三个键,`config.py:194-197`);§7.4 CLI 缺 `--model`/`--max-cost`/`--seed` 等(grep 无命中)。§3.1 覆盖缺口、§7.3 资源生命周期未逐条复核,以正文为准。
+>
+> ---
+> **截至 2026-08-31 的复核**(P0 四项落地;1098 收集 = 1056 passed + 10 skip + 32 xfailed):上文"部分修/仍成立"清单中两条已关闭——
+> - **§7.4 `[providers.kimi]`/`[providers.anthropic]` 子键**(WS5):kimi 的 `base_url`/`api_key` 与 anthropic 的 `api_key`/`base_url`/`default_max_tokens`/`anthropic_version` 已生效,未知子键抛 ConfigError(`runtime/config.py:182-198`);
+> - **§3.3 `float(timeout)` 逃逸**(WS4):编排路径 `float(timeout)` 解析失败现折为 INVALID_ARGS 错误观察,不再逃逸出帧(`kernel/runner.py:810-821`);runner 工具分发边界同步补 `except Exception` 兜底(意外异常归一化为 INTERNAL 错误观察,run 存活;CancelledError/RunAborted/MaxDepthExceeded 弹栈不动,`runner.py:480`)。
+>
+> 另:P0 其余三项(credentials 注入、tool-confirm 闸门 + HumanApproval 下沉、D2 数据 authZ)非本报告开口项,落点见 `dev-status.md` 的 2026-08-31 复核行;上文其余"仍成立"条目本次未复核,以正文为准。
+>
+> ---
+> **截至 2026-09-27 的复核**(stub 清零 + 真实流式;1385 收集 = 1336 passed + 10 skip + 39 xfailed):
+> - **§7.1 E FileBlobStore**:已落地——`tools/blob.py` 内容寻址落盘(`<root>/<run_id>/<sha256>`、白名单防逃逸),`[blob] dir` 配置段接线(`runtime/config.py:569-578`,缺段 = 内存版);
+> - **§7.2 "死机制"四条**:已全清——`kernel/dispatch.py`(Dispatcher 骨架)整文件删除、`kernel/run.py` 的 `check_control_flags` 移除、`merge_limits` 实填(`logic/limits.py:32`,两级取紧链式得三级;尚无调用点)、`tools/builtins.py` 模块级裸 `python_exec` 删除(仅余 `python_exec_tool` 工厂,同名炸弹解除);
+> - **真实 `stream()`**:非本报告开口项,已随本批落地(provider SSE/Anthropic 序列实填 + runner 消费 + ttft 记账;落点见 `dev-status.md` 同日复核块);
+> - `pinned` 无人写入、`SYSCALL_FD` dead constant 等其余条目本次未复核,以正文为准。
+
 ---
 
 ## 0. 一句话结论

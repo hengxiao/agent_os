@@ -5,8 +5,9 @@
 > 形态判定见 STDLIB §1 六条规则;引擎既有机制见 §2(不重复造)。
 >
 > 每条格式:`名字` — 一句话(形态,权限档)/ 签名 / 为什么 / 决策 / 坑。
-> 现状已有 16 个工具:`system.file.read` `system.file.write` `system.file.edit`
-> `system.file.list` `system.file.search` `system.shell.exec` `system.net.http_fetch`
+> 现状已有 20 个工具:`system.file.read` `system.file.write` `system.file.edit`
+> `system.file.list` `system.file.search` `system.file.stat` `system.file.delete`
+> `system.file.mkdir` `system.shell.exec` `system.net.http_fetch` `system.net.http_request`
 > `system.time.now` `system.task.todo_write` `system.task.todo_update` `system.task.todo_read`
 > `system.skill.search` `common.web.fetch_page` `blob_get` `python_exec`
 > `python_orchestrate`(伪工具)。
@@ -18,26 +19,30 @@
 这一波一件新工具都没有,却是最该先做的——它们改的是**所有工具共用的地基**。
 放到后面做等于把每条新工具都返工一遍。
 
-#### W0-1 `workdir` 可配置 — 让 agent 能碰真实项目(机制)
+#### W0-1 `workdir` 可配置 — 让 agent 能碰真实项目(机制)— 已实现
 
-`[run] workdir = "..."` + 分区语义;`ToolContext.workdir` 从"每 run 临时目录"改为可配置。
+`[run] workdir = "..."` + 分区语义已落地(`RunConfig.workdir`/`read_paths`,
+`resolve_work_path` 三段判定,fs/shell 共用同一解析器)。
 
-- **为什么**:实机发现的头号阻塞。现状 `_workdir(run_id)` 给每个 run 分配
+- **为什么**:实机发现的头号阻塞。原状 `_workdir(run_id)` 给每个 run 分配
   `tempfile.mkdtemp()`,fs/shell 工具全部锁死其中——**agent 读不到任何真实文件**。
   coding-agent、文件问答、代码审计三类主力场景直接落空。
 - **决策**:三分区(书 Ch10 四区的精简版)——
   `read_paths: []`(只读挂载,如源码目录)/ `workspace`(可写产出)/
   `scratch`(每帧私有临时,默认现行为)。fs 工具按前缀判定档位:
   只读区拒绝 WRITE 档操作,越界仍是 `INVALID_ARGS`(现有路径逃逸检查保留)。
+  (落地形态:`workdir` = workspace,`read_paths` = 只读区;缺省仍为 per-run
+  临时目录,scratch 分区与 per-skill 声明未做。)
 - **坑**:①默认必须保持现状(临时目录),否则所有现存配置的安全边界被静默放宽;
   ②`system.shell.exec` 的 `cwd` 与 fs 工具必须用同一个解析器,否则出现
   "脚本里 `ls` 和 `system.file.read` 看到不同世界"的错位(实机已踩过一次);
   ③多帧并发写同一 workspace → 需要 W0-4 的乐观锁配套。
 
-#### W0-2 工具契约四字段 — ToolSpec 增列(机制)
+#### W0-2 工具契约四字段 — ToolSpec 增列(机制)— 已实现
 
-`ToolSpec` 加 `idempotent: "yes"|"no"|"key"` / `concurrent_safe: bool=False` /
-`cacheable: bool`(READ 默认 True)/ `cost_hint: str`。
+`ToolSpec` 已增列 `idempotent: "yes"|"no"|"key"` / `concurrent_safe: bool=False` /
+`cacheable: bool`(READ 默认 True)/ `cost_hint: str`(另有 `replayable`/`confirm`/
+`side_effect`,内置工具注册时已逐条声明)。
 
 - **为什么**:编排把同一工具在一次执行里调几十次,并在 replay/崩溃恢复时整体重跑;
   没有幂等声明,重试就是赌博。缓存与并发标记则是白拿的性能(只读工具天然可缓存可并行)。
@@ -46,9 +51,9 @@
   违规案例再加。避免一上来就把所有内置工具卡住。
 - **坑**:`cost_hint` 别写成绝对秒数(依赖环境),写量级("~100ms"/"~5s,大文件更久")。
 
-#### W0-3 工具错误第四层 `hint` — 让错误可自纠(机制)
+#### W0-3 工具错误第四层 `hint` — 让错误可自纠(机制)— 已实现
 
-`ToolError` 已有 `{kind, message, retryable, hint}`,但 `hint` 全空。逐个内置工具填。
+`ToolError` 有 `{kind, message, retryable, hint}`,内置工具的 `hint` 已逐个填写。
 
 - **为什么**:书里实测该层把错误恢复率从 60% 拉到 95%,是全清单性价比最高的单点。
   实机也验证过反向案例:编排脚本的 `BrokenPipeError` 无法自纠,而 SyntaxError
@@ -58,9 +63,11 @@
   `PermissionDenied → "该工具不在本技能白名单;可用的有 A/B/C"`。
 - **坑**:hint 里带的路径/白名单是运行期事实,必须现取,不能硬编码进静态描述。
 
-#### W0-4 `system.file.write`/`system.file.edit` 的 `if_match` — 乐观锁(改造)
+#### W0-4 `system.file.write`/`system.file.edit` 的 `if_match` — 乐观锁(改造)— 已实现
 
-参数加 `if_match: str`(mtime 或内容 hash),不匹配则拒写并返回当前版本标识。
+参数 `if_match: str`(当前内容或其 sha256 十六进制)已落地,不匹配拒写并返回当前版本
+标识(hash 前缀 + 内容前 40 字符),`system.file.delete` 同样支持(`tools/builtins.py`
+`_check_if_match`)。
 
 - **为什么**:有了编排脚本的并发与 spawn 并发,同一文件的 lost update 是必然事件,
   而乐观锁是几十年前就有的成熟答案,改动面只有一个可选参数。
@@ -68,11 +75,11 @@
 - **坑**:mtime 在粗粒度文件系统上分辨率不足(测试里已见过需要 `os.utime` 拨快 2 秒),
   正式实现用内容 hash 更稳。
 
-#### W0-5 `system.shell.exec` 结构化返回 — 编排友好(改造)
+#### W0-5 `system.shell.exec` 结构化返回 — 编排友好(改造)— 已实现
 
-返回值从拼接字符串改为 `{stdout, stderr, exit_code, truncated}`。
+返回值已改为 `{stdout, stderr, exit_code, truncated}`,并保留 `text` 字段(拼接版)供模型直读。
 
-- **为什么**:实机教训。现状把 stdout/stderr/退出码拼成一个字符串给模型看,
+- **为什么**:实机教训。原状把 stdout/stderr/退出码拼成一个字符串给模型看,
   编排脚本只能 `listing["value"].split()` 硬解析——工具在"给模型看"和
   "给代码用"之间只选了前者。有了编排,后者同样是一等公民。
 - **决策**:同时保留 `text` 字段(拼接版)供模型直读,新增结构化字段供脚本用。
@@ -92,11 +99,11 @@
 
 ## 第 1 波:核心工具(P0,做完覆盖四类主力场景)
 
-#### W1-1 `system.file.list` — 目录列举(tool, READ)
+#### W1-1 `system.file.list` — 目录列举(tool, READ)— 已实现
 
 `{path?, pattern?, max_entries?, cursor?}` → `{entries: [{path, size, mtime, is_dir}], total, next_cursor?}`
 
-- **为什么**:探索文件系统是几乎所有文件任务的第一步。实机已确认缺失——
+- **为什么**:探索文件系统是几乎所有文件任务的第一步。实机曾确认缺失——
   编排脚本只能退而用 `system.shell.exec "ls"` 再解析字符串。
 - **决策**:①**默认尊重 `.gitignore` + 跳过 `.git/`、`node_modules/`、`.venv/`**
   (`include_ignored: true` 可关)——不做这件事,任何真实仓库的第一次列举就淹没在
@@ -105,7 +112,7 @@
 - **坑**:glob 递归 `**` 在大仓库上很慢,`max_entries` 必须有默认上限(建议 200)
   且截断时 `total` 如实报告。
 
-#### W1-2 `system.file.search` — 内容检索(tool, READ)
+#### W1-2 `system.file.search` — 内容检索(tool, READ)— 已实现
 
 `{pattern, path?, glob?, context_lines?, max_hits?, cursor?}` → `{hits: [{path, line, text, before[], after[]}], total, next_cursor?, spill_ref?}`
 
@@ -117,9 +124,10 @@
   ③大结果自动 spill 到 blob 并返回 `spill_ref`,上下文只留前 N 条。
 - **坑**:正则灾难性回溯要设超时;二进制文件要跳过(按 NUL 字节探测)。
 
-#### W1-3 `system.time.now` — 服务端时钟(tool, READ)
+#### W1-3 `system.time.now` — 服务端时钟(tool, READ)— 已实现
 
-`{tz?}` → `{iso, epoch, tz}`
+`{tz?}` → `{iso, epoch, tz}`;工具已声明 `replayable`,`local_registry.dispatch`
+在 replay 模式按调用序弹出记录值返回(host replay 的注入接线留后续里程碑)。
 
 - **为什么**:LLM 无时钟,这是真实且极便宜的缺口。书给了两个理由,第二个更硬:
   时间若由模型自报,一个假值就能绕过"退款窗口是否过期"这类守门校验——
@@ -130,7 +138,7 @@
   工具声明 `replayable=True` → 内核把结果记进 trace → replay 按调用序返回记录值。
   未来 `web_search`、`system.net.http_fetch` 都能复用。建议连同 W1-3 一起做成机制。
 
-#### W1-4 `system.task.todo_write` / `system.task.todo_update` — 任务规划(tool, WRITE·run 级状态)
+#### W1-4 `system.task.todo_write` / `system.task.todo_update` — 任务规划(tool, WRITE·run 级状态)— 已实现
 
 `system.task.todo_write{items: [{id, text, status}]}` → `{count}`;
 `system.task.todo_update{id, status, note?}` → `{item}`
@@ -139,7 +147,7 @@
 读取本 run 完整任务清单,`status` 可选过滤。
 
 - **为什么**:书里数据最硬的单点之一(带 TODO 15 轮 vs 不带 21 轮,且显著减少
-  漏做子任务)。当前 std 连"任务规划"这个概念都没有。
+  漏做子任务)。此前 std 连"任务规划"这个概念都没有。
 - **决策**:①**两个工具而非一个**——`write` 用于(重新)规划,`update` 用于
   推进,后者极便宜且高频;读侧由 `system.task.todo_read` 承担,与状态栏注入的
   摘要互补(摘要不够时取完整清单);②状态存 **run 级**而非文件系统(跨帧存活、随
@@ -148,12 +156,12 @@
 - **坑**:状态栏是 ephemeral 的,TODO 必须是内核记账的一部分才不会漂移;
   别让 LLM 自己维护 TODO 文本(书的三条教训之一:状态必须由代码维护)。
 
-#### W1-5 `system.skill.search` — 技能/工具发现(tool, READ)
+#### W1-5 `system.skill.search` — 技能/工具发现(tool, READ)— 已实现
 
 `{query, kind?: "skill"|"tool"|"all", limit?}` → `{results: [{name, kind, description, permissions}]}`
 
 - **为什么**:std 铺开后条目数会逼近书里"过百即选错"的门槛;渐进披露的前提是
-  能按需查找。纯读、零依赖,现在就能做。
+  能按需查找。纯读、零依赖。
 - **决策**:v1 用子串/关键词匹配即可;等 W2-9 `bm25_score` 落地后换成 BM25
   排序(自举:std 用自己的检索件)。
 - **坑**:结果里必须带 `permissions`,否则模型选中一个自己无权调的技能,
@@ -208,6 +216,9 @@
   与 `system.skill.search` 都没有默认实现。
 - **决策**:**无状态打分器**,不做索引持久化(索引是调用方的事)。语料大时
   由调用方先用 `system.file.search` 粗筛。
+- **落地**(2026-09-27):唯一实现已提取至 `memory/rank.py`(算法与常量逐字不变,
+  W2-10 `rrf_merge` 同),`std/transform.py` handler 改为委托;M6
+  `LocalFileMemoryService.search` 复用同一函数——"不允许第二份实现口径漂移"成立。
 
 #### W2-10 `rrf_merge` — 多路检索融合
 `{lists: [[id...]], k?}` → `{ranked: [id...]}`
@@ -345,13 +356,13 @@ ADD/UPDATE/DELETE/NOOP)/ `memory_consolidate`(周期重构)/ `memory_check`(code
 
 | 条目 | 阻塞在 |
 |---|---|
-| `ask_human`(特殊档) | 需要 tool 层的"挂起 run"语义:工具请求 → checkpoint → run 转 paused → 宿主呈现问题 → resume 时把答案作为该 tool result 注入。**全清单工程量最大的一条**,但它是 Constrain 层唯一的 std 落点 |
-| `set_timer` | 与 `ask_human` **共用同一条 checkpoint/resume 通道**,应合并立项摊薄成本 |
-| `subagent_cancel` / `subagent_status` | 引擎缺口 1:子树级联取消(现只有 run 级 stop) |
-| `race_first` 组合子 | 同上 |
-| 组合子统一 `budget` 参数 | 引擎缺口 3:按子树切分记账 |
+| `ask_human`(特殊档) | ~~需要 tool 层的"挂起 run"语义~~ **挂起-作答-恢复闭环已落地**:`ask_supervisor` 伪工具即此语义——pending 落盘 → 就地挂起等裁决 → 答案作为该 tool result 注入 → resume 重问(`kernel/runner.py` `_ask_supervisor` + `supervisor/manager.py`,升权确认复用同一通道);工具面 `system.user.ask`/`system.user.notify` 也已实填(2026-09-27:WRITE 档,宿主回调经 `bind_user_channel` 装配,未 bind → NOT_FOUND,`tools/builtins.py`;CLI 接线留 TODO)。剩余缺口收窄为 `ask_human` 的 std 形态本身(技能封装与宿主呈现通道)。它是 Constrain 层唯一的 std 落点 |
+| `set_timer` | 与 `ask_human` 共用的 checkpoint/resume 通道已随 supervisor 闭环落地;剩余为计时器工具面本身(one-shot + recurring),仍应与 `ask_human` 合并立项摊薄成本 |
+| `subagent_cancel` / `subagent_status` | ~~引擎缺口 1:子树级联取消~~ **引擎地基已落地**(2026-09-27:`Kernel.cancel_subtree`/`RunControl.cancel_frame`,`kernel/runner.py:1837-1893` + `kernel/control.py:63-71`);**组合子本体已落地**(2026-09-27:`std/combinators.yaml` + `combinators_handlers.py` 的 `common.task.subagent_cancel`(WRITE 语义,ctx.cancel ack)/`common.task.subagent_status`(READ 语义,ctx.frame_status;未知帧 status=null)) |
+| `race_first` 组合子 | 引擎地基已落地(2026-09-27:`parallel_invoke` first_success 模式 + 级联取消,`kernel/runner.py:1482-1763`);**组合子本体已落地**(2026-09-27:`std/combinators.yaml` + `combinators_handlers.py` 的 `common.task.race_first`(code TRUSTED)+ 私有批帧 `common.task.race_batch`——批帧给 watchdog 单一可寻址目标) |
+| 组合子统一 `budget` 参数 | 引擎缺口 3 的读视图已落地(2026-09-27:`Kernel.subtree_usage` 九字段求和,`kernel/runner.py:1951-1988`);**软强制已落地**(2026-09-27:`race_first` watchdog 50ms 轮询批帧 `ctx.frame_status` 子树 usage,超限 `ctx.cancel` 返回部分结果——检查间隔内可超、best-effort);budget 的**内核强制**仍留立项 |
 | `describe_image` + 多模态最低限 | 契约层:`blob_get` 带 mime + prompt 技能 inputs 支持 `image_ref` |
-| `memory_*` 服务版 | M6 MemoryService |
+| `memory_*` 服务版 | ~~M6 MemoryService~~ **已落地(2026-09-27)**:`LocalFileMemoryService`(`memory/local_file.py`)+ 工具面 `system.memory.search`/`system.memory.write` 常驻 `with_builtins`,`[memory] dir` 配置段接线 |
 
 ---
 
@@ -372,7 +383,9 @@ W0 地基(workdir / 契约四字段 / 错误 hint / if_match / shell 结构化)
                      │
                      └─→ W4-3 std/web · W4-4 std/learn
 
-W5 全部阻塞在内核立项(挂起语义 / 级联取消 / 子树记账 / 多模态契约)
+W5 剩余阻塞在内核立项(多模态契约;组合子 budget 的内核强制;ask_human/set_timer
+工具面——挂起语义已随 supervisor 闭环落地。级联取消/子树记账读视图/组合子本体
+均已落地(2026-09-27,std/combinators.yaml))
 ```
 
 **若只做三件**:W0-1(workdir)、W1-1+W1-2(system.file.list/system.file.search)、W0-3(错误 hint)。
@@ -468,7 +481,8 @@ WRITE/EXEC/NET 显式声明 idempotent、`cost_hint` 非空)。新增条目漏�
 
 ### CI 与离线的分界(不可破的线)
 
-现有套件的性质很珍贵:**~290 个测试 10 秒跑完、无需 API key、零 flaky**。
+现有套件的性质很珍贵:**1448 个测试(1399 passed / 10 条件 skip / 39 xfailed,
+0 失败;`pytest tests --collect-only` 实测收集数)、无需 API key、零 flaky**。
 层 1–3 全进 CI;层 4 走 nightly/发版前,需要 key、花钱、报置信区间。
 对抗用例(§7.3a 的"诱导攻击")对 `injection_scan`/`untrusted_content`
 是确定性的——攒注入语料库断言检测是否触发,不需要裁判,进 CI。
@@ -481,4 +495,5 @@ WRITE/EXEC/NET 显式声明 idempotent、`cost_hint` 非空)。新增条目漏�
 - `read_document`(PDF/Word 抽取):二进制依赖,走 entry point;若要收,
   必须是"统一工具 + file_type 参数"而非一类一个;
 - 随机数/UUID 工具:复现性毒药,需要时经 `RunConfig.seed` 管控的内核原语另议;
-- `fs_delete`:`system.shell.exec` + ToolGuard 规则已覆盖,单独给一个高危工具名不划算。
+- `fs_delete`:~~`system.shell.exec` + ToolGuard 规则已覆盖~~ → 已翻案落地为
+  `system.file.delete`(WRITE 档、声明 confirm、仅文件与空目录,递归删除不做);

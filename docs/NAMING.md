@@ -49,7 +49,7 @@ Additional top-level domains may be registered only after a formal review. The t
 
 ## 4. Converting Existing Names
 
-The following mapping applies to current built-in tools and standard-library skills. Legacy flat names are kept as aliases for backward compatibility until a deprecation release removes them.
+The following mapping applies to current built-in tools and standard-library skills. Legacy flat names are kept as aliases for backward compatibility until a deprecation release removes them (currently implemented for tools only — see §6 rule 3).
 
 | Legacy flat name | Hierarchical name | Domain reasoning |
 |-------------------|-------------------|------------------|
@@ -66,8 +66,9 @@ The following mapping applies to current built-in tools and standard-library ski
 | `todo_update` | `system.task.todo_update` | Kernel task primitive |
 | `todo_read` | `system.task.todo_read` | Kernel task primitive (added with this convention; no legacy alias) |
 | `skill_search` | `system.skill.search` | Kernel skill-discovery primitive |
-| `ask_user` | `system.ui.ask_user` | Kernel UI primitive |
-| `notify_user` | `system.ui.notify_user` | Kernel UI primitive |
+| `blob_get` | `system.blob.get` | Kernel blob-store primitive |
+| `ask_user` | `system.user.ask` | Kernel user-interaction primitive |
+| `notify_user` | `system.user.notify` | Kernel user-interaction primitive |
 | `fetch_page` | `common.web.fetch_page` | Reusable web utility |
 | `extract_json` | `common.text.extract_json` | Reusable text utility |
 | `template_render` | `common.text.template_render` | Reusable text utility |
@@ -155,8 +156,8 @@ Implementation: `agent_os/src/agent_os/providers/naming.py` (`mangle_name` / `un
 ## 6. Migration Rules
 
 1. All new skills and tools must use the hierarchical naming convention.
-2. Existing flat names in `std/skills.yaml`, `tools/builtins.py`, and `tools/std.py` are renamed to hierarchical names.
-3. Legacy flat names are kept as aliases for at least one release cycle, with a deprecation warning when used in `permissions.tools`, `permissions.skills`, or direct invocation.
+2. Existing flat names in `std/*.yaml` (the former `std/skills.yaml`, now split per domain), `tools/builtins.py`, and `tools/std.py` are renamed to hierarchical names.
+3. Legacy flat tool names are kept as aliases for at least one release cycle (`LocalPythonToolRegistry.register_alias`). Note: as of now aliases exist for tools only — the skill subsystem has no alias mechanism, and alias usage does not yet emit a deprecation warning; both are planned.
 4. Documentation and examples are updated to use hierarchical names.
 5. After the deprecation period, aliases are removed and only hierarchical names remain.
 
@@ -180,8 +181,8 @@ system.task.todo_write
 system.task.todo_update
 system.task.todo_read
 system.skill.search
-system.ui.ask_user
-system.ui.notify_user
+system.user.ask
+system.user.notify
 ```
 
 ### `common` — standard library

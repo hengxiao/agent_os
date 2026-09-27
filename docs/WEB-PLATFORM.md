@@ -106,10 +106,11 @@ GET  /api/sessions                     会话摘要列表(左栏索引)
 POST /api/sessions                     创建会话
 GET  /api/sessions/{id}                读会话(404)
 POST /api/sessions/{id}/messages       user 意图 → agent 消息(+卡;卡过协议闸)
-POST /api/cards/action                 卡片按钮统一入口(白名单 → 转发)
+POST /api/cards/action                 卡片按钮统一入口(白名单 → 转发;M1 起为旧卡兼容入口,新卡走 app action 管道)
 GET  /api/decisions                    待决升权请求聚合(W2;supervisor pending 纯转发)
-POST /api/decisions/{qid}              升权作答转发(W2;404/400 同旧收件箱)
 POST /api/sessions/{id}/decisions/present  轮询汇聚(W2;新 pending 落会话,幂等)
+(注:W2 的 POST /api/decisions/{qid} 作答端点已撤——升权作答收编进 app action
+ 管道:POST /api/apps/{instance_id}/actions/{action_id},ref platform.decision.answer)
 ```
 
 `cards/action` 的转发面(每件都薄,调既有 store/gate/package 能力,
@@ -159,7 +160,9 @@ POST /api/sessions/{id}/decisions/present  轮询汇聚(W2;新 pending 落会话
 
 `web_platform/static/`(独立入口 `/platform/`):
 
-- **骨架**(`index.html` + `app.js`,ES module):左栏**竖排 tab 条**
+- **骨架**(`index.html` + `app.js`,ES module;**现状**:旧壳已退役——C4.4 起
+  产品入口为 `desktop.html`,对话面收编 `conversation-app.js`,见
+  docs/DESKTOP-WIDGET.md):左栏**竖排 tab 条**
   (`role="tablist"`;conversation 固定首 tab 不可关,detail tab 可 ✕ 关闭,
   同 kind+ref 去重聚焦——`openTab`/`closeTab` 为纯函数),底部会话下拉
   (切换/新建);主区 conversation = 对话流(`role="log"`,气泡 + 产物卡)+
@@ -197,10 +200,11 @@ POST /api/sessions/{id}/decisions/present  轮询汇聚(W2;新 pending 落会话
 - **降级**:本页只覆盖意图级闭环;精确操作(改单字段/逐关报告/断点调试)
   一律回旧页(§8 专家模式),gate_report 卡的"去修复"就是这个出口的形态。
 
-测试:`static/tests/platform.test.mjs`(六卡型技术渲染 + 详情链接断言 +
-摘要层人话/禁忌词边界 + 详情层技术字段保留 + fetch stub 对话流/错误态 +
-tab 模型纯函数 + 详情全流程:开 tab/去重/五类渲染/重试/✕ 回落);浏览器
-绝对路径 import(`/static/js/` 共享模块)在 node 侧经
+测试:`host/web/static/tests/platform.test.mjs`(cards.js 双层渲染:六卡型
+技术渲染 + 详情链接断言 + 摘要层人话/禁忌词边界 + 详情层技术字段保留;
+旧壳集成段——fetch stub 对话流/tab 模型纯函数/详情全流程——已随旧壳退役,
+接替:`conversation-app.test.mjs` + `desktop-widget.test.mjs` + tests-ui
+真实浏览器全链);浏览器绝对路径 import(`/static/js/` 共享模块)在 node 侧经
 `platform-loader.mjs` 钩子映射(测试基建,非运行时)。
 
 ## 11. W2:升权决策汇入对话 + LLM 意图路由(本期落地)
@@ -214,15 +218,17 @@ tab 模型纯函数 + 详情全流程:开 tab/去重/五类渲染/重试/✕ 回
 - **端点**(app.py;**纯转发,零新权限通道**):
   `GET /api/decisions` 聚合 supervisor pending(只收 kind=escalation;人话
   字段 `tier_human` 随行;收件箱异常降级空表);
-  `POST /api/decisions/{qid}` 作答转发 run_manager.supervisor_answer
-  (404/400 归类与旧 web 收件箱一致);
+  作答原走 `POST /api/decisions/{qid}` 转发 run_manager.supervisor_answer——
+  **该端点已撤**,现状收编进 app action 管道(§17.7-4):escalation 卡的
+  approve-once/approve-run/deny 按钮 → `POST /api/apps/{instance_id}/actions/
+  {action_id}`(ref `platform.decision.answer`,answer 由管道按 action_id 注入);
 - **轮询汇聚**(系统主动开口的简单方案):前端每 5s
   `POST /api/sessions/{id}/decisions/present`——服务端把**新出现**的 pending
   以 agent 消息 + escalation 卡写进会话(持久化);"已呈现"判定 = 扫会话消息里
   的 escalation 卡 question_id(无状态,重启/多标签页安全);拉取失败前端静默;
 - **前端**:摘要层人话("「skill」想执行操作(只读/可改能撤销/需审批),需要
   你批准";reason_hint/参数/选项协议串不上屏)+ 就地按钮(批准一次/本次都批
-  [仅选项里有]/拒绝)→ POST decisions → 卡标已决(置灰 + 状态字;404 = "该
+  [仅选项里有]/拒绝)→ app action 管道(`platform.decision.answer`)→ 卡标已决(置灰 + 状态字;404 = "该
   请求已被处理",不算错误);详情 tab(esc)= 参数 JSON + 请求权限集 +
   reason_hint 原文。作答**不走** cards/action 白名单——它是 supervisor 闭环,
   不是卡片动作。

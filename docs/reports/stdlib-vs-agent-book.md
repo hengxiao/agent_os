@@ -7,6 +7,25 @@
 > 引擎已有 / std 已覆盖 / 真缺口 / 需拍板的设计冲突。
 > 生成日期:2026-07-25。
 
+> ---
+> **截至 2026-08-24 的复核**(基线 HEAD `36f0587`;引擎与 std 现状)。本报告是带日期的历史分析,正文保持原样;
+> §3.2"真缺口"清单与 §5 总表中有若干条目**已经落地**,归类时请以本注为准:
+>
+> - §3.2 #2 工具错误 hint:`ToolError` 已有 `hint` 字段(`api/v1/tools.py:67-75`,str 形态),`fs_edit` 等的 hint 可直接执行。
+> - §3.2 #3 progress/todo 原语:`system.task.todo_write`/`todo_update` 已实现(`tools/std.py:507-553`),`progress_track` 已实现(`std/files_handlers.py:151`,技能名 `common.eval.progress_track`)。
+> - §3.2 #4 来源标注与注入隔离:web 感知工具已落地 `<external_content source="...">` 包裹(`tools/std_web.py:73,108-110`);`injection_scan` 纯函数未见。
+> - §3.2 #7 检索纯函数:`std/retrieval.yaml` 已含 `bm25_score`/`rrf_merge`/`retrieval_metrics`(+ `deduplicate`/`sort_by`/`group_by`);chunk 类有 `common.text.chunk`(`std/text.yaml:282`);`contextualize_chunk` prompt 技能未见。
+> - §3.2 #9 fs 并发保护:`fs_write`/`fs_edit` 已带 `if_match` 乐观锁(`tools/builtins.py:67-95`,冲突回报当前版本 sha256 前缀)。
+> - §3.2 #10 多模态最低限:`blob_get` 已注册(`tools/builtins.py:422`);blob mime 字段与 `image_ref`/`describe_image` 仍无(grep 无命中)。
+> - §3.2 #8 写侧与发现侧:仍开口——`skill_search` 未收录,`skills/local_file.py:293 register()` 仍 M6 stub;但入库前验证门已由 Skill Lab 承载(`skills/gate.py` 五关 → `package.py` 原子发布)。
+> - §4.5 / §5-#22 文件版记忆:`std/memory.yaml` 已存在(`common.memory.*` 技能包),"文件版先行"的 std 侧部分落地;引擎 Memory 子系统仍为 M6 stub。
+> - §6 SKILL-INLINING v1 核对仍成立:`RunConfig.inline="off"` 在(`api/v1/run.py:43`),CLI 另有 `--inline on|off`(`host/cli/main.py`)。
+> - §5 P0 总表 #5(todo)、#6(if_match)对应实现已落地(见上);#1-#4、#7-#10 为 STDLIB 文档侧动作,本次未复核。
+>
+> **截至 2026-09-27 的复核**(M6 两项落地):上两条"仍开口"部分关闭——
+> - §3.2 #8:`register()` 已落地(`skills/local_file.py:314-484`,验证门 + `pre:skill.register` 否决 + 原子发布 + provenance;工具面 `system.skill.register`,confirm=True 过内核 tool-confirm 闸门);`skill_search` 未收录仍开口。
+> - §4.5 / §5-#22:引擎 Memory 子系统已落地(`memory/local_file.py` `LocalFileMemoryService` + `system.memory.search/write` 工具 + `[memory] dir` 配置段);与 `std/memory.yaml` 的边界说明保留——std 四件套是记忆的管线与纪律(extract/reconcile/consolidate/check),MemoryService 是存储与治理,互补不互替。
+
 ---
 
 ## 0. 结论摘要

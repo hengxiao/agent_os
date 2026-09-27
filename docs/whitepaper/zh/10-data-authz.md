@@ -1,8 +1,10 @@
 # 数据层 authN+Z:Principal 与数据域
 
 > 章次:10 · 状态:D1 已实现(Principal 模型、CLI/Web 单用户来源、fs 域、dispatch
-> 强制点、身份不变量与 checkpoint 往返);D2/D3 已设计未实现(配置段、per-subject
-> 域白名单、db/net 域、审计信号、派生链、多用户会话映射) ·
+> 强制点、身份不变量与 checkpoint 往返);D2 已实现(2026-08-31:`[data]` 配置段、
+> per-subject 域白名单第二判据、net/db 域判定、`data.access.*` 审计信号、判据回写
+> `credentials["_authz"]`);D3-lite 已落地(`[web.tokens]` 多用户映射);D3 余项
+> 已设计未实现(派生链最弱一环、EscalationRequest 数据面展示) ·
 > 依据:`docs/DATA-AUTHZ.md`、`agent_os/src/agent_os/api/v1/principal.py`、
 > `agent_os/src/agent_os/tools/local_registry.py`、
 > `agent_os/tests/tools/test_data_authz.py`
@@ -71,10 +73,13 @@ class Principal:
 
 D1 实现两个来源(`principal.py:83-105`):CLI 取本机用户
 (`user:$USER`,issuer=cli);Web 单用户取部署者登录名(宿主配置
-`[web].user`,缺省本机用户;`host/web/run_manager.py:430-440`)。两者
+`[web].user`,缺省本机用户;`host/web/run_manager.py:442-452`)。两者
 clearance 都给 confidential——单用户 = 机器的主人,拦截只对显式构造的
-低 clearance 身份(测试、嵌入宿主)生效(§8 实现注 3)。api-token 与
-host-embedded 是协议面已冻结、接线属 D3 的来源。
+低 clearance 身份(测试、嵌入宿主)生效(§8 实现注 3)。api-token 来源
+已接线(D3-lite,2026-08-31:`[web.tokens]` Bearer 映射命中 →
+`Principal(issuer="api-token", clearance=confidential)`,
+`host/web/app.py`/`host/web/run_manager.py`);host-embedded 是协议面
+已冻结、接线属 D3 的来源。
 
 ### 4.2 身份不变量:不可自升
 
@@ -112,7 +117,10 @@ allow(principal, domain, action) ⟺ clearance_of(principal) ≥ domain.sensitiv
 - 两个方向都 fail closed:未知 clearance 按 public,未知 sensitivity 按
   confidential(`principal.py:73-74`);attrs 缺 clearance 同样按最低档
   (`principal.py:57-59`);
-- §3.2 的第二判据(per-subject 域白名单)依赖宿主配置段,**D2 未实现**;
+- §3.2 的第二判据(per-subject 域白名单)已生效(D2,2026-08-31:
+  `[data.principals."<subject>"] domains = [...]` 配置段经
+  `DataPolicy.whitelist_for` 传入 `allow()` 的 `whitelist=None` 关键字,
+  None 与 D1 逐字一致);判据回写 `ctx.credentials["_authz"]`;
   `action` 参数是协议面占位,D1 不参与判定。
 
 ### 4.4 强制点:dispatch 双闸串联
@@ -124,15 +132,18 @@ ToolCall
 schema 校验(jsonschema,fail fast,禁止"智能纠正")
   │
   ▼
-数据层 authZ ── _check_data_access(local_registry.py:306-351)
+数据层 authZ ── _check_data_access(local_registry.py:396-508)
   │  ① 工具未声明 data_domains → 跳过(不碰数据)
   │  ② principal is None       → 跳过(单用户语义)
-  │  ③ 声明不含 "fs.*"         → 跳过(db/net 域判定属 D2)
-  │  ④ 无 path 参数可解析       → 跳过(D1 只解析 path 形参)
+  │  ③ net/db 声明且 policy 缺席 → 跳过(D1 语义逐字保留;policy 在场时
+  │     net 按 args["url"] 前缀匹配、db 等其余族 glob 对 policy.domains 匹配,D2)
+  │  ④ 无 path/url 参数可解析   → 跳过(无可判定目标)
   │  ⑤ resolve_work_path 越界   → 交还工具按沙箱语义报错,不重复判
-  │  ⑥ 域解析为 None(未配置)  → 跳过(D1 兼容策略,见下)
-  │  ⑦ allow() 拒绝 → DATA_ACCESS_DENIED(带域名/敏感度/clearance,
-  │                     不回显路径、不含域内内容)
+  │  ⑥ 域解析为 None(未配置)  → policy 缺席:跳过(D1 兼容策略,见下);
+  │     policy 在场:按 confidential(fs/net.unconfigured,D2 恢复原文语义)
+  │  ⑦ allow()(clearance + 白名单第二判据)拒绝 → DATA_ACCESS_DENIED
+  │     (带域名/敏感度/clearance,不回显路径、不含域内内容);
+  │     拒绝/放行各发一条 data.access.* 审计信号,判据回写 credentials["_authz"]
   ▼
 三层权限交集(帧白名单 ∩ RunConfig 上限;READ 档不占帧白名单)
   │
@@ -166,8 +177,11 @@ principal 的 run 内部不做数据隔离(低层 skill 读到机密写进输出
 
 ## 5. 效果与验证(效果)
 
-锚点测试 `agent_os/tests/tools/test_data_authz.py` 共 **13 例,本次运行
-全绿**(`pytest tests/tools/test_data_authz.py -q` → 13 passed)。关键断言:
+锚点测试 `agent_os/tests/tools/test_data_authz.py` 共 **23 例,本次运行
+全绿**(D2 新增 10 例:policy 绑定后未配置域 confidential、白名单第二判据
+glob、net 域 URL 前缀命中/未命中不泄漏、`data.access.*` 信号精确 payload、
+判据回写 `credentials["_authz"]`;另 `tests/web/test_data_authz.py` 5 例
+覆盖 D3-lite `[web.tokens]` 映射与未命中回落,合计 28 passed)。关键断言:
 
 | 验证点 | 用例 | 断言要点 |
 |---|---|---|
@@ -184,7 +198,7 @@ principal 的 run 内部不做数据隔离(低层 skill 读到机密写进输出
 
 宿主接线已生效:CLI 两个入口注入 `cli_principal()`
 (`host/cli/main.py:163,292`);Web 单用户每个 run 注入
-`web_single_user_principal`(`host/web/run_manager.py:553`)。
+`web_single_user_principal`(`host/web/run_manager.py:565`)。
 
 **可观察行为**:单用户部署(CLI / 未配多用户的 Web)行为与引入本系统前
 零差异——principal 为 confidential 或 None,拦截不发生;嵌入宿主或测试
@@ -193,38 +207,39 @@ hint 恢复(换路径或请求更高 clearance 的身份)。
 
 **涟漪效应**:principal 字段已成为其他子系统的判据锚点——Memory 检索层
 权限过滤以 principal 为参数(`api/v1/memory.py:60`,预留);Skill Lab
-promote 记录 `promoted_by`(`skills/gate.py:382`);升权确认卡片的数据面
+promote 记录 `promoted_by`(`skills/gate.py:539`);升权确认卡片的数据面
 展示(本调用将访问的域与敏感度)已列为 D3 的 EscalationRequest 扩展输入
 (§5.3,已设计未实现)。
 
 ## 6. 局限性与边界(局限性)
 
-1. **未配置域 fail-open(D1)**。设计语义"未配置域按 confidential"在 D1
-   刻意不生效(§8 实现注 1):域注册写错前缀或漏注册,结果是静默不保护,
-   而非静默拒绝。D2 配置段落地前,这是已知的最严口径缺口。
+1. **未配置 fail-open 残留(policy 缺席时)**。D2 已恢复"未配置域按
+   confidential"原文语义,但仅在 `bind_data_policy` 注入 `[data]` 策略
+   之后;未配置 `[data]` 段的部署仍保持 D1"未配置 = 不拦截"——忘了配段
+   = 数据层整体不启用,静默不保护而非静默拒绝。
 2. **出厂路径实际不拦截**。CLI 与 Web 单用户都给 confidential clearance,
    数据闸对自带宿主是 no-op;保护只对显式构造低 clearance 身份的嵌入方
-   生效。换言之 D1 交付的是机制与不变量,不是开箱即用的多用户隔离。
-3. **覆盖仅限 fs 域的 path 形参**。`_check_data_access` 只解析
-   `args["path"]`(`local_registry.py:324-326`):`system.shell.exec` 不
-   声明 data_domains、命令串无法解析,白名单里有它的低 clearance principal
-   可以用 `cat` 绕过数据闸(代价:shell 本身是 EXEC/L3,必过升权闸);
-   db/net 域的声明与判定整体属 D2。
-4. **第二判据缺失**。per-subject 域白名单(§3.2)未实现,判定只剩
-   clearance 一维;`ToolContext.credentials` 的判据回写同为 D2;`action`
-   参数是占位,D1 不区分 read/list/metadata。
+   (或 `[web.tokens]` 命中的多用户映射)生效。换言之交付的是机制与不变量,
+   不是开箱即用的多用户隔离。
+3. **覆盖仍限于可解析形参**。`_check_data_access` 对 fs.* 解析
+   `args["path"]`、对 net.* 解析 `args["url"]`(D2;db.* 等其余族按声明
+   glob 对 `policy.domains` 匹配):`system.shell.exec` 不声明
+   data_domains、命令串无法解析,白名单里有它的低 clearance principal
+   可以用 `cat` 绕过数据闸(代价:shell 本身是 EXEC/L3,必过升权闸)。
+4. **`action` 参数仍是协议面占位**。判定不区分 read/list/metadata
+   (D1/D2 同);第二判据(per-subject 域白名单)与 `ToolContext.credentials`
+   判据回写(`_authz`)已于 D2 生效。
 5. **同 run 内无隔离**。低层 skill 读到的机密可经输出流向同 run 高层
    skill(§4 明示残余风险);v1 靠"同一 principal 即同一人"的假设接受
    这一点,防注入扩散依赖的是帧隔离与升权闸,不是数据闸。
-6. **审计信号未实现**。`data.access.denied` / `data.access.granted`
-   (§6)属 D2;当前拒绝只以工具错误形式进 trace,无法按 principal 聚合
-   "谁被拒了几次"。
-7. **多用户与派生链未实现**(D3):所有 Web run 共享部署者身份;agent
-   代调场景没有最弱一环降级,委托方身份原样传递。
-8. **拒绝面泄漏域的存在性**(域名与敏感度进错误消息)。这是有意的可用性
+6. **派生链与确认卡片数据面未实现**(D3 余项):agent 代调场景没有最弱
+   一环降级,委托方身份原样传递;EscalationRequest 数据面展示(本调用将
+   访问的域与敏感度)归 E3。多用户映射 D3-lite 已落地(`[web.tokens]`,
+   2026-08-31);未配置时所有 Web run 仍共享部署者身份。
+7. **拒绝面泄漏域的存在性**(域名与敏感度进错误消息)。这是有意的可用性
    取舍(模型需要判据来恢复),但等于向低 clearance 调用方暴露了域的
    命名与分级。
-9. **明确不做**(§9):taint tracking、per-文件/行级 ACL、SSO/OIDC、
+8. **明确不做**(§9):taint tracking、per-文件/行级 ACL、SSO/OIDC、
    存储层加密;这些是范围外,不是遗漏。
 
 ## 7. 引用
@@ -236,12 +251,14 @@ promote 记录 `promoted_by`(`skills/gate.py:382`);升权确认卡片的数据�
   `agent_os/src/agent_os/api/v1/tools.py:57,119-121,145`
   (DATA_ACCESS_DENIED、ToolSpec.data_domains、ToolContext.principal);
   `agent_os/src/agent_os/api/v1/frames.py:102-105`(SkillFrame.principal)
-- 强制点:`agent_os/src/agent_os/tools/local_registry.py:181-286`(dispatch
-  流水线)、`:288-304`(register_fs_domain/_resolve_fs_domain)、
-  `:306-351`(_check_data_access)、`:544-588`(resolve_work_path)
+- 强制点:`agent_os/src/agent_os/tools/local_registry.py:228-347`(dispatch
+  流水线)、`:349-378`(register_fs_domain/register_net_domain 与
+  _resolve_fs_domain/_resolve_net_domain)、`:396-508`(_check_data_access)、
+  `:701-745`(resolve_work_path)
 - 身份流:`agent_os/src/agent_os/kernel/runner.py:206-228`(run 注入点);
   `agent_os/src/agent_os/skills/local_file.py:146-148`(子帧继承);
   `agent_os/src/agent_os/kernel/checkpoint.py:156,226-234`(序列化往返);
   `agent_os/src/agent_os/host/cli/main.py:163,292`;
-  `agent_os/src/agent_os/host/web/run_manager.py:430-440,553`
-- 测试:`agent_os/tests/tools/test_data_authz.py`(13 例)
+  `agent_os/src/agent_os/host/web/run_manager.py:442-452,565`
+- 测试:`agent_os/tests/tools/test_data_authz.py`(23 例)、
+  `agent_os/tests/web/test_data_authz.py`(5 例,D3-lite)

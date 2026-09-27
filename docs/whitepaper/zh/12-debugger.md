@@ -23,7 +23,7 @@
 3. **失控 run 只能杀不能看**:预算烧穿或行为异常时,唯一手段是 abort;缺少 GDB 里"发 signal 在下一个安全点停下"的随时暂停。
 4. **崩溃现场丢失**:调试暂停时 checkpoint 尚未落盘,检视只能读内核内存态;而进程崩溃时连终态 checkpoint 都可能没有,恢复点在"终态"而非"最近 N 步"。
 5. **停点不可复现**:live 调试中偶然走到第 7 步才发现问题,下次想直接回到第 7 步——LLM 非确定,重跑一遍停点序列就变了。
-6. **多线程宿主下的命令投递**:Web REST 线程与 run worker 线程各自有事件循环,REST 线程直接 `set()` 会话的 `asyncio.Event` 会撞 `loop.call_soon` 的线程检查(`run_manager.py:822-829`)。
+6. **多线程宿主下的命令投递**:Web REST 线程与 run worker 线程各自有事件循环,REST 线程直接 `set()` 会话的 `asyncio.Event` 会撞 `loop.call_soon` 的线程检查(`run_manager.py:834-858`)。
 
 ## 4. 设计与机制(解决的方法)
 
@@ -99,17 +99,17 @@ runner ── emit(pre:tool.call) ──▶ SignalBus(按订阅序 await)
 
 ### 4.5 Web 后端:会话 API、跨线程命令桥与 SSE
 
-`POST /api/debug/sessions` 开会话即起 run,请求体两形态互斥:`{skill, input, breakpoints?}`(live)或 `{replay_run_id, until_step?, breakpoints?}`(replay,响应带 `mode: "replay"`);每 run 至多一个活跃会话,冲突 409(`app.py:1071-1120`)。**breakpoints 在 run 启动之前注册**——mock brain 毫秒级推进,起 run 后再加断点会竞态错过早期信号,启动即断因此是确定性的(`run_manager.py:686-694`)。端点族:会话快照 `GET`、断点增删、`command`(仅 paused;`pause` 仅 running)、`modify` / `inject`(仅 paused)、`frames/{fid}`(live 内存态:暂停时 checkpoint 尚未落盘)、`stream`(SSE)、`rerun`、`DELETE`(detach 放行)。
+`POST /api/debug/sessions` 开会话即起 run,请求体两形态互斥:`{skill, input, breakpoints?}`(live)或 `{replay_run_id, until_step?, breakpoints?}`(replay,响应带 `mode: "replay"`);每 run 至多一个活跃会话,冲突 409(`app.py:1471-1521`)。**breakpoints 在 run 启动之前注册**——mock brain 毫秒级推进,起 run 后再加断点会竞态错过早期信号,启动即断因此是确定性的(`run_manager.py:691-714`)。端点族:会话快照 `GET`、断点增删、`command`(仅 paused;`pause` 仅 running)、`modify` / `inject`(仅 paused)、`frames/{fid}`(live 内存态:暂停时 checkpoint 尚未落盘)、`stream`(SSE)、`rerun`、`DELETE`(detach 放行)。
 
-**跨线程命令桥**(`_in_debug_loop`,`run_manager.py:822-846`):会话的 `asyncio.Event` 绑在 run worker 线程的循环上,REST 线程直接 `set()` 会撞线程检查;`_debug_loops` 逐会话记录 worker 循环(run.started 时捕获),resume/modify/inject/detach 一律经 `run_coroutine_threadsafe` 投递过去执行并等结果。worker 循环已退出(run 结束)时直接调用——此时没有阻塞中的 wait,`Event.set()` 无 waiter 是纯内存操作。
+**跨线程命令桥**(`_in_debug_loop`,`run_manager.py:834-858`):会话的 `asyncio.Event` 绑在 run worker 线程的循环上,REST 线程直接 `set()` 会撞线程检查;`_debug_loops` 逐会话记录 worker 循环(run.started 时捕获),resume/modify/inject/detach 一律经 `run_coroutine_threadsafe` 投递过去执行并等结果。worker 循环已退出(run 结束)时直接调用——此时没有阻塞中的 wait,`Event.set()` 无 waiter 是纯内存操作。
 
-**调试 SSE**(`app.py:1226-1301`):连接即发 `state` 快照(`prev_state` 不取当前态,已暂停的会话立即补发 `paused`,照顾迟到客户端),随后以 `_DEBUG_SSE_POLL=0.1s`(`app.py:78`)轮询会话内存态发差分事件:`bp_hit`(hits 增长)→ `paused` / `resumed` → `run_end`(detached 后短暂等终态落盘,最多 50 轮);空闲 15s 发 keepalive(`_SSE_KEEPALIVE`,`app.py:74`)。轮询而非 await 的原因:`wait_paused` 的 Event 绑在 worker 循环上,SSE 循环不能 await,轮询是最简可靠方案(`app.py:1228-1231`)。
+**调试 SSE**(`app.py:1634-1712`):连接即发 `state` 快照(`prev_state` 不取当前态,已暂停的会话立即补发 `paused`,照顾迟到客户端),随后以 `_DEBUG_SSE_POLL=0.1s`(`app.py:97`)轮询会话内存态发差分事件:`bp_hit`(hits 增长)→ `paused` / `resumed` → `run_end`(detached 后短暂等终态落盘,最多 50 轮);空闲 15s 发 keepalive(`_SSE_KEEPALIVE`,`app.py:93`)。轮询而非 await 的原因:`wait_paused` 的 Event 绑在 worker 循环上,SSE 循环不能 await,轮询是最简可靠方案(`app.py:1637-1640`)。
 
-**rerun**(`run_manager.py:722-754`):依据 live 会话创建时回填的 `origin`(skill/input/skill_set/启动断点,`kernel/debug.py:122-124`);replay/CLI 会话无 origin → 400,快照以 `rerunnable` 告知前端。旧会话仍活跃时先收尾:paused 走 `stop` 命令(正常中止路径,checkpoint 落盘),并等 stop verdict 落地(上限 `_RERUN_STOP_TIMEOUT=10s`,`run_manager.py:115`)再 detach——立即 detach 会让 `_resume_verdict` 先见 DETACHED 吞掉 stop,旧 run 变成跑完而非中止(时序竞争,`run_manager.py:737-739`)。
+**rerun**(`run_manager.py:734-767`):依据 live 会话创建时回填的 `origin`(skill/input/skill_set/启动断点,`kernel/debug.py:122-124`);replay/CLI 会话无 origin → 400,快照以 `rerunnable` 告知前端。旧会话仍活跃时先收尾:paused 走 `stop` 命令(正常中止路径,checkpoint 落盘),并等 stop verdict 落地(上限 `_RERUN_STOP_TIMEOUT=10s`,`run_manager.py:115`)再 detach——立即 detach 会让 `_resume_verdict` 先见 DETACHED 吞掉 stop,旧 run 变成跑完而非中止(时序竞争,`run_manager.py:750-752`)。
 
 ### 4.6 时间旅行与周期 checkpoint(P5)
 
-**时间旅行 = 回放 + 调试会话**。从产物目录(`meta.json` + `trace.jsonl` + `checkpoint.json`)经 `build_mock_script` 重建 MockProvider 脚本,`replace_providers` 换掉内核 provider 面,再以原 run 的 skill/input(取自 `meta.json`)起**新 run** 并挂调试会话(`run_manager.py:756-800`)——断点、单步、检视、干预与 live 完全一致,停点序列逐位复现。`until_step=N` 注册一次性步数断点,run 直达第 N 条 `pre:step` 才暂停。回放边界(`host/shared/replay.py` 模块 docstring):**LLM 不碰真实 API,按 trace 记录值重放;工具副作用仍按真实环境重跑**。
+**时间旅行 = 回放 + 调试会话**。从产物目录(`meta.json` + `trace.jsonl` + `checkpoint.json`)经 `build_mock_script` 重建 MockProvider 脚本,`replace_providers` 换掉内核 provider 面,再以原 run 的 skill/input(取自 `meta.json`)起**新 run** 并挂调试会话(`run_manager.py:769-787`)——断点、单步、检视、干预与 live 完全一致,停点序列逐位复现。`until_step=N` 注册一次性步数断点,run 直达第 N 条 `pre:step` 才暂停。回放边界(`host/shared/replay.py` 模块 docstring):**LLM 不碰真实 API,按 trace 记录值重放;工具副作用仍按真实环境重跑**。
 
 **周期 checkpoint**:`RunConfig.checkpoint_interval`(默认 0=关)挂载 `PeriodicCheckpointer`,计 `post:step`,每 N 步 `dump_checkpoint` **覆盖写** `checkpoint.json`——该文件语义是"最近现场",崩溃恢复点从"终态"提前到"最近 N 步";落盘失败捕获 + log,不拖垮 run(`docs/DEBUGGER.md` §7)。配置流:TOML `[run] checkpoint_interval = 20`、CLI `--checkpoint-interval N`、Web `overrides`(只影响本次 run)。
 
@@ -119,15 +119,15 @@ runner ── emit(pre:tool.call) ──▶ SignalBus(按订阅序 await)
 
 ## 5. 效果与验证(效果)
 
-调试器测试三层共 **44 例**:内核原语 `tests/kernel/test_debug.py`(14 例)、CLI REPL `tests/cli/test_debug.py`(12 例)、Web API `tests/web/test_debug_api.py`(18 例),全部在项目基线(Python 812 例 + 前端 24 个测试文件)内常绿。停点断言共用同一事实锚点:`demo.fib` n=3 的信号序列(F1 step1 → invoke F2(一步即弹)→ F1 step2 内 `pre:tool.call(system.python.exec)` → F1 step3 终答 → F1 pop)(`tests/web/test_debug_api.py:21-24`)。关键断言:
+调试器测试三层共 **44 例**:内核原语 `tests/kernel/test_debug.py`(14 例)、CLI REPL `tests/cli/test_debug.py`(12 例)、Web API `tests/web/test_debug_api.py`(18 例),全部在项目基线(Python 1448 例 + 前端 32 个测试文件)内常绿。停点断言共用同一事实锚点:`demo.fib` n=3 的信号序列(F1 step1 → invoke F2(一步即弹)→ F1 step2 内 `pre:tool.call(system.python.exec)` → F1 step3 终答 → F1 pop)(`tests/web/test_debug_api.py:21-24`)。关键断言:
 
 - **全流程**(`test_debug_full_flow`):启动即断(hits 累计、帧栈非空)→ step_into 进子帧(depth=2,frame_id 变化)→ step_out 停在子帧 `pre:frame.pop` → continue 命中 tool_call 断点(`reason="breakpoint"`)→ live 帧检视读到内存态 messages → modify 把 `code` 改为 `"result = 41"`,run 跑完,**结果随改后参数变化**:`{"seq": [0, 1, 41]}`;run 结束会话自动 detached(:84-145);
 - **step_over 边界**:同帧下一条 pre:step 停(中间跨过整个子帧);帧尾停在 `pre:frame.pop`(:148-174);
 - **inject 落痕**:注入消息以 `role=user, source=injected` 出现在帧上下文,frame_id 缺省 = 暂停帧(:182-204);
 - **pause 语义**:自由运行中 pause 落在下一条可仲裁信号,`reason="pause"`;若 pause 到达前 run 已跑完则归 409——两个分支都是正确语义(:297-314);
 - **错误语义矩阵**:未知会话 404、未知断点 kind 400、未知 cmd 422、非 paused 发 command/modify/inject 409、每 run 第二个会话 409、校验错 200+`failed`(:337-404);
-- **SSE 流**:`state` → `bp_hit(hits=2)` → `paused` → `resumed` → `run_end(done)`,已暂停会话连接后立即补发 `paused`(:426-486);
-- **时间旅行**:replay 会话响应带 `mode="replay"`,停点序列与 live 一致;`until_step=2` 直达第 2 条 `pre:step`(子帧);回放结果与原 run 逐位一致(`{"seq": [0, 1, 1]}`)(:495-538)。
+- **SSE 流**:`state` → `bp_hit(hits=2)` → `paused` → `resumed` → `run_end(done)`,已暂停会话连接后立即补发 `paused`(:452-518);
+- **时间旅行**:replay 会话响应带 `mode="replay"`,停点序列与 live 一致;`until_step=2` 直达第 2 条 `pre:step`(子帧);回放结果与原 run 逐位一致(`{"seq": [0, 1, 1]}`)(:519-564)。
 
 涟漪效应:调试器是**信号契约的第一个交互式消费者**,证明了"订阅序 + 阻塞 emit"足以承载人在环路的分钟级交互,同一模式随后支撑了升权确认的挂起-恢复闭环;`rerunnable`/`origin` 让"以创建参数重开 run"成为宿主层通用能力;CLI REPL 与 run 同事件循环 + stdin 脚本化喂命令(`asyncio.to_thread(stdin.readline)`)成为 CLI 交互组件的回归测试范式(`docs/DEBUGGER.md:129-131`)。
 
@@ -148,7 +148,7 @@ runner ── emit(pre:tool.call) ──▶ SignalBus(按订阅序 await)
 - 设计文档:`docs/DEBUGGER.md`(暂停协议/断点/单步/干预/时间旅行/已知限制)
 - 内核原语:`agent_os/src/agent_os/kernel/debug.py`(`DebugController` / `DebugSession` / `Breakpoint`)
 - CLI 前端:`agent_os/src/agent_os/host/cli/debug.py`(`agent-os debug` REPL)
-- Web 后端:`agent_os/src/agent_os/host/web/run_manager.py`(P3 会话管理 + 跨线程命令桥;P5 replay/rerun)、`agent_os/src/agent_os/host/web/app.py`(`/api/debug/*`,:1071-1301)
+- Web 后端:`agent_os/src/agent_os/host/web/run_manager.py`(P3 会话管理 + 跨线程命令桥;P5 replay/rerun)、`agent_os/src/agent_os/host/web/app.py`(`/api/debug/*`,:1471-1712)
 - Web 前端:`agent_os/src/agent_os/host/web/static/js/components/debug-view.js`、`debug-home.js`、`breakpoint-list.js`
 - 回放:`agent_os/src/agent_os/host/shared/replay.py`(`build_mock_script` / `replace_providers`,模块 docstring 为边界权威)
 - 周期 checkpoint:`agent_os/src/agent_os/kernel/checkpoint.py`(`PeriodicCheckpointer`)

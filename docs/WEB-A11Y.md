@@ -1,8 +1,8 @@
 # Web UI 无障碍(Accessibility)审计报告与执行标准
 
 > 版本:v0.2 · 日期:2026-08-04
-> 范围:`agent_os/src/agent_os/host/web/static/`(index.html + 22 个组件 +
->   6 套主题 + tokens/app.css,合计约 12,350 行)
+> 范围:`agent_os/src/agent_os/host/web/static/`(index.html + 23 个组件 +
+>   6 套主题 + tokens/app.css,合计约 12,200 行)
 > 目标基线:**WCAG 2.2 AA**
 > **实施状态:A0 已完成**(焦点可见性 + skip link + 高对比度兜底 + 契约断言);
 >   A1-A4 未做。v0.2 相对 v0.1 的改动都来自实施反馈:§4 P0-2 补了 ink 主题
@@ -72,18 +72,19 @@ WCAG 相对亮度与对比度计算,对每套主题断言关键文本配对 ≥ 
 **且**图标 `▶`。这是 WCAG 1.4.1(不能仅用颜色传达信息)的**执行点**,而不是
 建议。业界很少有项目把这条写成测试。
 
-**3.3 动效降级完整。** `css/tokens.css:178` 起有 `prefers-reduced-motion: reduce`
-的全局关闭,且 6 套主题各自再处理一次(ink/blueprint/pixel/terminal/moe 都有)。
+**3.3 动效降级完整。** `css/tokens.css:202` 起有 `prefers-reduced-motion: reduce`
+的全局关闭,且 5 套主题各自再处理一次(ink/blueprint/pixel/terminal/moe 都有;
+classic 无动效可降)。
 
 **3.4 语义骨架正确。** `index.html`:`<html lang="zh-CN">`、
 `<header>` / `<nav aria-label="主导航">` / `<aside aria-label="Run 列表">` /
 `<main id="main">` 地标齐全;导航项有 `aria-current="page"`;装饰性 SVG 与
 纯视觉字符统一 `aria-hidden="true"`;图标按钮统一给 `aria-label`
-(全仓 72 处 `aria-label`)。
+(全仓 130 处 `aria-label`)。
 
 **3.5 ARIA 角色成对,没有悬空。** 逐一核对过:
-`role="option"`(run 列表项 `app.js:184`、trace 行 `trace.js:627`、
-命令面板项)都有对应的 `role="listbox"` 父容器(`index.html:67`、
+`role="option"`(run 列表项 `app.js:192`、trace 行 `trace.js:627`、
+命令面板项)都有对应的 `role="listbox"` 父容器(`index.html:70`、
 `trace.js:689`、`debug-view.js:570`、`command-palette.js:84`);
 `role="treeitem"`(`frame-tree.js:185`)有 `role="tree"` 容器
 (`frame-tree.js:238`)。`option`/`treeitem` 也都带了 `tabindex="0"`。
@@ -94,7 +95,7 @@ WCAG 相对亮度与对比度计算,对每套主题断言关键文本配对 ≥ 
 `shortcuts-panel.js:20,52`),打开时也主动把焦点送进弹层。
 
 **3.7 图标按钮达到目标尺寸下限。** `.icon-btn` 为 `--s6` = 24px 见方
-(`app.css:212`、`tokens.css:73`),恰好满足 WCAG 2.2 的 2.5.8 目标尺寸(最小)
+(`app.css:259`、`tokens.css:90`),恰好满足 WCAG 2.2 的 2.5.8 目标尺寸(最小)
 24×24 CSS px。**恰好达标意味着没有余量**——见 §4.9。
 
 ---
@@ -166,8 +167,8 @@ chip、卡片全部没有任何焦点样式**,只能依赖浏览器默认轮廓�
 
 ### P1-4 全站没有 `<h1>`/`<h2>`,标题层级断裂
 
-**证据**:index.html 与全部 JS 组件里,标题元素只有 **9 个 `<h3>`**,
-`<h1>`/`<h2>` 零。
+**证据**:index.html 与全部 JS 组件里,标题元素只有 **10 个 `<h3>`**
+与 2 个 `<h2>`(后者在 compound-playground),`<h1>` 零、路由主区无页面级标题。
 
 **影响**:屏幕阅读器最主要的页内导航手段就是按标题跳转(H 键 / 标题列表)。
 现在每个路由页都没有页面级标题,用户无法快速定位"我在哪、这页有哪几块"。
@@ -180,7 +181,7 @@ chip、卡片全部没有任何焦点样式**,只能依赖浏览器默认轮廓�
 ### P1-5 SPA 路由切换不播报、不移焦
 
 **证据**:`js/app.js` 全文没有 `document.title` 的写入;路由切换后也没有把焦点
-移到新内容(唯一的 `.focus()` 在 `app.js:506`,是别的用途)。
+移到新内容(唯一的 `.focus()` 在 `app.js:519`,是别的用途)。
 
 **影响**:hash 路由切换后,屏幕阅读器用户毫无感知——标题没变、焦点还停在
 刚点过的导航项上、新内容静默替换。配合 P1-4(没有 `<h1>`)后果加倍。
@@ -343,7 +344,7 @@ forced-colors 下连 box-shadow 兜底都没有。
 | A4 | **焦点还原** | 同上文件必须含 `prevFocus`(或统一封装名) |
 | A5 | 可及名 | `<button` 模板串若无文字子节点,必须含 `aria-label` 或 `aria-labelledby` |
 | A6 | 装饰元素 | 每个 `<svg` 必须含 `aria-hidden="true"` 或(`role="img"` 且 `aria-label`) |
-| A7 | **outline 一律不得抑制** ✅已落地 | 任何样式表出现 `outline:\s*(none\|0)` 即判 fail。**比初稿更严**——初稿写的是"必须有替代",但 ink 主题的替代恰好也是 `none`(§4 P0-2),且 box-shadow 在 HCM 下会被丢弃,所以"有替代"不是充分条件 |
+| A7 | **outline 一律不得抑制** ✅已落地 | 任何样式表出现 `outline:\s*(none\|0)` 即判 fail。**比初稿更严**——初稿写的是"必须有替代",但 ink 主题的替代恰好也是 `none`(§4 P0-2),且 box-shadow 在 HCM 下会被丢弃,所以"有替代"不是充分条件。实现注:契约扫描面 = tokens.css + app.css + 6 主题;后加的 `widgets.css` 未纳入扫描,内有 3 处"焦点环移交容器"的 `outline: none`,A3 期应收口 |
 | A8 | 标题层级 | 每个路由根模板必须含且仅含一个 `<h1`;不得跳级(出现 `<h3` 则文件内须先有 `<h2` 或 `<h1`) |
 | A9 | 强制色 | `app.css` 必须含 `@media (forced-colors: active)` 段 |
 | A10 | live region | `index.html` 至少含一个 `aria-live="polite"` 的运行态区域(id 固定,见 §5.4) |
@@ -422,8 +423,12 @@ forced-colors 下连 box-shadow 兜底都没有。
 > 当前文件内容成立",**不能证明**该 `.mjs` 文件在 node 下语法/导入无误。
 >
 > **因此**:第一个有 node 的环境必须先跑一次
-> `node static/tests/themes-contract.test.mjs`,把这条证据补实。在那之前,
-> A0 的状态应读作"逻辑已验证、执行未验证"。
+> `node static/tests/themes-contract.test.mjs`,把这条证据补实。
+>
+> **已补实(2026-08-24)**:环境已装 node v22.23.1,真跑
+> `node static/tests/themes-contract.test.mjs` → all assertions passed;
+> `platform.test.mjs`、`conversation-app.test.mjs` 同过。A0 的状态升级为
+> "逻辑已验证、执行已验证"。
 >
 > 后端 `pytest agent_os/tests` 850 passed / 10 skipped / 32 xfailed,
 > 这条是真跑的——但它与前端改动正交,只说明没有连带回归。

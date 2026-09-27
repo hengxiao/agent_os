@@ -185,7 +185,9 @@ runner 只在帧上下文追加 LLM 响应,故 trace 中第 N 个属于帧 F 的
 `post:llm.response` ↔ checkpoint 中帧 F 的第 N 条 assistant 消息,按序
 重建脚本即可确定性重放整棵帧树——**LLM 不碰真实 API,按 trace 记录值
 重放;工具副作用仍按真实环境重跑**(文件、shell 等会再执行一次)。
-回放不问第二次 supervisor(按记录值走)。
+supervisor 答案的 trace 回放未接线:CLI replay 不装 supervisor 通道
+(`supervisor=False`,帧收 NOT_FOUND 错误观察,host/cli/main.py:276),Web 回放
+会话仍经收件箱通道会问第二次。
 
 ## 7. 周期 checkpoint(P5)
 

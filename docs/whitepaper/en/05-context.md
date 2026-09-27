@@ -29,7 +29,7 @@ The Context subsystem is the sole owner of the frame context (`FrameContext`). B
 
 ### 4.1 Contract Surface
 
-`api/v1/context.py` freezes four symbols: the `ContextManager` protocol (`build`/`maintain`, :20-29), the `Compressor` protocol (`name` + `compress(ctx, target_tokens, svc)`, :33-40), `CompressionReport` (evicted / before / after / cache_invalidation_estimate / marker, :44-54), and `KernelServices` (estimator / providers / blob, :58-67). New strategies register through the `agent_os.compressors` entry point — contract first, baseline replaceable.
+`api/v1/context.py` freezes four symbols: the `ContextManager` protocol (`build`/`maintain`, :20-29), the `Compressor` protocol (`name` + `compress(ctx, target_tokens, svc)`, :33-40), `CompressionReport` (evicted / before / after / cache_invalidation_estimate / marker, :44-54), and `KernelServices` (estimator / providers / blob, :58-67). New strategies are meant to register through the `agent_os.compressors` entry point — the group is currently a commented-out reservation in `pyproject.toml` (no plugin loading is wired), so today a strategy is attached at assembly time in code; contract first, baseline replaceable.
 
 ### 4.2 build: The Assembly Pipeline
 

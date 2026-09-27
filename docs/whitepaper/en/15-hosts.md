@@ -27,7 +27,7 @@ The host layer is the outermost ring of the architecture (the "host layer" in §
 
 ### 4.1 The artifact contract: four files + RunRecord
 
-Every run lands in one directory, written by `execute_run`/`execute_resume` (`host/shared/artifacts.py:50`):
+Every run lands in one directory, written by `execute_run`/`execute_resume` (`host/shared/artifacts.py:90,147`):
 
 ```
 .agent-os/runs/<run_id>/
@@ -46,16 +46,16 @@ The machine-facing contract is the **RunRecord** (`host/shared/runrecord.py:22`)
 | Class | Example | CLI (RUNNERS.md §3.3) | Web (`app.py`) |
 |---|---|---|---|
 | Success | status=done | 0 | 200 + RunRecord |
-| Never started (validation) | SkillLoadError, input fails schema | 2 | 200 + `{"status":"failed","error":...}` (`app.py:546`) |
+| Never started (validation) | SkillLoadError, input fails schema | 2 | 200 + `{"status":"failed","error":...}` (`app.py:615`) |
 | Failed/aborted after start | skill returned an error, RunAborted | 3 | (inside the RunRecord) |
 | Host/infrastructure | missing config, provider assembly failure | 4 (`_InfraError`, `main.py:46`) | 500 / assembly-time exception |
 | Request itself invalid | unknown skill_set, unknown breakpoint kind | 2 | 400/404/409 |
 
 ### 4.2 CLI: the machine surface
 
-Entry point `agent-os = agent_os.host.cli.main:main` (`pyproject.toml:31`), built on argparse with zero new dependencies (RUNNERS.md §3.5). Subcommands: `run / trace / inspect / resume / replay / diff / skills {validate,list} / lab validate / debug` (`main.py:447`). Output contract (`main.py:125`): with `--json`, stdout is exactly one RunRecord line; by default it is a human summary plus a **final JSON line** — humans and machines both parse by convention, and the convention is "read the last line."
+Entry point `agent-os = agent_os.host.cli.main:main` (`pyproject.toml:31`), built on argparse with zero new dependencies (RUNNERS.md §3.5). Subcommands: `run / trace / inspect / resume / replay / diff / skills {validate,list} / lab validate / debug` (`main.py:445-453`). Output contract (`main.py:125`): with `--json`, stdout is exactly one RunRecord line; by default it is a human summary plus a **final JSON line** — humans and machines both parse by convention, and the convention is "read the last line."
 
-The CLI also serves as one of the supervisor's **adjudication channels** (`main.py:57`): when a run suspends, the question is written to stderr as a single JSON line (a protocol line the coding agent can parse, including `kind` to distinguish escalation confirmations), and one line read from stdin is the answer — the loop closes inside the single-command process. `replay` deliberately does not inject this handler: a replay follows the trace's recorded values and never asks twice (`main.py:276`).
+The CLI also serves as one of the supervisor's **adjudication channels** (`main.py:56`): when a run suspends, the question is written to stderr as a single JSON line (a protocol line the coding agent can parse, including `kind` to distinguish escalation confirmations), and one line read from stdin is the answer — the loop closes inside the single-command process. `replay` deliberately does not inject this handler: a replay follows the trace's recorded values and never asks twice (`main.py:276`).
 
 ### 4.3 replay & diff: deterministic reproduction
 
@@ -80,33 +80,33 @@ RunManager (in-process, run_manager.py)
 
 Three key mechanisms:
 
-- **One thread, one kernel per run.** The design doc (RUNNERS.md §4.2) said "run as an asyncio task"; the implementation switched to a dedicated thread with its own `asyncio.run` inside (`run_manager.py:519`), because TestClient creates one portal per request and uvicorn request loops come and go — writing back a run's terminal state must not depend on any request loop staying alive (module docstring, `run_manager.py:1-13`). Code wins over the doc. Re-assembling a kernel per run also yields free isolation: `reload_skills` only affects runs created afterwards; a running run pins the old version (`run_manager.py:979`).
-- **SignalHub's atomic snapshot** (`run_manager.py:269`): `subscribe` registers the subscriber and snapshots the buffer under the same lock, so a new client receives replay followed by live signals with **no gap and no duplication**; the publishing side (the worker thread) delivers via `loop.call_soon_threadsafe`, and subscribers whose loops have closed are silently dropped — subscriber failure must never drag down a run. Run termination posts the `HUB_CLOSED` sentinel and the SSE emits `event: end` (`app.py:1058`); a 15-second keepalive defeats proxy timeouts (`app.py:74`).
+- **One thread, one kernel per run.** The design doc (RUNNERS.md §4.2) said "run as an asyncio task"; the implementation switched to a dedicated thread with its own `asyncio.run` inside (`run_manager.py:579`), because TestClient creates one portal per request and uvicorn request loops come and go — writing back a run's terminal state must not depend on any request loop staying alive (module docstring, `run_manager.py:1-13`). Code wins over the doc. Re-assembling a kernel per run also yields free isolation: `reload_skills` only affects runs created afterwards; a running run pins the old version (`run_manager.py:991`).
+- **SignalHub's atomic snapshot** (`run_manager.py:269`): `subscribe` registers the subscriber and snapshots the buffer under the same lock, so a new client receives replay followed by live signals with **no gap and no duplication**; the publishing side (the worker thread) delivers via `loop.call_soon_threadsafe`, and subscribers whose loops have closed are silently dropped — subscriber failure must never drag down a run. Run termination posts the `HUB_CLOSED` sentinel and the SSE emits `event: end` (`app.py:1458`); a 15-second keepalive defeats proxy timeouts (`app.py:93`).
 - **The `_StopBridge` assembly shim** (`run_manager.py:130`): since M4 the kernel only wires `kernel.ctl` when sidecars exist, yet Web stop requires every run to have a ctl. RunManager attaches a no-op ASYNC sidecar that subscribes to nothing, purely to push the builder down the sidecar assembly path — a typical example of the host solving its own problem within kernel contracts rather than asking the kernel to change its rules.
 
-The other cross-thread site is the debug command bridge: a debug session's `asyncio.Event` is bound to the run worker's loop, and a REST thread calling `set()` directly would trip the thread check, so resume/modify/inject are all delivered into the worker loop via `run_coroutine_threadsafe` (`run_manager.py:822`).
+The other cross-thread site is the debug command bridge: a debug session's `asyncio.Event` is bound to the run worker's loop, and a REST thread calling `set()` directly would trip the thread check, so resume/modify/inject are all delivered into the worker loop via `run_coroutine_threadsafe` (`run_manager.py:834`).
 
-**Cold data and half-written windows**: `_list_runs` (`app.py:317`) merges history rebuilt from the artifact directory with in-memory state (a directory with meta.json but no result.json counts as in-flight — the signature of a crash or power cut); SSE for historical runs replays from trace.jsonl (`app.py:1050`). Artifact writes are not atomic; readers degrade on `try/except` to "in flight, retry" (`app.py:281`), a deliberate avoidance of atomic-write plumbing in a dev tool (simplicity first).
+**Cold data and half-written windows**: `_list_runs` (`app.py:375`) merges history rebuilt from the artifact directory with in-memory state (a directory with meta.json but no result.json counts as in-flight — the signature of a crash or power cut); SSE for historical runs replays from trace.jsonl (`app.py:1451-1456`). Artifact writes are not atomic; readers degrade on `try/except` to "in flight, retry" (`app.py:385-388`), a deliberate avoidance of atomic-write plumbing in a dev tool (simplicity first).
 
-**Authentication** (`app.py:497`, RUNNERS.md §4.5): single-user localhost needs no auth; with `--token`, the whole site sits behind a Bearer gate using constant-time comparison (`secrets.compare_digest`), with `?token=` allowed because EventSource cannot set custom headers. `serve.py:67` **refuses to start** when binding a non-loopback address without a token — this service can execute skills carrying shell_exec, and exposing it unauthenticated is an open RCE.
+**Authentication** (`app.py:566-578`, RUNNERS.md §4.5): single-user localhost needs no auth; with `--token`, the whole site sits behind a Bearer gate using constant-time comparison (`secrets.compare_digest`), with `?token=` allowed because EventSource cannot set custom headers. `serve.py:67` **refuses to start** when binding a non-loopback address without a token — this service can execute skills carrying shell_exec, and exposing it unauthenticated is an open RCE.
 
 ### 4.5 The host as identity and adjudication channel
 
-The data-layer identity (docs/DATA-AUTHZ.md §2.2) is constructed by the host: the CLI uses `cli_principal()` (the local user, `main.py:163`); the Web uses `web_single_user_principal` (login name from the `[web].user` config key, `run_manager.py:430`). The supervisor channel is selected in the order "run-level injection > assembly-level injection > process-shared InboxChannel" (`run_manager.py:409-413`): the Web inbox is the default host channel and comes with assembly; the CLI injects `_cli_supervisor` over the stderr/stdin protocol. Escalation confirmations and human adjudication thus require no kernel awareness of the host's shape — this is where "humans in the loop are first-class" (executive summary §2.4) lands at the host layer.
+The data-layer identity (docs/DATA-AUTHZ.md §2.2) is constructed by the host: the CLI uses `cli_principal()` (the local user, `main.py:163`); the Web uses `web_single_user_principal` (login name from the `[web].user` config key, `run_manager.py:442-452`). The supervisor channel is selected in the order "run-level injection > assembly-level injection > process-shared InboxChannel" (`run_manager.py:418-425`): the Web inbox is the default host channel and comes with assembly; the CLI injects `_cli_supervisor` over the stderr/stdin protocol. Escalation confirmations and human adjudication thus require no kernel awareness of the host's shape — this is where "humans in the loop are first-class" (executive summary §2.4) lands at the host layer.
 
 ## 5. Effects & Verification
 
-**Test baseline**: `tests/cli/` — 4 files, 28 cases; `tests/web/` — 12 files, 80 cases; 108 test functions total (116 after parametrization). Full run for this chapter: **116 passed in 12.14s**. Key assertions:
+**Test baseline**: `tests/cli/` — 4 files, 28 cases; `tests/web/` — 15 files, 102 cases; 130 test functions total (138 after parametrization). Full run for this chapter: **138 passed** (`pytest tests/cli tests/web`, re-verified 2026-08-24). Key assertions:
 
 - `tests/cli/test_run.py:46`: successful run → exit code 0, `"v": 1`, all four artifacts present, exact usage.steps and frame counts;
 - `tests/cli/test_run.py:61/68`: validation error → 2, run failure → 3; `tests/cli/test_replay.py`: the record–replay–diff loop;
 - `tests/web/test_runs_api.py:103`: SSE replays the buffer first and terminates with `event: end`; `test_runs_api.py:65`: the list includes history rebuilt from artifacts;
 - `tests/web/test_rca_control.py:59`: RCA on a vetoed run locates the adjudicated frame; `:115/127`: stop/resume behavior;
-- 24 frontend `static/tests/*.test.mjs` files (run directly under Node, no build), covering the frame tree, timeline, RCA panel, inbox, and more — these are the "24 frontend test files" cited by the executive summary.
+- 32 frontend `static/tests/*.test.mjs` files (run directly under Node, no build), covering the frame tree, timeline, RCA panel, inbox, and more — the frontend test files cited by the executive summary.
 
 **Live example**: `instance/agent-os.toml` (dual configuration: a real Kimi Code endpoint plus a mock demo profile) and `instance/run-web.sh` (pulls a token from the kimi-code credential store, then starts `agent-os-web`) are the mechanisms of §4 in deployed form.
 
-**Ripple effects**: the artifact contract became shared ground for later systems — the debugger's time travel (P5) consumes trace+checkpoint directly to rebuild a replay script (`run_manager.py:756`); the Skill Lab's test-run/G4 smoke reuse the same assembly line and replay mechanism (`app.py:104`); and `signal_row` keeps SSE frames, ring-buffer rows, and trace.jsonl lines structurally identical (`run_manager.py:214`), so one frontend parser serves three data sources.
+**Ripple effects**: the artifact contract became shared ground for later systems — the debugger's time travel (P5) consumes trace+checkpoint directly to rebuild a replay script (`run_manager.py:768`); the Skill Lab's test-run/G4 smoke reuse the same assembly line and replay mechanism (`app.py:123-127`); and `signal_row` keeps SSE frames, ring-buffer rows, and trace.jsonl lines structurally identical (`run_manager.py:214`), so one frontend parser serves three data sources.
 
 ## 6. Limitations & Boundaries
 
@@ -116,13 +116,13 @@ The data-layer identity (docs/DATA-AUTHZ.md §2.2) is constructed by the host: t
 4. **Ring-buffer truncation.** Hub capacity is 2000 entries (`run_manager.py:122`); SSE replay of a very long run loses the head (trace.jsonl stays complete, but the in-flight fallback path of `/signals` serves only the tail).
 5. **Artifact writes are not atomic.** Half-written windows are absorbed by reader-side degradation (§4.4) and can make a finished run look "in flight" under extreme timing; skipping temp-file-plus-rename is a deliberate simplicity trade-off.
 6. **The thin-host boundary is kept by discipline, not tooling.** The ruff/import-lint guard of RUNNERS.md §2.4 is marked "optional" and is not configured; host code already imports kernel public pieces such as `kernel.debug`/`kernel.checkpoint`/`supervisor` (beyond the letter of "imports only api.v1"), so the boundary is maintained by review.
-7. **Residual doc-vs-code drift (code wins)**: the CLI `trace --kind` filter is unimplemented (the Web side has it, `app.py:363`); `resume` accepts only a checkpoint path, not a run_id; `stderr.log` from the §2.2 layout is never written.
+7. **Residual doc-vs-code drift (code wins)**: the CLI `trace --kind` filter is unimplemented (the Web side has it, `app.py:421`); `resume` accepts only a checkpoint path, not a run_id; `stderr.log` from the §2.2 layout is never written.
 8. **Known multi-set limitation**: code-skill handlers are imported lazily at call time, so same-named handler modules across skill sets are unsupported — rename to avoid (`run_manager.py:47`).
-9. **Debug SSE polls** (0.1s) instead of being event-driven (simplicity first, `app.py:77`); browser end-to-end behavior is still hand-tested, and the frontend unit tests do not cover real SSE timing.
+9. **Debug SSE polls** (0.1s) instead of being event-driven (simplicity first, `app.py:97`); browser end-to-end behavior is still hand-tested, and the frontend unit tests do not cover real SSE timing.
 
 ## 7. References
 
 - Docs: `docs/RUNNERS.md` (host design baseline); `docs/WEB-UI.md` (presentation layer); `docs/DEBUGGER.md`, `docs/SKILL-DEV.md`, `docs/SUPERVISOR.md`, `docs/DATA-AUTHZ.md` (adjacent system boundaries)
 - Source: `agent_os/src/agent_os/host/cli/main.py`, `host/cli/debug.py`; `host/shared/artifacts.py`, `host/shared/replay.py`, `host/shared/runrecord.py`; `host/web/app.py`, `host/web/run_manager.py`, `host/web/rca.py`, `host/web/serve.py`, `host/web/static/`; `agent_os/pyproject.toml` (entry points and the `web` extra)
-- Tests: `agent_os/tests/cli/` (4 files), `agent_os/tests/web/` (12 files), `host/web/static/tests/` (24 `*.test.mjs` files)
+- Tests: `agent_os/tests/cli/` (4 files), `agent_os/tests/web/` (15 files), `host/web/static/tests/` (32 `*.test.mjs` files)
 - Instance: `instance/agent-os.toml`, `instance/run-web.sh`

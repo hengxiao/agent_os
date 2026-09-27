@@ -25,11 +25,11 @@
 | [03](zh/03-tools.md) | Tools:分发流水线、三层权限交集、side_effect 声明、路径沙箱 | 已实现 |
 | [04](zh/04-logic-kernel.md) | Logic Kernel 与编排沙箱:信任路由、syscall 通道、无权限提升 | 已实现 |
 | [05](zh/05-context.md) | Context:组装、压缩(rolling-window)、前缀缓存稳定性 | 已实现(基线) |
-| [06](zh/06-determinism.md) | 信号、Telemetry 与确定性工程:31 信号目录、WAL、checkpoint/resume/replay/diff | 已实现 |
-| [07](zh/07-sidecars.md) | Sidecars:信号驱动监督、verdict 仲裁矩阵、双预算结构 | 部分实现(HumanApproval 骨架) |
+| [06](zh/06-determinism.md) | 信号、Telemetry 与确定性工程:35 信号目录、WAL、checkpoint/resume/replay/diff | 已实现 |
+| [07](zh/07-sidecars.md) | Sidecars:信号驱动监督、verdict 仲裁矩阵、双预算结构 | 部分实现(HumanApproval 已下沉为内核 tool-confirm 闸门) |
 | [08](zh/08-supervisor.md) | Supervisor:裁决路由、挂起-作答-恢复闭环、三宿主通道 | 已实现 |
 | [09](zh/09-escalation.md) | 升权系统:三档信任、升权闸、Grant、干净 context 不变量 | 已实现(E1/E2) |
-| [10](zh/10-data-authz.md) | 数据层 authN+Z:Principal、数据域、dispatch 双闸串联、默认拒绝 | 部分实现(D1) |
+| [10](zh/10-data-authz.md) | 数据层 authN+Z:Principal、数据域、dispatch 双闸串联、默认拒绝 | 已实现(D1/D2 + D3-lite;D3 余项未做) |
 | [11](zh/11-tier-standards.md) | 分档生产标准与提交闸门:判定树、逐档标准、五关、promote 三重防 | 已实现 |
 | [12](zh/12-debugger.md) | 调试器:GDB 语义、断点四类、单步/pause、干预与时间旅行 | 已实现 |
 | [13](zh/13-themes.md) | 主题系统:三层契约、六主题、mascot 抽象两实例 | 已实现(动效层设计) |
@@ -49,7 +49,8 @@
   (第 02 章注)。
 - **副车仲裁面小于设计**:`pre:skill.invoke`/`pre:llm.request`/`pre:compress`
   只发射不仲裁;`budget.warning/exceeded` 无发射点(第 07 章注)。
-- **数据层 D1 偏差**:未配置域 = 不拦截(设计原文为 confidential;D2 恢复);
+- **数据层 D1 偏差(D2 已收敛)**:未配置域 = 不拦截(设计原文为 confidential;
+  D2 起 `[data]` policy 在场即恢复 confidential,policy 缺席仍保持 D1 语义);
   `system.shell.exec` 不在数据闸覆盖面(第 10 章注)。
 - **supervisor 挂起非状态机迁移**:run 保持 RUNNING,无 PAUSED 迁移
   (第 08 章注,以 runner.py:607-610 注释为准)。

@@ -5,9 +5,11 @@
 > 关系:范围边界由 `ESCALATION.md` §1 划定——**机密性由数据层 authN+Z 完成,
 >   升权系统只管副作用**。本文件是"读"这一闸的设计;三闸模型:
 >   读 = 数据层 authZ(本文);写 = 档位升权(ESCALATION.md);泄露 = 写闸兜底。
-> 现状:`ToolContext.principal` / `credentials` 是预留字段,恒 None/空
->   (api/v1/tools.py:121,126);路径沙箱 `resolve_work_path` 是 fs 维度的
->   authZ 雏形(tools/local_registry.py:451-495)。
+> 现状:`ToolContext.principal` 已于 D1 实填(随帧透传,api/v1/tools.py:150;
+>   dispatch 注入 tools/local_registry.py:316);`credentials` 已于 WS1/D2 实填
+>   (`ToolSpec.credentials` 声明键 + `[credentials]` 配置段 env 间接引用,dispatch
+>   按声明键每次现解析并回写 `_authz` 判据,tools.py:155,local_registry.py:300-312);
+>   路径沙箱 `resolve_work_path` 是 fs 维度的 authZ 雏形(tools/local_registry.py:701 起)。
 
 ---
 
@@ -93,10 +95,16 @@ allow(principal, domain, action) ⟺
 - 判定结果 + 判据(命中哪条规则)进 `ToolContext.credentials`,工具可自省,
   审计信号可关联。
 
+> 实现注(D2):白名单第二判据已生效——`[data.principals."<subject>"] domains = [...]`
+> glob 白名单经 `DataPolicy.whitelist_for` 传入 `allow()`(`whitelist=None` 关键字,
+> None 与 D1 逐字一致;api/v1/principal.py:88);判据回写
+> `ctx.credentials["_authz"]`(与 WS1 用户凭证共用 credentials 字段,"_" 前缀防撞名)。
+
 ### 3.3 强制点(enforcement)
 
-`LocalPythonToolRegistry.dispatch`(local_registry.py:174-272)在 schema 校验后、
-三层权限交集前,插入数据层检查:
+`LocalPythonToolRegistry.dispatch`(local_registry.py:181-286)在 schema 校验后、
+三层权限交集前,插入数据层检查(D1 已落地,检查点 `_check_data_access`,
+local_registry.py:309 起):
 
 1. 工具声明的 `data_domains` ∩ 本次参数解析出的实际目标(路径/库表/URL
    前缀匹配宿主配置的域边界)→ 得到本次实际访问的域集合;
@@ -140,6 +148,10 @@ v1 **不做 taint tracking**(标记机密内容并跟踪其在 context 里的流
 
 run 详情页可按 principal 过滤:谁、读了哪些域、被拒几次。
 
+> 实现注(D2):两信号已实现并入 `SIGNAL_NAMES`(api/v1/signals.py,共 33 个),
+> 由 `_check_data_access` 拒绝/放行时发射(tools/local_registry.py:470/495);实际
+> payload 键为 `{subject, domain, sensitivity, tool}` / `{subject, domains, tool}`。
+
 ## 7. 对现有代码的改动面
 
 | 模块 | 改动 |
@@ -163,8 +175,9 @@ run 详情页可按 principal 过滤:谁、读了哪些域、被拒几次。
 >    域白名单)属 D2,D1 的兼容策略是"**未配置 = 不启用数据层拦截**":目标路径
 >    落不进任何已配置域时退化为现状 `resolve_work_path` 沙箱语义,保证既有行为
 >    零破坏。**默认拒绝只作用于已配置域**(内置默认域 `fs.workdir`=public +
->    `register_fs_domain` 程序化注册的域);D2 配置段落地后恢复"未配置域按
->    confidential"的原文语义。
+>    `register_fs_domain` 程序化注册的域);D2 配置段已落地,"未配置域按
+>    confidential"的原文语义已恢复——**仅在 policy 在场时**(`bind_data_policy`
+>    注入 `[data]` 策略后);policy 缺席时仍逐字保持 D1 语义。
 > 2. 存放点在**帧**(`SkillFrame.principal`)而非 RunContext:dispatch 只见帧,
 >    帧级存放天然给出"子帧/升权帧原样继承"的身份不变量(make_frame 复制),
 >    checkpoint 随帧序列化;`Kernel.run(principal=)`/`execute_run(principal=)`
@@ -174,8 +187,8 @@ run 详情页可按 principal 过滤:谁、读了哪些域、被拒几次。
 >    (测试/嵌入宿主)生效。`[web].user` 提供部署者登录名,缺省 `user:$USER`。
 > 4. `allow()` 的第二判据(per-subject 域白名单)与 `ToolContext.credentials`
 >    判据回写依赖配置段,属 D2;`action` 参数为协议面占位,D1 不参与判定。
-| D2 | 域配置段 + db/net 工具声明 + 审计信号 + 拒绝面不泄内容检查 |
-| D3 | 派生链最弱一环 + EscalationRequest 数据面展示 + 多用户 Web 会话映射 |
+| D2 ✅ | 域配置段 + db/net 工具声明 + 审计信号 + 拒绝面不泄内容检查。已实现(2026-08-31):`[data]` 配置段(domains 表数组:name/sensitivity 缺省 confidential/`path_prefix`|`url_prefix` 恰一;`[data.principals."<subject>"] domains = [...]` glob 白名单——解析在 runtime/config.py `_data_policy`,产物契约层 `DataPolicy`,api/v1/principal.py:60);registry `bind_data_policy`/`register_net_domain` 装配钩子;`_check_data_access` 泛化(fs.* 逐字不动;net.* 按 `call.args["url"]` 前缀匹配,未命中 → `net.unconfigured` confidential;db.* 等其余族 glob 对 `policy.domains` 匹配;**policy 在场才恢复"未配置域=confidential",缺省缺席保持 D1 语义**);`allow()` 增 `whitelist=None` 关键字(None 与 D1 逐字一致);审计信号 `data.access.denied`/`data.access.granted`(已入 SIGNAL_NAMES,33 个);判据回写 `ctx.credentials["_authz"]`;`http_fetch`/`http_request`/`fetch_page` 声明 `data_domains=["net.*"]`;拒绝面只带域名/敏感度/clearance,不回显路径/URL 与域内内容 |
+| D3 | 派生链最弱一环 + EscalationRequest 数据面展示 + 多用户 Web 会话映射。**D3-lite 已落地**(2026-08-31):`[web.tokens] "<token>" = "user:<login>"` 映射;Bearer 中间件命中 → `Principal(issuer="api-token", clearance=confidential)` 挂 `request.state` → `start_run(principal=)` → `execute_run`;未命中/无配置 → 单用户行为逐字不变(host/web/app.py,host/web/run_manager.py)。**仍未做**:派生链最弱一环、EscalationRequest 数据面展示(归 E3) |
 
 ## 9. 不做
 

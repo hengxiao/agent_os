@@ -108,7 +108,7 @@ TRUSTED 模式下 code 技能与 prompt 技能有同等的组合能力,只是用
 3. **脚本墙钟含内核侧 syscall 时间。** 设计稿要求"脚本 wall_time 不含内核执行 syscall 的时间"(§3),实现是 `asyncio.wait_for(proc.communicate(), timeout=wall)` 总口径(`logic/python_sandbox.py:340`);慢工具会烧脚本预算,只能靠调大 `timeout` 参数缓解。锚点测试清单第 6 条无对应用例。
 4. **syscall 通道能力窄。** 仅 `call_tool`/`invoke` 两种、串行阻塞语义;`ctx.spawn`/`wait`/`board`/`blob` 未过桥(设计 §2.2 的 `blob` 过桥未落地),并发 syscall(协议已预留 id)未支持——沙箱内做不了"前台保场、后台深想"。
 5. **CodeScanner 只是辅助。** 正则模式扫描对混淆代码无效,能力上限已写入文档;防护主体是沙箱 + 权限,不是扫描器。
-6. **记账口径粗糙。** InProcess 的 `mem_peak_mb` 恒 0;两个沙箱后端的 `cpu_ms` 以 `wall_ms` 充数(`logic/python_sandbox.py:367-368`);`merge_limits` 三级限额取紧仍是 `NotImplementedError`(`logic/limits.py:32-34`)。
+6. **记账口径粗糙。** InProcess 的 `mem_peak_mb` 恒 0;两个沙箱后端的 `cpu_ms` 以 `wall_ms` 充数(`logic/python_sandbox.py:367-368`)。`merge_limits` 已实填(`logic/limits.py:32`:两级逐字段取紧,`None` = 该级未设取另一级,三级取紧即链式调用,返回新实例),但尚无调用点——RunConfig/manifest/调用方三级取紧的消费侧仍留接线。
 7. **replay 的边界不因编排消失。** 编排 replay 仅当内部 syscall 命中确定性工具时逐字节复现;工具副作用仍按真实环境执行。
 8. **省 token 是机会式的。** 编排默认关闭且需 manifest 显式声明;一两步调用直接调工具更简单(schema 描述自己也这么写)。
 

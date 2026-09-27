@@ -29,7 +29,7 @@ Context 子系统是帧上下文(`FrameContext`)的全权管理者:每次 LLM �
 
 ### 4.1 契约面
 
-`api/v1/context.py` 冻结四个符号:`ContextManager` 协议(`build`/`maintain`,:20-29)、`Compressor` 协议(`name` + `compress(ctx, target_tokens, svc)`,:33-40)、`CompressionReport`(evicted/before/after/cache_invalidation_estimate/marker,:44-54)、`KernelServices`(estimator/providers/blob,:58-67)。新压缩策略经 entry point `agent_os.compressors` 注册——契约先行,基线可换。
+`api/v1/context.py` 冻结四个符号:`ContextManager` 协议(`build`/`maintain`,:20-29)、`Compressor` 协议(`name` + `compress(ctx, target_tokens, svc)`,:33-40)、`CompressionReport`(evicted/before/after/cache_invalidation_estimate/marker,:44-54)、`KernelServices`(estimator/providers/blob,:58-67)。新压缩策略的注册面设计为 entry point `agent_os.compressors`——契约先行,基线可换;但该 entry point 组目前在 `pyproject.toml` 中仅以注释预留组名、代码未接线,第三方压缩器现阶段只能经代码装配。
 
 ### 4.2 build:组装流水线
 

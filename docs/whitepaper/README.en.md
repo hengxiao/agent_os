@@ -28,11 +28,11 @@
 | [03](en/03-tools.md) | Tools: dispatch pipeline, three-way permission intersection, side_effect declarations, path sandbox | implemented |
 | [04](en/04-logic-kernel.md) | Logic Kernel & orchestration sandbox: trust routing, syscall channel, no privilege elevation | implemented |
 | [05](en/05-context.md) | Context: assembly, compression (rolling-window), prefix-cache stability | implemented (baseline) |
-| [06](en/06-determinism.md) | Signals, telemetry & determinism engineering: 31-signal catalog, WAL, checkpoint/resume/replay/diff | implemented |
-| [07](en/07-sidecars.md) | Sidecars: signal-driven supervision, verdict arbitration matrix, dual budget layers | partial (HumanApproval skeleton) |
+| [06](en/06-determinism.md) | Signals, telemetry & determinism engineering: 35-signal catalog, WAL, checkpoint/resume/replay/diff | implemented |
+| [07](en/07-sidecars.md) | Sidecars: signal-driven supervision, verdict arbitration matrix, dual budget layers | partial (HumanApproval sunk into the kernel tool-confirm gate) |
 | [08](en/08-supervisor.md) | Supervisor: ruling router, suspend-answer-resume loop, three host channels | implemented |
 | [09](en/09-escalation.md) | Escalation: three trust tiers, the gate, grants, clean-context invariant | implemented (E1/E2) |
-| [10](en/10-data-authz.md) | Data-layer authN+Z: Principal, data domains, dual-gate dispatch, default deny | partial (D1) |
+| [10](en/10-data-authz.md) | Data-layer authN+Z: Principal, data domains, dual-gate dispatch, default deny | implemented (D1/D2 + D3-lite; D3 remainder open) |
 | [11](en/11-tier-standards.md) | Tiered production standards & the admission gate: decision tree, per-tier standards, five gates, promote defenses | implemented |
 | [12](en/12-debugger.md) | Debugger: GDB semantics, four breakpoint kinds, stepping/pause, intervention & time travel | implemented |
 | [13](en/13-themes.md) | Theme system: three-layer contract, six themes, two mascot instances | implemented (motion layer designed) |
@@ -48,16 +48,17 @@ below — the full list lives in each chapter's §6 and endnotes.
   `skill.<name>` (the runner accepts both). Chapters follow the code (ch. 01/02).
 - **Three inaccuracies in the executive summary (fixed)**: the debugger has four
   breakpoint kinds (`skill.invoke` was missing); `lab validate` exit codes are
-  pass/warn=0 and fail=2 (no 4); the `[ESCALATED:...]` return tag is designed
-  but not implemented (ch. 09/12/14; ch. 00 corrected).
+  pass/warn=0 and fail=2 (no verdict-level 4); the `[ESCALATED:...]` return tag
+  is designed but not implemented (ch. 09/12/14; ch. 00 corrected).
 - **No semver solving**: DESIGN.md §6.1 promises semver constraint solving; the
   loader checks dependency existence only (ch. 02).
 - **Sidecar arbitration surface is smaller than designed**: `pre:skill.invoke`,
   `pre:llm.request`, `pre:compress` emit but are not arbitrated; the
   `budget.warning/exceeded` signals have no emitter (ch. 07).
-- **D1 deviations in data authZ**: unconfigured domains are not intercepted
-  (the design said confidential; D2 will restore); `system.shell.exec` is
-  outside the data gate's coverage (ch. 10).
+- **D1 deviations in data authZ (converged in D2)**: unconfigured domains are not
+  intercepted (the design said confidential; since D2 a bound `[data]` policy
+  restores confidential, while the D1 stance holds verbatim with no policy);
+  `system.shell.exec` is outside the data gate's coverage (ch. 10).
 - **Supervisor suspension is not a state-machine transition**: the run stays
   RUNNING; there is no PAUSED transition (ch. 08, per runner.py:607-610).
 - **RUNNERS.md is stale in places**: "run as asyncio task" vs. the actual

@@ -53,8 +53,8 @@ The existing tools and skills already map cleanly to the new hierarchy.
 | `todo_write` | `system.task.todo_write` | run-level todo list |
 | `todo_update` | `system.task.todo_update` | update todo item |
 | `skill_search` | `system.skill.search` | search registry |
-| `ask_user` | `system.ui.ask_user` | user prompt |
-| `notify_user` | `system.ui.notify_user` | user notification |
+| `ask_user` | `system.user.ask` | user prompt |
+| `notify_user` | `system.user.notify` | user notification |
 | `blob_get` | `system.blob.get` | blob read (future) |
 
 ### Existing standard-library skills (after migration)
@@ -176,13 +176,15 @@ when the injected summary is not enough.
 | `system.skill.search` | `query`, `kind`, `limit` | results | READ | already exists |
 | `system.skill.reload` | `path` | ok | WRITE | **new**; future milestone |
 
-### 4.8 `system.ui.*`
+### 4.8 `system.user.*`
 
 | Name | Inputs | Outputs | Permission | Notes |
 |------|--------|---------|------------|-------|
-| `system.ui.ask_user` | `question` | answer | UI | stub; host callback |
-| `system.ui.notify_user` | `message` | none | UI | stub; host callback |
-| `system.ui.show_progress` | `percent`, `message` | none | UI | **new**; future milestone |
+| `system.user.ask` | `question` | answer | WRITE | implemented(2026-09); host callback via `bind_user_channel` |
+| `system.user.notify` | `message` | none | WRITE | implemented(2026-09); host callback |
+| `system.user.show_progress` | `percent`, `message` | none | — | **new**; future milestone |
+
+(实现命名空间为 `system.user.*`,本节标题与条目已从早期的 `system.ui.*` 方案订正;命名权威以 docs/NAMING.md 为准。)
 
 ### 4.9 `system.blob.*`
 
@@ -394,7 +396,7 @@ Tool invocations use the dotted name directly.
     and replay semantics.
   - `system.blob.list` — blob stores expose only `put`/`get`; needs a store
     interface extension first.
-  - `system.ui.show_progress` — no host-callback channel exists yet
+  - `system.user.show_progress` — no host-callback channel exists yet
     (`ask_user`/`notify_user` are `NotImplementedError` stubs).
 
 ### Phase 4: Fill gaps in `common.*` — **done (except web search)**

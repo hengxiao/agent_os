@@ -683,7 +683,7 @@ minor bumps";避免包提交把整个命名空间的版本号一起抬高,制造
 
 1. **命名空间围栏**:新草稿名必须落在当前包的入口前缀内(根名的第一段命名
    空间),助手不能在别处建草稿。与 `_WRITABLE_FIELDS` 不含 `name`
-   (lab_tools.py:33-49)同源——助手改不出路径穿越,也建不出包外的东西;
+   (tools/lab_tools.py:43-59)同源——助手改不出路径穿越,也建不出包外的东西;
 2. **创建配额**:每 run ≤5 个,防"注入让它建一百个草稿"把 drafts 目录淹掉;
 3. **仍然没有 promote / delete**:"能改不能发"扩展为**"能改能建,不能发不能删"**。
    删除仍然只有人能做,因为它是唯一不可逆的动作。
@@ -849,9 +849,9 @@ manifest 的 `permissions.skills`),计算这些下游技能在本次提交**前�
   `.bak` 回滚;plan 生成后改动任一成员 → promote 返回 409;`unchanged` 成员
   版本号不变。
 - P3:助手无法在包命名空间外创建草稿;创建配额生效;助手工具面**恰好七件**
-  且仍无 promote/delete(对齐现有 `test_tool_surface_exactly_five_and_tiers`
+  且仍无 promote/delete(对齐现有 `test_tool_surface_seven_and_tiers`
   的断言风格)。
-- P4:多入口包的闭包 = 各入口闭包并集;L3 成员未覆盖 → G4 fail。
+- P5:多入口包的闭包 = 各入口闭包并集;L3 成员未覆盖 → G4 fail。
 
 ---
 

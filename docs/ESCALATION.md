@@ -48,8 +48,8 @@ skill 嵌套调用时,父帧的内容(用户输入、工具观察、网页/文�
   发出网(NET 发送)是副作用,照样撞 L2/L3 闸门,读授权不意味着能外泄。
 - 不防御高层 skill 自身 prompt 被污染(那是 skill 作者的供应链问题,交给
   Provenance/SkillArtifact 信任管线,M6);
-- 不做细粒度到单个工具调用的普遍人审(那是 `ToolSpec.confirm` 的活,§8.2 未实现,
-  升权系统只闸"跨层"这一刻);
+- 不做细粒度到单个工具调用的普遍人审(那是 `ToolSpec.confirm` 的活,§8.2 已实现
+  为内核 tool-confirm 闸门,升权系统只闸"跨层"这一刻);
 - 不做自动升权:没有确认通道之外的权限放宽路径。
 
 ## 2. 定义:什么是"升权"
@@ -301,11 +301,11 @@ class Grant:
 - **Grant 只放行"进入更高档 skill"这一动作,不修改任何 manifest 白名单、
   不放宽 `ToolPolicy.max_permission`**。高层 skill 的工具权限是它自己
   声明的、人审过的静态面;升权系统闸的是"低层能不能进来",不是"高层能干
-  更多"。 EXEC 档工具的人审(`ToolSpec.confirm`/HumanApproval,§8.2 未实现)
-  是独立的一层,不在本设计范围。
-- `ToolContext.principal`(现恒 None,tools.py:121)在升权帧内填
-  `{"escalated": true, "tier": ..., "granted_by": decided_by}`——高层工具
-  知道自己在被授权的上下文里跑,审计信号可关联。
+  更多"。 EXEC 档工具的人审(`ToolSpec.confirm`/HumanApproval,§8.2 已实现为内核
+  tool-confirm 闸门)是独立的一层,不在本设计范围。
+- `ToolContext.principal`(D1 起随帧透传调用方身份,tools.py:150)在升权帧内填
+  `{"escalated": true, "tier": ..., "granted_by": decided_by}`(升权标记未接线,
+  本条为设计意图)——高层工具知道自己在被授权的上下文里跑,审计信号可关联。
 
 ## 5. 信号与审计
 

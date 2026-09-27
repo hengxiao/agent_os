@@ -249,8 +249,9 @@ auditing: replay (§7) and the debugger (§6.2) are built on the same WAL.
 The sole execution point of logical code: code skills and LLM-authored
 dynamic code (`python_orchestrate`) are routed through it. With
 `logic: {mode: sandbox}` (or a global force-sandbox policy), code runs in an
-isolated environment with no `ctx`, returning to kernel dispatch only through
-the syscall channel — documented explicitly as "no privilege elevation".
+isolated environment whose only way back to kernel dispatch is the syscall
+channel (a bridged `ctx`, never a direct handle) — documented explicitly as
+"no privilege elevation".
 This is complementary to escalation: escalation governs "may the lower tier
 enter", the sandbox governs "may the code get out".
 
@@ -270,8 +271,12 @@ per kind (e.g., the escalation card).
 Memory: cross-run memory and knowledge, with permission-filtered retrieval
 (same verdict as data authZ). Blackboard: intra-run shared memory for
 inter-frame state and messages with concurrency control, used by fork/join
-parallel frames to exchange intermediate results. Both are contract-first
-with minimal baselines.
+parallel frames to exchange intermediate results. Both are contract-first;
+the Blackboard baseline (LocalBlackboard) is implemented, and the Memory
+baseline (`LocalFileMemoryService`, `memory/local_file.py`) landed on
+2026-09-27 — one Markdown file per entry with frontmatter, retrieval filtered
+by principal and freshness before BM25, wired via the `[memory] dir` config
+section with the `system.memory.search/write` tools resident.
 
 ## 5. Trust & Safety Model
 
@@ -410,18 +415,32 @@ for pass/warn, 2 for fail), consumable headlessly by coding agents.
 | State cannot be isolated | frame model + clean-context invariant + inline purity gate | implemented (test-asserted) |
 | Quality cannot be guaranteed | five-gate pipeline + tiered standards + Skill Lab | implemented (L1-L5) |
 | Runs cannot be observed | signal catalog + debugger + RCA | implemented |
-| Trust chain for self-written skills | SkillArtifact / Provenance | contract reserved (M6, not implemented) |
+| Trust chain for self-written skills | SkillArtifact / Provenance + register() validation gates | implemented (M6, 2026-09-27) |
 
 ## 8. Status and Roadmap
 
-As of v1.0 (2026-08): all nine kernel subsystems have landed with baseline
-implementations; escalation E1/E2 is implemented (including the spawn gate
-and the Web escalation card); data authZ D1 is implemented (transparent for
-single-user, enforceable for embedded/multi-user principals); Skill Lab
+As of v1.0 (2026-08; two M6 items landed 2026-09-27): all nine kernel
+subsystems have landed with baseline
+implementations — the Memory baseline (`LocalFileMemoryService`) and the
+skill runtime `register()` write path are in, the latter with validation
+gates, a vetoable `pre:skill.register` signal, and the `system.skill.register`
+confirm gate; escalation E1/E2 is implemented (including the spawn gate
+and the Web escalation card); data authZ D1/D2 is implemented (transparent for
+single-user, enforceable for embedded/multi-user principals; D2 brings the
+domain config section, per-subject whitelists, net/db judgment and the
+data.access.* audit signals, D3-lite the `[web.tokens]` multi-user mapping);
+credential injection (WS1) and the two-phase confirm gate (WS2, HumanApproval
+sunk into the kernel) are implemented; the three §3.4 concurrency primitives
+are complete (`parallel_invoke` fork/join landed, together with subtree
+cascade cancel and the subtree accounting read view); Skill Lab
 L1-L5 is complete; all six Web themes pass the contract tests; the test
-baseline is 812 Python tests plus 24 frontend test files, all green.
-Designed but not yet implemented: remaining E3 items (audit panel), D2/D3
-(domain config, delegation chains, multi-user), M6 (trust pipeline), the
+baseline is 1448 Python tests (1399 passed, 10 conditional skips, 39 xfailed,
+0 failures) plus 32 frontend test files, all green.
+Designed but not yet implemented: remaining E3 items (audit panel), the D3
+remainder (delegation-chain weakest link, EscalationRequest data face), the
+M6 remainder (sandbox callback channel, spill/summarize/narrate strategies,
+distillation sidecar, and register()'s semver solving / directory write path /
+hot reload / full replay+evaluator gate), the
 motion playback layer (theme contract test #5), multi-file skill_set
 promotion, and handler source promotion.
 

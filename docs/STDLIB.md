@@ -73,23 +73,34 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
 
 已知引擎缺口(std 依赖,需内核立项):
 
-1. **子树级联取消**(现只有 run 级 stop)——`race_first` 依赖;
+1. ~~**子树级联取消**(现只有 run 级 stop)——`race_first` 依赖~~ → **已落地**(2026-09-27):`Kernel.cancel_subtree` + `_collect_subtree` DFS(`kernel/runner.py:1837-1893`)、`RunControl.cancel_frame`(`kernel/control.py:63-71`);`SubtreeCancelled` 独立于 RunAborted——子树终态不杀 run,后台帧经 wait_frame 原样上抛;边界:point-in-time 收集(取消发起后新 spawn 不在集内)、帧级 stop 标志仅 prompt 帧在 safe point 消费且不持久化;
 2. **取消后工具副作用语义**;
-3. **组合子级预算**(§4.5 的 budget 参数需内核按子树切分记账);
-4. **工作目录不可配置**(v2.1 实机发现,见 §3.3 `workdir`)——
-   fs 工具锁在 per-run 临时目录,agent 无法读写真实项目;
+3. **组合子级预算**(§4.5 的 budget 参数需内核按子树切分记账)——**读视图已落地**(2026-09-27):`Kernel.subtree_usage` 九字段求和(`kernel/runner.py:1951-1988`)+ `RunControl.get_subtree_usage`(`kernel/control.py:97-103`);budget 强制(沿祖先链累加 + 子树级中止)仍留 budget 参数工具面立项;
+4. ~~**工作目录不可配置**~~ → **已落地**(§W0-1):`[run] workdir` +
+   `read_paths` 只读挂载进 RunConfig,fs/shell 工具共用 `resolve_work_path`
+   三段判定;缺省仍为 per-run 临时目录(安全边界不静默放宽)。per-skill
+   声明与 scratch 分区未做;
 5. **`ctx.spawn`/`board` 未过 syscall 桥**(编排脚本内只有 call_tool/invoke)。
 
 ---
 
 ## 3. Tool 层
 
-### 3.1 现状(7 个,文档补正)
+### 3.1 现状(25 个,文档补正)
 
 `system.file.read`(READ,**已带行号前缀与 offset/limit**)/ `system.file.write` /
-`system.file.edit`(WRITE,**已是 old→new 唯一匹配,失败区分未命中与多处命中**)/
-`system.shell.exec`(EXEC)/ `system.net.http_fetch`(NET)/ `blob_get`(READ)/
-`python_exec`(EXEC,经 Logic Kernel 沙箱)。
+`system.file.edit`(WRITE,**已是 old→new 唯一匹配,失败区分未命中与多处命中**;write/edit
+**已带 `if_match` 乐观锁**)/ `system.file.list` / `system.file.search` /
+`system.file.stat` / `system.file.delete`(WRITE,声明 confirm)/ `system.file.mkdir` /
+`system.shell.exec`(EXEC,**已结构化返回 {stdout, stderr, exit_code, truncated, text}**)/
+`system.net.http_fetch` / `system.net.http_request`(NET)/ `system.time.now`(replayable)/
+`system.task.todo_write` / `system.task.todo_update` / `system.task.todo_read` /
+`system.skill.search` / `system.memory.search`(READ)/ `system.memory.write`(WRITE,
+**M6 服务版已落地**,write 自动打 source/provenance)/ `system.skill.register`(WRITE,
+声明 confirm,运行期注册带验证门)/ `common.web.fetch_page` / `blob_get`(READ)/
+`system.user.ask` / `system.user.notify`(WRITE,宿主回调经 `bind_user_channel` 装配,
+未 bind → NOT_FOUND;CLI 接线留 TODO)/ `python_exec`(EXEC,经 Logic Kernel 沙箱)/
+`python_orchestrate`(伪工具,见 §3.3)。
 (v1 文档漏写了 system.file.read/system.file.edit 的既有契约,书 Ch5 恰好把这两条列为
 编辑成功率的决定因素——已实现,补文档即可。)
 
@@ -118,26 +129,27 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
 
 | 优先 | 工具 | 权限 | 说明 |
 |---|---|---|---|
-| **P0** | **工作目录可配置**(不是新工具,是 fs/shell 工具的 `workdir` 来源) | — | v2.1 实机发现:`_workdir` 给每个 run 分配临时目录,fs/shell 工具锁死在其中,**agent 无法读写真实项目**。需要 `[run] workdir = "..."`(或 per-skill 声明)+ 只读/可写分区(书 Ch10 四区)。没有它,coding-agent、文件问答、代码审计三类主力场景全部落空——优先级高于任何新工具 |
-| **P0** | `system.file.list` | READ | 目录列举 + glob(cursor + total + mtime;mtime 与 `system.time.now` 组合可白拿卡死检测)。实机确认缺失:编排脚本只能退而用 `system.shell.exec "ls"` 解析字符串 |
-| **P0** | `system.file.search` | READ | 内容检索(正则 + 行号 + 上下文行 + 分页;大结果 spill)。书:"grep 跨平台语法不同,专用工具优于即兴"(Ch4) |
-| **P0** | `system.time.now` | READ | 服务端时钟,replay 从 trace 回放。不只是复现性——时间自报可绕过守门校验,是安全边界(Ch5) |
-| **P0** | `system.task.todo_write` / `system.task.todo_update` | WRITE(run 级状态) | 任务规划双工具;书实测带 TODO 15 轮 vs 不带 21 轮,显著减少漏做(Ch2)。配套的 `system.task.todo_read` 已存在:READ 档,读取完整清单,支持 status 过滤 |
-| **P1** | `system.file.write`/`system.file.edit` 加 `if_match` | — | mtime/hash 乐观锁,不匹配拒写并返回当前版本;有 `map_over` 并发就必然需要(Ch10) |
+| **✅ 已落地** | **工作目录可配置**(不是新工具,是 fs/shell 工具的 `workdir` 来源) | — | `[run] workdir` + `read_paths` 已进 RunConfig 与 `agent-os.toml`,fs/shell 工具共用 `resolve_work_path` 三段判定(只读区/workdir 读写/越界 INVALID_ARGS);缺省仍为 per-run 临时目录,安全边界不静默放宽。per-skill 声明与 scratch 分区未做 |
+| **✅ 已落地** | `system.file.list` | READ | 目录列举 + glob(cursor + total + mtime;mtime 与 `system.time.now` 组合可白拿卡死检测);默认尊重 `.gitignore` 并跳过 `.git/`/`node_modules/`/`.venv/` |
+| **✅ 已落地** | `system.file.search` | READ | 内容检索(正则 + 行号 + 上下文行 + 分页;大结果 spill,纯 Python 实现不 shell out 到 ripgrep)。书:"grep 跨平台语法不同,专用工具优于即兴"(Ch4) |
+| **✅ 已落地** | `system.time.now` | READ | 服务端时钟,已声明 `replayable`:replay 模式由 dispatch 按调用序回放 trace 记录值(host replay 的注入接线留后续)。不只是复现性——时间自报可绕过守门校验,是安全边界(Ch5) |
+| **✅ 已落地** | `system.task.todo_write` / `system.task.todo_update` | WRITE(run 级状态) | 任务规划双工具;书实测带 TODO 15 轮 vs 不带 21 轮,显著减少漏做(Ch2)。配套的 `system.task.todo_read` 已存在:READ 档,读取完整清单,支持 status 过滤 |
+| **✅ 已落地** | `system.file.write`/`system.file.edit` 加 `if_match` | — | 内容/sha256 乐观锁,不匹配拒写并返回当前版本标识;`system.file.delete` 同样支持;有 `map_over` 并发就必然需要(Ch10) |
 | **P1** | `http_post` | NET | 与 fetch 分开注册(分级授权);**非幂等,必须 key-based 或 pre-check 两阶段**(Ch4) |
 | **P1** | `json_query` | READ(纯) | jq 式路径查询;"不要让模型在上下文里做聚合"(Ch2) |
 | **P1** | `web_search` | NET | **v1 P2 → P1**:书两处列为基础三件套(Ch4 主动发现 / Ch8 自进化入口);实现保持"无 key 则不注册" |
 | **P1** | `ask_human` | 特殊档 | **v1 P2 → P1**:Constrain 层唯一 std 落地点(失败阈值 + 高风险操作两触发,Ch1);与 `set_timer` 合并立项(共用 checkpoint/resume 通道) |
 | **P1** | `subagent_cancel` / `subagent_status` | 特殊档 | 引擎有 spawn/wait 无 cancel 工具面;"任务失去意义即止损"(Ch4),`race_first` 依赖它 |
 | **P1** | `system.shell.exec` 会话化 | EXEC | `session_id` 持久会话(保 cd/venv/环境变量)+ 后台执行/`shell_monitor` 形态(Ch5) |
-| **P1** | `system.skill.search` | READ | 按 description 检索已注册技能/工具;纯读零依赖;技能过百后"选择"变"发现"(Ch4/8) |
+| **✅ 已落地** | `system.skill.search` | READ | 按子串/关键词检索已注册技能/工具(结果带权限信息);纯读零依赖;技能过百后"选择"变"发现"(Ch4/8) |
 | **✅ 已落地** | `python_orchestrate` | EXEC(内核拦截式伪工具) | LLM 编排脚本在沙箱执行,脚本内经 syscall 中介调用白名单工具/子技能,中间变量不过上下文;实机验证:13 次工具调用 = 2 个 LLM 步、父帧只多 1 条 229 字节 tool result。见 [CODE-ORCHESTRATION.md](CODE-ORCHESTRATION.md);`python_exec` 保持纯计算不变 |
 | **P2** | `set_timer` | 特殊档 | one-shot + recurring;与 `ask_human` 同通道 |
-| **P2** | `memory_search` / `memory_write` | READ / WRITE | 服务版(M6);文件版记忆不等它,见 §4.7;**memory_write 须过与外部输入同等的信任审查**(Ch8 记忆投毒) |
+| **✅ 已落地** | `memory_search` / `memory_write` | READ / WRITE | 服务版(M6,2026-09-27):注册名 `system.memory.search` / `system.memory.write`(旧名为别名),`LocalFileMemoryService` 后端,经 `bind_memory` 装配、`[memory] dir` 配置段接线(未装配报 NOT_FOUND);**memory_write 自动打 source/provenance(模型不可伪造),走 dispatch 天然过 ToolGuard/tool-confirm 信任审查**(Ch8 记忆投毒);文件版记忆与它互补:std 四件套是管线与纪律,MemoryService 是存储与治理,见 §4.7 |
 | **P2** | `read_document` | READ | PDF/Word 纯文本抽取(统一 file_type 参数);若因二进制依赖不收,在 §7 显式写明 |
 
-**明确不做成 tool**:随机数/UUID(复现性毒药)、fs_delete(system.shell.exec +
-ToolGuard 覆盖)、数据库/云 SDK(entry point)。
+**明确不做成 tool**:随机数/UUID(复现性毒药)、数据库/云 SDK(entry point)。
+(~~fs_delete~~ 已翻案:`system.file.delete` 作为受限高危工具落地——WRITE 档 +
+声明 confirm + `if_match` 乐观锁,仅文件与空目录,递归删除不做。)
 
 ---
 
@@ -227,11 +239,11 @@ v1 七件保留:`summarize` `classify` `extract` `translate` `rewrite`
 | `retry_until` | **验证槽默认接外部确定性反馈**(run_tests / 退出码 / schema 校验),LLM judge 仅作补充——无外部反馈的自审被反复证伪(Ch6/10 最重一条);增加 retryable/non-retryable 错误分类(对不可重试错误立即停) |
 | `map_over` | **降级为编排脚本示例**——`for x in items: ctx.invoke(...)` 加一个 try 就是全部语义,不值得占一个技能名 |
 | `fanout_vote` | 增加 `models: [alias...]`;**文档明确:消偏须异族 judge,同族 N 次采样只能测方差且会同向放大偏见** |
-| `race_first` | **新增**:首个成功广播取消其余(依赖 `subagent_cancel`)、等 ack、幂等结算 |
+| `race_first` | **新增,✅ 已落地**(2026-09-27,组合子本体在 `std/combinators.yaml` + `combinators_handlers.py`,std 第 12 个域;同域含私有批帧 `race_batch` 与 `subagent_cancel`(WRITE)/`subagent_status`(READ) 条目):首个成功广播取消其余、等 ack、幂等结算;budget **软强制**(watchdog 50ms 轮询批帧 `ctx.frame_status` 子树 usage,超限 `ctx.cancel` 返回部分结果) |
 | `cross_check` | **新增**:只核对原始证据与最终结论、**显式不看中间推理**——破解错误级联;与 fanout_vote(采样)、judge(看推理)是三种机制 |
 | `reject_sample` | **新增**:采 k → 验证器过滤 → 去重 → 配额;`fanout_vote` 选一个,它产出一批合格样本(也是未来 SFT 数据管道)(Ch7) |
 | `pipeline` | **降级为编排脚本示例**(同上;串接就是顺序赋值) |
-| **全体** | 统一 `budget: {max_steps, max_tokens, max_depth}` 参数,超限停并返回部分结果——多 agent 15x token 成本 + 防环 + "步数多不等于结果好"三个问题一个参数(Ch10) |
+| **全体** | 统一 `budget: {max_steps, max_tokens, max_depth}` 参数,超限停并返回部分结果——多 agent 15x token 成本 + 防环 + "步数多不等于结果好"三个问题一个参数(Ch10);**软强制已落地**(2026-09-27,见 `race_first` 行;检查间隔内可超、best-effort),**内核强制留立项** |
 
 **白名单困境已被编排桥消解**(v1 开放问题 2 结案):当初的难题是
 "组合子要 invoke 参数指定的技能,但 permissions.skills 必须静态声明"。
@@ -258,7 +270,8 @@ v1 七件保留:`summarize` `classify` `extract` `translate` `rewrite`
   `memory_reconcile`(候选 × 既有 → ADD/UPDATE/DELETE/NOOP,防矛盾并存)、
   `memory_consolidate`(周期重构:评分/聚类/抽象)、`memory_check`
   (code:约束交叉校验);
-- **P2 服务版**:M6 MemoryService 工具面(§3.3)。
+- **P2 服务版**:M6 MemoryService 工具面(§3.3,✅ 已落地 2026-09-27:
+  `system.memory.search/write` + `LocalFileMemoryService`)。
 
 配套 inline:`knowledge_linking`(新条目须检索既有并建双向链接——
 弱模型不会自发做,Ch3)。
@@ -311,14 +324,14 @@ Ch8/9/10 三章独立要求同一原语,配 `system.file.list` mtime + `system.t
 (`map_over` 移出 P0——编排脚本已覆盖,§4.5。)
 
 **P1**:`if_match` 乐观锁、`http_post`、`json_query`、`web_search`、
-`ask_human`、`subagent_cancel/status`、shell 会话化、`system.skill.search`、
+`ask_human`、`subagent_cancel/status`(✅ 已落地 2026-09-27)、shell 会话化、`system.skill.search`、
 来源标注三件(source 字段 + untrusted_content + injection_scan)、
-检索纯函数四件 + `contextualize_chunk`、`std/eval` 三件、组合子 budget +
-race_first/cross_check/reject_sample、`progress_track`、多模态最低限
+检索纯函数四件 + `contextualize_chunk`、`std/eval` 三件、组合子 budget(软强制 ✅ 2026-09-27) +
+race_first(✅ 2026-09-27)/cross_check/reject_sample、`progress_track`、多模态最低限
 (mime + image_ref + describe_image)、`std/learn` 三件、文件版
 `std/memory`、渐进披露约定。
 
-**P2 / 专项**:`set_timer`(与 ask_human 合并立项)、服务版 memory(M6)、
+**P2 / 专项**:`set_timer`(与 ask_human 合并立项)、服务版 memory(M6,✅ 已落地 2026-09-27)、
 `read_document`、写侧治理(`learned/` 分层)、文件系统四区约定 +
 ToolGuard 路径模板、MCP 立场。
 

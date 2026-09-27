@@ -125,7 +125,7 @@ cascade 协议(`cascade.js`)不变:provider 按 path 注册;reparent 时按新 p
 | C1 ✅ | `compound.js` 基座:createCompound、slots/动态生灭/attach/detach/move、多 view 扇出、事件闸门、context 改写、reparent 广播;协议测试 | 四能力(预定义/动态/转移/hard link)各有测试 |
 | C2 ✅ | playground 演示件(`web/static/compound.html` 新页):双栏 compound,可从列表加件、左右互移、同一实例左 card 右 tab | 目检可走通四能力 |
 | C3 ✅ | doc-editor 迁为 compound(md-viewer + 动态 bubble 子件) | 既有行为测试不破 |
-| C4 | desktop widget 落地,platform 壳迁移 | 另行设计 |
+| C4 ✅ | desktop widget 落地,platform 壳迁移 | docs/DESKTOP-WIDGET.md(C4.1–C4.4 全 ✅) |
 
 > **C1/C2 实现注**(2026-08-05,分支 debugger):
 > - **C1 基座**(`js/widgets/compound.js`):`createCompound(def, opts)` 全协议——

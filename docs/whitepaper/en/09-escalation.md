@@ -69,7 +69,7 @@ unknown tiers count as lowest (`escalation.py:54-56`).
 ### 4.2 Declaration vs. derivation: tools declare, skills only derive
 
 - **Tools declare** `ToolSpec.side_effect` (the author knows the tool best); the default derives from
-  `Permission`: READ→none, WRITE/NET→reversible, EXEC→irreversible (`api/v1/tools.py:127-136`). A
+  `Permission`: READ→none, WRITE/NET→reversible, EXEC→irreversible (`api/v1/tools.py:123-135`). A
   read-only diagnostic exec may explicitly downgrade, a read tool may upgrade — always round up.
 - **Skills derive, never declare**: `derive_skill_tier` takes the max tier over whitelisted tools and
   (recursively) skills (`escalation.py:92-104`). Self-reports lie or go stale; the derived value always

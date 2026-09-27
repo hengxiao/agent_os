@@ -4,6 +4,15 @@
 > 范围:CLI Runner、Web UI Runner、内核、配置/部署。实测实例:8000(fib)、8001(support_desk)、8002(skills_100)。
 > 方法:四个真实场景端到端执行,逐步记录摩擦点(命令输出 + 截图证据)。
 
+> ---
+> **截至 2026-08-24 的复核**(基线 HEAD `36f0587`)。历史记录保持原样;优化点的当前状态:
+>
+> - **P0-1 dotted path / 相对路径**:**Web 侧已修**——装配前把 set 目录与全局配置目录钉入 `sys.path` 前两位并逐出同名缓存(`host/web/run_manager.py:44,189-203`,commit `ad9b763` 等);**CLI 侧仍开口**——2026-08-24 实测:从 /tmp 跑 `agent-os run --config <dir>/agent-os.toml` 仍报 `ConfigError: 无法加载 dotted path 'brains:fib_brain'`,`[skills].path` 仍按进程 CWD 解析(`runtime/config.py:290-292`,`_load_dotted` 无配置目录注入,`:117-127`)。
+> - **P0-2 `--reload`**:仍开口(`host/web/serve.py` 无 `--reload` 参数)。
+> - **P1-3 失败帧状态归一**:**部分修**——弹栈异常路径已把帧标记 FAILED 并写 StatusBoard(`kernel/runner.py:363-366` → `kernel/stack.py:48-51`);但 checkpoint 落盘标签 `_checkpoint_status` 仍只有 done/running 两档(`kernel/checkpoint.py:119-124`),FAILED 帧在检查点文件里仍写作 `"running"`——场景 3 的呈现问题在 checkpoint 序列化层未关闭。
+> - **P1-5 CLI 覆盖参数**:仍开口(`--model`/`--max-cost`/`--max-steps` grep 无命中;现有 `--inline`/`--checkpoint-interval` 等)。CLI 子命令面已比本文写作时更全(run/trace/inspect/resume/replay/diff/skills/lab + debug REPL)。
+> - 其余条目(排序/筛选、code-only 呈现、Usage 面板、`model.prefer` 装配期告警、quickstart)本次未复核,以正文为准。
+
 ---
 
 ## 一、场景与实测记录

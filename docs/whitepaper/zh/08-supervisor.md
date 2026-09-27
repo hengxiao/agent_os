@@ -87,18 +87,18 @@ YIELD 机制——父帧照常停在自己的 await 点,兄弟 spawn 帧照常�
 才置 DONE,handler 未回答期间状态保持 RUNNING(同处注释)。**注**:`docs/SUPERVISOR.md`
 §2.2 称"所有活跃帧挂起时 run 转 PAUSED、帧 status = SUSPENDED";代码中 supervisor
 路径**不做任何状态迁移**(`RunStatus.PAUSED`、`FrameStatus.SUSPENDED` 枚举存在于
-`api/v1/run.py:53`、`api/v1/frames.py:47`,但仅调试器等其他路径使用)。本章以代码
+`api/v1/run.py:60`、`api/v1/frames.py:48`,但仅调试器等其他路径使用)。本章以代码
 为准:"挂起"是 await 阻塞,不是状态机迁移;"等待上级"在 Web 上由收件箱 pending
 列表呈现,而非 run 状态字段。
 
 **通道选择顺序**(`docs/SUPERVISOR.md` §2.3,实现于
-`host/web/run_manager.py:405-418`):run 级注入的 handler → 装配级 handler → 宿主
+`host/web/run_manager.py:418-425`):run 级注入的 handler → 装配级 handler → 宿主
 默认通道。三条基线通道:
 
 | 调用方 | 通道实现 | decided_by / channel 标签 |
 |---|---|---|
 | 嵌入方应用 | 注入的 `SupervisorHandler`(`runtime/builder.py:100-116`) | 缺省 `"handler"` |
-| Web 用户 | `InboxChannel` 收件箱(`supervisor/inbox.py`),`GET /api/supervisor/pending` + `POST /api/supervisor/{id}/answer`(`host/web/app.py:649-669`) | `"host:web-ui"` / `"inbox"` |
+| Web 用户 | `InboxChannel` 收件箱(`supervisor/inbox.py`),`GET /api/supervisor/pending` + `POST /api/supervisor/{id}/answer`(`host/web/app.py:718-742`) | `"host:web-ui"` / `"inbox"` |
 | CLI 用户 / coding agent | stderr 单行 JSON `{"type":"supervisor.ask",...}` + stdin 读一行,进程内闭环(`host/cli/main.py:57-87`) | `"host:cli"` / `"cli"` |
 
 `InboxChannel` 是一个挂起式收件箱:`__call__` 即 handler 契约——Question 进 pending
@@ -118,7 +118,7 @@ YIELD 机制——父帧照常停在自己的 await 点,兄弟 spawn 帧照常�
 | `asyncio.wait_for` 超时 + `on_timeout="fail"` | 发 `supervisor.timeout`,返回 `{ok:false, error:{kind:"supervisor_timeout", retryable:true}}`,帧可自行降级 | manager.py:129-150 |
 | 超时 + `on_timeout="default_answer"` | 用配置兜底答案闭环,`decided_by="policy:default"` | manager.py:139-141 |
 | 答案不合 options | 以 `previous_error` 重问**调用方**(不重问子帧),初问+重问至多 2 次(`_MAX_ASK_ATTEMPTS=2`);仍不合法按 fail 闭环 | manager.py:40、:106-127 |
-| Web 路由层预校验 | 答案不在 options 内 → 400,问题保持挂起 | run_manager.py:935-953 |
+| Web 路由层预校验 | 答案不在 options 内 → 400,问题保持挂起 | run_manager.py:947-965 |
 
 重问上限取 2 而非无限,是可用性与防死循环的取舍:调用方连续两次答非所问,大概率
 是协议理解错误,继续重问只会空转;此时把结构化错误交给子帧,帧可按 prompt 预设
@@ -148,7 +148,7 @@ manager.py:179)、`supervisor.timeout`。channel 标签由 handler 的
 
 ## 5. 效果与验证(效果)
 
-**测试证据**(全绿,属 Python 812 例基线的一部分):
+**测试证据**(全绿,属 Python 1448 例基线的一部分):
 
 - `tests/kernel/test_supervisor.py`:**12 例**,覆盖 §9 锚点清单的内核侧——handler
   闭环、就地挂起(挂起期间父帧 await 点不动)、pending ask 阻止 run 提前判完成、
@@ -208,8 +208,8 @@ manager.py:179)、`supervisor.timeout`。channel 标签由 handler 的
   `kernel/checkpoint.py:31-36、:362-364`
 - 装配与配置:`agent_os/src/agent_os/runtime/builder.py:100-116、:196-210`、
   `runtime/config.py:295-314`
-- 宿主通道:`agent_os/src/agent_os/host/web/app.py:649-669`、
-  `host/web/run_manager.py:405-418、:928-953`、`host/cli/main.py:57-87、:276`
+- 宿主通道:`agent_os/src/agent_os/host/web/app.py:718-742`、
+  `host/web/run_manager.py:418-425、:947-965`、`host/cli/main.py:57-87、:276`
 - 测试:`agent_os/tests/kernel/test_supervisor.py`(12 例)、
   `agent_os/tests/web/test_supervisor_channel.py`(4 例)、
   `agent_os/tests/examples/test_supervision_nested.py`(4 例)

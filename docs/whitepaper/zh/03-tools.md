@@ -1,6 +1,6 @@
 # Tools:分发流水线与三层权限交集
 
-> 章次:03 · 状态:核心已实现(分发流水线、三层权限交集、数据闸、路径沙箱均有实现与测试);预留与扩展部分实现(凭证注入、confirm 两阶段、MCP 适配器、流水线级归一化) · 依据:`agent_os/src/agent_os/tools/local_registry.py`、`agent_os/src/agent_os/api/v1/tools.py`、`agent_os/src/agent_os/kernel/runner.py`、`docs/DESIGN.md` §8、`docs/DATA-AUTHZ.md`
+> 章次:03 · 状态:核心已实现(分发流水线、三层权限交集、数据闸、凭证注入、confirm 两阶段闸门、路径沙箱均有实现与测试);预留与扩展部分实现(MCP 适配器、流水线级归一化) · 依据:`agent_os/src/agent_os/tools/local_registry.py`、`agent_os/src/agent_os/api/v1/tools.py`、`agent_os/src/agent_os/kernel/runner.py`、`docs/DESIGN.md` §8、`docs/DATA-AUTHZ.md`
 
 ## 1. 概述
 
@@ -93,43 +93,42 @@ D1 的兼容策略是明确的设计取舍:**未配置 = 不拦截**。三种情
 
 ### 4.6 内置工具面与别名迁移
 
-`with_builtins`(:372-538)装配 17 件规范名工具(fs 七件、shell、net 两件、blob、time、todo 三件、skill.search),构造器另注册 `fetch_page`(:99-104,与 §6.1 闸门联动,原因见 `tools/std_web.py` 模块 docstring)。命名采用层级空间(`system.file.read`),旧扁平名(`fs_read`)经 `register_alias` 保留为别名,同一函数体多规名共存(:126-138)——分层命名迁移期不破坏存量技能。契约字段的声明有硬闸门:READ 档工具必须声明 `idempotent/cacheable/concurrent_safe`,`side_effect` 推导规则下 delete/kill 类必须显式标 `irreversible`(TIER-STANDARDS §1,:518-520 注释),`cost_hint` 只写量级不写绝对秒数。
+`with_builtins`(:558-749)装配 22 件规范名工具(fs 八件、shell、net 两件、blob、time、todo 三件、skill.search、skill.register、memory 两件、user 两件——`system.user.ask`/`system.user.notify` 经 `bind_user_channel` 装配宿主回调,未 bind → NOT_FOUND,CLI 接线留 TODO),构造器另注册 `fetch_page`(:132,与 §6.1 闸门联动,原因见 `tools/std_web.py` 模块 docstring)。命名采用层级空间(`system.file.read`),旧扁平名(`fs_read`)经 `register_alias` 保留为别名,同一函数体多规名共存(:155-168)——分层命名迁移期不破坏存量技能。契约字段的声明有硬闸门:READ 档工具必须声明 `idempotent/cacheable/concurrent_safe`,`side_effect` 推导规则下 delete/kill 类必须显式标 `irreversible`(TIER-STANDARDS §1,:729-731 注释),`cost_hint` 只写量级不写绝对秒数。
 
 ## 5. 效果与验证(效果)
 
-测试证据(本章直接相关部分,`agent_os/tests/`,本次运行实测 **283 passed + 32 xfailed**,3.11s):
+测试证据(本章直接相关部分,`agent_os/tests/`,本次运行实测 **362 passed + 39 xfailed**,3.3s):
 
 | 测试文件 | 用例数 | 覆盖 |
 |---|---|---|
 | `tools/test_builtins.py` | 14 | 内置装配、`test_tool_policy_caps_permission`(:189,上限闸)、`test_fs_path_traversal_rejected`(:97,逃逸)、edit 唯一匹配、别名解析、shell 超时钳制无孤儿进程 |
-| `tools/test_data_authz.py` | 13 | `test_dispatch_order_data_before_permission`(:132,闸门次序)、`test_configured_confidential_domain_denied_without_leak`(:150,拒绝不泄漏)、未配置降级(:194)、principal 跨帧不变量(:366)与 checkpoint 往返(:395) |
+| `tools/test_data_authz.py` | 23 | `test_dispatch_order_data_before_permission`(:132,闸门次序)、`test_configured_confidential_domain_denied_without_leak`(:150,拒绝不泄漏)、未配置降级(:194)、principal 跨帧不变量(:366)与 checkpoint 往返(:395);D2 增例:policy 绑定后未配置域 confidential、白名单第二判据、net 域 URL 前缀命中/未命中、`data.access.*` 信号 payload、判据回写 `credentials["_authz"]` |
+| `tools/test_credentials.py` | 7 | WS1 凭证注入:声明键注入、未声明/未 bind → 空 dict、env 缺席键不出现、动态解析(env 现改现生效)、注入按声明过滤、凭证不进 checkpoint |
 | `tools/test_std_foundation.py` | 9 | workdir 三分区、只读区拒写(:82)、逃逸 hint 可操作(:143)、READ 档契约字段齐备(:213) |
-| `tools/test_std_tools.py` / `test_blob.py` / `test_builtin_side_effects.py` | 17 / 5 / 2 | std 工具行为、blob ref 形态、副作用档推导 |
-| `test_contracts.py` | 7 | ToolSpec 等冻结面契约(§14.1) |
+| `tools/test_std_tools.py` / `test_blob.py` / `test_builtin_side_effects.py` | 17 / 10 / 2 | std 工具行为、blob ref 形态(内存版 + FileBlobStore 落盘/防逃逸)、副作用档推导 |
+| `test_contracts.py` | 60 | ToolSpec 等冻结面契约(§14.1) |
 | `test_std_gate.py` | 参数化 | 工具门槛:description 必须写"何时用"、参数必须是 object schema、READ⇒cacheable、双拼写同步 |
 
-32 例 xfail 集中在同一项:`test_parameters_are_documented`——`derive_spec` 从签名推导 schema,尚无逐参数 description 的机制(xfail 理由引实测:该项影响工具调用准确率 72%→90%)。这是被显式标记的已知缺口,不是静默失败。
+39 例 xfail 集中在同一项:`test_parameters_are_documented`——`derive_spec` 从签名推导 schema,尚无逐参数 description 的机制(xfail 理由引实测:该项影响工具调用准确率 72%→90%)。这是被显式标记的已知缺口,不是静默失败。
 
-真实配置示例:`instance/agent-os.toml` + `instance/skills.yaml` 是宿主侧装配形态;`agent_os/examples/workspace_janitor` 等示例技能的白名单直接消费本权限模型。**涟漪效应**:① 工具 schema 顺序固定(注册序,`schemas_for` :153-163)是 §7.4 前缀缓存不变量 5 的数据源;② `ToolErrorKind.retryable` 供 LoopDetector 与模型区分"该重试"与"该换策略"(`tools.py:53-62`);③ `side_effect` 推导是技能信任档递归取 max 的叶子值,工具声明质量直接决定升权判定的质量;④ 沙箱内 syscall 通道复用同一条 `_dispatch_call`(`runner.py:690-716`),编排代码无权限提升旁路;⑤ `specs()` 是 Web UI Tools 浏览器的数据源(:143-145)。
+真实配置示例:`instance/agent-os.toml` + `instance/skills.yaml` 是宿主侧装配形态;`agent_os/examples/workspace_janitor` 等示例技能的白名单直接消费本权限模型。**涟漪效应**:① 工具 schema 顺序固定(注册序,`schemas_for` :182-189)是 §7.4 前缀缓存不变量 5 的数据源;② `ToolErrorKind.retryable` 供 LoopDetector 与模型区分"该重试"与"该换策略"(`tools.py:53-62`);③ `side_effect` 推导是技能信任档递归取 max 的叶子值,工具声明质量直接决定升权判定的质量;④ 沙箱内 syscall 通道复用同一条 `_dispatch_call`(`runner.py:694-763`),编排代码无权限提升旁路;⑤ `specs()` 是 Web UI Tools 浏览器的数据源(:172-175)。
 
 ## 6. 局限性与边界(局限性)
 
-1. **凭证注入未实现。** §8.1 流水线列有"凭证注入(按工具声明从凭证作用域取)",契约也预留 `ToolContext.credentials`,但分发固定填 `{}`(`local_registry.py:259`)。需要凭证的工具目前只能靠宿主环境变量绕行——恰是契约想禁止的做法。
-2. **confirm 两阶段只声明、未强制。** `system.file.delete` 声明 `confirm=True`(:521-528),但 dispatch 没有任何 dry-run/confirmation token 逻辑;§8.2 描述的两阶段语义停在契约层,当前实际防线是白名单 + 人审 sidecar。
-3. **并发与缓存声明不强制。** `cacheable/concurrent_safe/concurrency_safe` 全部"声明不强制"(`tools.py:91-93` 注释),`parallel_invoke` 依赖的并发安全判定尚无一处消费。错误声明当前无代价。
-4. **流水线级结果归一化未落地。** §8.1 的"大小封顶 → spill 到 blob""调用计数注释(Tool call #N)"在 registry 中不存在;spill 是工具各自为之(`std_web.py` 的 fetch_page、`std.py:376-383` 的 fs_search),阈值与保留策略不统一,`"Tool call #"` 字样全仓仅出现在 DESIGN.md。`untrusted_source` 同理:契约字段在、http_fetch 声明在,统一的包裹标记未实现。
-5. **READ 档白名单豁免语义窄。** 如 4.2 所述,生产路径上 runner 闸先查白名单,豁免只便利直接嵌入方;两层检查语义不同步(一层豁免、一层不豁免)是刻意冗余,但也是理解成本。
-6. **数据层 authZ 仅 D1。** 只覆盖 fs 域;db/net 域声明与判定属 D2(:322-323);`agent-os.toml [data]` 配置段未接线,域边界只能由宿主代码调 `register_fs_domain` 注册;"未配置不拦截"与 DATA-AUTHZ 文档的"默认 confidential"目标态之间留有差距,多用户隔离由 run 边界承担。
-7. **类型推导能力有限。** 多支 Union、嵌套泛型、字面量等注解退化为 `{}`——schema 校验对这类参数形同虚设,fail-fast 承诺只覆盖基本型。
-8. **sync 工具的取消是假的。** `asyncio.to_thread` 无法中断线程,TIMEOUT 返回后底层函数可能继续运行;shell_exec 以超时钳制与子进程回收兜底(`test_shell_exec_timeout_clamped_to_spec_no_orphan`),但一般 sync 工具无此待遇。
-9. **MCP 与持久 shell 未接入。** §8.3 的 MCP 适配器、供应链隔离仍是文档承诺;`shell_exec` 是一次性子进程,§8.3 描述的"run 作用域持久会话(cwd/env 跨调用保持)"明确标注为后续里程碑(`with_builtins` docstring,:380-381)——文档与实现口径不同,以代码为准。
-10. **回放接线未完成。** `replayable` 的弹出机制已实现并有锚点测试,但记录源(host trace → `replay_records`)的接线"留后续里程碑"(:11-12,:239-240 注释);当前 replay 重放 LLM 侧,工具副作用仍真实发生。
+1. **缓存声明不强制;并发声明已有首个消费点。** `cacheable`/`concurrent_safe` 仍"声明不强制"(`tools.py:91-93` 注释);`concurrency_safe`(双拼写任一)自 2026-09-27 起被 `parallel_invoke` 强制消费——code 分支白名单含未声明工具即串行降级、占满全部并发额度(fail-safe 不拒绝,`runner.py:1709-1728`),prompt 分支豁免,cacheable 缓存层不做。批外场景错误声明仍无代价。
+2. **流水线级结果归一化未落地。** §8.1 的"大小封顶 → spill 到 blob""调用计数注释(Tool call #N)"在 registry 中不存在;spill 是工具各自为之(`std_web.py` 的 fetch_page、`std.py:376-383` 的 fs_search),阈值与保留策略不统一,`"Tool call #"` 字样全仓仅出现在 DESIGN.md。`untrusted_source` 同理:契约字段在、http_fetch 声明在,统一的包裹标记未实现。
+3. **READ 档白名单豁免语义窄。** 如 4.2 所述,生产路径上 runner 闸先查白名单,豁免只便利直接嵌入方;两层检查语义不同步(一层豁免、一层不豁免)是刻意冗余,但也是理解成本。
+4. **数据层 authZ 的 D3 余项未做。** D2 已落地(2026-08-31:`[data]` 配置段、per-subject 白名单第二判据、net/db 域判定、`data.access.*` 审计信号、判据回写 `credentials["_authz"]`),残余边界:派生链最弱一环与 EscalationRequest 数据面展示仍未实现(归 E3);policy 缺席时保持 D1"未配置不拦截"语义(忘了配 `[data]` 段 = 数据层整体不启用);多用户映射为 D3-lite(`[web.tokens]`),未配置时隔离仍由 run 边界承担。
+5. **类型推导能力有限。** 多支 Union、嵌套泛型、字面量等注解退化为 `{}`——schema 校验对这类参数形同虚设,fail-fast 承诺只覆盖基本型。
+6. **sync 工具的取消是假的。** `asyncio.to_thread` 无法中断线程,TIMEOUT 返回后底层函数可能继续运行;shell_exec 以超时钳制与子进程回收兜底(`test_shell_exec_timeout_clamped_to_spec_no_orphan`),但一般 sync 工具无此待遇。
+7. **MCP 与持久 shell 未接入。** §8.3 的 MCP 适配器、供应链隔离仍是文档承诺;`shell_exec` 是一次性子进程,§8.3 描述的"run 作用域持久会话(cwd/env 跨调用保持)"明确标注为后续里程碑(`with_builtins` docstring,:565-566)——文档与实现口径不同,以代码为准。
+8. **回放接线未完成。** `replayable` 的弹出机制已实现并有锚点测试,但记录源(host trace → `replay_records`)的接线"留后续里程碑"(:11-12,:315-316 注释);当前 replay 重放 LLM 侧,工具副作用仍真实发生。
 
 ## 7. 引用
 
 - 设计文档:`docs/DESIGN.md` §2.2、§2.4、§7.4、§8(Tool Registry 全节)、§14.1;`docs/DATA-AUTHZ.md` §2-§3、§5.2;`docs/ESCALATION.md` §2.1;`docs/TIER-STANDARDS.md` §1
 - 契约:`agent_os/src/agent_os/api/v1/tools.py`(Permission/ToolPolicy/ToolErrorKind/ToolSpec/ToolContext/ToolDispatchContext/Tool/BlobStore);`agent_os/src/agent_os/api/v1/messages.py:35-40`(ToolCall)
-- 实现:`agent_os/src/agent_os/tools/local_registry.py`(dispatch :181-286;`_check_data_access` :306-351;`resolve_work_path` :544-588;`derive_spec` :608-634;`with_builtins` :372-538);`agent_os/src/agent_os/tools/blob.py`;`agent_os/src/agent_os/tools/builtins.py`;`agent_os/src/agent_os/tools/std.py`;`agent_os/src/agent_os/tools/std_web.py`
-- 内核闸:`agent_os/src/agent_os/kernel/runner.py:547-598`(`_dispatch_call`)、:675-716(syscall 通道)
-- 测试:`agent_os/tests/tools/test_builtins.py`、`agent_os/tests/tools/test_data_authz.py`、`agent_os/tests/tools/test_std_foundation.py`、`agent_os/tests/tools/test_std_tools.py`、`agent_os/tests/tools/test_blob.py`、`agent_os/tests/tools/test_builtin_side_effects.py`、`agent_os/tests/test_contracts.py`、`agent_os/tests/test_std_gate.py`
+- 实现:`agent_os/src/agent_os/tools/local_registry.py`(dispatch :256-376;`_check_data_access` :424-537;`resolve_work_path` :755-818;`derive_spec` :819-845;`with_builtins` :558-749);`agent_os/src/agent_os/tools/blob.py`;`agent_os/src/agent_os/tools/builtins.py`;`agent_os/src/agent_os/tools/std.py`;`agent_os/src/agent_os/tools/std_web.py`
+- 内核闸:`agent_os/src/agent_os/kernel/runner.py:694-763`(`_dispatch_call`)、:835-877(syscall 通道)
+- 测试:`agent_os/tests/tools/test_builtins.py`、`agent_os/tests/tools/test_data_authz.py`、`agent_os/tests/tools/test_credentials.py`、`agent_os/tests/kernel/test_tool_confirm.py`、`agent_os/tests/tools/test_std_foundation.py`、`agent_os/tests/tools/test_std_tools.py`、`agent_os/tests/tools/test_blob.py`、`agent_os/tests/tools/test_builtin_side_effects.py`、`agent_os/tests/test_contracts.py`、`agent_os/tests/test_std_gate.py`
 - 示例与配置:`agent_os/examples/workspace_janitor`、`instance/agent-os.toml`、`instance/skills.yaml`

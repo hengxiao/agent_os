@@ -285,7 +285,7 @@ static/
 
 无框架(纯函数组件 + 事件委托)、无 CDN(离线可用)、图标用字母章 + 少量内联 SVG。
 
-### 6.2 后端补充端点(三个只读小端点,host 侧)
+### 6.2 后端补充端点(三个只读小端点,host 侧;均已落地于 `host/web/app.py`)
 
 | 端点 | 数据 | 说明 |
 |---|---|---|
@@ -293,7 +293,7 @@ static/
 | `GET /api/skills/{name}` | 全量 manifest(含 prompt 模板、lint 警告) | 同上 |
 | `GET /api/tools` | 共享 tools registry 的全量 ToolSpec | 装配时留一份引用即可 |
 
-`POST /api/runs` 已支持 `overrides`(model/max_cost/max_steps,§4.3 高级区);如 R3 实现未含,一并补上。
+`POST /api/runs` 已支持 `overrides`(model/max_cost/max_steps,另含 inline/checkpoint_interval;§4.3 高级区)。
 
 ### 6.3 性能与边界
 

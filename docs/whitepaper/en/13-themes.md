@@ -39,8 +39,8 @@ Why not in the kernel or the backend: theming is pure presentation. Keeping it o
 │   code (contract test #6, static scan)                        │
 ├──────────────────────────────────────────────────────────────┤
 │ Contract layer (js/themes.js)                                 │
-│   CONTRACT_TOKENS (43 variables, themes.js:25-40)             │
-│   COPY_KEYS (classic table is canonical, 69 keys, :43)        │
+│   CONTRACT_TOKENS (50 variables, themes.js:26-47)             │
+│   COPY_KEYS (classic table is canonical, 436 keys, :50)        │
 │   motion names × 5: bp-hit / step / resume / run-done /       │
 │   intervene                                                   │
 │   registration check: css not loaded or token missing →       │
@@ -56,29 +56,29 @@ Why not in the kernel or the backend: theming is pure presentation. Keeping it o
 
 ### 4.2 Token Contract & Registration Validation
 
-Every theme must assign all 43 contract variables under its `[data-theme="<id>"]` rule: base 9 (`--bg-0..3`, `--line`, `--line-strong`, `--fg-0..2`), status 5, signal 6, permission 4, typography 19 (fonts 2 + sizes 6 + spacing 7 + radii 4) — not one fewer (`themes.js:25-40`; the list is exactly WEB-UI.md §3's existing semantic variables). At registration, `sheetTokens()` extracts the theme's declaration block from the loaded stylesheets (`themes.js:108-129`); missing variables or an unloaded css means refusal plus `console.warn` (`themes.js:133-153`) — "preventing half-finished themes from going live" (`DEBUG-UI-THEMES.md:45`). In node test environments without the `styleSheets` API the runtime check is skipped, and completeness is asserted by the contract test parsing the css source directly (`themes.js:6-8`); both validation paths share the same contract list.
+Every theme must assign all 50 contract variables under its `[data-theme="<id>"]` rule: base 9 (`--bg-0..3`, `--line`, `--line-strong`, `--fg-0..2`), widget panel 2 (`--log-bg`/`--log-fg`), status 5, annotation 4 (`--ann-*`), focus 1 (`--focus-ring`), signal 6, permission 4, typography 19 (fonts 2 + sizes 6 + spacing 7 + radii 4) — not one fewer (`themes.js:26-47`; the list is WEB-UI.md §3's existing semantic variables plus the later widget/annotation/accessibility additions). At registration, `sheetTokens()` extracts the theme's declaration block from the loaded stylesheets (`themes.js:110-136`); missing variables or an unloaded css means refusal plus `console.warn` (`themes.js:138-152`) — "preventing half-finished themes from going live" (`DEBUG-UI-THEMES.md:45`). In node test environments without the `styleSheets` API the runtime check is skipped, and completeness is asserted by the contract test parsing the css source directly (`themes.js:6-8`); both validation paths share the same contract list.
 
 **Trade-off: refuse registration instead of backfilling at runtime.** A missing token has no sane fallback — filling it with classic's value would produce a region that "doesn't look like the theme," which is worse than the theme not loading at all. Better the whole theme stays off (`DEBUG-UI-THEMES.md:144`: "rather fall back than ship half-finished").
 
 ### 4.3 Copy Contract: A Translation Layer, Not a Replacement Layer
 
-`COPY_KEYS` takes the classic table as canonical (69 keys covering status phrases, empty states, confirmations, Skill Lab, escalation cards — see `js/copy/classic.js`); every theme table must cover the same key set. Components read values via `copy(key)`, resolved through three fallback levels: **effective theme → classic → the raw key itself** (`themes.js:245-251`). The core rule is the **technical-text exemption**: raw errors, raw statuses, and tool parameters are always rendered verbatim and never enter the copy table (`DEBUG-UI-THEMES.md:50-51`). Theme copy is a "translation layer" — e.g. moe's aborted phrase is `先到这里喵(aborted)`, with the original kept in parentheses (asserted at `smoke-theme.test.mjs:262`).
+`COPY_KEYS` takes the classic table as canonical (436 keys covering status phrases, empty states, confirmations, Skill Lab, escalation cards — see `js/copy/classic.js`); every theme table must cover the same key set. Components read values via `copy(key)`, resolved through three fallback levels: **effective theme → classic → the raw key itself** (`themes.js:257-263`). The core rule is the **technical-text exemption**: raw errors, raw statuses, and tool parameters are always rendered verbatim and never enter the copy table (`DEBUG-UI-THEMES.md:50-51`). Theme copy is a "translation layer" — e.g. moe's aborted phrase is `先到这里喵(aborted)`, with the original kept in parentheses (asserted at `smoke-theme.test.mjs:262`).
 
-**Trade-off: a missing copy key only warns, it does not block registration** (`themes.js:147-150`) — deliberately asymmetric with the token rule. A missing copy key has a classic fallback and the page does not break; a missing token has no fallback and leaves a visual hole. Different consequences, different gate strengths.
+**Trade-off: a missing copy key only warns, it does not block registration** (`themes.js:153-157`) — deliberately asymmetric with the token rule. A missing copy key has a classic fallback and the page does not break; a missing token has no fallback and leaves a visual hole. Different consequences, different gate strengths.
 
 ### 4.4 Switching, Persistence & Scope Fallback
 
 ```
-startup initTheme():  URL (?theme=) > localStorage > classic (themes.js:223-232)
+startup initTheme():  URL (?theme=) > localStorage > classic (themes.js:241-250)
                       a URL hit is also persisted — deep links share "the same temperament"
 switch  applyTheme(): requestedId → localStorage (agent-os.theme)
                       → hash ?theme= sync (replaceState, no routing; classic omits the param)
                       → resolveEffective(page): unvetted scope → forced classic
-                        (themes.js:168-173)
+                        (themes.js:176-182, :217-238)
                       → <html data-theme="<effective>"> → CSS variable cascade, instant app-wide
 ```
 
-The implementation deliberately separates `requestedId` (the user's choice, the persisted object) from `effectiveId` (what actually applies on the current page, `themes.js:161-162`): a scope fallback does not overwrite the user's choice, and the original choice resumes automatically on vetted pages. `syncTheme()` re-resolves on route change (`app.js:339`). The TopBar picker is purely data-driven: it renders from the registry, each item carrying a three-color swatch read from the theme css (`--bg-0`/`--fg-0`/`--live`, `themes.js:254-260`).
+The implementation deliberately separates `requestedId` (the user's choice, the persisted object) from `effectiveId` (what actually applies on the current page, `themes.js:169-170`): a scope fallback does not overwrite the user's choice, and the original choice resumes automatically on vetted pages. `syncTheme()` re-resolves on route change (`app.js:352`). The TopBar picker is purely data-driven: it renders from the registry, each item carrying a three-color swatch read from the theme css (`--bg-0`/`--fg-0`/`--live`, `themes.js:266-272`).
 
 **Trade-off: a `data-theme` attribute + CSS cascade instead of JS-driven skinning.** Switching re-renders nothing and components are oblivious to themes; it also makes the "no build, zero dependencies" constraint hold naturally. The cost is that theme expressiveness is capped at what CSS variables can say — but the §4.2 contract is exactly that range, so constraint and capability are consistent.
 
@@ -86,7 +86,7 @@ The implementation deliberately separates `requestedId` (the user's choice, the 
 
 The mascot is an independent layer, not an in-component branch: components only call `mascotHtml(expr)` at fixed slots (e.g. the control-bar slot at `debug-view.js:441`), and the layer itself reads the current theme's `mascot` declaration — under a `null`-mascot theme (classic/terminal/blueprint/ink) it returns an empty string, with no `if` in any component (`mascot.js:164-177`). Inside the layer sits the `MASCOTS` registry: each mascot = { name, exprs, sprite }, where the sprite is a pure-SVG `<symbol>` sprite sheet whose colors all come from the theme css class rules — zero color values inside the SVG (`mascot.js:21-22`). The expression mapping `mascotStateFor` derives from the session snapshot (running/paused/done/failed, `mascot.js:12-19`) and is shared by both mascots.
 
-`pixel`'s `sprite8` is the **second instance** of this abstraction — the same `MascotLayer` interface with a different 8-bit sprite sheet, proving the layer is replaceable (`DEBUG-UI-THEMES.md:117`, asserted at `smoke-theme.test.mjs:424-436`).
+`pixel`'s `sprite8` is the **second instance** of this abstraction — the same `MascotLayer` interface with a different 8-bit sprite sheet, proving the layer is replaceable (`DEBUG-UI-THEMES.md:117`, asserted at `smoke-theme.test.mjs:434-441`).
 
 ### 4.6 The Six-Theme Catalog
 
@@ -99,25 +99,26 @@ The mascot is an independent layer, not an in-component branch: components only 
 | `ink` | Ink wash (rice paper + a single vermilion accent) | vermilion seal-stamp statuses; ink-stroke pause indicator; terse classical copy | none |
 | `pixel` | 8-bit retro game | budget bars = HP/MP; breakpoint = checkpoint flag; `LEVEL CLEAR!` | sprite8 |
 
-(`DEBUG-UI-THEMES.md §3.1-3.6`; all six are `scope: "app-wide"`, `themes.js:48-104`.)
+(`DEBUG-UI-THEMES.md §3.1-3.6`; all six are `scope: "app-wide"`, `themes.js:55-106`.)
 
 ### 4.7 Motion Profiles (Designed; Playback Layer Not Implemented)
 
-The contract says components invoke only named motions (`bp-hit`/`step`/`resume`/`run-done`/`intervene`), and each theme declares a level per name: `full` / `subtle` / `instant`, with `prefers-reduced-motion` forcing `instant` (`DEBUG-UI-THEMES.md:55-57`). **Current implementation: all five motion names in all six themes are registered as `subtle`** (e.g. `themes.js:54`); the motion playback layer has not landed, and contract test #5 (motion-degradation assertions) is pending (`DEBUG-UI-THEMES.md:141`, Executive Summary §8). The scattered `@keyframes` in theme css files (moe breathing/entry, terminal scanlines, etc.) do not go through the named-motion channel.
+The contract says components invoke only named motions (`bp-hit`/`step`/`resume`/`run-done`/`intervene`), and each theme declares a level per name: `full` / `subtle` / `instant`, with `prefers-reduced-motion` forcing `instant` (`DEBUG-UI-THEMES.md:55-57`). **Current implementation: all five motion names in all six themes are registered as `subtle`** (e.g. `themes.js:60`); the motion playback layer has not landed, and contract test #5 (motion-degradation assertions) is pending (`DEBUG-UI-THEMES.md:141`, Executive Summary §8). The scattered `@keyframes` in theme css files (moe breathing/entry, terminal scanlines, etc.) do not go through the named-motion channel.
 
 ## 5. Effects & Verification (Results)
 
-**Contract test** `tests/themes-contract.test.mjs` (runs directly under node, no browser) iterates the registry and asserts five property groups per theme:
+**Contract test** `tests/themes-contract.test.mjs` (runs directly under node, no browser) iterates the registry and asserts six property groups per theme, plus two app-wide checks:
 
-1. **Token completeness**: all 43 contract variables defined and non-empty in the css source (`themes-contract.test.mjs:94-100`);
-2. **Contrast**: programmatic WCAG relative-luminance computation — 30 critical pairs (body text / status / signal & permission colors × bases) ≥ 4.5:1, 4 dim-tier pairs ≥ 3:1 (`themes-contract.test.mjs:77-114`); a theme author who changes a color gets instant red;
-3. **Dual encoding**: status elements carry both a color hook (`data-status`/`data-on`) and a text/icon channel (status words / ● / ▶) — no dependence on the color-vision channel alone (`themes-contract.test.mjs:116-135`);
-4. **Copy-key completeness**: copy tables cover all 69 keys (`themes-contract.test.mjs:137-139`);
-5. **Zero component branches**: static scan of `js/components/` forbidding theme-id literals, `data-theme` attributes, and theme-id comparisons (`themes-contract.test.mjs:142-162`; `terminal` is exempt from the literal rule because the word collides with an icon name — only its comparison forms are banned).
+1. **Token completeness**: all 50 contract variables defined and non-empty in the css source (`themes-contract.test.mjs:94-100`);
+2. **Contrast**: programmatic WCAG relative-luminance computation — 30 critical pairs (body text / status / signal & permission colors × bases) ≥ 4.5:1, 4 dim-tier pairs ≥ 3:1 (`themes-contract.test.mjs:78-122`), plus the dark-panel pair (`--log-fg` × `--log-bg`, group 2b) ≥ 4.5:1; a theme author who changes a color gets instant red;
+3. **Dual encoding**: status elements carry both a color hook (`data-status`/`data-on`) and a text/icon channel (status words / ● / ▶) — no dependence on the color-vision channel alone (`themes-contract.test.mjs:125-144`);
+4. **Copy-key completeness**: copy tables cover all 436 keys (`themes-contract.test.mjs:146-148`);
+5. **Focus-ring contrast**: `--focus-ring` × each base ≥ 3:1 (WCAG 1.4.11 non-text contrast, group 7; `themes-contract.test.mjs:150-157`);
+6. **Zero component branches** (app-wide): static scan of `js/components/` forbidding theme-id literals, `data-theme` attributes, and theme-id comparisons (`themes-contract.test.mjs:161-181`; `terminal` is exempt from the literal rule because the word collides with an icon name — only its comparison forms are banned). A second app-wide group (8) pins the focus-ring width/offset policy constants (`themes-contract.test.mjs:183-195`).
 
 **Smoke test** `tests/smoke-theme.test.mjs` covers runtime behavior in 12 scenario groups: registration negatives (a ghost theme whose css is not loaded is refused and does not pollute the registry), startup precedence (URL > localStorage > classic, with URL hits persisted), unknown-theme fallback to classic, picker rendering and wiring, four themes' copy voices (terminal `[halted](paused)`, blueprint `APPROVED(done)`, ink `驻(paused)`, pixel `CLEAR!`), MascotLayer appearing/disappearing with the theme, debug-console integration (Mochi appears in the control bar under moe while the raw pause point text stays side by side), scope fallback (verified with a synthetic scoped theme), and css-source assertions (moe emoji mappings, the six themes' background motifs).
 
-Overall baseline: 24 frontend test files green (Executive Summary §8), of which the theme system accounts for 2. The `classic` extraction achieved zero behavior change (values copied verbatim from `tokens.css`); swatch colors come straight from the real css (moe = `#fff5f7`/`#5c3d47`/`#c2245c`, `smoke-theme.test.mjs:150`).
+Overall baseline: 32 frontend test files green (Executive Summary §8), of which the theme system accounts for 2. The `classic` extraction achieved zero behavior change (values copied verbatim from `tokens.css`); swatch colors come straight from the real css (moe = `#fff5f7`/`#5c3d47`/`#c2245c`, `smoke-theme.test.mjs:150`).
 
 **Ripple effects**: the moe proposal demoted itself from "a second page" to one member of the theme catalog (`DEBUG-UI-MOE.md` header, v0.2); the copy contract outgrew the debug console — Skill Lab and the escalation inbox also read from the copy tables (`lab.*`, `escalation.*` keys), making the theme system the single outlet for UI copy app-wide; and once `sprite8` proved the mascot abstraction replaceable, the criterion "a theme is a temperament package; the mascot is just an optional asset" (`DEBUG-UI-THEMES.md:61`) held. Phase T4 had planned page-by-page vetting before opening `scope`; in practice T1.1 went app-wide immediately — justified precisely by zero-branch components plus full-contract validation making "a missing piece" structurally impossible (`DEBUG-UI-THEMES.md:146-149`).
 
@@ -139,4 +140,4 @@ Overall baseline: 24 frontend test files green (Executive Summary §8), of which
 - Tests: `agent_os/src/agent_os/host/web/static/tests/themes-contract.test.mjs` (five contract assertion groups), `.../tests/smoke-theme.test.mjs` (12 runtime scenario groups)
 - Related chapter: Chapter 00 §6.3 (positioning in the executive summary)
 
-> Source discrepancies (code wins): ① the initial palette in `DEBUG-UI-MOE.md` §3 (cream base `#fdf6f0`, `--ok: #5ec9a7`, etc.) was replaced by the T1.2 sakura rework — `moe.css:13` notes "the original beige cream `#fdf6f0` family is retired"; actual values are `--bg-0: #fff5f7`, `--ok: #1b7355` (luminance lowered to keep 4.5:1). ② The prose list in `DEBUG-UI-THEMES.md` §2.1 omits `--line-strong`/`--text-2xs`/`--s1-5`/`--r-conn`, while `CONTRACT_TOKENS` (`themes.js:25-40`) includes them — the code list is authoritative: 43 variables.
+> Source discrepancies (code wins): ① the initial palette in `DEBUG-UI-MOE.md` §3 (cream base `#fdf6f0`, `--ok: #5ec9a7`, etc.) was replaced by the T1.2 sakura rework — `moe.css:13` notes "the original beige cream `#fdf6f0` family is retired"; actual values are `--bg-0: #fff5f7`, `--ok: #1b7355` (luminance lowered to keep 4.5:1). ② The prose list in `DEBUG-UI-THEMES.md` §2.1 omits `--line-strong`/`--text-2xs`/`--s1-5`/`--r-conn` (and predates the widget/annotation/focus additions), while `CONTRACT_TOKENS` (`themes.js:26-47`) includes them — the code list is authoritative: 50 variables.

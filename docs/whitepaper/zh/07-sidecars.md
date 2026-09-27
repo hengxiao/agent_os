@@ -1,6 +1,6 @@
 # Sidecars:信号驱动的监督
 
-> 章次:07 · 状态:部分实现(M4 主体已落地:SidecarSupervisor、RunControl、五个内置副车可用;HumanApproval 为骨架,entry point 注册、LLM 驱动副车的配套设施未实现) · 依据:`agent_os/src/agent_os/sidecars/`、`agent_os/src/agent_os/api/v1/{sidecars,signals,control}.py`、`agent_os/src/agent_os/kernel/{signals,control,runner}.py`、`docs/DESIGN.md` §5
+> 章次:07 · 状态:部分实现(M4 主体已落地:SidecarSupervisor、RunControl、五个内置副车可用;HumanApproval 已下沉为内核 tool-confirm 闸门的策略载体——WS2,`on_signal` 弃权;entry point 注册、LLM 驱动副车的配套设施未实现) · 依据:`agent_os/src/agent_os/sidecars/`、`agent_os/src/agent_os/api/v1/{sidecars,signals,control}.py`、`agent_os/src/agent_os/kernel/{signals,control,runner}.py`、`docs/DESIGN.md` §5
 
 ## 1. 概述
 
@@ -30,7 +30,7 @@
 
 ### 4.1 信号目录与总线
 
-信号命名 `<阶段>:<事件>`;`pre:` 前缀表示同步可否决,`post:` 表示异步观察(§5.1)。目录冻结在契约层(`api/v1/signals.py:49-96`,31 个名字进 `SIGNAL_NAMES` 供契约测试断言),结构为 `Signal{name, run_id, frame_id, payload, ts}`(`api/v1/signals.py:134-142`)。订阅模式支持三种:`"*"` 全量、精确名、`"prefix.*"` 后缀通配(`kernel/signals.py:19-25`)。总线 `emit` 按订阅序 await 全部匹配 handler 并收集返回值;handler 异常吞掉记日志——订阅者故障不得拖垮 run(`kernel/signals.py:41-56`)。
+信号命名 `<阶段>:<事件>`;`pre:` 前缀表示同步可否决,`post:` 表示异步观察(§5.1)。目录冻结在契约层(`api/v1/signals.py:53-151`,35 个名字进 `SIGNAL_NAMES` 供契约测试断言;D2 新增 `data.access.denied/granted`,WS-C 新增 `pre/post:skill.register`),结构为 `Signal{name, run_id, frame_id, payload, ts}`(`api/v1/signals.py:154-162`)。订阅模式支持三种:`"*"` 全量、精确名、`"prefix.*"` 后缀通配(`kernel/signals.py:19-25`)。总线 `emit` 按订阅序 await 全部匹配 handler 并收集返回值;handler 异常吞掉记日志——订阅者故障不得拖垮 run(`kernel/signals.py:41-56`)。
 
 ### 4.2 数据流与裁决链
 
@@ -83,7 +83,7 @@ runner 回收 verdicts → _arbitrate_pre:首个非 Allow 生效(runner.py:316-3
 | StallDetector(builtins.py:132-171) | `post:step` | ASYNC/100 | 相邻 step 间隔超 `max_idle_seconds` → 先纠偏注入,再犯 → stop;`clock` 可注入(测试用假钟) |
 | ToolGuard(builtins.py:174-199) | `pre:tool.call` | SYNC/10 | 规则表 `(工具名, 参数正则, 理由)`,命中 → Veto;能力上限自声明:正则对 shell 组合爆炸无效,防护主体是沙箱+权限 |
 | CodeScanner(builtins.py:202-234) | `pre:logic.exec` | SYNC/10 | 默认危险集(import os/os.system/ctypes/subprocess/socket)扫描 `payload["source"]`,命中 → Veto;无 source 的发射(如 code 技能帧)无可扫描对象,放行 |
-| HumanApproval(builtins.py:237-253) | `pre:tool.call`(EXEC 级) | SYNC/20 | **骨架**:`on_signal` 抛 `NotImplementedError("M4")`,见 §6 |
+| HumanApproval(builtins.py:237-257) | `pre:tool.call`(EXEC 级) | SYNC/20 | **策略载体**(WS2):`on_signal` 返回 None 弃权(仲裁视为 Allow);EXEC 档人审已下沉为内核 tool-confirm 闸门(`kernel/runner.py:_dispatch_call`,`kind="tool-confirm"`),本类在场即生效,`[sidecars] human_approval` 配置装配,见 §6 |
 
 **设计取舍**:
 
@@ -94,24 +94,24 @@ runner 回收 verdicts → _arbitrate_pre:首个非 Allow 生效(runner.py:316-3
 
 ## 5. 效果与验证(效果)
 
-**测试证据**(直接锚点 17 例,另有相邻套件覆盖交互面):
+**测试证据**(直接锚点 18 例,另有相邻套件覆盖交互面):
 
-- `tests/sidecars/test_builtin_sidecars.py`(8 例):预算超限强停(`test_budget_guard_stops_run`,匹配 RunAborted 含 "BudgetGuard");循环先纠偏后强停,且纠偏消息确实进入后续 LLM 请求(`test_loop_detector_injection_reaches_context` 断言 mock 录制里出现"停止重试");ToolGuard veto 理由回写(`kind=vetoed`、`retryable is False`、理由原文在工具结果里)且被 veto 的调用**不产生** `post:tool.call`(`test_tool_guard_veto_skips_dispatch`);reviewer 打回后第二次弹栈放行、打回理由进入第二次请求;SYNC 副车抛异常 → fail-closed → RunAborted 含 "fail-closed";StallDetector 假钟验证。
+- `tests/sidecars/test_builtin_sidecars.py`(9 例):预算超限强停(`test_budget_guard_stops_run`,匹配 RunAborted 含 "BudgetGuard");循环先纠偏后强停,且纠偏消息确实进入后续 LLM 请求(`test_loop_detector_injection_reaches_context` 断言 mock 录制里出现"停止重试");ToolGuard veto 理由回写(`kind=vetoed`、`retryable is False`、理由原文在工具结果里)且被 veto 的调用**不产生** `post:tool.call`(`test_tool_guard_veto_skips_dispatch`);reviewer 打回后第二次弹栈放行、打回理由进入第二次请求;SYNC 副车抛异常 → fail-closed → RunAborted 含 "fail-closed";HumanApproval 弃权(`test_human_approval_abstains`,WS2);StallDetector 假钟验证。
 - `tests/sidecars/test_code_scanner.py`(2 例):危险代码被 veto 且无 `post:logic.exec`(未执行);干净代码放行(对照组)。
 - `tests/kernel/test_run_control.py`(7 例):pause 理由带 "paused: " 前缀;注入消息包装为 USER/INJECTED 并出现在后续请求;帧不存在时注入/强压被丢弃不崩 run;`get_frame_tree` 嵌套形状;`get_usage` 快照。
 - 相邻覆盖:`tests/logic/test_orchestration.py` 断言编排脚本的 syscall 照发 `pre:tool.call`、ToolGuard veto 理由回到脚本(:211),且编排期间的 RunAborted 不被降级为脚本可吞的错误(:424 回归测试);`tests/test_contracts.py` 断言冻结信号名(含 `pre:frame.pop`)。
 
-**真实配置**:`instance/agent-os.toml:43-45` 与三个 examples 的 TOML 均启用 `budget_guard = { max_cost = 2.0 }`、`loop_detector = { threshold = 3, max_strikes = 2 }`;`runtime/config.py:193-224` 以白名单解析 `[sidecars]` 段(仅 budget_guard / loop_detector / tool_guard_rules,未知键报 ConfigError)。
+**真实配置**:`instance/agent-os.toml:43-45` 与三个 examples 的 TOML 均启用 `budget_guard = { max_cost = 2.0 }`、`loop_detector = { threshold = 3, max_strikes = 2 }`;`runtime/config.py:361-422` 以白名单解析 `[sidecars]` 段(budget_guard / loop_detector / tool_guard_rules / human_approval,未知键报 ConfigError;human_approval 为 WS2 新增,`true | {timeout, on_timeout}`)。
 
 **涟漪效应**:
 
 - **调试器刻意绕过副车体系**(docs/DEBUGGER.md §1):SYNC 通道 2 秒超时 fail-closed 与交互式暂停水火不容,DebugController 直接订阅总线、订阅序在 Telemetry 之后——暂停点本身先落 trace 再暂停。这反过来验证了"信号总线是公共通道、副车只是其中一类订阅者"的架构判断。
-- **supervisor 子系统接管"人答"通道**(docs/SUPERVISOR.md §1.2):分工被明确为"副车是规则化监督(确定性,fail-closed);supervisor 是决策路由",HumanApproval 未来下沉为 supervisor 的宿主策略。
+- **supervisor 子系统接管"人答"通道**(docs/SUPERVISOR.md §1.2):分工被明确为"副车是规则化监督(确定性,fail-closed);supervisor 是决策路由",HumanApproval 已下沉为 supervisor 的宿主策略(WS2:内核 tool-confirm 闸门,`kind="tool-confirm"`)。
 - **编排沙箱复用同一闸门**(docs/CODE-ORCHESTRATION.md §2.3):沙箱内 syscall 回到内核 `_dispatch_call`,白名单、ToolGuard veto、信号、记账全部沿用——监督面没有为快路径开后门。
 
 ## 6. 局限性与边界(局限性)
 
-1. **HumanApproval 只是骨架**:`on_signal` 抛 `NotImplementedError`(builtins.py:253),EXEC 级工具当前没有人审闸门;人工裁决的实际承载是 supervisor 的 `ask_supervisor` 与升权确认(docs/ESCALATION.md),两者都不经过副车契约。
+1. **EXEC 级人审不走副车契约(WS2 边界)**:HumanApproval 已下沉为内核 tool-confirm 闸门(`kernel/runner.py:_dispatch_call`,`supervisor.ask` 带 `kind="tool-confirm"`;approve-run 仅 reversible 档提供,deny → PERMISSION_DENIED,无 supervisor → fail-closed),`on_signal` 返回 None 弃权,类仅作策略载体;`[sidecars] human_approval = true | {timeout, on_timeout}` 配置生效(timeout/on_timeout 装配期映射 SupervisorManager 策略)。行为变化:无 supervisor 的裸 run 调 EXEC 闸门工具(如 `system.file.delete`)现在 fail-closed 拒绝。
 2. **规则类副车的能力上限是自声明的**:ToolGuard/CodeScanner 的正则对 shell 组合爆炸、混淆代码无效,docstring 明写"防护主体是沙箱(§9.2)+ 权限(§8.2)";语义解析器仅作预留。把它们当成安全边界是误用。
 3. **仲裁覆盖不全**:`pre:skill.invoke`(runner.py:857)、`pre:llm.request`(runner.py:411)、`pre:compress`(context/manager.py:310)与 code 技能帧的 `pre:logic.exec`(runner.py:523)当前**只发射不仲裁**——DESIGN §5.1 的"pre 可否决"在这些点是契约先行,实现未跟(以代码为准)。
 4. **ASYNC 强停有延迟且状态不进检查点**:`ctl.stop` 在下一个 safe point 才生效,在跑的一步/一个工具调用会完成;BudgetGuard/LoopDetector 的累计器是进程内存,检查点只序列化 run 与帧(`kernel/checkpoint.py:12-16`)——跨进程恢复后侧车累计清零(内核自身的 max_cost 兜底因 `run.state.usage` 入档而存活)。

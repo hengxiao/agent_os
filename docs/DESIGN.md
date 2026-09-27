@@ -404,7 +404,7 @@ class RunControl(Protocol):   # 内核暴露给 sidecar 的特权接口(仅此�
 
 - **SYNC sidecar** 在关键路径上执行,有超时(默认 2s);自身抛异常时**默认 fail-closed**(视为 Veto),可配置 fail-open;
 - **ASYNC sidecar** 在监督任务里跑,异常只记日志,**永远不允许拖垮 run**;
-- sidecar 由 supervisor 统一托管:注册、心跳、重启(仅 ASYNC)、关停;
+- sidecar 由 supervisor 统一托管:注册、心跳、重启(仅 ASYNC)、关停(v1 已实现注册与关停;心跳/重启未实现——`sidecars/supervisor.py`);
 - 引入 LLM 驱动的 sidecar 时:审批模型应与执行模型**不同家族、能力相近**;连续否决触发 rejection circuit breaker 回退人工。
 
 ### 5.4 内置 sidecar
@@ -416,7 +416,7 @@ class RunControl(Protocol):   # 内核暴露给 sidecar 的特权接口(仅此�
 | StallDetector | `post:step` | 帧级静默超时(长期无进展)→ inject 纠偏 → stop |
 | ToolGuard | `pre:tool.call` | 规则表(工具名/参数模式)→ `Veto`。**能力上限声明:正则/关键字对 shell 组合爆炸无效,`shell_exec` 的防护主体是沙箱(§9.2)+ 权限(§8.2);语义解析器作为后续替换实现预留** |
 | CodeScanner | `pre:logic.exec` | 动态代码静态模式扫描(危险 import、可疑调用)→ `Veto` |
-| HumanApproval | `pre:tool.call`(EXEC 级) | 挂起等待人工批准,超时走可配默认(如"超时拒绝");高风险可叠加模型审批 |
+| HumanApproval | `pre:tool.call`(EXEC 级) | 挂起等待人工批准,超时走可配默认(如"超时拒绝");高风险可叠加模型审批(已下沉为内核 tool-confirm 闸门:`kernel/runner.py:_dispatch_call`,见 §8.2;`sidecars/builtins.py` 的 `on_signal` 改为弃权,类保留为策略载体,`[sidecars] human_approval = true \| {timeout, on_timeout}` 配置生效) |
 
 TraceRecorder 不在此列——它已升格为 Telemetry 子系统的 JSONL exporter(见第 10 章)。自定义 sidecar 经 entry point `agent_os.sidecars` 注册。
 
@@ -454,7 +454,7 @@ class SkillRegistry(Protocol):
 
 - **`register()` 信任管线**:运行期生成的技能(Agent 自写)**默认不信任**——code 部分强制 SANDBOX 执行、经 CodeScanner 扫描、注册动作本身发信号并可被 HumanApproval 拦截、manifest 权限从严;
 - **入库前验证门**:publish 前经重放(可用 MockProvider 脚本化)+ evaluator 确认任务真完成——"程序性记忆需要验证门,否则自我改进循环必然腐坏";
-- v1 最小实现:Agent 经 `fs_write` 写技能包文件 + `reload()`,契约形状先行。
+- v1 最小实现:**已实现为 `LocalFileSkillRegistry.register()`**(`skills/local_file.py:314-484`,2026-09-27):命名正则 + G5 注入卫生纯函数闸门 → 归一化(code 技能 logic 强制 sandbox)→ 可选 validate_draft G1-G3 → `pre:skill.register` 可 Veto → 原子写 + provenance;工具面 `system.skill.register`(WRITE,confirm=True)经内核 tool-confirm 闸门兑现"注册动作可被 HumanApproval 拦截"。**偏差说明**:不是裸 `fs_write` + `reload()`,而是带了验证门与信号;完整重放 + evaluator 验证门不在方法内(降级为可选 smoke_runner 注入哲学,留 M6 后段)。
 
 ### 6.3 基础实现:`LocalFileSkillRegistry`(M2)
 
@@ -590,11 +590,11 @@ parse args → JSON Schema 校验(不合法 → 错误观察,不执行;fail fast
 - 工具声明权限等级 `READ < WRITE < NET < EXEC`;
 - Skill manifest 声明工具白名单(同时继承了工具的等级);
 - RunConfig 设全局上限。三层取交集,任一拒绝即拒绝。HumanApproval sidecar 可对高等级工具加人工闸门;
-- 不可幂等工具(EXEC 级,发邮件/转账类)可声明 `confirm: true` 走两阶段:dry run 返回 confirmation token,凭 token 执行,失败回上层重新 pre-check 而非盲目重试。
+- 不可幂等工具(EXEC 级,发邮件/转账类)可声明 `confirm: true` 走两阶段:dry run 返回 confirmation token,凭 token 执行,失败回上层重新 pre-check 而非盲目重试。**已实现为内核 tool-confirm 闸门**(`kernel/runner.py:_dispatch_call`,pre:tool.call 仲裁后、dispatch 前):`spec.confirm=True` 或(HumanApproval 策略在场且 EXEC 档)→ `supervisor.ask`(`kind="tool-confirm"`);options 按 `derive_side_effect`——reversible 三选(approve-once/approve-run/deny),irreversible 两选(无批量授权);approve-run 复用 `Run.grants`;deny → PERMISSION_DENIED 错误观察;无 supervisor → fail-closed 拒绝(裸 run 调 `system.file.delete` 等闸门工具现在直接拒);pending 随 checkpoint,resume 重问(`kernel/checkpoint.py` 第三个 settle 钩子)。**偏差说明**:内核批准即 confirmation token,未做字面"dry run 返回 token 注入 args 二次调用"(契约未定义 token 格式)。
 
 ### 8.3 来源与扩展
 
-内置:`fs_read`(行区间 + 行号前缀)、`fs_write`、`fs_edit`(old_string→new_string 唯一匹配,否则报错)、`shell_exec`(EXEC,持久会话:run 作用域句柄,跨调用保持 cwd/env,哨兵判完成)、`http_fetch`(NET)、`blob_get`(offset/limit 分页)、`ask_user`/`notify_user`(User Communication 类,宿主注入回调)、`python_exec`(委托 Logic Kernel 沙箱,见 9.4);entry point `agent_os.tools` 注册第三方;MCP 适配器作为独立包后续接入——供应链清单:描述按不可信输入审查、版本锁定、同名工具 namespace 隔离、最小权限凭证。
+内置:`fs_read`(行区间 + 行号前缀)、`fs_write`、`fs_edit`(old_string→new_string 唯一匹配,否则报错)、`shell_exec`(EXEC,持久会话:run 作用域句柄,跨调用保持 cwd/env,哨兵判完成)、`http_fetch`(NET)、`blob_get`(offset/limit 分页)、`ask_user`/`notify_user`(User Communication 类,宿主注入回调;已实现——`tools/builtins.py`,canonical 名 `system.user.ask`/`system.user.notify`,WRITE 档,经 `bind_user_channel` 装配,未 bind → NOT_FOUND;CLI 接线留 TODO)、`python_exec`(委托 Logic Kernel 沙箱,见 9.4);entry point `agent_os.tools` 注册第三方;MCP 适配器作为独立包后续接入——供应链清单:描述按不可信输入审查、版本锁定、同名工具 namespace 隔离、最小权限凭证。
 
 ### 8.4 基础实现:`LocalPythonToolRegistry`(M1)
 
@@ -613,8 +613,8 @@ async def fetch_url(url: str, max_bytes: int = 100_000) -> str:
 ```
 
 - sync 函数包 `asyncio.to_thread`,async 函数直接 await;
-- 8.1 分发流水线**全量实现**(schema 校验、三层权限、凭证、信号、超时、归一化)——契约本体,不是可简化项;
-- blob store 基础版:运行目录下的文件存储,ref 采用 `blob://<run_id>/<sha>` URI 形态(为跨 run 记忆层留命名空间)。
+- 8.1 分发流水线**全量实现**(schema 校验、三层权限、信号、超时、归一化)——契约本体,不是可简化项;凭证注入已实现:`ToolSpec.credentials` 声明键(api/v1/tools.py:126,additive),值来自宿主 `[credentials]` 配置段(`{ env = "VAR_NAME" }` 间接引用,不落盘明文;`runtime/config.py` `_credentials`/`CredentialScope`),`LocalPythonToolRegistry.bind_credentials(resolver)` 装配,dispatch 按声明键**每次现解析**(env 缺席的键不出现;未声明/未 bind → 空 dict 零破坏,见 `tools/local_registry.py:300-308`),凭证不进 SkillFrame/checkpoint/trace;
+- blob store 基础版:ref 采用 `blob://<run_id>/<sha>` URI 形态(为跨 run 记忆层留命名空间);内存实现 `InMemoryBlobStore` 与文件实现 `FileBlobStore` 均已交付(`tools/blob.py`;后者 `<root>/<run_id>/<sha256>` 内容寻址落盘、白名单防逃逸,`[blob] dir` 配置段接线,缺段 = 内存版)。
 
 ---
 
@@ -660,7 +660,7 @@ ExecResult = {
 | 模式 | 实现 | 用于 | 隔离强度 |
 |---|---|---|---|
 | `InProcessLogicKernel` | 进程内 await 调用 + 协程超时 + 记账 | 可信 code 技能(默认)、调试 | 无,仅协程级超时 |
-| `PythonSandboxLogicKernel` | 子进程 + `setrlimit`(CPU/内存/文件大小) + 临时只读工作目录 + 默认断网(目的级白名单可配) | LLM 动态代码(强制)、声明 `sandbox: true` 的 code 技能 | 进程级 |
+| `PythonSandboxLogicKernel` | 子进程 + `setrlimit`(CPU/内存/文件大小/fd) + env 白名单 + 临时空工作目录;网络与文件系统未隔离(系统级断网/只读 fs 由下述 Docker 后端落地) | LLM 动态代码(强制)、声明 `sandbox: true` 的 code 技能 | 进程级 |
 
 选择规则:
 
@@ -696,7 +696,7 @@ SANDBOX 回调通道(设计方向,M6 目标):沙箱内经 **JSON-RPC 代理**获
 - `pre:logic.exec`(SYNC 可否决):CodeScanner 静态模式扫描(危险 import、`ctypes`、可疑网络调用),命中 → `Veto`;
 - `post:logic.exec`:cpu/mem 用量入帧 usage,Telemetry 落盘(含源码哈希,供审计);
 - 超限(时间/内存)→ `LIMIT_EXCEEDED`,结构化错误上抛,父帧 LLM 可补救;
-- sidecar `Stop` 对运行中的沙箱 = 杀进程组;对 TRUSTED = 取消协程。
+- sidecar `Stop` 对运行中的沙箱 = 杀子进程(v1 不杀进程组,脚本自行 fork 的子孙进程可能残留——`logic/python_sandbox.py`);对 TRUSTED = 取消协程。
 
 ### 9.6 扩展点
 
@@ -739,7 +739,7 @@ class TelemetrySink(Protocol):
 - **PII 脱敏 hook**:落盘前可插拔清洗(默认关闭;regex 快筛 + 本地小模型深扫的混合方案),供合规敏感宿主启用;
 - **MetricsCollector**:在线汇聚过程指标(action legality rate、path efficiency、回溯频率),信号流信息已足;
 - **纪律**:golden-file 测试集标注"评估专用"(训练/评估数据严格隔离);
-- **baseline**(M5):`JsonlTelemetrySink`(`traces/<run_id>.jsonl`,版本头 + 队列批量落盘)。
+- **baseline**(M5):`JsonlTelemetrySink`(`traces/<run_id>.jsonl`,版本头 + 行缓冲逐行落盘,flush 时 fsync;`snapshot()` 已实现为 WAL 视角快照——`Checkpoint(run_id, seq=已落盘信号数, state={})`,帧树等可重建状态由 `kernel/checkpoint.py` 承担,§10.2"轨迹即全部状态");`JsonlExporter`(`telemetry/jsonl_exporter.py`,全 run 信号汇聚单文件,行缓冲 + close 时 fsync,close 幂等)同批落地。
 
 ---
 
@@ -774,7 +774,7 @@ MemoryEntry = {
 - **存储区域语义**(VFS 四区):私有 scratchpad(帧工作目录,随 run 销毁)/ 共享 workspace(任务级持久,需并发控制)/ 外部挂载(受外部权限约束,读为主)/ 内置只读(技能包);
 - **常驻层**:高价值结构化事实经 `pinned` 注入帧上下文("overview 常驻 + details 按需");
 - **写路径范式**:离线 extract–compare–decide(ADD/UPDATE/DELETE/NOOP),或蒸馏 sidecar(订阅 `run.finished`,触发条件满足时廉价模型蒸馏经验写入);
-- **baseline**(M6):`LocalFileMemoryService`——Markdown 文件 + frontmatter(tags/created/freshness)+ 检索工具(grep/BM25 即可),即 `MEMORY.md` 路线:可人读人改、保序、Git 可版本化。
+- **baseline**(M6,**已实现** 2026-09-27):`LocalFileMemoryService`(`memory/local_file.py`)——每条目一 Markdown 文件 + 手写 frontmatter(tags/source/created_at/freshness/trust/provenance)+ BM25 检索(`memory/rank.py` 唯一实现,principal 过滤与 freshness 失效在打分前),即 `MEMORY.md` 路线:可人读人改、保序、Git 可版本化;工具面 `system.memory.search`/`system.memory.write` 常驻,`[memory] dir` 配置段接线。
 
 ---
 
@@ -915,9 +915,23 @@ agent_os/                  # 工作区(DESIGN.md / reports/ / ai-agent-book/)
 | **M1 工具与模型**(1 周) | LocalPythonToolRegistry + 4 个内置工具、OpenAICompatibleProvider、Manager 重试/限流/记账(usage 细分) | 单技能 agent 用工具完成真实任务;429 注入下自动恢复 |
 | **M2 技能与调用栈**(1 周) | LocalFileSkillRegistry(单 YAML 加载)、压栈/挂起/返回、深度与预算限制、InProcessLogicKernel | 技能互调嵌套运行;code 技能经 `LogicContext.invoke` 编排 LLM 技能;循环依赖加载期报错;深度超限正确上抛 |
 | **M3 Context**(1 周) | ContextManager(组装 + 状态注入 + 前缀稳定性)、token 估算器、RollingWindowCompressor、blob store、不变量测试 | 10 万 token 对话压缩后配对不变量零破坏;golden-file 断言相邻步前缀 diff 为空 |
-| **M4 sidecar 与信号**(1 周) | supervisor、5 个基础 sidecar(budget/loop/stall/guard)、RunControl、`pre:frame.pop` | 预算超限强停;循环检测先纠偏后强停;veto 生效且理由回写;reviewer 打回弹栈生效 |
-| **M5 可靠性**(持续) | **中断配对修复 + 恢复熔断(P0 洞)**、Telemetry(WAL + 版本头 + 检查点恢复)、Blackboard + spawn 后台帧、stream idle watchdog、`fs_edit`、PythonSandboxLogicKernel + python_exec + CodeScanner、OTLP 导出 | 断电恢复演示;中断注入下配对不变量零破坏;沙箱内资源滥用被限制并正确报错;spawn 快慢模式演示 |
+| **M4 sidecar 与信号**(1 周) | supervisor、5 个基础 sidecar(budget/loop/stall/guard/scanner)、RunControl、`pre:frame.pop` | 预算超限强停;循环检测先纠偏后强停;veto 生效且理由回写;reviewer 打回弹栈生效 |
+| **M5 可靠性**(持续) | **中断配对修复 + 恢复熔断(P0 洞)**、Telemetry(WAL + 版本头 + 检查点恢复)、Blackboard + spawn 后台帧、stream idle watchdog、`fs_edit`、PythonSandboxLogicKernel + python_exec + CodeScanner | 断电恢复演示;中断注入下配对不变量零破坏;沙箱内资源滥用被限制并正确报错;spawn 快慢模式演示 |
 | **M6 演化**(可选,持续) | Memory 契约 + LocalFile baseline、register() 写入路径 + 验证门、沙箱回调通道、spill/summarize/narrate 高级策略、蒸馏 sidecar | 经验跨 run 复用演示;Agent 自写技能经验证门注册并复用 |
+
+> **实现状态核对**(2026-08,对照 `agent_os/src/agent_os/` 代码;2026-08-31、2026-09-27 复核):**M0–M5 已完成;M6 的 Memory baseline 与 register() 写入路径已落地(2026-09-27);M1/M3/M5 遗留占位 stub 已于 2026-09-27 清零(见下「已关闭」)**。各里程碑主体均已交付;以下为仍开口项(2026-09-27 逐条核对,附代码证据):
+> - M6(余项):沙箱回调通道高级形态(沙箱内 `spawn`/`wait`/`board`/`blob` 未过桥、并发 syscall 未支持)、spill/summarize/narrate 高级压缩策略与 hierarchical 责任链(`context/` 仍只有 RollingWindow truncate 一档)、蒸馏 sidecar;register() 留尾:semver ^/~ 依赖求解、DirectorySkillSource 写路径、文件监听热重载、完整重放 + evaluator 验证门;Memory 留尾:context 注入槽(§11.2 常驻层/通道隔离的组装侧)、蒸馏 sidecar 写路径。
+> - 跨里程碑开口:pause 真语义(v1 = 带 `"paused: "` 前缀的 stop,`kernel/control.py:41-44`);外部事件唤醒入口(§17 开放问题 4);恢复熔断通用化(目前仅 outputs 校验有连败熔断,`kernel/runner.py:124`);spawn 的"不说 done"校验 hook(§3.4);`ModelRouter` 动态路由(仅契约,`api/v1/providers.py:141`);logprobs / 多模态 token 精确口径(契约预留,`ProviderCaps.supports_logprobs`);MCP 适配器(entry point 预留);OTLP 导出 / PII 脱敏 hook(`telemetry/` 仅 JSONL);E3/D3 余项(E3 审计面板与 DESIGN §8 引用更新;D3 的派生链最弱一环、EscalationRequest 数据面展示与完整多用户会话映射——D3-lite `[web.tokens]` 已落地,docs/DATA-AUTHZ.md §8)。
+>
+> 已关闭(2026-08-31,P0 四项,1056 passed/1098 collected):① **凭证注入**——`ToolSpec.credentials` + `[credentials]` 配置段(env 间接引用)+ `bind_credentials` 装配钩子,dispatch 按声明键每次现解析(§8.4);② **confirm 两阶段**——内核 tool-confirm 闸门(`kernel/runner.py:_dispatch_call`,§8.2;含偏差说明:批准即 token,不做字面 dry run 二次调用);③ **HumanApproval**(原 M4 项)——下沉为闸门策略载体(`sidecars/builtins.py` `on_signal` 弃权,`[sidecars] human_approval` 配置生效);④ **D2 数据层 authZ**——`[data]` 配置段 + per-subject 域白名单判据 + `data.access.denied/granted` 审计信号(SIGNAL_NAMES 33 个)+ D3-lite `[web.tokens]` 多用户映射(docs/DATA-AUTHZ.md §8)。**行为变化**:无 supervisor 的裸 run 调 `confirm=True`/EXEC 闸门工具(如 `system.file.delete`)现在 fail-closed 拒绝。
+>
+> 已关闭(2026-09-27,M6 两项,1250 passed/1297 collected):① **Memory baseline**——`LocalFileMemoryService` 三方法全实现(`memory/local_file.py`:每条目一 Markdown + frontmatter(tags/source/created_at/freshness/trust/provenance),evict 删文件记 `.evictions.log` 审计;search = principal 过滤 → freshness → BM25 → k 截断,损坏条目容错);BM25/RRF 唯一实现提取至 `memory/rank.py`(std `transform.py` 检索 handler 改为委托,无第二份口径);工具面 `system.memory.search`(READ)/`system.memory.write`(WRITE)常驻 `with_builtins`(`tools/local_registry.py:682-685`),MemoryService 经 `bind_memory` 装配(未装配调 NOT_FOUND),write 自动打 source/provenance;`[memory] dir` 配置段接线(`runtime/config.py`,缺段不 bind),KernelBuilder `.memory()` 收进 kernel;② **`register()` 写入路径**——`LocalFileSkillRegistry.register()`(`skills/local_file.py:314-484`):纯函数闸门(命名正则 + G5 注入卫生 fail)→ 归一化(version 缺省 bump;code 技能 handler 落 `generated_handlers/`,logic 无条件钳 sandbox)→ 可选 validate_draft G1-G3 → `pre:skill.register` 可 Veto → `package._atomic_write` 先证后换 → provenance `register.jsonl` → `post:skill.register`;信号目录新增 pre/post:skill.register(SIGNAL_NAMES 33→**35**,`api/v1/signals.py:79-80,115-151`);消费面 `system.skill.register` 工具(WRITE,confirm=True,`data_domains=["skills.*"]`)——注册动作经内核 tool-confirm 闸门可被 HumanApproval 拦截(兑现 §6.2),skills registry 经 `bind_skills` 注入(无 register 能力报 NOT_FOUND)。
+>
+> 已关闭(2026-09-27,§3.4/§5.2 三项,1273 passed/1320 collected):① **`parallel_invoke` fork/join(WS3,§3.4 第三原语)**——`Kernel.parallel_invoke`(`kernel/runner.py:1482-1763`,辅助 `_parallel_branch`/`_parallel_unsafe_tool`/`_parallel_cancelled`/`_parallel_cancel_all` :1765-1831):起批前串行预检逐分支复用 spawn 管线前置段(spawn_frame 拆为 `_spawn_whitelist_check`/`_spawn_gate`/`_spawn_register`,:1369-1434,行为逐字不变);all_settled 结构化 gather 永不上抛,depends_on 前置失败标 cancelled 不启动;first_success done-flag 只赢一次 + 级联取消败方 + `settle_timeout` 等 ack + 幂等结算(父侧唯一 join 点,usage 不可回滚);硬失败(RunAborted/BudgetExceeded/MaxDepthExceeded)不折叠炸 run;`max_concurrency` Semaphore;`concurrency_safe` 首个强制消费(code 分支白名单含未声明工具 → 串行降级占满额度,fail-safe 不拒绝;prompt 分支豁免);`LogicContext.parallel()` 委托(`kernel/logic_context.py:149-156` + `api/v1/logic.py:222` 协议面);checkpoint/resume 与 spawn 同形(在跑批不恢复,父帧重跑重发,调用方幂等);② **子树级联取消(WS1)**——`Kernel.cancel_subtree` + `_collect_subtree` DFS(`kernel/runner.py:1837-1893`)、`RunControl.cancel_frame`(`kernel/control.py:63-71` + `api/v1/control.py:31` 协议面);`SubtreeCancelled`(`kernel/errors.py:34`)独立于 RunAborted——分支/子树取消不杀 run,后台帧经 wait_frame 原样上抛交 code 技能,`_invoke_skill` 边界折叠为 interrupted 错误观察;`_spawned` 重构为 run 分桶 `dict[run_id, dict[frame_id, (parent_id, task)]]`(`runner.py:233`,顺带修复 `_release_run` 跨 run 误杀);帧级 stop 标志 `_frame_stop_flags`(`runner.py:226`,仅 prompt 帧在 pre:step safe point 消费,:436-440);边界:point-in-time 收集(取消后新 spawn 不在集内)、帧级标志不持久化;③ **子树记账读视图(WS2)**——`Kernel.subtree_usage`(`kernel/runner.py:1951-1988`,九字段全求和,total_ms 语义为子树资源占用累计非墙钟)、`RunControl.get_subtree_usage`(`kernel/control.py:97-103` + `api/v1/control.py:37`)、rca usage_panel 每帧行加 `subtree` 字段(`host/web/rca.py:122-167`,checkpoint 帧表 parent_id 链接 DFS);只读视图,不改 `account()` 写入路径;明确不做:组合子 budget 强制(留 budget 参数工具面)、SkillLimits.max_steps 执行点。**§3.4 三原语至此齐备**;spawn 的"不说 done"校验 hook(§3.4)仍未实现,保持开口。
+>
+> 已关闭(2026-09-27,stub 清零 + 真实流式,1336 passed/1385 collected):**清理批**——① 死 stub 删除:`kernel/dispatch.py`(Dispatcher)整文件移除、`kernel/run.py` 的 M0 stub `Run.check_control_flags` 移除(run.py 仅余 Run 句柄)、`tools/builtins.py` 裸 `python_exec` 死函数删除(可用面为 `python_exec_tool` 工厂,canonical 名 `system.python.exec`);② **`ask_user`/`notify_user` 实填**(M1 尾巴):`system.user.ask`/`system.user.notify`(WRITE 档)常驻 `with_builtins`(`tools/local_registry.py:716-717`),宿主回调经装配钩子 `LocalPythonToolRegistry.bind_user_channel(channel)` + `KernelBuilder.user_channel()` 注入(未 bind → NOT_FOUND,同 bind_memory 先例);与 `ask_supervisor` 分工:ask_supervisor = 内核通道(pending 落盘/resume 重问),ask_user = 工具面宿主回调(无 pending 语义);CLI 接线留 TODO(`host/cli/main.py` `_cli_supervisor` 旁);③ **`FileBlobStore`**(M3,`tools/blob.py`):`<root>/<run_id>/<sha256>` 内容寻址落盘,run_id/sha 白名单校验防目录逃逸;`[blob] dir` 配置段接线(`runtime/config.py:569-578`,缺段 = 内存版 InMemoryBlobStore);④ **`merge_limits`**(M5,`logic/limits.py:32`):两级逐字段取紧(None = 该级未设,取另一级;两级都设取更小),三级取紧即链式调用,返回新实例;⑤ **`JsonlTelemetrySink.snapshot()`**(M5,`telemetry/jsonl_exporter.py:112`):WAL 视角快照 `Checkpoint(run_id, seq=已落盘信号数, state={})`——帧树等可重建状态不在 sink 侧重复实现的决策写入 docstring(§10.2 轨迹即全部状态);`JsonlExporter.export/close` 同批实填(全 run 信号汇聚单文件,行缓冲 + close 时 fsync,close 幂等);⑥ resume 收尾缺口修复:`resume_from_checkpoint` 的 finally 补 `_release_run`(`kernel/checkpoint.py:387-394`,与 `run()` 对称,spawn/parallel 登记的后台帧不再滞留);⑦ 空 `[data]` 段装配期 warning(`runtime/config.py:484-493`,行为不变,fail-closed 语义下提示漏配可能)。**真实流式 `stream()`**——`OpenAICompatibleProvider.stream`(`providers/openai_compatible.py:104`;SSE 解析:content/reasoning delta 透传、tool_calls 分片缓冲末帧组装、usage chunk、`[DONE]` 终止、断流 → UNAVAILABLE retryable)与 `ClaudeProvider.stream`(`providers/claude.py:100`;Anthropic 事件序列,thinking/signature/input_json 按块累计)实填,KimiProvider 继承获得;MockProvider 配 `stream_scripts` 时 caps 报 `supports_streaming=True`,脚本支持尾随 ChatChunk(finish_reason/usage);Manager **提交点语义**(`providers/manager.py:195-258`):首 chunk 产出前停滞(`stream_idle_timeout` 秒无新 chunk → 杀流)与 retryable 错误可重试(watchdog 保留),产出后不重试直接上抛,重试耗尽走 fallback 链;`[retry] stream_idle_timeout` 配置接线(`runtime/config.py:590-603`);Runner 侧 `RunConfig.stream: bool = True` 缺省开(`api/v1/run.py:56`,`[run]` TOML 白名单同步),caps 不支持/Mock 无脚本自动回落 chat;`_llm_call`/`_stream_call`(`kernel/runner.py:548-632`)逐 chunk 发 `post:llm.chunk`(payload `{model, seq, text}` + `_sig` 基底,仅 ASYNC 观察),组装与 chat 同形态;**ttft_ms/total_ms 记账落地**(`account` 扩可选参数 `runner.py:2022-2061`,帧/run 两级累加);cost 折算提取为 `ProviderManager._cost_usage`(usage 级,流式终 chunk 与 chat 同价共用);流中 stop → RunAborted、帧级 → SubtreeCancelled,finally `aclose()` 关流,半截消息不入帧。边界保持列明:token 级 UI 未做(hub 环形缓冲 2000 挤占问题留后续)、sidecar 不逐 chunk 仲裁(`post:llm.chunk` 仅 ASYNC)、流中不重试/resume 整步重跑、web_platform 直达 chat 路径未流式化。
+>
+> 另:§14.3 各 entry point 组在 `pyproject.toml` 中仅为注释预留,运行期未发现加载接线。
 
 每个里程碑交付恰是对应子系统的 baseline;高级形态(版本求解、fallback 链、hierarchical 压缩、目录包技能源、OTLP)都在 baseline 跑通后以"替换注册项"的方式进入,不动契约。
 

@@ -35,7 +35,8 @@ supervisor 接收"请求上级裁决"的请求,**路由出 agent**,交给
 
 与 sidecar 的分工:sidecar 是**规则化监督**(确定性,fail-closed);
 supervisor 是**决策路由**(agent 之外的权威)。HumanApproval sidecar
-未来可下沉为 supervisor 的一条宿主策略(§10),v1 不动。
+已下沉(WS2):内核 tool-confirm 闸门(`kind="tool-confirm"`)经
+supervisor.ask 走"人答"通道,sidecar 类保留为策略载体(§10)。
 
 ### 1.3 与微内核的边界
 
@@ -70,20 +71,24 @@ permissions:
 {"answer": "approve", "decided_by": "host:web-ui", "question_id": "q-7"}
 ```
 
-code 技能经 `ctx.ask_supervisor(...)`(同一仲裁路径)。
+code 技能可经 `ctx.call_tool("ask_supervisor", ...)` 走同一仲裁路径
+(`ctx.ask_supervisor(...)` 便捷方法未接线,`kernel/logic_context.py` 无此方法)。
 
 ### 2.2 帧级中断:就地挂起(v2 的简化)
 
 提问帧**就地挂起**:它的 `ask_supervisor` 分发等待一个
-`asyncio.Future`,帧的 loop 停在该分发点(status = SUSPENDED)。
+`asyncio.Future`,帧的 loop 停在该分发点(await 阻塞;status 不翻转——
+`FrameStatus.SUSPENDED` 是预留枚举,全仓无写入点)。
 
 - **不需要在帧栈内部让渡**(v1 删除项):答案来自 agent 之外,内部栈
   没有任何一方需要为推进答案而恢复——父帧照常停在它自己的 await 点,
   兄弟 spawn 帧照常运行;
 - **配对原子性零特判**:挂起期间子帧的 ask 调用只是"未完成的调用",
   恢复时答案作为其 tool result 写回,配对自然闭合(不变量 2 天然成立);
-- **run 状态**:所有活跃帧都被挂起时 run 转 PAUSED;部分挂起时
-  run 保持 RUNNING(帧树上有"等待上级"的标注帧)。
+- **run 状态**:设计形态是"所有活跃帧都被挂起时 run 转 PAUSED";**实现注**:
+  `RunStatus.PAUSED` 同样是预留枚举,全仓无写入点——handler 未答期间 run
+  保持 RUNNING(runner.py:674-675:run 只在整棵帧树返回后才置 DONE,
+  "无 pending ask"由 await 结构满足),部分挂起时其余帧照常推进。
 
 ### 2.3 路由:到 agent 的调用方
 
@@ -104,7 +109,8 @@ supervisor 子系统把问题(含 context/options/urgency)送达调用方通道:
   `{"answer": ..., "decided_by": ...}` 作为提问帧那条 pending
   `ask_supervisor` 调用的 tool result 写回该帧上下文,**重新进入该帧的
   agent loop**——帧带着答案继续;
-- run 之前转 PAUSED 的,恢复 RUNNING。
+- run 无 PAUSED 状态转换(§2.2 实现注:`RunStatus.PAUSED` 预留未接线),
+  全程 RUNNING 至收尾。
 
 ### 2.5 嵌套监督(调用方是另一个 agent)
 
@@ -138,8 +144,9 @@ supervisor 子系统把问题(含 context/options/urgency)送达调用方通道:
   序列化(复用现有结构,无 schema 变更);
 - **resume**:恢复的帧发现 `_pending_ask` → **重新向调用方通道提问**
   (新 question_id;原问题已答的按 trace 的 `supervisor.answer` 直接取回);
-- **replay**:`supervisor.answer` 在 trace 中,replay 按记录值回放,
-  不问第二次。
+- **replay**:`supervisor.answer` 在 trace 中,但"按记录值回放答案"的接线
+  不存在:CLI replay 不装 supervisor 通道(`supervisor=False`,帧收
+  NOT_FOUND 错误观察),Web 回放会话仍经收件箱通道会问第二次。
 
 ---
 
@@ -153,7 +160,8 @@ supervisor.timeout  {question_id, after_s}
 
 Web(收件箱随 S2):pending 列表(run/帧/问题/context 展开/ urgency
 排序)、回答表单、超时倒计时;trace 视图里 ask/answer 成对渲染;
-帧树上挂起帧标"等待上级"。CLI:S2 即做(stderr JSON 协议 + answer 子命令)。
+帧树上挂起帧标"等待上级"。CLI:S2 即做(stderr JSON 协议 + stdin 作答;
+无跨进程 answer 子命令,§2.3)。
 
 ---
 
@@ -227,7 +235,13 @@ manifest 侧只需 `permissions.tools` 声明 `ask_supervisor`。
 
 ## 10. 开放问题
 
-1. HumanApproval sidecar 何时下沉为 supervisor 的宿主策略(统一"人答"通道)?
+1. ~~HumanApproval sidecar 何时下沉为 supervisor 的宿主策略(统一"人答"通道)?~~
+   **已下沉**(WS2,2026-08-31):EXEC 档工具(HumanApproval 策略在场时)与
+   `confirm=True` 工具过内核 tool-confirm 闸门,`supervisor.ask` 带
+   `kind="tool-confirm"` 走统一"人答"通道(`kernel/runner.py:_dispatch_call`);
+   `sidecars/builtins.py` 的 `HumanApproval.on_signal` 改为弃权,类保留为策略
+   载体,`[sidecars] human_approval = true | {timeout, on_timeout}` 配置在装配期
+   映射 SupervisorManager 策略。
 2. `set_timer` 是否复用"挂起 + 外部事件唤醒"通道(结构上兼容,单独立项)?
 3. `options` 之外的自由文本与结构化答案(schema 化 answer)要不要分级?
 4. urgency=high 在收件箱里要不要打断性呈现(而不仅是排序)?

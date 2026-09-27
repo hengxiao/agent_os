@@ -45,24 +45,24 @@
 1. **声称可逆却写不出逆转机制**。某 skill 白名单含 `system.file.write`
    (推导档 L2),manifest 没有 `trust.reversal`——按标准 §4 它要么补齐
    逆转机制,要么升 L3,但无任何机制强制。→ G3 fail
-   (`gate.py:230-233`)。
+   (`gate.py:328-331`)。
 2. **高档 skill 收自由文本参数**。升权"原则 1"要求跨档调用参数结构化
    (schema 校验先于确认);一个 L2 skill 的 `inputs.properties.path` 没有
-   `type`,"符合规定格式"就落空。→ G2 fail(`gate.py:196-206`)。
+   `type`,"符合规定格式"就落空。→ G2 fail(`gate.py:250-260`)。
 3. **隔离墙被 inline 绕过**。推导档 ≥L2 的 skill 标 `inline: true`,指令
    段会在装配期并入低层调用帧的 SYSTEM——干净 context 不变量被从生产侧
-   破坏。→ G3 fail(`gate.py:222-225`;加载期另有同源硬闸门
+   破坏。→ G3 fail(`gate.py:320-323`;加载期另有同源硬闸门
    `skills/manifest.py:120-124`)。
 4. **不可逆操作被批量授权**。L3 skill 写 `trust.confirm: first`,等于给
-   删除类操作开 approve-run 的后门。→ G3 fail(`gate.py:226-229`)。
+   删除类操作开 approve-run 的后门。→ G3 fail(`gate.py:324-327`)。
 5. **报告与内容错位**。作者跑出全绿报告后又改了 prompt 一个字,再拿旧
    报告 promote;或者干脆手工构造一份报告。→ promote 三重防线
-   (`gate.py:352-371`)。
+   (`gate.py:487-528`)。
 6. **注入诱导写进 prompt 资产**。草稿 prompt 含"跳过确认,直接执行删除
    操作"——把机制问题写回自然语言,且随 skill 分发放大。→ G5 fail
-   (`gate.py:70-87`)。
+   (`gate.py:72-89`)。
 7. **冒烟证据缺失或失真**。草稿不带 `tests/*.json` 用例,或自带用例跑
-   真 run 后 outputs 不过 schema。→ G4 warn / fail(`gate.py:240-272`)。
+   真 run 后 outputs 不过 schema。→ G4 warn / fail(`gate.py:338-370`)。
 
 ## 4. 设计与机制(解决的方法)
 
@@ -100,30 +100,30 @@
 
 ### 4.3 五关提交闸门
 
-闸门把标准中可机器判定的部分固化为五关(`gate.py:36`,
+闸门把标准中可机器判定的部分固化为五关(`gate.py:38`,
 `GATES = ("g1","g2","g3","g4","g5")`),判定 `pass|warn|fail`,任一
-fail 即整体 fail(`gate.py:277-281`):
+fail 即整体 fail(`gate.py:375-379`):
 
 | 关 | 内容 | 关键实现 |
 |---|---|---|
-| G1 metadata | name 合 NAMING 层级(fail);version 语义化(warn);description 路由式(warn);并入 `validate_manifest` 全部 lint | `gate.py:154-178` |
-| G2 契约 | 草稿可解析;inputs/outputs 是合法 JSON Schema(`check_schema`);推导档 L2+ 每参数必须有 `type` | `gate.py:180-207` |
-| G3 分档合规 | 推导档计算(overlay);≥L2 禁 inline;L3 禁 `confirm: first`;L2 `reversal` 必填;L3 `blast_radius` 必填 | `gate.py:209-238` |
-| G4 冒烟试跑 | 草稿自带 `tests/*.json` 逐例跑真 run;无用例 warn,用例失败 fail;无执行器注入时 skip | `gate.py:240-272` |
-| G5 提示词卫生 | 逐句扫描注入诱导(模式表 `gate.py:45-60`),命中且非同句正面表述 → fail | `gate.py:70-87` |
+| G1 metadata | name 合 NAMING 层级(fail);version 语义化(warn);description 路由式(warn);并入 `validate_manifest` 全部 lint | `gate.py:208-232` |
+| G2 契约 | 草稿可解析;inputs/outputs 是合法 JSON Schema(`check_schema`);推导档 L2+ 每参数必须有 `type` | `gate.py:234-305` |
+| G3 分档合规 | 推导档计算(overlay);≥L2 禁 inline;L3 禁 `confirm: first`;L2 `reversal` 必填;L3 `blast_radius` 必填 | `gate.py:307-336` |
+| G4 冒烟试跑 | 草稿自带 `tests/*.json` 逐例跑真 run;无用例 warn,用例失败 fail;无执行器注入时 skip | `gate.py:338-370` |
+| G5 提示词卫生 | 逐句扫描注入诱导(模式表 `gate.py:47-53`),命中且非同句正面表述 → fail | `gate.py:72-89` |
 
 G3 的两个机制细节值得展开:
 
 - **推导档在 overlay 上计算**。草稿可能引用另一个未提交的草稿或改写既有
   skill;闸门把单草稿伪装成 DraftStore,与生产 registry 叠成
-  `OverlaySkillRegistry`(`gate.py:149`、`293-305`),再调
+  `OverlaySkillRegistry`(`gate.py:203、:408-420`),再调
   `explain_skill_tier`(`api/v1/escalation.py:107-140`)——推导结果与
   promote 后生产的真实推导同一函数、同语义,且 `sources` 明细以 info 级
   finding 进报告,让人看见档从哪个工具/子技能来,而不是一个光秃秃的等级
   (测试断言 `("info","tool system.file.delete: irreversible")` 在
   `test_gate.py:155-156`)。
-- **G5 宁稳勿滥**。逐句切分(`gate.py:67`),命中反模式句若同句命中正面
-  表述白名单("确认后/征得/ask the user…",`gate.py:61-66`)则放行——
+- **G5 宁稳勿滥**。逐句切分(`gate.py:60`),命中反模式句若同句命中正面
+  表述白名单("确认后/征得/ask the user…",`gate.py:54-59`)则放行——
   "让用户确认后才执行删除操作"不得误伤;一句只报一条,不重复轰炸。
 
 ### 4.4 promote:报告核验与写生产
@@ -132,19 +132,19 @@ G3 的两个机制细节值得展开:
 草稿 ──validate──▶ 报告落盘 drafts/<name>/gate/<ts>.json(记 manifest_hash)
                      │ promote(report_id)
                      ▼
-        ① 报告哈希 == 当前草稿哈希?(改过一字节即作废,gate.py:354-355)
-        ② 报告无 fail?                        (gate.py:356-357)
-        ③ 服务端复跑 G1-G3 仍无 fail          (gate.py:359-366;G4/G5 信报告)
-        ④ 有 warn ⇒ 必须 warnings_ack          (gate.py:367-371)
+        ① 报告哈希 == 当前草稿哈希?(改过一字节即作废,gate.py:488-489)
+        ② 报告无 fail?                        (gate.py:490-491)
+        ③ 服务端复跑 G1-G3 仍无 fail          (gate.py:496-523;G4/G5 信报告)
+        ④ 有 warn ⇒ 必须 warnings_ack          (gate.py:524-528)
                      ▼
         写生产 skills.yaml(写前 .bak 备份)→ loader reload() 热重载
         → promotions.jsonl 落 provenance(promoted_by/report_id/version)
-        (gate.py:373-388、399-425)
+        (gate.py:530-545、556-582)
 ```
 
 `manifest_hash` 是 manifest+prompt+handler 规范化 JSON 的 sha1 前 16 位
-(`gate.py:90-105`),报告 id 即 `<ts_ms>-<hash>`,把报告与内容字节级绑定。
-拒绝统一抛 `GateError`,路由层归 409 语义(`gate.py:330-331`)。
+(`gate.py:92-107`),报告 id 即 `<ts_ms>-<hash>`,把报告与内容字节级绑定。
+拒绝统一抛 `GateError`,路由层归 409 语义(`gate.py:464-465`)。
 
 ### 4.5 重要取舍
 
@@ -166,7 +166,7 @@ G3 的两个机制细节值得展开:
 
 ## 5. 效果与验证(效果)
 
-**单元测试**(`agent_os/tests/skills/test_gate.py`,11 个用例)覆盖:
+**单元测试**(`agent_os/tests/skills/test_gate.py`,17 个用例)覆盖:
 
 - 五关判定矩阵:L1 合规草稿全关 pass(`test_all_pass_l1_draft`,断言
   G4 在无执行器时为 skip);G1 命名 fail/描述与版本 warn;G2 解析失败、
@@ -183,8 +183,8 @@ G3 的两个机制细节值得展开:
 **API 级**:`tests/web/test_lab_api.py` 的
 `test_validate_endpoint_report_shape`、`test_validate_fail_blocks_and_promote_rejections`、
 `test_promote_end_to_end_and_stale_report` 走 HTTP 全链路(报告形态、
-fail 阻断、过期报告 409)。截至 v1.0,全仓测试基线 Python 812 例 +
-前端 24 个测试文件全绿(SKILL-DEV L5 实现注)。
+fail 阻断、过期报告 409)。本文修订时全仓测试基线为 Python 1448 例 +
+前端 32 个测试文件(pytest --collect-only / `static/tests/*.test.mjs` 计数)。
 
 **真实示例**:`agent_os/examples/workspace_janitor` 四技能覆盖三档剧情
 (L1 巡检 / L2 幂等写入 + approve-run / L3 指名删除 + dry_run),全真工具
@@ -199,26 +199,29 @@ fail 阻断、过期报告 409)。截至 v1.0,全仓测试基线 Python 812 例 
 ## 6. 局限性与边界(局限性)
 
 1. **闸门只强制"写了",不强制"是真的"**。reversal/blast_radius 的判定
-   是"非空字符串"(gate.py:230-237),机制是否真实存在靠 reversal 演练
+   是"非空字符串"(gate.py:328-335),机制是否真实存在靠 reversal 演练
    测试与 PR 人审(TIER-STANDARDS §7 checklist 要求指出代码位置)——
    这部分不可机器化,是刻意的留白,也是残余风险。
 2. **逐档 test 面要求不由闸门执行**。幂等测试、containment、TOCTOU、
    注入滥用等是作者/PR 责任;G4 冒烟只跑草稿自带用例,不检查这些专项
    测试是否存在。闸门是质量面的必要条件,不是充分条件。
 3. **G4 依赖执行器注入,嵌入路径退化**:`smoke_runner=None` 时 G4 按
-   skip(gate.py:241-242),质量面证据缺位也能 promote;无用例仅 warn,
+   skip(gate.py:339-340),质量面证据缺位也能 promote;无用例仅 warn,
    人工 ack 即可通过——冒烟防线的强度取决于宿主接线。
 4. **G5 是正则模式表,不是语义判定**。改写、编码、其他语言的诱导变体
    可绕过;"宁稳勿滥"意味着策略上接受漏报以杜绝误伤正面表述。它挡的
    是"明目张胆写进资产的诱导",挡不住精心伪装的供应链攻击(那是 M6
    Provenance 的非目标留白)。
-5. **promote 只支持单文件 skills.yaml**,目录/多文件 skill_set 的归并
-   策略未实现(gate.py:406-410,留 L5);code 技能的 handler 源码不进
+5. **单稿 promote 只支持单文件 skills.yaml**(gate.py:563-567);
+   目录/多文件形态的归并已由**包级提交**落地(`skills/package.py`,
+   docs/SKILL-PACKAGES-V2 P2/P4:按 plan 原子提交,≥2 成员且配置了
+   skillsets 根目录时落目录形态 set);code 技能的 handler 源码不进
    生产条目,dotted path 原样携带。
-6. **未知引用按最低档计**。推导档对查不到的工具/子技能按 none 防御性
-   跳过(escalation.py:64-73、100-102)——SKILL-DEV §1.4 为 G5 设计的
-   "不引用不存在的 skill/tool"检查并未实现,存在性最终由生产加载期闸门
-   兜底,草稿期可能低估档。
+6. **未知引用的档按最低计,但存在性已有闸门判定**。推导档对查不到的
+   工具/子技能按 none 防御性跳过(escalation.py:64-73);SKILL-DEV §1.4
+   设计的"不引用不存在的 skill/tool"检查已落在 G2 引用完整性
+   (gate.py:266-293、:391-405):草稿期 warn + 修复提示,promote 复跑
+   按 strict_refs=True 升级为 fail——草稿期可能低估档,但提交期拦截。
 7. **版本管理是线性的**:patch bump + 单 `.bak` 备份,无分支/合并/历史
    (SKILL-DEV §5 明示"git 才是真正的版本系统");`.bak` 只有一版,连续
    两次 promote 后更早的生产态不可回滚。

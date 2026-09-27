@@ -39,6 +39,8 @@ max_steps = 200
 max_cost = 2.0
 max_wall_time = 1800
 compression = "hierarchical"        # off = 消融档
+# stream = false                    # 关掉流式消费(缺省 true:caps 支持走 stream chunk 循环,逐 chunk
+                                    # 发 post:llm.chunk 并记 ttft/total;caps 不支持自动回落 chat)
 # workdir = "/path/to/project"      # §W0-1:run 工作目录(fs/shell 可写区;缺省每 run 临时目录)
 # read_paths = ["/path/to/vendor"]  # §W0-1:只读挂载(可在 workdir 之外,如源码目录)
 
@@ -49,7 +51,7 @@ compression = "hierarchical"        # off = 消融档
 # api_key_env = "OPENAI_API_KEY"
 
 [tools]
-builtins = true                     # system.file.read/system.file.write/system.file.edit/system.shell.exec/system.net.http_fetch
+builtins = true                     # 内置工具面(22 件规范名:system.file.*/shell/net/blob/time/task/skill/memory/user 等,旧扁平名留别名)
 python_exec = "docker"              # docker | subprocess | off
 
 [skills]
@@ -58,7 +60,9 @@ path = "./skills.yaml"              # LocalFileSkillRegistry
 [sidecars]
 budget_guard = { max_cost = 2.0 }
 loop_detector = { threshold = 3, max_strikes = 2 }
-# tool_guard_rules = "./tool-guard.rules"
+# tool_guard_rules = [["system.shell.exec", "rm -rf", "理由"]]  # 每项 = [工具名, 参数正则, 否决理由]
+# human_approval = true                # WS2:EXEC 档工具过内核 tool-confirm 闸门(supervisor.ask,kind="tool-confirm")
+# human_approval = { timeout = 300, on_timeout = "deny" }  # 或表:审批超时秒数 + 超时兜底(deny|allow)
 
 [telemetry]
 dir = ".agent-os/traces"
@@ -66,9 +70,35 @@ dir = ".agent-os/traces"
 [retry]
 max_attempts = 3
 backoff_base = 0.5
+# stream_idle_timeout = 30.0           # 流式停滞 watchdog 秒数:N 秒无新 chunk 杀流(提交点语义:
+                                       # 首 chunk 产出前可退避重试,产出后错误直接上抛)
+
+[credentials]                          # WS1:凭证作用域;值只存 env 变量名,不落盘明文
+# github = { env = "GITHUB_TOKEN" }    # 工具 ToolSpec.credentials 声明键 → dispatch 每次现解析注入(env 缺席键不出现)
+
+# [data]                               # D2 数据层 authZ(docs/DATA-AUTHZ.md §3);段存在即接线——空段 = 绑定空 policy,
+                                       # principals 白名单 fail closed 全拒,启用前务必配齐 domains 与白名单
+# domains = [                          # 表数组:name 必填;sensitivity 缺省 confidential(忘了配 = 最严)
+#   { name = "fs.shared", sensitivity = "internal", path_prefix = "/srv/shared" },  # path_prefix|url_prefix 恰居其一
+#   { name = "net.public", sensitivity = "public", url_prefix = "https://api.example.com/" },
+# ]
+# [data.principals."user:alice"]       # per-subject 域白名单(glob 域名模式,并入 allow() 第二判据)
+# domains = ["fs.*", "net.public"]
+
+[web.tokens]                           # D3-lite 多用户映射:Bearer token → subject(命中 → Principal(issuer="api-token"))
+# "tok-alice-xxx" = "user:alice"       # 未命中/段缺席(含空段)→ 单用户行为逐字不变
+
+# [memory]                             # M6 记忆子系统(docs/DESIGN.md §11):段存在才接线,缺段完全不 bind
+# dir = "./memory"                     # LocalFileMemoryService 根目录(每条目一 Markdown + frontmatter);
+                                       # 接线后 system.memory.search/write 经 bind_memory 装配(未装配调 NOT_FOUND)
+
+# [blob]                               # M3 spill 文件存储(docs/DESIGN.md §8.4/§7.2):段存在才接线,
+                                       # 缺段 = 进程内 InMemoryBlobStore(零破坏)
+# dir = "./blobs"                      # FileBlobStore 根目录(<root>/<run_id>/<sha256> 内容寻址落盘,
+                                       # run_id/sha 白名单防目录逃逸)
 ```
 
-加载器落点:`runtime/config.py`(目前 M0 stub,随 R1 一并实现)。
+加载器落点:`runtime/config.py`(已实现:CLI/Web 两个宿主共用,均支持 `--config`)。
 
 ### 2.2 产物布局 `.agent-os/runs/<run_id>/`
 
@@ -79,8 +109,7 @@ backoff_base = 0.5
 ├── meta.json         # {run_id, skill, input, config 摘要, started_at, host: "cli"|"web"}
 ├── trace.jsonl       # Telemetry WAL(版本头,全部信号)
 ├── checkpoint.json   # 结束/中止时自动快照(帧含完整上下文)
-├── result.json       # {status, result|error, usage 汇总}
-└── stderr.log        # 内核与宿主日志
+└── result.json       # {status, result, error, usage 汇总}
 ```
 
 - `trace.jsonl` 由 JsonlTelemetrySink 按 run 写入,runner 在 run 结束后归档到该目录;
@@ -107,7 +136,8 @@ backoff_base = 0.5
 src/agent_os/host/
 ├── shared/           # 配置加载、产物组织、RunRecord 读取层
 ├── cli/              # CLI runner(argparse,无新依赖)
-└── web/              # Web runner(FastAPI,optional extra `agent-os[web]`)
+├── web/              # Web runner(FastAPI,optional extra `agent-os[web]`)
+└── web_platform/     # Web Platform(对话中枢宿主,docs/WEB-PLATFORM.md)
 ```
 
 `host/` 是独立顶层包:只 import `agent_os.api.v1` 与内核公开件(builder/manager/sink/checkpoint),不 import 内核私有实现——边界由 ruff 自定义规则或 import-lint 守护(可选)。
@@ -124,29 +154,38 @@ src/agent_os/host/
 
 ```
 agent-os run <skill> --input '<json>'|@file
-    [--config agent-os.toml] [--skills path.yaml] [--model m]
-    [--max-cost 1.0] [--seed 42] [--json] [--artifacts .agent-os]
+    [--config agent-os.toml] [--json] [--artifacts .agent-os]
+    [--inline on|off] [--checkpoint-interval N]
   → 运行;stdout = RunRecord JSON(见 3.3);产物落盘
+  (注:--skills/--model/--max-cost/--seed 旗标未实现——覆盖走 agent-os.toml;
+   单次覆盖只有 Web 的 POST /api/runs overrides 面,见 §4.3)
 
-agent-os trace <run_id> [--kind llm|tool|frame|all] [--format json|table]
-  → 从 trace.jsonl 读信号时间线(coding agent 用 json)
+agent-os trace <run_id> [--format json|table] [--artifacts .agent-os]
+  → 从 trace.jsonl 读信号时间线(coding agent 用 json;--kind 过滤未实现)
 
-agent-os inspect <run_id> [--frame <frame_id>] [--messages]
+agent-os inspect <run_id> [--frame <frame_id>] [--messages] [--json]
   → 从 checkpoint.json 读帧树;--frame 指定帧输出其完整上下文
     (messages 逐条:role/source/content/tool_calls)——"模型当时看到了什么"
 
-agent-os resume <run_id>|<checkpoint.json> [--json]
+agent-os resume <checkpoint.json> [--config agent-os.toml] [--json]
   → 从 checkpoint 恢复运行(断电/改代码后续跑)
+  (注:只收 checkpoint 路径,不收 run_id;无 --model/--max-cost 覆盖旗标)
 
-agent-os replay <run_id> [--json]
+agent-os replay <run_id> [--config agent-os.toml] [--json]
   → 用 trace 里的 LLM 请求/响应对构建 MockProvider 脚本,确定性重放
     该次运行(不碰真实 API);验证修复是否改变行为
 
-agent-os diff <run_id_a> <run_id_b> [--kind signals|usage|result]
-  → 两次运行的结构化 diff(信号序列、usage 增量、结果差异)
+agent-os diff <run_id_a> <run_id_b> [--json]
+  → 两次运行的结构化 diff(result/usage/信号序列一次全算;--kind 细分未实现)
 
-agent-os skills list|validate <path.yaml>
+agent-os debug [skill] [--input '<json>'|@file] [--replay <run_id>] [--until-step N]
+  → 交互式调试 REPL(断点/单步/检视/注入;--replay = 时间旅行回放)
+
+agent-os skills list|validate <path.yaml> [--json]
   → manifest lint(描述质量/权限引用/循环依赖),开发者自检
+
+agent-os lab validate <name> [--config agent-os.toml] [--json]
+  → 草稿跑提交闸门(G1-G5,与 Web 同一 gate.py);pass/warn 退出码 0,fail 2
 ```
 
 ### 3.3 输出契约(coding agent 的消费面)
@@ -185,7 +224,7 @@ agent-os skills list|validate <path.yaml>
 - trace 的 `pre:llm.request`/`post:llm.response` 载荷含模型与消息摘要;replay 按**顺序匹配**构建 MockProvider 脚本(与 fib 测试同一机制),重放整棵帧树;
 - 用途 A(回归):改了技能实现后 replay,`diff` 与原始 run 的信号序列;
 - 用途 B(复现):线上失败的 run 拿回本地 replay,在 checkpoint 上 `inspect` 逐帧检查;
-- 边界:replay 只能覆盖 LLM 调用面;工具副作用(fs/shell/docker)按真实环境执行,`--sandbox` 档可把 system.shell.exec/python_exec 强制切到 docker 后端。
+- 边界:replay 只能覆盖 LLM 调用面;工具副作用(fs/shell/docker)按真实环境执行。`--sandbox` 档(把 system.shell.exec/python_exec 强制切到 docker 后端)未实现——目前只能改 `[tools] python_exec` 配置。
 
 ### 3.5 实现要点
 

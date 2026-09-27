@@ -35,7 +35,7 @@
 
 ### 4.1 信号目录:一张冻结的事件表
 
-信号命名 `<阶段>:<事件>`:`pre:` 前缀同步可否决,`post:` 前缀异步观察(`api/v1/signals.py:1-5`)。目录全集 `SIGNAL_NAMES` 共 **31 个**信号名(`api/v1/signals.py:99-131`),覆盖 run 生命周期(3)、帧栈(4)、步(2)、LLM(3)、工具(2)、子技能(2)、升权(3)、逻辑执行(2)、压缩(2)、内联(1)、黑板(2)、预算(2)、supervisor 裁决(3)。`Signal` 结构只有五字段:`name/run_id/frame_id/payload/ts`(`api/v1/signals.py:134-142`)——刻意单薄,语义全部在 name 与 payload 约定里。注:docs/DESIGN.md §5.1 的目录清单成文较早(未含升权三信号、`post:context.inline`、supervisor 三信号),以代码 `SIGNAL_NAMES` 为准。
+信号命名 `<阶段>:<事件>`:`pre:` 前缀同步可否决,`post:` 前缀异步观察(`api/v1/signals.py:1-5`)。目录全集 `SIGNAL_NAMES` 共 **35 个**信号名(`api/v1/signals.py:115-151`),覆盖 run 生命周期(3)、帧栈(4)、步(2)、LLM(3)、工具(2)、子技能(2)、注册(2,WS-C 增 `pre/post:skill.register`)、升权(3)、逻辑执行(2)、压缩(2)、内联(1)、黑板(2)、预算(2)、数据访问(2,D2 增 `data.access.denied/granted`)、supervisor 裁决(3)。`Signal` 结构只有五字段:`name/run_id/frame_id/payload/ts`(`api/v1/signals.py:154-162`)——刻意单薄,语义全部在 name 与 payload 约定里。注:docs/DESIGN.md §5.1 的目录清单成文较早(未含注册对、升权三信号、`post:context.inline`、supervisor 三信号),以代码 `SIGNAL_NAMES` 为准。
 
 ### 4.2 总线:忠实广播,故障隔离
 
@@ -121,7 +121,7 @@ InProcessSignalBus(订阅序 await;handler 异常吞掉)
 - **周期检查点**(`tests/kernel/test_periodic_checkpoint.py`,3 例):interval=2 时第 2 步即见"最近现场"、第 1 步不落盘;interval=0 不挂载(零行为变化);配置项经 `build_kernel` 透传。
 - **replay/diff**(`tests/cli/test_replay.py`,5 例):录制 fib(4) 后 replay 产出相同结果且与原 run 的 diff 为空(`result_equal` 与 `signals_equal` 均真),replay 是新 run_id;不同参数的两次 run 被 diff 判定分叉;同参数两次 run diff 为空。
 
-真实配置面:`instance/agent-os.toml` 的 `[run].checkpoint_interval` 即可开启周期快照;CLI 消费面为 `agent-os run/resume/replay/diff`(`host/cli/main.py:271-320`)。测试基线整体口径:当前 `pytest --collect-only` 收集 **854 例**(执行摘要成文时记 812 例,以实际收集为准)。
+真实配置面:`instance/agent-os.toml` 的 `[run].checkpoint_interval` 即可开启周期快照;CLI 消费面为 `agent-os run/resume/replay/diff`(`host/cli/main.py:271-320`)。测试基线整体口径:当前 `pytest --collect-only` 收集 **1448 例**(1399 passed / 10 条件 skip / 39 xfailed,0 失败;早期文稿记 812/854 例,以实际收集为准)。
 
 涟漪效应:调试器的断点命中即 pending,走同一挂起-落盘-恢复闭环(docs/DEBUGGER.md);Web SSE 扇出与 RCA 页是总线 `"*"` 订阅者(docs/RUNNERS.md §4.2);升权台账与 run 级工具状态以 additive 字段随 checkpoint 落盘,是"schema v1 不变、字段可加"契约纪律的实例(`kernel/checkpoint.py:139-141`);Skill Registry 的入库前验证门把"重放 + evaluator 确认"设计为自我进化的信任前提(docs/DESIGN.md §6.2,已设计未实现)。
 

@@ -101,26 +101,26 @@ returns, and its status stays RUNNING while the handler has not answered (commen
 same location). **Note**: `docs/SUPERVISOR.md` §2.2 states that "when all active frames
 are suspended the run turns PAUSED" and the frame's "status = SUSPENDED"; the supervisor
 path performs **no status transitions** in code (`RunStatus.PAUSED` and
-`FrameStatus.SUSPENDED` exist as enum members at `api/v1/run.py:53` and
+`FrameStatus.SUSPENDED` exist as enum members at `api/v1/run.py:60` and
 `api/v1/frames.py:47`, but only other paths such as the debugger use them). This chapter
 follows the code: suspension is await-blocking, not a state-machine migration; "waiting
 on the superior" is surfaced via the inbox pending list, not a run status field.
 
 **Channel selection order** (`docs/SUPERVISOR.md` §2.3, implemented in
-`host/web/run_manager.py:405-418`): run-level injected handler → assembly-level handler →
+`host/web/run_manager.py:418-425`): run-level injected handler → assembly-level handler →
 host default channel. The three baseline channels:
 
 | Caller | Channel implementation | decided_by / channel label |
 |---|---|---|
 | Embedding application | Injected `SupervisorHandler` (`runtime/builder.py:100-116`) | default `"handler"` |
-| Web user | `InboxChannel` (`supervisor/inbox.py`); `GET /api/supervisor/pending` + `POST /api/supervisor/{id}/answer` (`host/web/app.py:649-669`) | `"host:web-ui"` / `"inbox"` |
-| CLI user / coding agent | Single-line JSON `{"type":"supervisor.ask",...}` on stderr + one line from stdin, in-process loop (`host/cli/main.py:57-87`) | `"host:cli"` / `"cli"` |
+| Web user | `InboxChannel` (`supervisor/inbox.py`); `GET /api/supervisor/pending` + `POST /api/supervisor/{id}/answer` (`host/web/app.py:718-743`) | `"host:web-ui"` / `"inbox"` |
+| CLI user / coding agent | Single-line JSON `{"type":"supervisor.ask",...}` on stderr + one line from stdin, in-process loop (`host/cli/main.py:56-88`) | `"host:cli"` / `"cli"` |
 
 `InboxChannel` is a suspending inbox: `__call__` *is* the handler contract — the Question
 enters the pending table and suspends on an `asyncio.Future`; the Web request thread
 calls `answer`, which settles cross-thread via `loop.call_soon_threadsafe`
 (`supervisor/inbox.py:88-101`); on timeout or cancellation the question leaves the inbox
-via `finally` (:47-51); the pending list sorts urgency=high first, then FIFO (:79). The
+via `finally` (:47-51); the pending list sorts urgency=high first, then FIFO (:78). The
 CLI channel deliberately has no cross-process pending/answer subcommands — a
 single-process CLI has no inbox to query; the asynchronous inbox form is carried by the
 Web host (`docs/SUPERVISOR.md` §2.3).
@@ -135,7 +135,7 @@ Web host (`docs/SUPERVISOR.md` §2.3).
 | `asyncio.wait_for` timeout + `on_timeout="fail"` | Emit `supervisor.timeout`, return `{ok:false, error:{kind:"supervisor_timeout", retryable:true}}`; the frame may degrade on its own | manager.py:129-150 |
 | Timeout + `on_timeout="default_answer"` | Close the loop with the configured fallback answer, `decided_by="policy:default"` | manager.py:139-141 |
 | Answer outside options | Re-ask the **caller** with `previous_error` (never re-ask the child frame); initial ask + one re-ask, at most 2 handler calls (`_MAX_ASK_ATTEMPTS=2`); still invalid → fail outcome | manager.py:40, :106-127 |
-| Web route pre-validation | Answer outside options → 400, question stays pending | run_manager.py:935-953 |
+| Web route pre-validation | Answer outside options → 400, question stays pending | run_manager.py:947-965 |
 
 The re-ask cap of 2 (rather than unbounded) is a deliberate trade: a caller that misses
 the spec twice has most likely misunderstood the protocol, and further re-asks would just
@@ -164,14 +164,14 @@ and `kind` labels, manager.py:90-105), `supervisor.answer` (answer truncated to 
 characters, manager.py:179), and `supervisor.timeout`. The channel label is declared by a
 `supervisor_channel` attribute on the handler (manager.py:63-65), making "which channel
 carried this question" auditable in the trace. Kernel escalation confirmations reuse the
-same loop: `_escalate` converts an `EscalationRequest` into a supervisor question with
+same loop: `_confirm_escalation` converts an `EscalationRequest` into a supervisor question with
 `kind="escalation"` (`kernel/runner.py:1003`), and is fail-closed when no supervisor
-channel is installed and no Grant matches (:957-965) — an escalation nobody can review
+channel is installed and no Grant matches (:957-967) — an escalation nobody can review
 is an escalation nobody guards.
 
 ## 5. Effects and Verification (What)
 
-**Test evidence** (all green, part of the 812-case Python baseline):
+**Test evidence** (all green, part of the 1448-case Python baseline):
 
 - `tests/kernel/test_supervisor.py`: **12 cases** covering the kernel side of the §9
   anchor list — handler round-trip; in-place suspension (the parent's await point does
@@ -243,8 +243,8 @@ loop: every point needing authority outside the agent converges on this one rout
   `kernel/checkpoint.py:31-36, :362-364`
 - Assembly and config: `agent_os/src/agent_os/runtime/builder.py:100-116, :196-210`,
   `runtime/config.py:295-314`
-- Host channels: `agent_os/src/agent_os/host/web/app.py:649-669`,
-  `host/web/run_manager.py:405-418, :928-953`, `host/cli/main.py:57-87, :276`
+- Host channels: `agent_os/src/agent_os/host/web/app.py:718-743`,
+  `host/web/run_manager.py:418-425, :943-965`, `host/cli/main.py:56-88, :276`
 - Tests: `agent_os/tests/kernel/test_supervisor.py` (12 cases),
   `agent_os/tests/web/test_supervisor_channel.py` (4), `tests/examples/test_supervision_nested.py` (4)
 - Example: `agent_os/examples/supervision/` (nested supervision)

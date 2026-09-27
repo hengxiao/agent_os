@@ -1,6 +1,6 @@
 # Data-Layer authN+Z: Principal & Data Domains
 
-> Chapter 10 · Status: D1 implemented (Principal model, CLI/Web single-user sources, fs domains, dispatch enforcement point, identity invariant with checkpoint round-trip); D2/D3 designed but not implemented (config section, per-subject domain whitelist, db/net domains, audit signals, delegation chain, multi-user session mapping) ·
+> Chapter 10 · Status: D1 implemented (Principal model, CLI/Web single-user sources, fs domains, dispatch enforcement point, identity invariant with checkpoint round-trip); D2 implemented (2026-08-31: `[data]` config section, per-subject domain whitelist as second criterion, net/db domain judgment, `data.access.*` audit signals, judgment written back to `credentials["_authz"]`); D3-lite landed (`[web.tokens]` multi-user mapping); D3 remainder designed but not implemented (delegation-chain weakest link, EscalationRequest data face) ·
 > Sources: `docs/DATA-AUTHZ.md`, `agent_os/src/agent_os/api/v1/principal.py`, `agent_os/src/agent_os/tools/local_registry.py`, `agent_os/tests/tools/test_data_authz.py`
 
 ## 1. Overview
@@ -39,7 +39,7 @@ class Principal:
     attrs: Mapping[str, str]  # attributes (clearance, etc.) for ABAC verdicts
 ```
 
-D1 implements two sources (`principal.py:83-105`): CLI takes the local user (`user:$USER`, issuer=cli); Web single-user mode takes the deployer's login (host config `[web].user`, defaulting to the local user; `host/web/run_manager.py:430-440`). Both grant confidential clearance — a single user owns the machine, so interception only bites for explicitly constructed low-clearance identities (tests, embedding hosts) (§8 note 3). api-token and host-embedded are sources whose protocol surface is frozen but whose wiring belongs to D3.
+D1 implements two sources (`principal.py:83-105`): CLI takes the local user (`user:$USER`, issuer=cli); Web single-user mode takes the deployer's login (host config `[web].user`, defaulting to the local user; `host/web/run_manager.py:442-452`). Both grant confidential clearance — a single user owns the machine, so interception only bites for explicitly constructed low-clearance identities (tests, embedding hosts) (§8 note 3). The api-token source is now wired (D3-lite, 2026-08-31: a `[web.tokens]` Bearer-mapping hit yields `Principal(issuer="api-token", clearance=confidential)` — `host/web/app.py` / `host/web/run_manager.py`); host-embedded remains a source whose protocol surface is frozen but whose wiring belongs to D3.
 
 ### 4.2 The identity invariant: no self-elevation
 
@@ -59,7 +59,7 @@ allow(principal, domain, action) ⟺ clearance_of(principal) ≥ domain.sensitiv
 
 - Default deny: insufficient clearance has no fallback pass; the single exception is `principal is None` → allow (v1 single-user semantics: a host that injected no identity has not enabled the data layer, and behavior is identical to before this system existed);
 - Fail closed in both directions: unknown clearance counts as public, unknown sensitivity counts as confidential (`principal.py:73-74`); attrs lacking a clearance key also default to the lowest level (`principal.py:57-59`);
-- The second criterion of §3.2 (a per-subject domain whitelist) depends on the host config section and is **not implemented (D2)**; the `action` parameter is a protocol placeholder and takes no part in D1 verdicts.
+- The second criterion of §3.2 (a per-subject domain whitelist) is now in force (D2, 2026-08-31: the `[data.principals."<subject>"] domains = [...]` config section feeds `allow()` through `DataPolicy.whitelist_for` as the `whitelist=None` keyword — `None` is verbatim D1); the verdict judgment is written back to `ctx.credentials["_authz"]`; the `action` parameter is a protocol placeholder and takes no part in D1 verdicts.
 
 ### 4.4 Enforcement: two gates in series inside dispatch
 
@@ -70,15 +70,21 @@ ToolCall
 schema validation (jsonschema, fail fast, no "smart correction")
   │
   ▼
-data-layer authZ ── _check_data_access (local_registry.py:306-351)
+data-layer authZ ── _check_data_access (local_registry.py:396-508)
   │  ① tool declares no data_domains → skip (touches no data)
   │  ② principal is None             → skip (single-user semantics)
-  │  ③ declaration lacks "fs.*"      → skip (db/net verdicts are D2)
-  │  ④ no resolvable path argument   → skip (D1 parses path-shaped args)
+  │  ③ net/db declarations, no policy → skip (D1 semantics verbatim; with a policy
+  │     bound, net matches on args["url"] prefix, db-class families glob-match
+  │     against policy.domains — D2)
+  │  ④ no resolvable path/url arg    → skip (no decidable target)
   │  ⑤ resolve_work_path rejects     → tool reports sandbox error; no re-judgment
-  │  ⑥ domain resolves to None       → skip (D1 compatibility, see below)
-  │  ⑦ allow() denies → DATA_ACCESS_DENIED (domain/sensitivity/clearance only;
-  │                     never echoes the path, never leaks domain content)
+  │  ⑥ domain resolves to None       → no policy: skip (D1 compatibility, see
+  │     below); policy bound: treated as confidential (fs/net.unconfigured —
+  │     D2 restores the original semantics)
+  │  ⑦ allow() (clearance + whitelist second criterion) denies →
+  │     DATA_ACCESS_DENIED (domain/sensitivity/clearance only; never echoes
+  │     the path, never leaks domain content); denial and grant each emit one
+  │     data.access.* audit signal; judgment written back to credentials["_authz"]
   ▼
 three-layer permission intersection (frame whitelist ∩ RunConfig ceiling;
   READ tier does not consume the frame whitelist)
@@ -97,7 +103,7 @@ v1 does **no taint tracking** (marking confidential content and tracing its flow
 
 ## 5. Effects and Verification (What)
 
-The anchor suite `agent_os/tests/tools/test_data_authz.py` holds **13 cases, all green in this run** (`pytest tests/tools/test_data_authz.py -q` → 13 passed). Key assertions:
+The anchor suite `agent_os/tests/tools/test_data_authz.py` holds **23 cases, all green in this run** (10 added for D2: unconfigured domain = confidential once a policy is bound, glob whitelist second criterion, net-domain URL prefix hit/miss without leaks, exact `data.access.*` signal payloads, judgment written back to `credentials["_authz"]`; a further `tests/web/test_data_authz.py` with 5 cases covers the D3-lite `[web.tokens]` mapping and the miss fallback — 28 passed in total). Key assertions:
 
 | Checkpoint | Case | Asserts |
 |---|---|---|
@@ -112,28 +118,27 @@ The anchor suite `agent_os/tests/tools/test_data_authz.py` holds **13 cases, all
 | Identity invariant | `test_principal_identity_invariant_across_frames` (:366) | root frame and an approve-once-admitted L3 escalated child capture the **same principal object** |
 | Checkpoint | `test_checkpoint_principal_round_trip` (:395) | all serialized frames carry the principal; frames rebuilt by resume are equal |
 
-Host wiring is live: both CLI entry points inject `cli_principal()` (`host/cli/main.py:163,292`); every Web single-user run injects `web_single_user_principal` (`host/web/run_manager.py:553`).
+Host wiring is live: both CLI entry points inject `cli_principal()` (`host/cli/main.py:163,292`); every Web single-user run injects `web_single_user_principal` (`host/web/run_manager.py:565`).
 
 **Observable behavior**: single-user deployments (CLI, or Web without multi-user config) behave exactly as before the system existed — the principal is confidential or None and nothing is intercepted; an embedding host or test that injects a low-clearance principal gets a structured denial the moment a call crosses a domain, and the model can recover from the hint (pick another path, or ask for an identity with higher clearance).
 
-**Ripple effects**: the principal field has become an anchor for other subsystems — Memory's retrieval-layer permission filtering takes a principal (`api/v1/memory.py:60`, reserved); Skill Lab records `promoted_by` on promote (`skills/gate.py:382`); showing the data surface (domains and sensitivities a call will touch) on the escalation confirmation card is a planned D3 input to EscalationRequest (§5.3, designed, not implemented).
+**Ripple effects**: the principal field has become an anchor for other subsystems — Memory's retrieval-layer permission filtering takes a principal (`api/v1/memory.py:60`, reserved); Skill Lab records `promoted_by` on promote (`skills/gate.py:539`); showing the data surface (domains and sensitivities a call will touch) on the escalation confirmation card is a planned D3 input to EscalationRequest (§5.3, designed, not implemented).
 
 ## 6. Limitations and Boundaries (Limits)
 
-1. **Unconfigured domains fail open (D1)**. The designed semantics "unconfigured = confidential" is deliberately inert in D1 (§8, note 1): a typo'd prefix or a missing registration silently unprotects instead of silently denying. Until the D2 config section lands, this is the known gap in the strictest posture.
-2. **The shipped paths do not actually intercept**. CLI and Web single-user both grant confidential clearance, so the data gate is a no-op for the bundled hosts; protection engages only for embedders who deliberately inject low-clearance identities. D1 delivers the mechanism and the invariants, not out-of-the-box multi-user isolation.
-3. **Coverage is limited to fs domains with path-shaped arguments**. `_check_data_access` only parses `args["path"]` (`local_registry.py:324-326`): `system.shell.exec` declares no data_domains and its command string is unparseable, so a low-clearance principal with it whitelisted can `cat` past the data gate (the mitigation: shell is EXEC/L3 and must pass the escalation gate); db/net domain declarations and verdicts are entirely D2.
-4. **The second criterion is missing**. The per-subject domain whitelist (§3.2) is unimplemented, leaving clearance as the only verdict dimension; the verdict write-back into `ToolContext.credentials` is likewise D2; the `action` parameter is a placeholder — D1 does not distinguish read/list/metadata.
+1. **Unconfigured still fails open when no policy is bound**. D2 has restored the designed "unconfigured = confidential" semantics, but only once `[data]` is wired in via `bind_data_policy`; a deployment without the `[data]` section keeps the D1 "unconfigured = unenforced" stance — forgetting the section disables the data layer wholesale, silently unprotecting rather than silently denying.
+2. **The shipped paths do not actually intercept**. CLI and Web single-user both grant confidential clearance, so the data gate is a no-op for the bundled hosts; protection engages only for embedders who deliberately inject low-clearance identities (or for per-user identities mapped via `[web.tokens]`). What shipped is the mechanism and the invariants, not out-of-the-box multi-user isolation.
+3. **Coverage is limited to parseable arguments**. `_check_data_access` parses `args["path"]` for fs.* and `args["url"]` for net.* (D2; db-class families glob-match against `policy.domains`): `system.shell.exec` declares no data_domains and its command string is unparseable, so a low-clearance principal with it whitelisted can `cat` past the data gate (the mitigation: shell is EXEC/L3 and must pass the escalation gate).
+4. **The `action` parameter is still a protocol placeholder**. Verdicts do not distinguish read/list/metadata (D1 and D2 alike); the second criterion (per-subject whitelist) and the verdict write-back into `ToolContext.credentials` (`_authz`) are in force since D2.
 5. **No isolation inside a run**. A secret read by a low-tier skill can flow through its output to higher-tier skills of the same run (§4, documented residual risk); v1 accepts this under the "same principal = same person" assumption, and containment against injection spread relies on frame isolation and the escalation gate, not the data gate.
-6. **Audit signals are unimplemented**. `data.access.denied` / `data.access.granted` (§6) belong to D2; today a denial appears only as a tool error in the trace, with no per-principal aggregation of "who was denied, how often".
-7. **Multi-user and delegation chains are unimplemented (D3)**: all Web runs share the deployer's identity; agent-mediated calls get no weakest-link degradation — the caller's identity passes through unchanged.
-8. **The denial surface leaks domain existence** (domain name and sensitivity ride in the error message). This is a deliberate usability trade-off (the model needs the criterion to recover), but it does expose domain naming and grading to a low-clearance caller.
-9. **Explicit non-goals** (§9): taint tracking, per-file/row-level ACLs, SSO/OIDC, storage-layer encryption. These are out of scope, not omissions.
+6. **Delegation chains and the confirmation card's data face are unimplemented (D3 remainder)**: agent-mediated calls get no weakest-link degradation — the caller's identity passes through unchanged; the EscalationRequest data face (domains and sensitivities a call will touch) belongs to E3. The multi-user mapping has landed as D3-lite (`[web.tokens]`, 2026-08-31); without it, all Web runs still share the deployer's identity.
+7. **The denial surface leaks domain existence** (domain name and sensitivity ride in the error message). This is a deliberate usability trade-off (the model needs the criterion to recover), but it does expose domain naming and grading to a low-clearance caller.
+8. **Explicit non-goals** (§9): taint tracking, per-file/row-level ACLs, SSO/OIDC, storage-layer encryption. These are out of scope, not omissions.
 
 ## 7. References
 
 - Design docs: `docs/DATA-AUTHZ.md` (three-gate boundary, verdict model, D1 implementation notes, phasing); `docs/ESCALATION.md` §1 (scope boundary: escalation does not gate confidentiality)
 - Contracts: `agent_os/src/agent_os/api/v1/principal.py` (Principal/DataDomain/allow/clearance_of/cli_principal/web_single_user_principal); `agent_os/src/agent_os/api/v1/tools.py:57,119-121,145` (DATA_ACCESS_DENIED, ToolSpec.data_domains, ToolContext.principal); `agent_os/src/agent_os/api/v1/frames.py:102-105` (SkillFrame.principal)
-- Enforcement: `agent_os/src/agent_os/tools/local_registry.py:181-286` (dispatch pipeline), `:288-304` (register_fs_domain/_resolve_fs_domain), `:306-351` (_check_data_access), `:544-588` (resolve_work_path)
-- Identity flow: `agent_os/src/agent_os/kernel/runner.py:206-228` (run injection point); `agent_os/src/agent_os/skills/local_file.py:146-148` (child inheritance); `agent_os/src/agent_os/kernel/checkpoint.py:156,226-234` (serialization round-trip); `agent_os/src/agent_os/host/cli/main.py:163,292`; `agent_os/src/agent_os/host/web/run_manager.py:430-440,553`
-- Tests: `agent_os/tests/tools/test_data_authz.py` (13 cases)
+- Enforcement: `agent_os/src/agent_os/tools/local_registry.py:228-347` (dispatch pipeline), `:349-378` (register_fs_domain/register_net_domain and _resolve_fs_domain/_resolve_net_domain), `:396-508` (_check_data_access), `:701-745` (resolve_work_path)
+- Identity flow: `agent_os/src/agent_os/kernel/runner.py:206-228` (run injection point); `agent_os/src/agent_os/skills/local_file.py:146-148` (child inheritance); `agent_os/src/agent_os/kernel/checkpoint.py:156,226-234` (serialization round-trip); `agent_os/src/agent_os/host/cli/main.py:163,292`; `agent_os/src/agent_os/host/web/run_manager.py:442-452,565`
+- Tests: `agent_os/tests/tools/test_data_authz.py` (23 cases), `agent_os/tests/web/test_data_authz.py` (5 cases, D3-lite)

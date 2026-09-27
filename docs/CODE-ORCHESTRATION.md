@@ -1,6 +1,7 @@
 # 代码编排设计稿:Logic Kernel 的工具系统调用(Tool Syscalls)
 
-> 状态:**已实现**(锚点测试 `agent_os/tests/logic/test_orchestration.py`,16 条)。
+> 状态:**已实现**(锚点测试 `agent_os/tests/logic/test_orchestration.py`,18 条;
+> pytest 收集数,含参数化展开)。
 > 落地与本稿的两处偏差见 §12。权威架构见 [DESIGN.md](DESIGN.md);
 > 与 [STDLIB.md](STDLIB.md) §9"被拒绝的备选路线·现场代码编排"的关系见 §11
 > ——本设计改变了当初拒绝的前提条件。
@@ -236,3 +237,13 @@ STDLIB v2 §9 拒绝"现场代码编排"的理由是**审计/白名单**("违反
    `ORCHESTRATE_TOOL` / `ORCHESTRATE_SCHEMA`),ContextManager 按 manifest
    声明 + 消融开关补进可见工具面;KernelBuilder 的装配期闸门放行该名字
    (伪工具不进 registry)。
+5. **Docker 后端未接入 syscall**(§2.2/§5 偏差):服务循环仅 subprocess 后端
+   落地;`logic/docker_sandbox.py` 保持一次性 `communicate()`,不读
+   `ExecRequest.dispatch_fn`——SANDBOX 编排路由到 Docker 后端时退化为纯计算
+   (ctx=None)。fd 透传细节仍挂 §7.5。
+6. **`ctx.blob` 未过桥**(§2.2 偏差):沙箱 ctx(`_SyncCtx`/`_AsyncCtx`)暴露
+   `call_tool`/`invoke`/`cancel`/`frame_status`(`logic/python_sandbox.py:92-125`;
+   `cancel`/`frame_status` 为 W5-WS1 帧控制面,2026-09-27 桥接),`spawn`/`wait`/
+   `parallel` 未桥接(SANDBOX 档不能做 spawn 类操作,留后续档);TRUSTED 档的 blob
+   是帧级本地 `InMemoryBlobStore`(`kernel/logic_context.py:78-79`)。blob 过桥
+   留后续档。

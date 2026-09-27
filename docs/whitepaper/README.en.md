@@ -27,7 +27,7 @@
 | [02](en/02-skills.md) | Skills: manifest contract, loading pipeline, pseudo-tools & the inline purity gate | implemented |
 | [03](en/03-tools.md) | Tools: dispatch pipeline, three-way permission intersection, side_effect declarations, path sandbox | implemented |
 | [04](en/04-logic-kernel.md) | Logic Kernel & orchestration sandbox: trust routing, syscall channel, no privilege elevation | implemented |
-| [05](en/05-context.md) | Context: assembly, compression (rolling-window), prefix-cache stability | implemented (baseline) |
+| [05](en/05-context.md) | Context: assembly, compression (truncate/spill/summarize chain), prefix-cache stability | implemented (narrate open) |
 | [06](en/06-determinism.md) | Signals, telemetry & determinism engineering: 35-signal catalog, WAL, checkpoint/resume/replay/diff | implemented |
 | [07](en/07-sidecars.md) | Sidecars: signal-driven supervision, verdict arbitration matrix, dual budget layers | partial (HumanApproval sunk into the kernel tool-confirm gate) |
 | [08](en/08-supervisor.md) | Supervisor: ruling router, suspend-answer-resume loop, three host channels | implemented |
@@ -53,8 +53,9 @@ below — the full list lives in each chapter's §6 and endnotes.
 - **No semver solving**: DESIGN.md §6.1 promises semver constraint solving; the
   loader checks dependency existence only (ch. 02).
 - **Sidecar arbitration surface is smaller than designed**: `pre:skill.invoke`,
-  `pre:llm.request`, `pre:compress` emit but are not arbitrated; the
-  `budget.warning/exceeded` signals have no emitter (ch. 07).
+  `pre:llm.request` emit but are not arbitrated; the
+  `budget.warning/exceeded` signals have no emitter (ch. 07; `pre:compress`
+  gained veto on 2026-09-28, see ch. 05).
 - **D1 deviations in data authZ (converged in D2)**: unconfigured domains are not
   intercepted (the design said confidential; since D2 a bound `[data]` policy
   restores confidential, while the D1 stance holds verbatim with no policy);

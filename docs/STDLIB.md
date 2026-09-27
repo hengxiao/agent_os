@@ -80,7 +80,9 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
    `read_paths` 只读挂载进 RunConfig,fs/shell 工具共用 `resolve_work_path`
    三段判定;缺省仍为 per-run 临时目录(安全边界不静默放宽)。per-skill
    声明与 scratch 分区未做;
-5. **`ctx.spawn`/`board` 未过 syscall 桥**(编排脚本内只有 call_tool/invoke)。
+5. **`ctx.board`/`blob` 未过 syscall 桥**(`spawn`/`wait`/`parallel` 已于
+   2026-09-28 过桥;编排脚本 ctx 现为 call_tool/invoke/cancel/frame_status/
+   spawn/wait/parallel 七方法)。
 
 ---
 

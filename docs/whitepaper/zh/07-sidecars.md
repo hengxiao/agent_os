@@ -1,6 +1,6 @@
 # Sidecars:信号驱动的监督
 
-> 章次:07 · 状态:部分实现(M4 主体已落地:SidecarSupervisor、RunControl、五个内置副车可用;HumanApproval 已下沉为内核 tool-confirm 闸门的策略载体——WS2,`on_signal` 弃权;entry point 注册、LLM 驱动副车的配套设施未实现) · 依据:`agent_os/src/agent_os/sidecars/`、`agent_os/src/agent_os/api/v1/{sidecars,signals,control}.py`、`agent_os/src/agent_os/kernel/{signals,control,runner}.py`、`docs/DESIGN.md` §5
+> 章次:07 · 状态:部分实现(M4 主体已落地:SidecarSupervisor、RunControl、五个内置副车可用;HumanApproval 已下沉为内核 tool-confirm 闸门的策略载体——WS2,`on_signal` 弃权;第七个内置 DistillSidecar 已于 2026-09-28 落地,见 §4.4 表与 §6 第 10 条;entry point 注册未实现,审批异家族/rejection circuit breaker 等 LLM 驱动副车配套设施仍预留) · 依据:`agent_os/src/agent_os/sidecars/`、`agent_os/src/agent_os/api/v1/{sidecars,signals,control}.py`、`agent_os/src/agent_os/kernel/{signals,control,runner}.py`、`docs/DESIGN.md` §5
 
 ## 1. 概述
 
@@ -84,6 +84,7 @@ runner 回收 verdicts → _arbitrate_pre:首个非 Allow 生效(runner.py:316-3
 | ToolGuard(builtins.py:174-199) | `pre:tool.call` | SYNC/10 | 规则表 `(工具名, 参数正则, 理由)`,命中 → Veto;能力上限自声明:正则对 shell 组合爆炸无效,防护主体是沙箱+权限 |
 | CodeScanner(builtins.py:202-234) | `pre:logic.exec` | SYNC/10 | 默认危险集(import os/os.system/ctypes/subprocess/socket)扫描 `payload["source"]`,命中 → Veto;无 source 的发射(如 code 技能帧)无可扫描对象,放行 |
 | HumanApproval(builtins.py:237-257) | `pre:tool.call`(EXEC 级) | SYNC/20 | **策略载体**(WS2):`on_signal` 返回 None 弃权(仲裁视为 Allow);EXEC 档人审已下沉为内核 tool-confirm 闸门(`kernel/runner.py:_dispatch_call`,`kind="tool-confirm"`),本类在场即生效,`[sidecars] human_approval` 配置装配,见 §6 |
+| DistillSidecar(builtins.py:331-526) | `run.finished`/`run.aborted` | ASYNC/90 | run 终态后经廉价模型蒸馏本次 run 为一条经验写入 Memory(§11.2 写路径范式,2026-09-28 落地):aborted 恒触发 failure reflection,finished 需该 run 帧树 TOOL 消息数 > `min_tool_calls`(默认 5)才触发 strategy summary;实例级 `_seen` run_id 幂等去重;连败 ≥ `breaker_threshold`(默认 3)熔断,异常吞掉;**触发闭包直挂信号总线**——终态信号的 supervisor ASYNC 派发有结构性竞态(见 §6 第 10 条),蒸馏任务实例自管 detached;`[sidecars] distill` 配置装配,需 `[memory]` 段配合(缺则休眠);run 已结束,用量不入帧账,记入 provenance.detail |
 
 **设计取舍**:
 
@@ -113,13 +114,14 @@ runner 回收 verdicts → _arbitrate_pre:首个非 Allow 生效(runner.py:316-3
 
 1. **EXEC 级人审不走副车契约(WS2 边界)**:HumanApproval 已下沉为内核 tool-confirm 闸门(`kernel/runner.py:_dispatch_call`,`supervisor.ask` 带 `kind="tool-confirm"`;approve-run 仅 reversible 档提供,deny → PERMISSION_DENIED,无 supervisor → fail-closed),`on_signal` 返回 None 弃权,类仅作策略载体;`[sidecars] human_approval = true | {timeout, on_timeout}` 配置生效(timeout/on_timeout 装配期映射 SupervisorManager 策略)。行为变化:无 supervisor 的裸 run 调 EXEC 闸门工具(如 `system.file.delete`)现在 fail-closed 拒绝。
 2. **规则类副车的能力上限是自声明的**:ToolGuard/CodeScanner 的正则对 shell 组合爆炸、混淆代码无效,docstring 明写"防护主体是沙箱(§9.2)+ 权限(§8.2)";语义解析器仅作预留。把它们当成安全边界是误用。
-3. **仲裁覆盖不全**:`pre:skill.invoke`(runner.py:857)、`pre:llm.request`(runner.py:411)、`pre:compress`(context/manager.py:310)与 code 技能帧的 `pre:logic.exec`(runner.py:523)当前**只发射不仲裁**——DESIGN §5.1 的"pre 可否决"在这些点是契约先行,实现未跟(以代码为准)。
+3. **仲裁覆盖不全**:`pre:skill.invoke`(runner.py:857)、`pre:llm.request`(runner.py:411)与 code 技能帧的 `pre:logic.exec`(runner.py:523)当前**只发射不仲裁**——DESIGN §5.1 的"pre 可否决"在这些点是契约先行,实现未跟(以代码为准)。(`pre:compress` 已于 2026-09-28 落地否决:首个非 Allow verdict 跳过本次压缩,context/manager.py:397-402。)
 4. **ASYNC 强停有延迟且状态不进检查点**:`ctl.stop` 在下一个 safe point 才生效,在跑的一步/一个工具调用会完成;BudgetGuard/LoopDetector 的累计器是进程内存,检查点只序列化 run 与帧(`kernel/checkpoint.py:12-16`)——跨进程恢复后侧车累计清零(内核自身的 max_cost 兜底因 `run.state.usage` 入档而存活)。
 5. **Pause verdict 是"带标签的 abort",不是真暂停**(control.py:39-41;docs/DEBUGGER.md §1 原话):BudgetGuard 的 stop→pause 降级在 v1 实际是"换理由中止",可恢复的暂停属于调试器/supervisor 通道。
 6. **`budget.warning`/`budget.exceeded` 在冻结目录里但无人发射**:`account()` 直接抛 BudgetExceeded(runner.py:1249-1252),80% 预警目前只以 Web 进度条客户端语义存在(docs/WEB-UI.md:186)。
 7. **LoopDetector 的观察面有两个盲区**:签名是精确哈希,语义等价但参数字面不同的调用不可见;编排脚本内部的 syscall 序列不进 `post:step` 载荷,脚本内死循环它看不见(docs/CODE-ORCHESTRATION.md §4 已列待补)。
 8. **SYNC 副车是关键路径成本**:每个 `pre:tool.call` 最坏要排一条 priority 链、每环 2 秒上限;§16 风险表要求压测预算内才可注册 SYNC。supervisor 的"心跳、重启(仅 ASYNC)"(§5.3)未实现,现只有注册与关停。
 9. **输入最小化靠自律不靠强制**:`needs_free_text=False` 的载荷裁剪未做机制保证(docs/reports/dev-status.md:58);自定义副车的 entry point 注册在 pyproject.toml 里是注释占位,第三方副车只能经代码装配。
+10. **ASYNC 副车订阅终态信号(`run.finished`/`run.aborted`)必须直挂总线**(2026-09-28 DistillSidecar 落地时发现,最小复现 + 真实内核探针双重验证):`Kernel.run` 的 finally 在 `emit(run.finished)` 后立即 `supervisor.close()`(supervisor.py:93-99 取消全部在跑 ASYNC 任务),两者间无事件循环让出点,经 supervisor 注册的 ASYNC wrapper(supervisor.py:77-85 的 `create_task`)从未运行就被回收——`on_signal` 永远不会执行。DistillSidecar 的落地方式:builder 把触发闭包直挂信号总线(emit 内联 await,保证触发判定执行),真正的蒸馏任务由实例自管(detached 任务集,run 收尾 cancel 不到);`supervisor.register` 仍照常走,保持契约形态统一。配套边界:`supervisor.close()` 不调 sidecar.close(),DistillSidecar.close()/wait_pending() 由宿主/测试显式调用(CLI 一次性进程退出时蒸馏可能未跑完,best-effort)。
 
 ## 7. 引用
 

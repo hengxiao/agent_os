@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import textwrap
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -33,10 +34,13 @@ from agent_os.api.v1 import (
     SkillFrame,
     SkillRef,
     ToolCall,
+    Veto,
 )
 from agent_os.context.estimator import TokenEstimator
-from agent_os.context.manager import ContextManager
+from agent_os.context.manager import ContextManager, ContextOverflowError
 from agent_os.context.rolling_window import RollingWindowCompressor
+from agent_os.context.spill import SpillCompressor
+from agent_os.context.summarize import SummarizeCompressor
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.local_registry import LocalPythonToolRegistry
 
@@ -53,8 +57,14 @@ skills:
 """
 
 
-def _registry(tmp_path) -> LocalFileSkillRegistry:
-    (tmp_path / "skills.yaml").write_text(textwrap.dedent(CHATTY_YAML), encoding="utf-8")
+def _registry(
+    tmp_path, *, mode: str = "truncate", max_tokens: int = 4000
+) -> LocalFileSkillRegistry:
+    yaml_text = textwrap.dedent(CHATTY_YAML).replace(
+        "max_tokens: 4000, compress: truncate",
+        f"max_tokens: {max_tokens}, compress: {mode}",
+    )
+    (tmp_path / "skills.yaml").write_text(yaml_text, encoding="utf-8")
     return LocalFileSkillRegistry(str(tmp_path / "skills.yaml"))
 
 
@@ -363,6 +373,169 @@ def test_maintain_without_compressor_updates_estimate_only(tmp_path):
 
     assert len(frame.context.messages) == before
     assert frame.context.token_estimate > 100
+
+
+# ---------------------------------------------------------------------------
+# WS2 模式注册表与责任链装配(§7.2):_MODE_CHAINS 选段 + strategy 遥测
+# ---------------------------------------------------------------------------
+
+
+def _chain_manager(reg, *, bus: _RecordingBus | None = None):
+    """注册表三段齐全(spill/truncate/summarize)的 manager + 录制总线。
+
+    summarize 不配模型(providers 也为 None)→ 内部退化 truncate(§7.2),
+    但责任链身份(post:compress 的 strategy 名)不受影响。
+    """
+    bus = bus or _RecordingBus()
+    mgr = ContextManager(
+        skills=reg,
+        tools=LocalPythonToolRegistry(),
+        config=RunConfig(compression="hierarchical", max_cost=2.0),
+        compressors={
+            "spill": SpillCompressor(threshold_chars=200, head_chars=50, tail_chars=50),
+            "truncate": RollingWindowCompressor(),
+            "summarize": SummarizeCompressor(model=None),
+        },
+        estimator=TokenEstimator(),
+        signals=bus,
+        default_max_tokens=4000,
+        target_ratio=0.5,
+    )
+    return mgr, bus
+
+
+def _oversized_frame(n: int = 40, size: int = 400) -> SkillFrame:
+    """pinned 系统消息 + n 个原子组(≈16k+ tokens,远超 cap 4000)。"""
+    msgs = [_sys_msg()]
+    for i in range(n):
+        msgs.extend(_group(i, size=size))
+    return _frame(msgs, pinned=["sys-0"])
+
+
+@pytest.mark.parametrize(
+    "mode,strategy",
+    [
+        ("truncate", "truncate"),
+        ("spill", "spill+truncate"),
+        ("summarize", "summarize"),
+        ("hierarchical", "spill+summarize"),
+    ],
+)
+def test_mode_selects_registered_chain(tmp_path, mode, strategy):
+    """四种模式按 _MODE_CHAINS 取注册表阶段组链;post:compress 带实际 strategy 名。"""
+    reg = _registry(tmp_path, mode=mode)
+    mgr, bus = _chain_manager(reg)
+    frame = _oversized_frame()
+
+    asyncio.run(mgr.maintain(frame))
+
+    post = [s for s in bus.seen if s.name == POST_COMPRESS]
+    assert len(post) == 1
+    assert post[0].payload["strategy"] == strategy
+    assert _pairing_ok(frame.context.messages)
+    assert frame.context.token_estimate <= 4000 * 0.5 + 400  # 目标水位 + 单组粒度容差
+
+
+def test_unknown_compress_mode_fails_fast(tmp_path):
+    """compress: "bogus" → maintain 抛 ValueError(快速失败,连 pre:compress 都不发)。"""
+    reg = _registry(tmp_path, mode="bogus")
+    mgr, bus = _chain_manager(reg)
+    frame = _oversized_frame()
+
+    with pytest.raises(ValueError, match=r"未知压缩模式.*bogus"):
+        asyncio.run(mgr.maintain(frame))
+    assert not any(s.name == PRE_COMPRESS for s in bus.seen)
+
+
+class _VetoBus(_RecordingBus):
+    """pre:compress 一律 Veto 的录制总线(§7.4 不变量 4:压缩可否决)。"""
+
+    async def emit(self, sig: Signal):
+        self.seen.append(sig)
+        if sig.name == PRE_COMPRESS:
+            return [Veto(reason="测试否决:禁止本次压缩")]
+        return []
+
+
+def test_pre_compress_veto_skips_compression(tmp_path):
+    """pre:compress 否决 → 不压缩、不发 post;token_estimate 照常更新。"""
+    reg = _registry(tmp_path)
+    bus = _VetoBus()
+    mgr, _ = _chain_manager(reg, bus=bus)
+    frame = _oversized_frame()
+    before = list(frame.context.messages)
+
+    asyncio.run(mgr.maintain(frame))
+
+    assert frame.context.messages == before  # 消息未动
+    assert any(s.name == PRE_COMPRESS for s in bus.seen)  # pre 照发
+    assert not any(s.name == POST_COMPRESS for s in bus.seen)  # 无 post
+    assert frame.context.token_estimate > 4000  # 估算已更新(未压缩,仍超 cap)
+
+
+def test_force_compress_also_vetoable(tmp_path):
+    """force 触发同样被 pre:compress 否决跳过(§7.1/§7.4)。"""
+    reg = _registry(tmp_path)
+    bus = _VetoBus()
+    mgr, _ = _chain_manager(reg, bus=bus)
+    msgs = [_sys_msg(), *_group(0, size=400)]  # 远低于 cap 4000
+    frame = _frame(msgs, pinned=["sys-0"])
+    before = list(frame.context.messages)
+
+    asyncio.run(mgr.force_compress(frame))
+
+    pre = [s for s in bus.seen if s.name == PRE_COMPRESS]
+    assert len(pre) == 1 and pre[0].payload.get("forced") is True
+    assert not any(s.name == POST_COMPRESS for s in bus.seen)
+    assert frame.context.messages == before
+
+
+def test_hard_cap_overflow_raises(tmp_path):
+    """§7.1 硬上限尾路径:pinned 巨型消息吃满 cap 压不动 → ContextOverflowError;
+    post:compress 在抛错前照发(after_tokens 如实),pinned 仍永驻(不变量 1)。"""
+    reg = _registry(tmp_path)
+    mgr, bus = _chain_manager(reg)
+    big_sys = Message(role=Role.SYSTEM, content="x" * 20_000, meta={"id": "sys-big"})
+    msgs = [big_sys]
+    for i in range(4):
+        msgs.extend(_group(i, size=400))
+    frame = _frame(msgs, pinned=["sys-big"])  # pinned ≈5000 tokens > cap 4000
+
+    with pytest.raises(ContextOverflowError) as exc_info:
+        asyncio.run(mgr.maintain(frame))
+
+    err = exc_info.value
+    assert err.frame_id == "f1" and err.cap == 4000
+    assert err.after > err.cap and err.before > err.after
+    assert "f1" in str(err) and "4000" in str(err)
+    post = [s for s in bus.seen if s.name == POST_COMPRESS]
+    assert len(post) == 1 and post[0].payload["after_tokens"] > 4000
+    assert any(m.meta.get("id") == "sys-big" for m in frame.context.messages)
+
+
+def test_legacy_compressor_merged_into_registry(tmp_path):
+    """旧用法(只传 compressor=)并入注册表 {"truncate": c}:truncate 模式照常工作。"""
+    reg = _registry(tmp_path)  # compress: truncate
+    mgr, bus = _manager(reg)  # legacy: compressor=RollingWindowCompressor()
+    frame = _oversized_frame()
+
+    asyncio.run(mgr.maintain(frame))
+
+    post = [s for s in bus.seen if s.name == POST_COMPRESS]
+    assert len(post) == 1 and post[0].payload["strategy"] == "truncate"
+
+
+def test_legacy_compressor_hierarchical_falls_back(tmp_path):
+    """旧用法 + hierarchical 模式:注册表只有 truncate,hierarchical 链空 → 回退 legacy。"""
+    reg = _registry(tmp_path, mode="hierarchical")
+    mgr, bus = _manager(reg)
+    frame = _oversized_frame()
+
+    asyncio.run(mgr.maintain(frame))
+
+    post = [s for s in bus.seen if s.name == POST_COMPRESS]
+    assert len(post) == 1 and post[0].payload["strategy"] == "truncate"  # legacy 兜底
+    assert _pairing_ok(frame.context.messages)
 
 
 # ---------------------------------------------------------------------------

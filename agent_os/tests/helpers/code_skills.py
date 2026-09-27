@@ -210,6 +210,19 @@ async def sandbox_cancel_probe(input: dict[str, Any], ctx: Any) -> dict[str, Any
     return {"ack": ack, "status": status["status"], "usage_keys": sorted(status["usage"].keys())}
 
 
+async def sandbox_spawn_wait_probe(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """SANDBOX 档经 syscall 桥 spawn+wait(§3.4 桥接测试):取回子帧返回值。"""
+    fid = await ctx.spawn(input["skill"], dict(input.get("args") or {}))
+    value = await ctx.wait(fid)
+    return {"frame_id": fid, "value": value}
+
+
+async def sandbox_parallel_probe(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """SANDBOX 档经 syscall 桥 parallel(§3.4 桥接测试):批结果按分支序原样带回。"""
+    results = await ctx.parallel(input["branches"], **dict(input.get("kw") or {}))
+    return {"results": results}
+
+
 async def std_cancel_probe(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """std/combinators 装配测试驱动(W5-WS2+3):经 std 技能面调 subagent_cancel/status。
 

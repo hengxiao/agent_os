@@ -38,7 +38,7 @@ max_depth = 8
 max_steps = 200
 max_cost = 2.0
 max_wall_time = 1800
-compression = "hierarchical"        # off = 消融档
+compression = "hierarchical"        # off|truncate|spill|summarize|hierarchical;off = 消融档
 # stream = false                    # 关掉流式消费(缺省 true:caps 支持走 stream chunk 循环,逐 chunk
                                     # 发 post:llm.chunk 并记 ttft/total;caps 不支持自动回落 chat)
 # workdir = "/path/to/project"      # §W0-1:run 工作目录(fs/shell 可写区;缺省每 run 临时目录)
@@ -63,6 +63,12 @@ loop_detector = { threshold = 3, max_strikes = 2 }
 # tool_guard_rules = [["system.shell.exec", "rm -rf", "理由"]]  # 每项 = [工具名, 参数正则, 否决理由]
 # human_approval = true                # WS2:EXEC 档工具过内核 tool-confirm 闸门(supervisor.ask,kind="tool-confirm")
 # human_approval = { timeout = 300, on_timeout = "deny" }  # 或表:审批超时秒数 + 超时兜底(deny|allow)
+# distill = true                       # 蒸馏 sidecar(DESIGN §11.2):run 终态后经廉价模型蒸馏经验写入 Memory——
+                                      # run.aborted 恒触发 failure reflection;run.finished 需帧树 TOOL 消息数
+                                      # > min_tool_calls 才触发 strategy summary;需 [memory] 段配合(缺则休眠)
+# distill = { model = "kimi/cheap", min_tool_calls = 5, temperature = 0.2, breaker_threshold = 3, max_transcript_chars = 24000 }
+                                      # 或表(strict 校验,未知键报错):model 缺省跟 [run] model;
+                                      # breaker_threshold = 连败熔断阈值(默认 3);max_transcript_chars = 转写总量上限
 
 [telemetry]
 dir = ".agent-os/traces"
@@ -96,6 +102,12 @@ backoff_base = 0.5
                                        # 缺段 = 进程内 InMemoryBlobStore(零破坏)
 # dir = "./blobs"                      # FileBlobStore 根目录(<root>/<run_id>/<sha256> 内容寻址落盘,
                                        # run_id/sha 白名单防目录逃逸)
+
+# [context]                            # §7.2 压缩链调参(2026-09-28);缺段 = 全默认
+# summarize_model = "kimi/kimi-k2-thinking"  # summarize 策略的摘要模型,缺省跟 [run] model
+# spill_threshold_chars = 4000         # TOOL 消息超此字符数移入 blob store(冻结 [SPILLED] 替换串)
+# summarize_breaker = 3                # 摘要连败熔断次数;熔断开/无 providers 退化纯截断([COMPRESSED:truncate])
+# summarize_temperature = 0.2          # 摘要采样温度
 ```
 
 加载器落点:`runtime/config.py`(已实现:CLI/Web 两个宿主共用,均支持 `--config`)。

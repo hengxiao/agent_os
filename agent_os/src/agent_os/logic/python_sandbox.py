@@ -66,7 +66,10 @@ _DEFAULT_WALL_TIME = 30.0
 #: ``_SyncCtx`` 给编排脚本(LLM 写直线代码,无 async 样板),``_AsyncCtx`` 给
 #: code 技能 handler(``await ctx.call_tool(...)``,与 TRUSTED 档契约逐字一致)。
 #: kind 路由:``tool``/``skill`` 走内核 ``_dispatch_call`` 闸门;``cancel``/
-#: ``frame_status``(W5-WS1 帧控制面)直委托内核读/控视图(同名 ctx 方法,§9.3)。
+#: ``frame_status``(W5-WS1 帧控制面)直委托内核读/控视图(同名 ctx 方法,§9.3);
+#: ``spawn``/``wait``/``parallel``(§3.4 后台帧/fork-join 原语)直委托内核
+#: ``spawn_frame``/``wait_frame``/``parallel_invoke``,白名单/深度/升权闸与
+#: invoke 同一条路径,无权限提升。
 _SYSCALL_PRELUDE = """\
 import json, os, socket
 
@@ -110,6 +113,33 @@ class _SyncCtx:
             raise RuntimeError((r.get("error") or {}).get("message") or ("帧 %s 状态查询失败" % frame_id))
         return r["value"]
 
+    def spawn(self, skill, input):
+        r = self._t.call("spawn", skill, dict(input))
+        if not r["ok"]:
+            raise RuntimeError((r.get("error") or {}).get("message") or ("spawn %s 失败" % skill))
+        return r["value"]
+
+    def wait(self, frame_id):
+        r = self._t.call("wait", frame_id, {})
+        if not r["ok"]:
+            err = r.get("error") or {}
+            # kind 前缀让脚本能区分子树取消(cancelled)与其他失败——对齐 TRUSTED 档
+            # wait 上抛 SubtreeCancelled 的可捕获语义(§3.4),如 "cancelled: 后台帧 ..."
+            raise RuntimeError(
+                "%s: %s" % (err.get("kind") or "error",
+                            err.get("message") or ("帧 %s wait 失败" % frame_id))
+            )
+        return r["value"]
+
+    def parallel(self, branches, mode="all_settled", max_concurrency=None, settle_timeout=5.0):
+        r = self._t.call("parallel", "", {"branches": branches, "mode": mode,
+                                          "max_concurrency": max_concurrency,
+                                          "settle_timeout": settle_timeout})
+        if not r["ok"]:
+            raise RuntimeError((r.get("error") or {}).get("message") or "parallel 批预检失败")
+        # 逐分支 ok=False 是正常结算(批内故障隔离),不抛
+        return r["value"]
+
 
 class _AsyncCtx(_SyncCtx):
     async def call_tool(self, tool, args):
@@ -123,6 +153,15 @@ class _AsyncCtx(_SyncCtx):
 
     async def frame_status(self, frame_id):
         return _SyncCtx.frame_status(self, frame_id)
+
+    async def spawn(self, skill, input):
+        return _SyncCtx.spawn(self, skill, input)
+
+    async def wait(self, frame_id):
+        return _SyncCtx.wait(self, frame_id)
+
+    async def parallel(self, branches, mode="all_settled", max_concurrency=None, settle_timeout=5.0):
+        return _SyncCtx.parallel(self, branches, mode, max_concurrency, settle_timeout)
 
 
 def _make_ctx(cls):

@@ -1,6 +1,6 @@
 # Logic Kernel 与编排沙箱
 
-> 章次:04 · 状态:已实现(InProcess / subprocess 沙箱 / Docker 沙箱三个后端与编排 syscall 通道均已落地并有测试;沙箱内 `spawn`/`blob` 过桥、syscall 并发、Docker 后端的编排支持为已设计未实现) · 依据:`docs/DESIGN.md` §9;`docs/CODE-ORCHESTRATION.md`;`agent_os/src/agent_os/api/v1/logic.py`、`logic/`、`kernel/runner.py`、`kernel/logic_router.py`、`tools/builtins.py`
+> 章次:04 · 状态:已实现(InProcess / subprocess 沙箱 / Docker 沙箱三个后端与编排 syscall 通道均已落地并有测试;沙箱内 `blob` 过桥、syscall 并发、Docker 后端的编排支持为已设计未实现) · 依据:`docs/DESIGN.md` §9;`docs/CODE-ORCHESTRATION.md`;`agent_os/src/agent_os/api/v1/logic.py`、`logic/`、`kernel/runner.py`、`kernel/logic_router.py`、`tools/builtins.py`
 
 ## 1. 概述
 
@@ -90,9 +90,9 @@ TRUSTED 模式下 code 技能与 prompt 技能有同等的组合能力,只是用
 
 ## 5. 效果与验证(效果)
 
-测试基线(实测 `pytest tests/logic/test_orchestration.py tests/logic/test_python_sandbox.py tests/kernel/test_code_skills.py -q`:**38 passed**):
+测试基线(实测 `pytest tests/logic/test_orchestration.py tests/logic/test_python_sandbox.py tests/kernel/test_code_skills.py -q`:**47 passed**):
 
-- `agent_os/tests/logic/test_orchestration.py`:17 个测试函数(18 用例,含参数化)。关键断言:白名单外调用折叠为脚本可见的 `PERMISSION_DENIED` 而非崩掉整次编排(`test_out_of_whitelist_tool_denied_into_script`);ToolGuard 否决 syscall 且理由回脚本;CodeScanner 在 `pre:logic.exec` 否决整段脚本;100 次 `fs_read` 循环后父帧只多一条 tool result、信号流有 100 条 `via: orchestrate` 记录(`test_loop_keeps_intermediates_out_of_context`);`max_tool_calls` 超限回报已执行清单;同一 handler 在 TRUSTED/SANDBOX 两档结果一致(`test_trusted_and_sandbox_equivalent`);含编排的 run replay diff 为空(确定性工具);硬失败穿透编排上抛(`test_hard_failure_escapes_orchestration`)。
+- `agent_os/tests/logic/test_orchestration.py`:26 个测试函数(27 用例,含参数化)。关键断言:白名单外调用折叠为脚本可见的 `PERMISSION_DENIED` 而非崩掉整次编排(`test_out_of_whitelist_tool_denied_into_script`);ToolGuard 否决 syscall 且理由回脚本;CodeScanner 在 `pre:logic.exec` 否决整段脚本;100 次 `fs_read` 循环后父帧只多一条 tool result、信号流有 100 条 `via: orchestrate` 记录(`test_loop_keeps_intermediates_out_of_context`);`max_tool_calls` 超限回报已执行清单;同一 handler 在 TRUSTED/SANDBOX 两档结果一致(`test_trusted_and_sandbox_equivalent`);含编排的 run replay diff 为空(确定性工具);硬失败穿透编排上抛(`test_hard_failure_escapes_orchestration`);§3.4 沙箱桥(`spawn`/`wait`/`parallel`)全流程与故障隔离、白名单拒绝折叠、`cancelled:` 降格、限额计数(`test_sandbox_code_skill_spawn_wait` 等 7 例,2026-09-28)。
 - `agent_os/tests/logic/test_python_sandbox.py`:12 例,覆盖 wall 超时杀进程、stderr 尾部映射错误、stdout 截断、模块驱动形态、**宿主环境变量不继承**(`test_host_env_is_not_inherited`)、cwd 隔离(`test_sandbox_cwd_is_isolated_temp_dir`)。
 - `agent_os/tests/logic/test_docker_sandbox.py`:8 例(docker 不可用时整文件 skip),含 `--network none` 断网与内存超限 OOM 断言。
 - `agent_os/tests/kernel/test_code_skills.py`:8 例,覆盖 code 技能编排 prompt 技能、`ctx.call_tool`、`pre/post:logic.exec` 携带 trust、白名单拒绝、`force_sandbox` 路由。
@@ -106,7 +106,7 @@ TRUSTED 模式下 code 技能与 prompt 技能有同等的组合能力,只是用
 1. **subprocess 沙箱不是安全边界。** 网络、文件系统(绝对路径)、进程三项 v1 均不隔离(模块 docstring 逐项自认,`logic/python_sandbox.py:7-18`)。env 白名单只防"顺手读凭证",硬编码路径仍可达凭证文件。蓄意对抗场景必须用 Docker 后端,而 Docker 依赖宿主装有 docker CLI 与镜像。
 2. **Docker 后端不支持编排。** `docker_sandbox.py` 忽略 `dispatch_fn`(fd 透传细节是设计稿开放问题 5);配置 `python_exec = "docker"` 时若启用 `python_orchestrate`,沙箱内 `ctx` 为 `None`,脚本一调即 `NameError`。编排能力目前只属于 subprocess 后端——隔离最强的档反而没有编排。
 3. **脚本墙钟含内核侧 syscall 时间。** 设计稿要求"脚本 wall_time 不含内核执行 syscall 的时间"(§3),实现是 `asyncio.wait_for(proc.communicate(), timeout=wall)` 总口径(`logic/python_sandbox.py:340`);慢工具会烧脚本预算,只能靠调大 `timeout` 参数缓解。锚点测试清单第 6 条无对应用例。
-4. **syscall 通道能力窄。** 仅 `call_tool`/`invoke` 两种、串行阻塞语义;`ctx.spawn`/`wait`/`board`/`blob` 未过桥(设计 §2.2 的 `blob` 过桥未落地),并发 syscall(协议已预留 id)未支持——沙箱内做不了"前台保场、后台深想"。
+4. **syscall 通道仍有收窄处。** ctx 面现为七方法:`call_tool`/`invoke`/`cancel`/`frame_status`/`spawn`/`wait`/`parallel`(`cancel`/`frame_status` 为 2026-09-27 桥接的帧控制面,`spawn`/`wait`/`parallel` 为 2026-09-28 桥接,直委托内核 spawn_frame / wait / `parallel_invoke` 闸内管线),串行阻塞语义不变。仍窄处:`ctx.board`/`blob` 未过桥(设计 §2.2 的 `blob` 过桥未落地),并发 syscall(协议已预留 id)未支持,Docker 后端无 syscall;`wait` 期间脚本单 outstanding 阻塞;`SubtreeCancelled` 降格为 RuntimeError(`cancelled:` 前缀),不再保持 TRUSTED 档的异常类型保真。
 5. **CodeScanner 只是辅助。** 正则模式扫描对混淆代码无效,能力上限已写入文档;防护主体是沙箱 + 权限,不是扫描器。
 6. **记账口径粗糙。** InProcess 的 `mem_peak_mb` 恒 0;两个沙箱后端的 `cpu_ms` 以 `wall_ms` 充数(`logic/python_sandbox.py:367-368`)。`merge_limits` 已实填(`logic/limits.py:32`:两级逐字段取紧,`None` = 该级未设取另一级,三级取紧即链式调用,返回新实例),但尚无调用点——RunConfig/manifest/调用方三级取紧的消费侧仍留接线。
 7. **replay 的边界不因编排消失。** 编排 replay 仅当内部 syscall 命中确定性工具时逐字节复现;工具副作用仍按真实环境执行。

@@ -381,6 +381,43 @@ class Kernel:
         if force is not None:
             await force(frame)
 
+    async def _drain_compress_usage(self, frame: SkillFrame) -> None:
+        """压缩链 LLM 用量排干入账(§7.2:summarize 等策略经 ProviderManager 的调用)。
+
+        压缩器把每次 LLM 调用落 ``frame.context.working["_compress_llm_usage"]``
+        (``{"model", "usage"}``;force_compress 与 maintain 共用该键,在本排干点
+        一起收)。逐条:token 六项镜像 :meth:`account` 累加进帧/run 两级——
+        **steps 不加**(压缩不是主循环步,预算检查仍在下一步 account 统一做)——
+        并补发 ``post:llm.response``(``source="compress"``,与主循环发送点
+        同形状 + additive),让 BudgetGuard/遥测看到完整成本。
+        """
+        entries = frame.context.working.pop("_compress_llm_usage", [])
+        if not entries:
+            return
+        run = self._runs.get(frame.run_id)
+        for entry in entries:
+            usage = entry.get("usage")
+            if usage is not None:
+                targets = [frame.usage] + ([run.state.usage] if run is not None else [])
+                for target in targets:
+                    target.prompt_tokens += usage.prompt
+                    target.completion_tokens += usage.completion
+                    target.cache_read_tokens += usage.cache_read
+                    target.cache_write_tokens += usage.cache_write
+                    target.thinking_tokens += usage.thinking
+                    target.cost += usage.cost
+            await self.signals.emit(
+                self._sig(
+                    POST_LLM_RESPONSE,
+                    frame,
+                    {
+                        "model": entry.get("model", ""),
+                        "usage": self._usage_payload(usage),
+                        "source": "compress",
+                    },
+                )
+            )
+
     @staticmethod
     def _usage_payload(usage: ChatUsage | None) -> dict[str, Any]:
         """post:llm.response 的 usage 载荷(BudgetGuard 的记账数据源,§5.4)。"""
@@ -452,6 +489,7 @@ class Kernel:
             if frame.context.working.pop(FORCE_COMPRESS_KEY, False):
                 await self._force_compress(frame)
             await self.context.maintain(frame)
+            await self._drain_compress_usage(frame)
             req = await self.context.build(frame)
             await self.signals.emit(self._sig(PRE_LLM_REQUEST, frame, {"model": req.model}))
             resp = await self._llm_call(frame, req)
@@ -842,6 +880,11 @@ class Kernel:
         帧控制面 syscall(kind=``cancel``/``frame_status``,W5-WS1)不是工具分发,
         不进 ``_dispatch_call``:直委托内核读/控视图(``cancel_subtree``/
         ``frame_status_payload``),寻址范围限于本 run 帧树,同样无权限提升。
+        §3.4 编排原语(kind=``spawn``/``wait``/``parallel``)直委托内核后台帧
+        管线(``spawn_frame``/``wait_frame``/``parallel_invoke``)——白名单/深度/
+        升权闸与 invoke 同一条路径;可预见拒绝(白名单/深度/批形态/未知帧)与
+        子树取消折叠为脚本可处置的错误观察,RunAborted(含 BudgetExceeded)穿透
+        (``_serve_syscalls`` 硬失败边界,§3.2)。
         """
         counter = stats if stats is not None else {"calls": 0, "failed": []}
         limit = (
@@ -870,6 +913,77 @@ class Kernel:
                 return {"ok": True, "value": ids, "error": None}
             if kind == "frame_status":
                 return {"ok": True, "value": self.frame_status_payload(name), "error": None}
+            # §3.4 编排原语:spawn(name=技能名,args=input)/ wait(name=frame_id)/
+            # parallel(args 带 branches/mode/max_concurrency/settle_timeout)
+            if kind == "spawn":
+                try:
+                    fid = await self.spawn_frame(frame, name, dict(args))
+                except (SkillLoadError, MaxDepthExceeded) as e:
+                    # 白名单/升权拒绝与深度拒绝同形:脚本可预见的预检失败,折叠返回
+                    return {
+                        "ok": False,
+                        "value": None,
+                        "error": _error_payload(ToolErrorKind.PERMISSION_DENIED, str(e)),
+                    }
+                except RunAborted:
+                    raise  # 硬失败穿透(_serve_syscalls 停服并弹到 Run 边界,§3.2)
+                except Exception as e:  # noqa: BLE001 — 其余失败折叠为脚本可处置的错误观察
+                    return {
+                        "ok": False,
+                        "value": None,
+                        "error": _error_payload(ToolErrorKind.INTERNAL, f"{type(e).__name__}: {e}"),
+                    }
+                return {"ok": True, "value": fid, "error": None}
+            if kind == "wait":
+                try:
+                    value = await self.wait_frame(name)
+                except SubtreeCancelled as e:
+                    # 子树取消是分支终态不是 run 中止:脚本可捕获继续结算
+                    # (对齐 TRUSTED 档 race_first 的 catch 模式,§3.4)
+                    return {"ok": False, "value": None, "error": _cancelled_payload(str(e))}
+                except SkillLoadError as e:
+                    return {
+                        "ok": False,
+                        "value": None,
+                        "error": _error_payload(ToolErrorKind.INVALID_ARGS, str(e)),
+                    }
+                except (RunAborted, MaxDepthExceeded):
+                    raise  # 硬失败穿透(§3.2)
+                except Exception as e:  # noqa: BLE001 — 子帧失败原样回脚本(TRUSTED wait 上抛语义)
+                    return {
+                        "ok": False,
+                        "value": None,
+                        "error": _error_payload(ToolErrorKind.INTERNAL, f"{type(e).__name__}: {e}"),
+                    }
+                return {"ok": True, "value": value, "error": None}
+            if kind == "parallel":
+                branches = args.get("branches")
+                if not isinstance(branches, list):
+                    return {
+                        "ok": False,
+                        "value": None,
+                        "error": _error_payload(
+                            ToolErrorKind.INVALID_ARGS,
+                            f"parallel 的 branches 应为 list,得到: {type(branches).__name__}",
+                        ),
+                    }
+                try:
+                    results = await self.parallel_invoke(
+                        frame,
+                        branches,
+                        mode=args.get("mode", "all_settled"),
+                        max_concurrency=args.get("max_concurrency"),
+                        settle_timeout=args.get("settle_timeout", 5.0),
+                    )
+                except SkillLoadError as e:
+                    # 批形态错/白名单外分支(预检):与 spawn 白名单拒绝同形折叠
+                    return {
+                        "ok": False,
+                        "value": None,
+                        "error": _error_payload(ToolErrorKind.PERMISSION_DENIED, str(e)),
+                    }
+                # MaxDepthExceeded/RunAborted/BudgetExceeded 不在此折叠(§3.2 穿透)
+                return {"ok": True, "value": results, "error": None}
             target = f"skill.{name}" if kind == "skill" else name
             payload = await self._dispatch_call(
                 ToolCall(id=f"{frame.frame_id[:8]}#{counter['calls']}", name=target, args=dict(args)),

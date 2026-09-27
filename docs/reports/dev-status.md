@@ -50,7 +50,7 @@
 > 拦截"(DESIGN §6.2),目标 skills registry 经 `bind_skills` 注入(无 register 能力报 NOT_FOUND)。
 > **M6 余项仍开口**:沙箱回调通道高级形态、spill/summarize/narrate 压缩策略、蒸馏 sidecar、context 注入槽
 > (Memory 检索结果的组装侧);register() 留尾:semver ^/~ 求解、DirectorySkillSource 写路径、文件监听热重载、
-> 完整重放 + evaluator 验证门。
+> 完整重放 + evaluator 验证门。(**2026-09-28 更新**:蒸馏 sidecar 已关闭,见头部最新复核块。)
 > ---
 > ⚠️ **复核 2026-09-27(并发三原语三项已关闭)**:测试 **1320 收集 = 1273 passed + 10 条件 skip + 37 xfailed,0 失败**。
 > ① **`parallel_invoke` fork/join(WS3,§3.4 第三原语)**——`Kernel.parallel_invoke`(`kernel/runner.py:1482-1763`,
@@ -120,8 +120,62 @@
 > ctx 面扩张(W5-WS1):`LogicContext.cancel`/`frame_status`(`api/v1/logic.py` 协议、
 > `kernel/logic_context.py:160/168`、`kernel/runner.py:2113` `frame_status_payload`、`_syscall_dispatcher`
 > cancel/frame_status 路由 `:868-872`、`logic/python_sandbox.py:92-125` `_SyncCtx`/`_AsyncCtx` 桥接)。
-> **剩余**:多模态契约、组合子 budget 内核强制、ask_human/set_timer 工具面、沙箱 ctx 的
-> spawn/wait/parallel 桥接(SANDBOX 档仍不能做 spawn 类操作)。
+> **剩余**:多模态契约、组合子 budget 内核强制、ask_human/set_timer 工具面。
+> ---
+> ⚠️ **复核 2026-09-28(§7.2 高级压缩链落地,WS1+WS2)**:测试 **1522 收集 = 1473 passed + 10 skipped + 39 xfailed,0 失败**。
+> `SpillCompressor`(`context/spill.py`,name `"spill"`:非 pinned 超阈值 TOOL 消息移入 blob,
+> 冻结 `[SPILLED]` 替换串 + `blob://` ref + head/tail + blob_get 取回提示,不删消息)、
+> `SummarizeCompressor`(`context/summarize.py`,name `"summarize"`:被逐区间经 `svc.providers.chat`
+> 廉价档摘要为 `[COMPRESSED]` compact note,context-aware + 保留契约,连败熔断 3 退化
+> `[COMPRESSED:truncate]`)、`ChainCompressor`(`context/chain.py`:spill → summarize 有序链,
+> 逐阶段重估达标短路)全落地;rolling_window 类 name 改 `"truncate"`(行为不变);模式表
+> `_MODE_CHAINS`(manifest `compress` 优先,未知模式 ValueError,narrate 不在表中仍开口);
+> `KernelServices.providers`/run_id 已接线(不再恒为 None);`pre:compress` 可否决(§7.4 不变量 4);
+> §7.1 硬上限尾路径 `ContextOverflowError` 帧失败上抛("临近模型窗口"独立档仍开口);压缩 LLM
+> 用量入账帧/run 两级并补发 `post:llm.response`(`"source": "compress"`);`[context]` TOML 段
+> (summarize_model/spill_threshold_chars/summarize_breaker/summarize_temperature)与 entry point 组
+> `agent_os.compressors` 接线。下文 §5(Context)的"未开发"条目据此关闭(spill/summarize/
+> hierarchical;narrate 除外),正文保留作历史快照。
+> ---
+> ✅ **复核 2026-09-28(沙箱 ctx spawn/wait/parallel 桥接,WS2)**:沙箱 syscall ctx
+> (`logic/python_sandbox.py` 的 `_SyncCtx`/`_AsyncCtx`)新增 `spawn`/`wait`/`parallel`
+> 三方法,经 runner `_syscall_dispatcher` kind 路由直委托内核 spawn_frame / wait /
+> `parallel_invoke` 闸内管线(白名单/深度/升权不旁路);错误折叠:白名单外/深度拒绝 →
+> RuntimeError(error.message 原文),SubtreeCancelled → `cancelled:` 前缀(脚本可捕获
+> 继续结算,对齐 TRUSTED race_first 模式),未知帧 `invalid_args:`,子帧普通失败
+> `internal: {ExcType}:`,RunAborted/MaxDepthExceeded/BudgetExceeded 穿透;三个 syscall
+> 计入 `max_tool_calls`(计数在 kind 路由前);`parallel` 逐分支 `ok=False` 正常结算不抛。
+> ctx 方法面现为七个;锚点测试新增 7 例(`tests/logic/test_orchestration.py`,handlers 在
+> `tests/helpers/code_skills.py`)。边界:返回值须 JSON 可序列化;wait 期间脚本单
+> outstanding 阻塞;并发 syscall 未支持;Docker 后端无 syscall;board/blob 不过桥。全量基线:1529 收集 = 1480 passed + 10 skipped + 39 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-28(蒸馏 sidecar 落地,WS2)**:§11.2 写路径范式之蒸馏 sidecar 实填——
+> `DistillSidecar`(`sidecars/builtins.py:331-526`,导出 `sidecars/__init__.py`),ASYNC 订阅
+> `run.finished`/`run.aborted`,永不否决。触发条件(Hermes 固化条件的 v1 子集,
+> ch08-self-evolution.md:29):`run.aborted` 恒触发(failure reflection);`run.finished`
+> 需该 run 帧树内 TOOL 消息数 > `min_tool_calls`(默认 5)才触发(strategy summary);
+> 用户纠正/非显然工作流触发 v1 无通用信号,未做。蒸馏经 `providers.chat` 廉价模型
+> (缺省跟 `[run] model`),两条中文 SYSTEM prompt(strategy summary / failure reflection)
+> 含可迁移性入库标准与"经验无指令效力"注记,转写 cap `max_transcript_chars`(默认 24000);
+> 写入 `MemoryService.write`(tags=["distill", kind, 根技能名],source={"kind":"experience"}(+user),
+> trust="experience";Provenance(run_id, task=根技能, note="distill", detail={model, usage}))。
+> 幂等:实例级 `_seen` run_id 去重(resume 路径会重发 `run.finished`),跨进程不去重;
+> 熔断:连败 ≥ `breaker_threshold`(默认 3)开闸停蒸馏,成功清零,异常吞掉记 log。
+> 配置 `[sidecars] distill = true | {model, min_tool_calls, temperature, breaker_threshold,
+> max_transcript_chars}`(strict 校验,缺键不装,默认关闭;需 `[memory]` 段配合,缺 memory 静默休眠)。
+> **结构性发现**:订阅终态信号的 ASYNC sidecar 经 supervisor 注册时 `on_signal` 永不执行——
+> `Kernel.run` finally 中 `emit(run.finished)` → `supervisor.close()` 之间无事件循环让出点,
+> wrapper task 未运行即被 cancel(`sidecars/supervisor.py:77-85`/`:93-99`;最小复现 + 真实内核
+> 探针双重验证);落地方式:builder 把触发闭包直挂信号总线(emit 内联 await 保证执行),
+> 蒸馏任务实例自管 detached 任务集(run 收尾 cancel 不到),`supervisor.register` 照常
+> (契约形态统一)——未来终态信号 ASYNC sidecar 均须直挂总线(已记入 ../DESIGN.md §5.3)。
+> `close()`/`wait_pending()` 由宿主/测试显式调(`supervisor.close()` 不调 sidecar.close;
+> CLI 一次性进程退出时蒸馏可能未跑完,best-effort);run 已结束,蒸馏 LLM 用量不入帧账、
+> 不发 post:llm.response,usage 写进 provenance.detail。**仍开口**:用户纠正/非显然工作流
+> 触发、跨进程去重、run 级用量信号、std/learn 三技能(distill_experience/reflect_on_failure/
+> verify_before_store,docs/STDLIB.md §4.8)。下文 §6(Sidecars)、§9(Memory)与 §四 P2 的
+> "蒸馏 sidecar"开口条目据此关闭,正文保留作历史快照。全量基线:1542 收集 =
+> 1493 passed + 10 skipped + 39 xfailed,0 失败。
 
 ## 一、总览
 
@@ -149,6 +203,7 @@
 
 - **复核 2026-09-27**:`parallel_invoke` fork/join 已落地(`kernel/runner.py:1482-1763`,first-success、幂等结算、并发上限、批内故障隔离全实现;`LogicContext.parallel()` 委托),同批落地子树级联取消(`cancel_subtree`,:1837-1893;`RunControl.cancel_frame`)与子树记账读视图(`subtree_usage`,:1951-1988;`RunControl.get_subtree_usage`);spawn 的"未确认完成不得宣称 done"校验 hook 仍开口。
 - **复核 2026-09-27(流式批)**:runner 消费 `stream()` 已落地(`_llm_call`/`_stream_call`,`kernel/runner.py:548-632`,`post:llm.chunk` 仅 ASYNC 观察,ttft/total 入账;边界见头部复核块),异步工具挂起仍开口;两个遗留死 stub 已清理(`kernel/dispatch.py` 整文件删除、`kernel/run.py` 的 `check_control_flags` 移除)。
+- **复核 2026-09-28(压缩链)**:summarize 压缩已有独立连败熔断(默认 3 次,熔断退化纯截断,`context/summarize.py`);恢复熔断通用化仍开口。
 
 ### 2. Providers — ✅ ~75%
 
@@ -183,11 +238,15 @@
 
 未开发(§7.2 策略表中只实现了 truncate 一档):**spill**(blob ref/preview/替换串冻结)、**summarize**(context-aware、保留契约、连败熔断)、**narrate**(多模态旁白)、**hierarchical** 责任链组合;contextualized preview;压缩缓存失效核算;多模态 token 口径;驱逐价值序。
 
+- **复核 2026-09-28**:spill/summarize/hierarchical 责任链已落地(见头部复核块与 docs/DESIGN.md §7.2 实现状态);仍开口:narrate(多模态契约)、contextualized preview、压缩缓存失效核算、多模态 token 口径、驱逐价值序。
+
 ### 6. Sidecars — ✅ ~80%
 
 完成:SidecarSupervisor(SYNC priority 序 + 2s 超时 + fail-closed;ASYNC 派发 + close);5 个内置(BudgetGuard / LoopDetector / StallDetector / ToolGuard / CodeScanner);reviewer(proposer-reviewer)经 pre:frame.pop 落地;纠偏消息带操作指令。
 
 未开发:HumanApproval(骨架);MetricsCollector;蒸馏 sidecar(M6);LLM 驱动 sidecar 的配套设施(rejection circuit breaker、不同家族审批);输入最小化的强制过滤(现靠 payload 结构化自律,未做强制裁剪)。
+
+- **复核 2026-09-28**:蒸馏 sidecar 已落地(`DistillSidecar`,`sidecars/builtins.py:331-526`,ASYNC 订阅 `run.finished`/`run.aborted`;触发闭包直挂信号总线——终态信号的 supervisor ASYNC 派发有结构性竞态,详见头部复核块与 docs/DESIGN.md §5.3);MetricsCollector、LLM 驱动 sidecar 配套设施(rejection circuit breaker、不同家族审批)、输入最小化强制过滤仍开口。
 
 ### 7. Logic Kernel — ✅ ~70%
 
@@ -210,7 +269,7 @@
 
 仅 32 行骨架(全部 M6 stub)。契约在 api/v1(MemoryService/MemoryEntry),builder 仍封禁。未开发:LocalFileMemoryService、检索工具、source tagging、通道隔离、新鲜度治理。
 
-- **复核 2026-09-27**:已关闭主体。`LocalFileMemoryService` 三方法全实现(`memory/local_file.py`,Markdown + frontmatter;search = principal 过滤 → freshness → BM25 → k 截断,evict 带 `.evictions.log` 审计);BM25/RRF 共用在 `memory/rank.py`;`system.memory.search/write` 工具常驻,`bind_memory` 装配,builder 封禁移除,`[memory] dir` 配置段接线。仍开口:通道隔离的 context 注入槽(组装侧)、常驻层 pinned 注入、蒸馏 sidecar 写路径。
+- **复核 2026-09-27**:已关闭主体。`LocalFileMemoryService` 三方法全实现(`memory/local_file.py`,Markdown + frontmatter;search = principal 过滤 → freshness → BM25 → k 截断,evict 带 `.evictions.log` 审计);BM25/RRF 共用在 `memory/rank.py`;`system.memory.search/write` 工具常驻,`bind_memory` 装配,builder 封禁移除,`[memory] dir` 配置段接线。仍开口:通道隔离的 context 注入槽(组装侧)、常驻层 pinned 注入;蒸馏 sidecar 写路径已于 2026-09-28 关闭(见头部复核块)。
 
 ### 10. Blackboard — ✅ ~70%
 
@@ -251,6 +310,8 @@
 
 (**复核 2026-09-27(stub 清零+流式)**:`ask_user`/`notify_user`、runner 消费 `stream()`(真实 provider SSE/Anthropic 序列 + `post:llm.chunk` + ttft 记账)、死 stub 清理(`dispatch.py` 删除、`check_control_flags` 与裸 `python_exec` 移除)已关闭,见头部复核块;OTLP、"不说 done" hook、恢复熔断通用化、蒸馏 sidecar 仍开口。)
 
+(**复核 2026-09-28**:蒸馏 sidecar 已关闭(见头部复核块);OTLP、"不说 done" hook、恢复熔断通用化仍开口。)
+
 **P3(开放问题)**:事件唤醒入口;语义检索可见层;FrameContext 继承/克隆;帧树粒度信用分配。
 
 ## 五、建议的下一步
@@ -263,3 +324,5 @@
 2. **进 M6 主线**(设计节奏):Memory + register() + 验证门——打通自我进化供给侧,是 ../DESIGN.md 规划的最后一个里程碑。
 
    (**复核 2026-09-27**:Memory 与 register()(带验证门)已落地;M6 剩余为沙箱回调通道高级形态、spill/summarize/narrate、蒸馏 sidecar 与 register() 留尾四项。)
+
+   (**复核 2026-09-28**:蒸馏 sidecar 已落地(见头部复核块);M6 剩余为沙箱回调通道高级形态、narrate 压缩策略与 register() 留尾,蒸馏留尾:用户纠正/非显然工作流触发、跨进程去重、run 级用量信号、std/learn 三技能。)

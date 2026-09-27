@@ -229,9 +229,10 @@ other "may this principal read this region".
 
 Assembly and compression of frame contexts: *build* (SYSTEM rendering +
 messages + status injection + tool schemas), *maintain* (compression when
-the estimate exceeds the cap; chain-of-responsibility strategies; the
-rolling-window baseline evicts atomic groups, never compresses pinned items,
-and marks idempotently with `[COMPRESSED]`). Prefix-cache stability is a hard
+the estimate exceeds the cap; the chain-of-responsibility strategies are
+implemented — truncate/spill/summarize; the truncate baseline evicts atomic
+groups, never compresses pinned items, and marks idempotently with
+`[COMPRESSED]`). Prefix-cache stability is a hard
 constraint: inline segments freeze into `working` at the frame's first build,
 so prefixes are identical across resume and hot reload.
 
@@ -276,7 +277,10 @@ the Blackboard baseline (LocalBlackboard) is implemented, and the Memory
 baseline (`LocalFileMemoryService`, `memory/local_file.py`) landed on
 2026-09-27 — one Markdown file per entry with frontmatter, retrieval filtered
 by principal and freshness before BM25, wired via the `[memory] dir` config
-section with the `system.memory.search/write` tools resident.
+section with the `system.memory.search/write` tools resident. The distillation
+write path is also live (2026-09-28, `DistillSidecar`: after a run's terminal
+signal, a cheap model distills the run into an experience entry in Memory —
+trigger conditions and the direct-bus wiring note are in chapter 07).
 
 ## 5. Trust & Safety Model
 
@@ -434,13 +438,13 @@ sunk into the kernel) are implemented; the three §3.4 concurrency primitives
 are complete (`parallel_invoke` fork/join landed, together with subtree
 cascade cancel and the subtree accounting read view); Skill Lab
 L1-L5 is complete; all six Web themes pass the contract tests; the test
-baseline is 1448 Python tests (1399 passed, 10 conditional skips, 39 xfailed,
+baseline is 1542 Python tests (1493 passed, 10 skipped, 39 xfailed,
 0 failures) plus 32 frontend test files, all green.
 Designed but not yet implemented: remaining E3 items (audit panel), the D3
 remainder (delegation-chain weakest link, EscalationRequest data face), the
-M6 remainder (sandbox callback channel, spill/summarize/narrate strategies,
-distillation sidecar, and register()'s semver solving / directory write path /
-hot reload / full replay+evaluator gate), the
+M6 remainder (sandbox callback channel, the narrate compression strategy
+(multimodal contract open), and register()'s semver solving / directory write
+path / hot reload / full replay+evaluator gate), the
 motion playback layer (theme contract test #5), multi-file skill_set
 promotion, and handler source promotion.
 

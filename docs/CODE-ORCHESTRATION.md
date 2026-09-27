@@ -108,8 +108,12 @@ stdout 混流)交换单行 JSON:
   进程退出或超限则收尾);
 - 同一协议同时覆盖 subprocess 与 Docker 两个沙箱后端(都是子进程管道);
   协议成为 LogicKernel 契约的一部分(版本号首行,同 telemetry 惯例);
-- `ctx.spawn`/`wait`/`board` v1 不过桥(后续档);`ctx.blob` 过桥
-  (大中间结果 spill 在沙箱侧就地发起)。
+- `ctx.spawn`/`wait`/`parallel` 已过桥(2026-09-28 落地,见 §12 偏差 6):
+  三方法经 syscall kind 路由直委托内核闸内管线——`spawn` = spawn_frame
+  (白名单/深度/升权闸不旁路),`wait` = 阻塞取回子帧返回值(失败折叠为
+  带 kind 前缀的 RuntimeError,脚本可捕获),`parallel` = `parallel_invoke`
+  全语义;`ctx.board` 不过桥;`ctx.blob` 过桥
+  (大中间结果 spill 在沙箱侧就地发起)未落地。
 
 ### 2.3 权限:无提升论证(本设计的安全支点)
 
@@ -195,8 +199,11 @@ CodeScanner 照常在 `pre:logic.exec` 扫描脚本源码(veto 点保持)。
 1. syscall 并发:脚本内 `asyncio.gather(ctx.call_tool(...), ...)` 要不要
    支持(协议需 id 乱序响应;内核侧天然可并发)——v1 先串行,协议
    预留 id 已兼容;
-2. `ctx.spawn` 过桥(脚本发起后台帧)——涉及沙箱进程生命周期与帧
-   生命周期解耦,后续档;
+2. ~~`ctx.spawn` 过桥(脚本发起后台帧)——涉及沙箱进程生命周期与帧
+   生命周期解耦,后续档~~ → **已解决**(2026-09-28):顾虑不成立——帧生命
+   周期本就在内核侧管理(`_spawned` 登记、`_release_run` 回收),沙箱进程
+   退出不影响已 spawn 的帧;`spawn`/`wait`/`parallel` 三方法一并桥接
+   (见 §12 偏差 6);
 3. 编排脚本的产物能否直接成为 code skill(与 STDLIB §10.6 写侧治理
    衔接:跑通的脚本 + `verify_before_store` → `learned/`)——这是
    自进化闭环的最短路径,单独立项;
@@ -232,7 +239,9 @@ STDLIB v2 §9 拒绝"现场代码编排"的理由是**审计/白名单**("违反
    `sys.path`,不清空 `os.environ`)。
 3. 两种 ctx 形态(实现细节,设计稿未写明):`_SyncCtx` 给编排脚本
    (LLM 写直线代码,无 async 样板)、`_AsyncCtx` 给 code 技能 handler
-   (`await ctx.call_tool(...)`,与 TRUSTED 档逐字一致),共享同一传输层。
+   (`await ctx.call_tool(...)`,与 TRUSTED 档逐字一致),共享同一传输层;
+   两档方法集同为七面:`call_tool`/`invoke`/`cancel`/`frame_status`/
+   `spawn`/`wait`/`parallel`(2026-09-28 口径,见偏差 6)。
 4. 伪工具名与 LLM 可见 schema 定义在契约层(`api/v1/logic.py` 的
    `ORCHESTRATE_TOOL` / `ORCHESTRATE_SCHEMA`),ContextManager 按 manifest
    声明 + 消融开关补进可见工具面;KernelBuilder 的装配期闸门放行该名字
@@ -241,9 +250,18 @@ STDLIB v2 §9 拒绝"现场代码编排"的理由是**审计/白名单**("违反
    落地;`logic/docker_sandbox.py` 保持一次性 `communicate()`,不读
    `ExecRequest.dispatch_fn`——SANDBOX 编排路由到 Docker 后端时退化为纯计算
    (ctx=None)。fd 透传细节仍挂 §7.5。
-6. **`ctx.blob` 未过桥**(§2.2 偏差):沙箱 ctx(`_SyncCtx`/`_AsyncCtx`)暴露
-   `call_tool`/`invoke`/`cancel`/`frame_status`(`logic/python_sandbox.py:92-125`;
-   `cancel`/`frame_status` 为 W5-WS1 帧控制面,2026-09-27 桥接),`spawn`/`wait`/
-   `parallel` 未桥接(SANDBOX 档不能做 spawn 类操作,留后续档);TRUSTED 档的 blob
-   是帧级本地 `InMemoryBlobStore`(`kernel/logic_context.py:78-79`)。blob 过桥
-   留后续档。
+6. **沙箱 ctx 七方法面与错误折叠偏差**(§2.2 偏差):沙箱 ctx
+   (`_SyncCtx`/`_AsyncCtx`,`logic/python_sandbox.py`)现为七方法:
+   `call_tool`/`invoke`/`cancel`/`frame_status`/`spawn`/`wait`/`parallel`
+   (`cancel`/`frame_status` 为 W5-WS1 帧控制面,2026-09-27 桥接;
+   `spawn`/`wait`/`parallel` 于 2026-09-28 桥接,经 `_syscall_dispatcher`
+   kind 路由直委托内核 spawn_frame / wait / `parallel_invoke` 闸内管线,
+   三个 syscall 计入 `max_tool_calls`,计数在 kind 路由前)。随桥接引入的
+   偏差:① SubtreeCancelled 降格为 RuntimeError(`cancelled: ` 前缀,
+   脚本可捕获继续结算,对齐 TRUSTED race_first 模式),不再保持异常类型
+   保真;② 子帧普通失败折叠为 `internal: {ExcType}: ...` 错误观察(防
+   syscall 服务循环停止),未知帧 `invalid_args: ...`;③ 分支值/返回值
+   须 JSON 可序列化(syscall 传输约束,与 invoke 同);④ `wait` 期间脚本
+   单 outstanding 阻塞(spawn + frame_status 轮询 + wait 是既定模式)。
+   TRUSTED 档的 blob 是帧级本地 `InMemoryBlobStore`
+   (`kernel/logic_context.py:78-79`);`ctx.board`/`blob` 未过桥,留后续档。

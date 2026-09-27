@@ -41,6 +41,12 @@ loop_detector = { threshold = 3, max_strikes = 2 }
 # tool_guard_rules = [["system.shell.exec", "rm\\s+-rf", "禁止危险命令"]]
 # human_approval = true                 # WS2:EXEC 档工具过内核 tool-confirm 闸门(supervisor.ask,kind="tool-confirm")
 # human_approval = { timeout = 300, on_timeout = "deny" }   # 或表:审批超时秒数 + 超时兜底(deny|allow)
+# distill = true                          # 蒸馏 sidecar(DESIGN.md §11.2 写路径范式;缺省关闭):run.aborted 恒触发,
+#                                         # run.finished 需该 run 工具调用数 > 5 才触发;满足时经廉价模型把本次
+#                                         # run 蒸馏成经验条写入 [memory](source.kind="experience",trust="experience")
+# distill = { model = "kimi/cheap", min_tool_calls = 5, temperature = 0.2, breaker_threshold = 3, max_transcript_chars = 24000 }
+#                                         # 或表(全键可缺省,上行为默认值):model = 蒸馏模型(缺省跟 run.model);
+#                                         # breaker_threshold = 蒸馏连败熔断次数;需配合 [memory] 段,否则装配出休眠实例
 
 [telemetry]
 dir = ".agent-os/traces"
@@ -79,3 +85,12 @@ stream_idle_timeout = 30.0            # 流式停滞 watchdog 秒数:N 秒无新
 # [blob]
 # dir = "./blobs"                       # FileBlobStore 根目录(<root>/<run_id>/<sha256> 内容寻址落盘,
                                         # run_id/sha 白名单防目录逃逸)
+
+# —— 压缩链调参(WS2,docs/DESIGN.md §7.2;段缺席 = 全默认,下列值即默认值)——
+# [context]
+# summarize_model = "kimi/kimi-k2-thinking"   # summarize 摘要所用模型;缺省跟 [run] model 走
+                                             # (无可用 providers 时 summarize 自动退化 truncate)
+# spill_threshold_chars = 4000                # spill 触发阈值:单条 TOOL 消息超此字符数才移入
+                                             # blob store(替换串永久冻结,见 §7.2)
+# summarize_breaker = 3                       # summarize 连败熔断次数:连败 N 次后退化纯 truncate
+# summarize_temperature = 0.2                 # 摘要采样温度(低温求稳)

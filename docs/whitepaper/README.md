@@ -24,7 +24,7 @@
 | [02](zh/02-skills.md) | Skills:manifest 契约、加载流水线、伪工具与内联纯度闸门 | 已实现 |
 | [03](zh/03-tools.md) | Tools:分发流水线、三层权限交集、side_effect 声明、路径沙箱 | 已实现 |
 | [04](zh/04-logic-kernel.md) | Logic Kernel 与编排沙箱:信任路由、syscall 通道、无权限提升 | 已实现 |
-| [05](zh/05-context.md) | Context:组装、压缩(rolling-window)、前缀缓存稳定性 | 已实现(基线) |
+| [05](zh/05-context.md) | Context:组装、压缩(truncate/spill/summarize 责任链)、前缀缓存稳定性 | 已实现(narrate 未实现) |
 | [06](zh/06-determinism.md) | 信号、Telemetry 与确定性工程:35 信号目录、WAL、checkpoint/resume/replay/diff | 已实现 |
 | [07](zh/07-sidecars.md) | Sidecars:信号驱动监督、verdict 仲裁矩阵、双预算结构 | 部分实现(HumanApproval 已下沉为内核 tool-confirm 闸门) |
 | [08](zh/08-supervisor.md) | Supervisor:裁决路由、挂起-作答-恢复闭环、三宿主通道 | 已实现 |
@@ -47,8 +47,9 @@
   返回标记已设计未实现(第 09/12/14 章勘,00 章已改)。
 - **版本约束求解未实现**:DESIGN.md §6.1 承诺 semver 求解,代码只查依赖存在
   (第 02 章注)。
-- **副车仲裁面小于设计**:`pre:skill.invoke`/`pre:llm.request`/`pre:compress`
-  只发射不仲裁;`budget.warning/exceeded` 无发射点(第 07 章注)。
+- **副车仲裁面小于设计**:`pre:skill.invoke`/`pre:llm.request` 只发射不仲裁;
+  `budget.warning/exceeded` 无发射点(第 07 章注;`pre:compress` 已于
+  2026-09-28 落地否决,见第 05 章)。
 - **数据层 D1 偏差(D2 已收敛)**:未配置域 = 不拦截(设计原文为 confidential;
   D2 起 `[data]` policy 在场即恢复 confidential,policy 缺席仍保持 D1 语义);
   `system.shell.exec` 不在数据闸覆盖面(第 10 章注)。

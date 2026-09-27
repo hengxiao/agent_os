@@ -18,11 +18,19 @@ import pytest
 from agent_os.api.v1 import (
     CONFIDENTIAL,
     INTERNAL,
+    RUN_ABORTED,
+    RUN_FINISHED,
+    Mode,
     Permission,
     SkillFrame,
     ToolCall,
     ToolDispatchContext,
     ToolPolicy,
+)
+from agent_os.context import (
+    RollingWindowCompressor,
+    SpillCompressor,
+    SummarizeCompressor,
 )
 from agent_os.memory.local_file import LocalFileMemoryService
 from agent_os.runtime.config import (
@@ -32,7 +40,7 @@ from agent_os.runtime.config import (
     load_skillsets,
     web_token_map,
 )
-from agent_os.sidecars import HumanApproval
+from agent_os.sidecars import DistillSidecar, HumanApproval
 from tests.helpers.kernels import FIB_SKILLS_YAML
 
 
@@ -151,6 +159,79 @@ def test_human_approval_unknown_subkey_rejected():
 def test_human_approval_bad_on_timeout_rejected():
     with pytest.raises(ConfigError, match="on_timeout"):
         build_kernel(_base_cfg(sidecars={"human_approval": {"on_timeout": "maybe"}}))
+
+
+# ---------------------------------------------------------------------------
+# [sidecars] distill(§11.2 写路径范式):true/表形态装配 + strict 校验
+# ---------------------------------------------------------------------------
+
+
+def _distill_of(kernel) -> DistillSidecar | None:
+    sidecars = kernel.sidecars.sidecars if kernel.sidecars is not None else []
+    return next((s for s in sidecars if isinstance(s, DistillSidecar)), None)
+
+
+def test_distill_true_form_defaults():
+    """true 形态 = 全默认;model 缺省回落 run.model(builder 装配);未配 [memory] 时装配出休眠实例。"""
+    kernel = build_kernel(_base_cfg(sidecars={"distill": True}))
+    d = _distill_of(kernel)
+    assert isinstance(d, DistillSidecar)
+    assert d.name == "distill"
+    assert d.mode is Mode.ASYNC
+    assert d.priority == 90
+    assert d.needs_free_text is False
+    assert d.subscriptions == [RUN_FINISHED, RUN_ABORTED]
+    assert d.model == "mock/fib"  # 回落 run.model
+    assert d.min_tool_calls == 5
+    assert d.temperature == 0.2
+    assert d.breaker_threshold == 3
+    assert d.max_transcript_chars == 24000
+    assert d._memory is None, "无 [memory] 段:bind 缺 memory,实例休眠"
+
+
+def test_distill_table_form_lands():
+    """表形态五键落位;model 显式配置时不回落。"""
+    kernel = build_kernel(
+        _base_cfg(
+            sidecars={
+                "distill": {
+                    "model": "mock/cheap",
+                    "min_tool_calls": 9,
+                    "temperature": 0.7,
+                    "breaker_threshold": 5,
+                    "max_transcript_chars": 1000,
+                }
+            }
+        )
+    )
+    d = _distill_of(kernel)
+    assert isinstance(d, DistillSidecar)
+    assert d.model == "mock/cheap"
+    assert d.min_tool_calls == 9
+    assert d.temperature == 0.7
+    assert d.breaker_threshold == 5
+    assert d.max_transcript_chars == 1000
+
+
+def test_distill_absent_not_installed():
+    """[sidecars] 缺 distill 键 → 不装配。"""
+    kernel = build_kernel(_base_cfg(sidecars={"budget_guard": {"max_cost": 1.0}}))
+    assert _distill_of(kernel) is None
+
+
+def test_distill_bad_shape_rejected():
+    with pytest.raises(ConfigError, match="distill"):
+        build_kernel(_base_cfg(sidecars={"distill": "yes"}))
+
+
+def test_distill_unknown_subkey_rejected():
+    with pytest.raises(ConfigError, match="distill"):
+        build_kernel(_base_cfg(sidecars={"distill": {"mdoel": "mock/cheap"}}))
+
+
+def test_distill_bad_value_type_rejected():
+    with pytest.raises(ConfigError, match="distill"):
+        build_kernel(_base_cfg(sidecars={"distill": {"min_tool_calls": "5"}}))
 
 
 def test_unknown_python_exec_backend_rejected():
@@ -652,3 +733,121 @@ def test_memory_write_search_roundtrip_via_kernel(tmp_path):
     assert written.ok, written.error
     assert found.ok, found.error
     assert any("flaky" in r["content"] for r in found.value["results"]), "写入后应可检索闭环"
+
+
+# ---------------------------------------------------------------------------
+# [context] 段(WS2,§7.2):压缩链调参;缺段 = 全默认;严格未知字段/类型校验
+# ---------------------------------------------------------------------------
+
+
+def test_context_section_absent_uses_defaults():
+    """缺 [context] 段 = 全默认:注册表三段齐全,summarize 模型跟 run.model,providers 接线。"""
+    kernel = build_kernel(_base_cfg())
+    compressors = kernel.context._compressors
+    assert set(compressors) == {"spill", "truncate", "summarize"}
+    assert isinstance(compressors["spill"], SpillCompressor)
+    assert isinstance(compressors["truncate"], RollingWindowCompressor)
+    assert isinstance(compressors["summarize"], SummarizeCompressor)
+    assert compressors["spill"]._threshold_chars == 4000
+    assert compressors["summarize"]._model == "mock/fib"  # 缺省跟 run.model
+    assert compressors["summarize"]._breaker_threshold == 3
+    assert compressors["summarize"]._temperature == 0.2
+    assert kernel.context._providers is kernel.providers  # ProviderManager 注入(§7.5)
+
+
+def test_context_section_explicit_values():
+    """显式四键全部落到注册表对应压缩器。"""
+    kernel = build_kernel(
+        _base_cfg(
+            context={
+                "summarize_model": "mock/cheap",
+                "spill_threshold_chars": 8000,
+                "summarize_breaker": 5,
+                "summarize_temperature": 0.7,
+            }
+        )
+    )
+    compressors = kernel.context._compressors
+    assert compressors["summarize"]._model == "mock/cheap"
+    assert compressors["summarize"]._breaker_threshold == 5
+    assert compressors["summarize"]._temperature == 0.7
+    assert compressors["spill"]._threshold_chars == 8000
+
+
+def test_context_section_unknown_field_rejected():
+    """严格先例(同 [blob]/_prices):键拼错会静默落默认,调参错位不痛不痒地失效。"""
+    with pytest.raises(ConfigError, match=r"\[context\] 含未知字段"):
+        build_kernel(_base_cfg(context={"summarize_moodel": "mock/cheap"}))
+
+
+def test_context_section_type_errors_rejected():
+    with pytest.raises(ConfigError, match=r"\[context\] summarize_model 须为非空字符串"):
+        build_kernel(_base_cfg(context={"summarize_model": 42}))
+    with pytest.raises(ConfigError, match=r"\[context\] spill_threshold_chars 须为正整数"):
+        build_kernel(_base_cfg(context={"spill_threshold_chars": "4000"}))
+    with pytest.raises(ConfigError, match=r"\[context\] spill_threshold_chars 须为正整数"):
+        build_kernel(_base_cfg(context={"spill_threshold_chars": True}))
+    with pytest.raises(ConfigError, match=r"\[context\] summarize_breaker 须为"):
+        build_kernel(_base_cfg(context={"summarize_breaker": 0}))
+    with pytest.raises(ConfigError, match=r"\[context\] summarize_temperature 须为非负数字"):
+        build_kernel(_base_cfg(context={"summarize_temperature": "hot"}))
+
+
+# ---------------------------------------------------------------------------
+# entry point 压缩策略加载(WS2,§7.5/§14.3):按 name 入注册表,可覆盖内置;坏 EP 只警告
+# ---------------------------------------------------------------------------
+
+
+class _EpInstanceCompressor:
+    """假插件(实例形态 EP):name="custom" 追加进注册表。"""
+
+    name = "custom"
+
+    async def compress(self, ctx, target_tokens, svc):  # pragma: no cover — 只验装配
+        raise AssertionError("不应被调用")
+
+
+class _EpTruncateOverride:
+    """假插件(类形态 EP):name="truncate" 覆盖内置 RollingWindowCompressor。"""
+
+    name = "truncate"
+
+    async def compress(self, ctx, target_tokens, svc):  # pragma: no cover — 只验装配
+        raise AssertionError("不应被调用")
+
+
+class _FakeEntryPoint:
+    """importlib.metadata.EntryPoint 的最小假身(name + load)。"""
+
+    def __init__(self, name: str, loaded):
+        self.name = name
+        self._loaded = loaded
+
+    def load(self):
+        if isinstance(self._loaded, Exception):
+            raise self._loaded
+        return self._loaded
+
+
+def test_compressor_entry_points_loaded_and_override(monkeypatch):
+    instance_ep = _EpInstanceCompressor()
+    eps = [
+        _FakeEntryPoint("ep-custom", instance_ep),  # 实例直接用
+        _FakeEntryPoint("ep-truncate", _EpTruncateOverride),  # 类 → 无参实例化,覆盖内置
+        _FakeEntryPoint("ep-bad", RuntimeError("坏 EP")),  # 坏 EP:警告跳过,不杀 build
+    ]
+    monkeypatch.setattr(
+        "importlib.metadata.entry_points",
+        lambda group=None: eps if group == "agent_os.compressors" else (),
+    )
+
+    with pytest.warns(UserWarning, match="压缩器 entry point 加载失败"):
+        kernel = build_kernel(_base_cfg())
+
+    compressors = kernel.context._compressors
+    assert compressors["custom"] is instance_ep
+    assert isinstance(compressors["truncate"], _EpTruncateOverride), "EP 按 name 覆盖内置"
+    assert isinstance(compressors["spill"], SpillCompressor), "未覆盖的内置段保留"
+    # 走注册表的压缩行为随之改变:spill 模式链的 truncate 段已是插件实例
+    chain = kernel.context._select_compressor("spill")
+    assert chain.stages[-1] is compressors["truncate"]

@@ -41,7 +41,7 @@ from agent_os.api.v1 import (
 )
 from agent_os.kernel.errors import RunAborted
 from agent_os.sidecars import CodeScanner, ToolGuard
-from tests.helpers.kernels import assemble, record_all, sandbox_tools
+from tests.helpers.kernels import assemble, auto_approve, record_all, sandbox_tools
 
 SKILLS_YAML = """
 skills:
@@ -513,3 +513,311 @@ def test_sandbox_code_skill_ctx_cancel_frame_status(tmp_path):
     )
     result = asyncio.run(kernel.run("test.sbx_probe", {}))
     assert result == {"ack": [], "status": None, "usage_keys": USAGE_KEYS}
+
+
+# ---------------------------------------------------------------------------
+# §3.4 编排原语:ctx.spawn / ctx.wait / ctx.parallel 经 syscall 桥
+# ---------------------------------------------------------------------------
+
+SPAWN_SKILLS_YAML = """
+skills:
+  - name: test.driver
+    version: 1.0.0
+    kind: prompt
+    inputs: { type: object, properties: {} }
+    outputs: { type: object }
+    permissions: { tools: [python_orchestrate], skills: [test.echo, test.slow_echo] }
+    model: { prefer: ["mock/x"] }
+    limits: { max_steps: 10, max_tool_calls: 20 }
+    prompt: DRIVER
+  - name: test.echo
+    version: 1.0.0
+    kind: prompt
+    inputs:
+      type: object
+      properties: { text: { type: string } }
+      required: [text]
+    outputs:
+      type: object
+      properties: { echoed: { type: string } }
+      required: [echoed]
+    permissions: { tools: [], skills: [] }
+    model: { prefer: ["mock/x"] }
+    prompt: ECHO
+  - name: test.slow_echo
+    version: 1.0.0
+    kind: prompt
+    description: 调一个慢工具再给最终答案(spawn 后 frame_status 轮询命中在跑时间窗)。
+    inputs: { type: object, properties: {} }
+    outputs:
+      type: object
+      properties: { done: { type: boolean } }
+      required: [done]
+    permissions: { tools: [test.slow_tool], skills: [] }
+    model: { prefer: ["mock/x"] }
+    limits: { max_steps: 4, timeout: 60 }
+    prompt: SLOW
+  - name: test.outside
+    version: 1.0.0
+    kind: prompt
+    inputs: { type: object, properties: {} }
+    outputs: { type: object }
+    permissions: { tools: [], skills: [] }
+    model: { prefer: ["mock/x"] }
+    prompt: OUTSIDE
+"""
+
+
+def spawn_brain(script: str):
+    """orchestrating_brain 的 spawn 测试变体:额外应答 test.echo / test.slow_echo 子帧。"""
+
+    def brain(req: ChatRequest) -> ChatResponse:
+        first = req.messages[0].content or ""
+        if first.startswith("ECHO"):
+            text = json.loads(req.messages[1].content)["text"]
+            return _final({"echoed": text.upper()})
+        if first.startswith("SLOW"):
+            if not any(m.role is Role.TOOL for m in req.messages):
+                return ChatResponse(
+                    message=Message(
+                        role=Role.ASSISTANT,
+                        tool_calls=[
+                            ToolCall(id="slow-1", name="test.slow_tool", args={"seconds": 1})
+                        ],
+                    ),
+                    finish_reason="tool_calls",
+                    usage=ChatUsage(prompt=1, completion=1),
+                )
+            return _final({"done": True})
+        tool_msgs = [m for m in req.messages if m.role is Role.TOOL]
+        if not tool_msgs:
+            return ChatResponse(
+                message=Message(
+                    role=Role.ASSISTANT,
+                    tool_calls=[
+                        ToolCall(id="c1", name=ORCHESTRATE_TOOL, args={"code": script, "timeout": 30})
+                    ],
+                ),
+                finish_reason="tool_calls",
+                usage=ChatUsage(prompt=1, completion=1),
+            )
+        return _final(json.loads(tool_msgs[-1].content))
+
+    return brain
+
+
+def _spawn_tools():
+    """sandbox 工具 + test.slow_tool(async 睡眠,spawn 子帧的在跑时间窗)。"""
+    reg = sandbox_tools(builtins=True)
+
+    @reg.tool(name="test.slow_tool", permission=Permission.READ, timeout=30)
+    async def slow_tool(seconds: int) -> str:
+        """睡眠 seconds 秒后返回(spawn 子帧的在跑时间窗)。"""
+        await asyncio.sleep(seconds)
+        return "slept"
+
+    return reg
+
+
+def _spawn_kernel(tmp_path, script: str, *, body=SPAWN_SKILLS_YAML):
+    config = RunConfig(
+        model="mock/x",
+        orchestrate=True,
+        tool_policy=ToolPolicy(max_permission=Permission.EXEC),
+        compression="off",
+    )
+    return assemble(
+        config,
+        spawn_brain(script),
+        _yaml(tmp_path, body),
+        tools=_spawn_tools(),
+        # spawn 升权闸(docs/ESCALATION.md §3):自动批准通道等价于生产宿主里人每次放行
+        supervisor=auto_approve,
+    )
+
+
+def test_orchestration_script_spawn_wait(tmp_path):
+    """编排脚本(_SyncCtx)经 syscall 桥 spawn/wait(§3.4):spawn 慢技能 →
+    frame_status 观察 → wait 收值,子帧返回值端到端回脚本。"""
+    script = """
+fid = ctx.spawn("test.slow_echo", {})
+st = ctx.frame_status(fid)
+value = ctx.wait(fid)
+result = {"frame_id": fid, "seen": st["status"], "value": value}
+"""
+    out = _run(_spawn_kernel(tmp_path, script))["value"]
+    assert out["result"]["seen"] in ("pending", "running")
+    assert out["result"]["value"] == {"done": True}
+    assert out["calls"] == 3 and out["failed"] == []
+
+
+def test_spawn_out_of_whitelist_denied_into_script(tmp_path):
+    """spawn 白名单外技能 → 折叠为脚本可捕获的 RuntimeError,run 不崩(§2.3 无提升)。"""
+    script = """
+try:
+    ctx.spawn("test.outside", {})
+    result = {"raised": False}
+except RuntimeError as e:
+    result = {"raised": True, "msg": str(e)}
+"""
+    out = _run(_spawn_kernel(tmp_path, script))["value"]
+    assert out["result"]["raised"] is True
+    assert "白名单" in out["result"]["msg"]
+    assert out["calls"] == 1
+
+
+def test_wait_cancelled_frame_raises_cancelled(tmp_path):
+    """wait 被取消的子帧 → RuntimeError 带 cancelled 前缀(脚本可捕获继续结算)。"""
+    script = """
+fid = ctx.spawn("test.slow_echo", {})
+ctx.cancel(fid, "脚本主动取消")
+try:
+    ctx.wait(fid)
+    result = {"raised": False}
+except RuntimeError as e:
+    result = {"raised": True, "msg": str(e)}
+"""
+    out = _run(_spawn_kernel(tmp_path, script))["value"]
+    assert out["result"]["raised"] is True
+    assert out["result"]["msg"].startswith("cancelled: ")
+    assert out["calls"] == 3
+
+
+def test_parallel_invalid_batch_shape_raises(tmp_path):
+    """parallel 批形态错(branches 非 list)→ invalid_args 折叠,脚本侧 RuntimeError。"""
+    script = """
+try:
+    ctx.parallel("not-a-list")
+    result = {"raised": False}
+except RuntimeError as e:
+    result = {"raised": True, "msg": str(e)}
+"""
+    out = _run(_spawn_kernel(tmp_path, script))["value"]
+    assert out["result"]["raised"] is True
+    assert "branches" in out["result"]["msg"]
+    assert out["calls"] == 1
+
+
+def test_spawn_wait_parallel_count_toward_limit(tmp_path):
+    """spawn/wait/parallel 与工具调用共用同一计数:限额内各消耗一次,第 4 次被拒。"""
+    script = """
+fid = ctx.spawn("test.echo", {"text": "x"})
+value = ctx.wait(fid)
+batch = ctx.parallel([{"skill": "test.echo", "input": {"text": "y"}}])
+try:
+    ctx.spawn("test.echo", {"text": "z"})
+    denied = None
+except RuntimeError as e:
+    denied = str(e)
+result = {"value": value, "batch_ok": batch[0]["ok"], "denied": denied}
+"""
+    body = SPAWN_SKILLS_YAML.replace("max_tool_calls: 20", "max_tool_calls: 3")
+    out = _run(_spawn_kernel(tmp_path, script, body=body))["value"]
+    assert out["calls"] == 3 and out["limit_hit"] is True
+    assert out["result"]["value"] == {"echoed": "X"}
+    assert out["result"]["batch_ok"] is True
+    assert "上限" in out["result"]["denied"]
+
+
+SANDBOX_SPAWN_YAML = """
+skills:
+  - name: test.sbx_spawn
+    version: 1.0.0
+    kind: code
+    handler: tests.helpers.code_skills:sandbox_spawn_wait_probe
+    logic: { mode: sandbox }
+    inputs:
+      type: object
+      properties: { skill: { type: string }, args: { type: object } }
+      required: [skill]
+    outputs: { type: object }
+    permissions: { tools: [], skills: [test.echo] }
+  - name: test.echo
+    version: 1.0.0
+    kind: prompt
+    inputs:
+      type: object
+      properties: { text: { type: string } }
+      required: [text]
+    outputs:
+      type: object
+      properties: { echoed: { type: string } }
+      required: [echoed]
+    permissions: { tools: [], skills: [] }
+    model: { prefer: ["mock/x"] }
+    prompt: ECHO
+"""
+
+SANDBOX_PARALLEL_YAML = """
+skills:
+  - name: test.sbx_parallel
+    version: 1.0.0
+    kind: code
+    handler: tests.helpers.code_skills:sandbox_parallel_probe
+    logic: { mode: sandbox }
+    inputs:
+      type: object
+      properties: { branches: { type: array }, kw: { type: object } }
+      required: [branches]
+    outputs: { type: object }
+    permissions: { tools: [], skills: [test.echo] }
+  - name: test.echo
+    version: 1.0.0
+    kind: prompt
+    inputs:
+      type: object
+      properties: { text: { type: string } }
+      required: [text]
+    outputs:
+      type: object
+      properties: { echoed: { type: string } }
+      required: [echoed]
+    permissions: { tools: [], skills: [] }
+    model: { prefer: ["mock/x"] }
+    prompt: ECHO
+"""
+
+
+def _sandbox_probe_kernel(tmp_path, body):
+    config = RunConfig(
+        model="mock/x",
+        tool_policy=ToolPolicy(max_permission=Permission.EXEC),
+        compression="off",
+    )
+    return assemble(
+        config,
+        orchestrating_brain("result = 1"),
+        _yaml(tmp_path, body),
+        tools=sandbox_tools(),
+        supervisor=auto_approve,
+    )
+
+
+def test_sandbox_code_skill_spawn_wait(tmp_path):
+    """SANDBOX code 技能(_AsyncCtx)经 syscall 桥 spawn+wait 全流程取回子帧返回值。"""
+    kernel = _sandbox_probe_kernel(tmp_path, SANDBOX_SPAWN_YAML)
+    result = asyncio.run(kernel.run("test.sbx_spawn", {"skill": "test.echo", "args": {"text": "abc"}}))
+    assert result["value"] == {"echoed": "ABC"}
+    assert result["frame_id"]
+
+
+def test_sandbox_code_skill_parallel(tmp_path):
+    """SANDBOX parallel(§3.4):两分支结果按序返回;一分支失败折叠 ok=False 不炸批。"""
+    kernel = _sandbox_probe_kernel(tmp_path, SANDBOX_PARALLEL_YAML)
+    result = asyncio.run(
+        kernel.run(
+            "test.sbx_parallel",
+            {
+                "branches": [
+                    {"skill": "test.echo", "input": {"text": "a"}},
+                    {"skill": "test.echo", "input": {"text": "b"}},
+                    {"skill": "test.echo", "input": {}},  # 缺 text:分支级预检失败
+                ]
+            },
+        )
+    )
+    results = result["results"]
+    assert [r["ok"] for r in results] == [True, True, False]
+    assert results[0]["value"] == {"echoed": "A"}
+    assert results[1]["value"] == {"echoed": "B"}
+    assert results[2]["error"]["kind"] == "invalid_args"

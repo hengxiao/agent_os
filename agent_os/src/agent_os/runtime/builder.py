@@ -20,6 +20,9 @@
 
 from __future__ import annotations
 
+import importlib.metadata
+import warnings
+from dataclasses import dataclass
 from typing import Any
 
 from agent_os.api.v1 import (
@@ -30,6 +33,8 @@ from agent_os.api.v1 import (
 )
 from agent_os.context.manager import ContextManager
 from agent_os.context.rolling_window import RollingWindowCompressor
+from agent_os.context.spill import SpillCompressor
+from agent_os.context.summarize import SummarizeCompressor
 from agent_os.kernel import Kernel
 from agent_os.kernel.control import RunControlImpl
 from agent_os.kernel.errors import SkillLoadError
@@ -37,11 +42,54 @@ from agent_os.kernel.logic_router import LogicKernelRouter
 from agent_os.kernel.signals import InProcessSignalBus
 from agent_os.kernel.stack import FrameStack
 from agent_os.providers.manager import ProviderManager
-from agent_os.sidecars.builtins import HumanApproval
+from agent_os.sidecars.builtins import DistillSidecar, HumanApproval
 from agent_os.sidecars.supervisor import SidecarSupervisor
 from agent_os.skills.manifest import validate_escalation_gates
 from agent_os.supervisor import SupervisorManager
 from agent_os.tools.local_registry import LocalPythonToolRegistry
+
+
+@dataclass
+class ContextSection:
+    """``[context]`` 段(docs/RUNNERS.md §2.1)的装配形态:§7.2 压缩链调参。
+
+    只在装配默认 ContextManager 时生效;嵌入方经 ``.context()`` 自装 manager 时
+    本段不生效(注册表由嵌入方自负)。字段缺省值与 TOML 段缺席时的全默认一致。
+    """
+
+    summarize_model: str | None = None  # summarize 摘要模型;None = 跟 RunConfig.model
+    spill_threshold_chars: int = 4000  # spill 触发阈值(单条 TOOL 消息字符数)
+    summarize_breaker: int = 3  # summarize 连败熔断次数(熔断后退化 truncate)
+    summarize_temperature: float = 0.2  # 摘要采样温度
+
+
+def _compressor_plugins() -> dict[str, Any]:
+    """entry point ``agent_os.compressors`` 插件加载(docs/DESIGN.md §7.5/§14.3)。
+
+    逐条 ``ep.load()``:是类则无参实例化,是实例直接用;按 ``.name`` 入注册表
+    (允许覆盖内置);单条坏只 ``warnings.warn`` 跳过,不杀装配;零条目 no-op。
+    """
+    registry: dict[str, Any] = {}
+    for ep in importlib.metadata.entry_points(group="agent_os.compressors"):
+        try:
+            obj = ep.load()
+            instance = obj() if isinstance(obj, type) else obj
+            name = getattr(instance, "name", None)
+            if not isinstance(name, str) or not name:
+                raise TypeError(f"entry point {ep.name!r} 的压缩器缺 name 属性")
+            registry[name] = instance
+        except Exception as e:  # noqa: BLE001 — 单条坏 EP 只警告,不杀 build
+            warnings.warn(f"压缩器 entry point 加载失败,已跳过: {ep.name}: {e}", stacklevel=2)
+    return registry
+
+
+def _distill_trigger(sidecar: DistillSidecar, ctl: Any) -> Any:
+    """DistillSidecar 的总线直连 handler(装配理由见 build 内注释):内联触发判定。"""
+
+    async def handler(sig: Any) -> None:
+        await sidecar.on_signal(sig, ctl)
+
+    return handler
 
 
 class KernelBuilder:
@@ -63,6 +111,7 @@ class KernelBuilder:
         self._supervisor: dict[str, Any] | None = None
         self._debug_controller: Any = None
         self._retry: dict[str, Any] = {}
+        self._context_section: ContextSection | None = None
 
     def providers(self, *providers: Any) -> KernelBuilder:
         self._providers.extend(providers)
@@ -78,6 +127,14 @@ class KernelBuilder:
 
     def context(self, manager: Any) -> KernelBuilder:
         self._context = manager
+        return self
+
+    def context_section(self, section: ContextSection) -> KernelBuilder:
+        """``[context]`` 段(§7.2 压缩链调参):装配默认 ContextManager 的注册表时用。
+
+        嵌入方自装 ContextManager(``.context()``)时本段不生效——不强塞注册表。
+        """
+        self._context_section = section
         return self
 
     def logic_kernels(self, *kernels: Any) -> KernelBuilder:
@@ -176,7 +233,9 @@ class KernelBuilder:
         """组装 Kernel(注入信号总线 / FrameStack / RunControl 等内核件)。
 
         装配边界:缺省补 ContextManager
-        (M3:RollingWindowCompressor + 状态注入 + pre/post:compress 信号,§7);
+        (M3:§7.2 注册表装配 spill/truncate/summarize 三段 + ProviderManager 注入
+        + entry point ``agent_os.compressors`` 插件按 name 覆盖 + 状态注入
+        + pre/post:compress 信号,§7);
         logic_kernels 按 TrustLevel 索引装配为 LogicKernelRouter(§9.2);
         sidecars(M4)装配 RunControlImpl + SidecarSupervisor 并注册到总线(§5);
         telemetry(M5a)作为总线特权订阅者接入(§5.1:全量订阅,不算 sidecar);
@@ -191,6 +250,9 @@ class KernelBuilder:
         human_approval(WS2,docs/SUPERVISOR.md §10):sidecar 列表中的 HumanApproval
         实例作策略载体传给 Kernel(EXEC 档工具过内核 tool-confirm 闸门),
         其 timeout/on_timeout 补缺 supervisor 通道策略(显式配置优先);
+        distill sidecar(§11.2 写路径范式):bind providers/memory/stack 句柄,
+        model 缺省回落 run.model;终态信号直挂总线(supervisor 的 ASYNC wrapper
+        在 run 收尾 close 时等不到运行,见下方装配注释);
         debug_controller(P1)给了就把它挂到信号总线(直接订阅,见 kernel/debug.py);
         装配期权限闸门(§6.1):manifest 声明的工具必须在注册表中,缺失即拒绝加载。
         """
@@ -249,16 +311,34 @@ class KernelBuilder:
                 # None = 未显式配置,落 SupervisorManager 默认值(120s/fail/"")
                 **{k: v for k, v in sup_policy.items() if v is not None},
             )
-        context = self._context or ContextManager.default(
-            RollingWindowCompressor(),
-            skills=skills,
-            tools=tools,
-            config=self.config,
-            signals=bus,
-            # S2(docs/SUPERVISOR.md §2.1):ask_supervisor 伪工具 schema 只在装了
-            # supervisor 通道时呈现给 LLM;嵌入方自带 context manager 时自行决定
-            supervisor=sup_manager is not None,
-        )
+        if self._context is not None:
+            # 嵌入方自装 ContextManager:注册表/providers 由嵌入方自负,不强塞
+            context = self._context
+        else:
+            ctx_cfg = self._context_section or ContextSection()
+            compressors: dict[str, Any] = {
+                "spill": SpillCompressor(threshold_chars=ctx_cfg.spill_threshold_chars),
+                "truncate": RollingWindowCompressor(),
+                "summarize": SummarizeCompressor(
+                    # 缺省跟主模型走;无可用 providers 时 summarize 自动退化 truncate(§7.2)
+                    model=ctx_cfg.summarize_model or self.config.model or None,
+                    breaker_threshold=ctx_cfg.summarize_breaker,
+                    temperature=ctx_cfg.summarize_temperature,
+                ),
+            }
+            # §7.5/§14.3:entry point 插件按 name 入注册表,允许覆盖内置
+            compressors.update(_compressor_plugins())
+            context = ContextManager.default(
+                compressors=compressors,
+                providers=providers,
+                skills=skills,
+                tools=tools,
+                config=self.config,
+                signals=bus,
+                # S2(docs/SUPERVISOR.md §2.1):ask_supervisor 伪工具 schema 只在装了
+                # supervisor 通道时呈现给 LLM;嵌入方自带 context manager 时自行决定
+                supervisor=sup_manager is not None,
+            )
         if hasattr(tools, "bind_signals"):
             tools.bind_signals(bus)
         if skills is not None and hasattr(tools, "bind_skills"):
@@ -292,6 +372,22 @@ class KernelBuilder:
             ctl = RunControlImpl(kernel)
             supervisor = SidecarSupervisor(bus, ctl)
             for sidecar in self._sidecars:
+                if isinstance(sidecar, DistillSidecar):
+                    # §11.2 蒸馏写路径范式:bind 子系统句柄;model 缺省回落 run.model
+                    # (照 :310-315 summarize_model 回落先例);未配 [memory] 段时
+                    # memory=None → 实例休眠(on_signal 不触发)
+                    if sidecar.model is None:
+                        sidecar.model = self.config.model or None
+                    sidecar.bind(
+                        providers=kernel.providers, memory=kernel.memory, stack=kernel.stack
+                    )
+                    # 终态信号(run.finished/run.aborted)emit 后 Kernel.run 的 finally
+                    # 立即 supervisor.close() 取消 ASYNC wrapper——emit→close 无让出点,
+                    # wrapper 从未运行就被回收(实测)——蒸馏触发故直挂总线(emit 内联
+                    # await,保证执行);on_signal 只做触发判定 + create_task,按 run_id
+                    # 幂等(_seen),wrapper 万一运行也不双触发
+                    for pattern in sidecar.subscriptions:
+                        bus.subscribe(pattern, _distill_trigger(sidecar, ctl))
                 supervisor.register(sidecar)
             kernel.sidecars = supervisor
             kernel.ctl = ctl

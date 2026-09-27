@@ -17,6 +17,7 @@ from agent_os.api.v1 import (
     POST_COMPRESS,
     POST_CONTEXT_INLINE,
     PRE_COMPRESS,
+    Allow,
     ChatRequest,
     Compressor,
     Message,
@@ -27,8 +28,9 @@ from agent_os.api.v1 import (
     SkillRef,
     Source,
 )
+from agent_os.context.chain import ChainCompressor
 from agent_os.context.estimator import TokenEstimator
-from agent_os.kernel.errors import SkillLoadError
+from agent_os.kernel.errors import AgentOSError, SkillLoadError
 from agent_os.skills.loader import render_prompt
 
 #: 预算剩余低于该比例时,hint 切换为收敛策略(§7.3:读数 + 操作策略)
@@ -48,6 +50,34 @@ INLINE_CAPS_KEY = "_inline_caps"
 #: 内联能力段的固定标头(跨帧跨步字节稳定)
 INLINE_SECTION_HEADER = "## 内联能力(直接运用,无需调用)"
 
+#: 压缩模式 → 责任链阶段名序列(§7.2;manifest ``context_policy.compress`` 优先,
+#: 缺省取 ``RunConfig.compression``;"off" 在 ``_cap`` 已短路,不进本表)
+_MODE_CHAINS = {
+    "truncate": ["truncate"],
+    "spill": ["spill", "truncate"],
+    "summarize": ["summarize"],
+    "hierarchical": ["spill", "summarize"],
+}
+
+
+class ContextOverflowError(AgentOSError):
+    """§7.1 硬上限:压缩后仍超 cap(pinned 常驻占满等压不动的场景),该帧失败上抛。
+
+    压缩目标本身是 ``int(cap * target_ratio)``,正常链路 after ≤ target < cap;
+    只有 pinned 永驻(§7.4 不变量 1)把可压空间吃光时才触发。消息与同名属性
+    带 frame_id/before/after/cap,供宿主/遥测定位。
+    """
+
+    def __init__(self, frame_id: str, *, before: int, after: int, cap: int) -> None:
+        super().__init__(
+            f"帧 {frame_id} 压缩后仍超硬上限: before={before} after={after} cap={cap}"
+            "(pinned 常驻压不动;调大 context_policy.max_tokens 或减少 pinned 占用)"
+        )
+        self.frame_id = frame_id
+        self.before = before
+        self.after = after
+        self.cap = cap
+
 
 class ContextManager:
     """``agent_os.api.v1.ContextManager`` 协议的基础实现(M3)。
@@ -58,9 +88,12 @@ class ContextManager:
       伪工具面的两个开关:``python_orchestrate`` 随 ``RunConfig.orchestrate`` 消融档,
       ``ask_supervisor`` 随构造参数 ``supervisor``(S2:内核是否装了 supervisor 通道,
       docs/SUPERVISOR.md §2.1);
-    - ``maintain``:超 cap 时经 compressor 压到 ``int(cap * target_ratio)``,
-      前后发 ``pre/post:compress`` 信号(§7.4 不变量 4);``compression == "off"``
-      (RunConfig 或 manifest ``context_policy.compress``)时全部短路(§7.1 消融档)。
+    - ``maintain``:超 cap 时按模式(``_MODE_CHAINS``,manifest 优先)从策略注册表
+      取阶段链压到 ``int(cap * target_ratio)``,前后发 ``pre/post:compress`` 信号
+      (§7.4 不变量 4;pre 可否决——首个非 ``Allow`` verdict 跳过本次压缩);
+      压缩后仍超 cap(§7.1 硬上限,pinned 占满等压不动场景)抛
+      :class:`ContextOverflowError`;``compression == "off"``(RunConfig 或
+      manifest ``context_policy.compress``)时全部短路(§7.1 消融档)。
     """
 
     def __init__(
@@ -70,6 +103,8 @@ class ContextManager:
         tools: Any,
         config: RunConfig,
         compressor: Compressor | None = None,
+        compressors: dict[str, Compressor] | None = None,
+        providers: Any = None,
         estimator: TokenEstimator | None = None,
         signals: Any = None,
         status_bar: bool = True,
@@ -81,6 +116,15 @@ class ContextManager:
         self._tools = tools
         self._config = config
         self._compressor = compressor
+        #: 策略注册表(§7.2 责任链装配,策略名 → Compressor):给了 ``compressor``
+        #: 而没给 ``compressors`` 时旧用法并入 ``{"truncate": compressor}``
+        #: (向后兼容);都没给 → None(无 compressor,压缩静默跳过)
+        if compressors is None and compressor is not None:
+            compressors = {"truncate": compressor}
+        self._compressors = compressors
+        #: summarize 等 LLM 策略的 ProviderManager(§7.5 KernelServices.providers;
+        #: 装配期注入,未注入 = None → summarize 退化 truncate)
+        self._providers = providers
         self._estimator = estimator or TokenEstimator()
         self._signals = signals
         self._status_bar = status_bar
@@ -92,9 +136,17 @@ class ContextManager:
         self._supervisor = supervisor
 
     @classmethod
-    def default(cls, compressor: Compressor | None = None, **kw: Any) -> ContextManager:
-        """§14.2 组装示例入口:``ContextManager.default(RollingWindowCompressor(), ...)``。"""
-        return cls(compressor=compressor, **kw)
+    def default(
+        cls,
+        compressor: Compressor | None = None,
+        *,
+        compressors: dict[str, Compressor] | None = None,
+        providers: Any = None,
+        **kw: Any,
+    ) -> ContextManager:
+        """§14.2 组装示例入口:``ContextManager.default(RollingWindowCompressor(), ...)``;
+        WS2 起装配层走 ``compressors=`` 注册表 + ``providers=``(§7.2 责任链)。"""
+        return cls(compressor=compressor, compressors=compressors, providers=providers, **kw)
 
     async def build(self, frame: SkillFrame) -> ChatRequest:
         skill = self._skills.get(frame.skill)
@@ -271,22 +323,27 @@ class ContextManager:
         cap = self._cap(manifest.context_policy)
         if cap is None:
             return  # §7.1:compression "off"(RunConfig 消融档或 manifest 档)全部策略短路
-        if estimate <= cap or self._compressor is None:
+        if estimate <= cap or not self._has_compressor():
             return  # 未超限,或无 compressor 可压(静默跳过,估算已更新)
-        await self._compress(frame, estimate, cap)
+        await self._compress(frame, manifest.context_policy, estimate, cap)
 
     async def force_compress(self, frame: SkillFrame) -> None:
         """§7.1 外部强制触发(sidecar ``ForceCompress`` / ``RunControl.force_compress``):
 
-        无视 cap 是否触发,强制执行一次压缩;``compression == "off"`` 仍短路(消融档)。
+        无视 cap 是否触发,强制执行一次压缩;``compression == "off"`` 仍短路(消融档);
+        pre:compress 否决对本路径同样生效(§7.4 不变量 4,见 :meth:`_compress`)。
         """
         manifest = self._skills.get(frame.skill).manifest
         estimate = self._estimator.estimate(frame.context.messages)
         frame.context.token_estimate = estimate
         cap = self._cap(manifest.context_policy)
-        if cap is None or self._compressor is None:
+        if cap is None or not self._has_compressor():
             return
-        await self._compress(frame, estimate, cap, forced=True)
+        await self._compress(frame, manifest.context_policy, estimate, cap, forced=True)
+
+    def _has_compressor(self) -> bool:
+        """注册表或 legacy 单压缩器任一在场即可压缩(都没有 = 静默跳过,估算已更新)。"""
+        return bool(self._compressors) or self._compressor is not None
 
     def _cap(self, policy: Any) -> int | None:
         """帧上下文软上限;``compression == "off"`` 时返回 None(全部策略短路)。"""
@@ -301,15 +358,50 @@ class ContextManager:
         )
 
     async def _compress(
-        self, frame: SkillFrame, estimate: int, cap: int, *, forced: bool = False
+        self,
+        frame: SkillFrame,
+        policy: Any,
+        estimate: int,
+        cap: int,
+        *,
+        forced: bool = False,
     ) -> None:
-        """压缩路径(maintain 超限触发与 force_compress 外部强制共用,§7.1/§7.4)。"""
+        """压缩路径(maintain 超限触发与 force_compress 外部强制共用,§7.1/§7.4)。
+
+        - 模式解析 manifest 优先(``policy.compress`` 缺省/空回落
+          ``RunConfig.compression``);未知模式抛 :class:`ValueError`——配错快速失败,
+          连 pre:compress 都不发;
+        - pre:compress 可否决(§7.4 不变量 4):首个非 ``None`` 非 ``Allow`` verdict
+          → 跳过本次压缩(不发 post、不动消息;``token_estimate`` 已由调用方更新);
+          force 触发同样可否决;
+        - post:compress 载荷带 ``strategy``(实际执行的 compressor.name,additive);
+        - 压缩后重估仍超 cap(§7.1 硬上限尾路径):post:compress 照发
+          (after_tokens 如实)后抛 :class:`ContextOverflowError`,该帧失败上抛。
+        """
+        mode = (
+            policy.compress
+            if policy is not None and policy.compress
+            else self._config.compression
+        )
+        if mode not in _MODE_CHAINS:
+            raise ValueError(
+                f"未知压缩模式: {mode!r}(合法值: {sorted(_MODE_CHAINS)} + 'off';"
+                f"manifest context_policy.compress 优先,缺省取 RunConfig.compression)"
+            )
+        compressor = self._select_compressor(mode)
+        if compressor is None:
+            return  # 注册表无本模式阶段且无 legacy 兜底:静默跳过(同无 compressor 现状)
         pre_payload = {"frame_id": frame.frame_id, "estimate": estimate, "cap": cap}
         if forced:
             pre_payload["forced"] = True
-        await self._emit(PRE_COMPRESS, frame, pre_payload)
-        report = await self._compressor.compress(
-            frame.context, int(cap * self._target_ratio), self._svc()
+        verdicts = await self._emit(PRE_COMPRESS, frame, pre_payload)
+        veto = next(
+            (v for v in verdicts if v is not None and not isinstance(v, Allow)), None
+        )
+        if veto is not None:
+            return  # §7.4 不变量 4"可否决":跳过本次压缩(不发 post、不动消息)
+        report = await compressor.compress(
+            frame.context, int(cap * self._target_ratio), self._svc(frame)
         )
         await self._emit(
             POST_COMPRESS,
@@ -321,27 +413,48 @@ class ContextManager:
                 "after_tokens": report.after_tokens,
                 "cache_invalidation_estimate": report.cache_invalidation_estimate,
                 "marker": report.marker,
+                "strategy": compressor.name,
             },
         )
-        frame.context.token_estimate = self._estimator.estimate(frame.context.messages)
+        after = self._estimator.estimate(frame.context.messages)
+        frame.context.token_estimate = after
+        if after > cap:
+            # §7.1 硬上限:压缩目标是 int(cap*target_ratio),正常链路 after ≤ target
+            # < cap;只有 pinned 占满等压不动的场景才走到这里
+            raise ContextOverflowError(frame.frame_id, before=estimate, after=after, cap=cap)
 
-    def _svc(self) -> Any:
-        """压缩器可用的内核服务(§7.5 KernelServices 形状)。
+    def _select_compressor(self, mode: str) -> Compressor | None:
+        """按模式从注册表取阶段链(>1 段现场组 :class:`ChainCompressor`);
+        空链回退 legacy 单压缩器,都没有 → ``None``(静默跳过)。"""
+        registry = self._compressors or {}
+        stages = [registry[n] for n in _MODE_CHAINS[mode] if n in registry]
+        if not stages:
+            return self._compressor
+        if len(stages) == 1:
+            return stages[0]
+        return ChainCompressor(stages)
 
-        rolling window 只用 estimator;providers(summarize/narrate 用,M6 前 None),
-        blob 取工具注册表的内存 blob(spill 策略预留),没有则 None。
+    def _svc(self, frame: SkillFrame) -> Any:
+        """压缩器可用的内核服务(§7.5 KernelServices 形状 + run_id)。
+
+        rolling window 只用 estimator;providers 是 summarize 等 LLM 策略的
+        ProviderManager(装配期注入,未注入 = None → summarize 退化 truncate);
+        blob 取工具注册表的 spill store,run_id 供 spill 的 blob 命名空间。
         """
         return SimpleNamespace(
             estimator=self._estimator,
-            providers=None,
+            providers=self._providers,
             blob=getattr(self._tools, "blob", getattr(self._tools, "_blob", None)),
+            run_id=frame.run_id,
         )
 
-    async def _emit(self, name: str, frame: SkillFrame, payload: dict[str, Any]) -> None:
-        if self._signals is not None:
-            await self._signals.emit(
-                Signal(name=name, run_id=frame.run_id, frame_id=frame.frame_id, payload=payload)
-            )
+    async def _emit(self, name: str, frame: SkillFrame, payload: dict[str, Any]) -> list[Any]:
+        """发信号并返回订阅者 verdict 列表(pre:* 的可否决判定由调用方仲裁)。"""
+        if self._signals is None:
+            return []
+        return await self._signals.emit(
+            Signal(name=name, run_id=frame.run_id, frame_id=frame.frame_id, payload=payload)
+        )
 
 
 class MinimalContextManager:

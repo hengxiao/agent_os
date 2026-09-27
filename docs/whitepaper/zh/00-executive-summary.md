@@ -194,8 +194,9 @@ inputs/outputs/permissions/model/context_policy/limits/trust 等),
 ### 4.4 Context(内存管理)
 
 帧上下文的组装与压缩:build(SYSTEM 渲染 + 消息 + 状态注入 + 工具 schema)、
-maintain(估算超 cap 触发压缩,责任链策略,rolling-window 基线:原子组
-驱逐、pinned 永不压、幂等标记 `[COMPRESSED]`)。前缀缓存稳定性是硬约束:
+maintain(估算超 cap 触发压缩,责任链策略已实现:truncate/spill/summarize;
+truncate 基线:原子组驱逐、pinned 永不压、幂等标记 `[COMPRESSED]`)。
+前缀缓存稳定性是硬约束:
 inline 段在帧首次 build 时冻结进 working,resume/热重载后前缀一致。
 
 ### 4.5 Sidecars 与 Telemetry(监督与黑匣子)
@@ -229,7 +230,9 @@ options 校验不合带 `previous_error` 重问。裁决请求是结构化数据
 Memory:跨 run 记忆与知识,检索层做权限过滤(与数据 authZ 同判据)——
 契约已冻结,基线 `LocalFileMemoryService` 已实现(2026-09-27,`memory/
 local_file.py`:每条目一 Markdown + frontmatter,principal 过滤 → freshness →
-BM25;`[memory] dir` 配置段接线,`system.memory.search/write` 工具常驻)。
+BM25;`[memory] dir` 配置段接线,`system.memory.search/write` 工具常驻);
+蒸馏写路径亦已通(2026-09-28,`DistillSidecar`:run 终态后经廉价模型
+蒸馏经验写入 Memory,触发条件与直挂总线注记见第 7 章)。
 Blackboard:run 内帧间状态与
 消息的共享内存,并发控制,供 fork/join 并行的帧交换中间结果;
 `LocalBlackboard`(CAS + pub/sub)为已实现基线。
@@ -363,10 +366,10 @@ E1/E2 已实现(含 spawn 闸、Web 升权卡片);数据层 authZ D1/D2 已实�
 多用户映射);凭证注入(WS1)与 confirm 两阶段闸门(WS2,HumanApproval
 已下沉)已实现;§3.4 并发三原语齐备(`parallel_invoke` fork/join 落地,
 配套子树级联取消与子树记账读视图);Skill Lab L1-L5 全部落地;
-Web 六主题全部通过契约测试;测试基线 Python 1448 例(pytest 收集,
-1399 passed)+ 前端 32 个测试文件全绿。已设计未实现:E3 余项(审计面板)、
+Web 六主题全部通过契约测试;测试基线 Python 1542 例(1493 passed /
+10 skipped / 39 xfailed)+ 前端 32 个测试文件全绿。已设计未实现:E3 余项(审计面板)、
 D3 余项(派生链最弱一环、EscalationRequest 数据面)、M6 余项(沙箱回调
-通道、spill/summarize/narrate 高级策略、蒸馏 sidecar、register() 的 semver
+通道、narrate 压缩策略(多模态契约开口)、register() 的 semver
 求解/目录写路径/热重载/完整重放+evaluator 门)、
 动效播放层(主题契约测试第 5 项)、多文件 skill_set 归并、handler 源码进生产。
 

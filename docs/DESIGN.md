@@ -405,7 +405,8 @@ class RunControl(Protocol):   # 内核暴露给 sidecar 的特权接口(仅此�
 - **SYNC sidecar** 在关键路径上执行,有超时(默认 2s);自身抛异常时**默认 fail-closed**(视为 Veto),可配置 fail-open;
 - **ASYNC sidecar** 在监督任务里跑,异常只记日志,**永远不允许拖垮 run**;
 - sidecar 由 supervisor 统一托管:注册、心跳、重启(仅 ASYNC)、关停(v1 已实现注册与关停;心跳/重启未实现——`sidecars/supervisor.py`);
-- 引入 LLM 驱动的 sidecar 时:审批模型应与执行模型**不同家族、能力相近**;连续否决触发 rejection circuit breaker 回退人工。
+- 引入 LLM 驱动的 sidecar 时:审批模型应与执行模型**不同家族、能力相近**;连续否决触发 rejection circuit breaker 回退人工。(**首个 LLM 驱动 sidecar 已落地**:蒸馏 sidecar `DistillSidecar`,2026-09-28,见 §11.2 与 §16「已关闭 2026-09-28」;审批异家族与 rejection circuit breaker 仍预留。)
+- **ASYNC sidecar 订阅 `run.finished`/`run.aborted` 的结构性陷阱**(2026-09-28 蒸馏落地时发现,最小复现 + 真实内核探针双重验证):`Kernel.run` 的 finally 中 `emit(run.finished)` 之后立即 `supervisor.close()`,两者间无事件循环让出点——supervisor 的 ASYNC wrapper(`sidecars/supervisor.py:77-85` 的 `create_task`)尚未运行即被 close(:93-99)取消,经 supervisor 注册的此类 sidecar `on_signal` **永远不会执行**。规避方式:触发闭包**直挂信号总线**(emit 内联 await,保证执行),耗时任务由实例自管(detached,run 收尾 cancel 不到);`DistillSidecar` 即按此装配(`runtime/builder.py:375-390`),`supervisor.register` 仍照常走(契约形态统一)。**任何未来想在终态信号上做文章的 ASYNC sidecar 都必须直挂总线。**
 
 ### 5.4 内置 sidecar
 
@@ -492,7 +493,7 @@ skills:
 ### 7.1 触发
 
 - **软上限**(manifest `max_tokens` 或模型窗口 80%):压缩到目标水位;
-- **硬上限**(临近模型窗口):激进压缩;仍超限则该帧失败上抛;
+- **硬上限**(临近模型窗口):激进压缩;仍超限则该帧失败上抛(尾路径已实现:全链压完重估仍 `after > cap` → 抛 `ContextOverflowError`,`context/manager.py:63/:421-424`;"临近模型窗口"独立档仍开口——模型窗口不可知,cap 目前只有 manifest `max_tokens` 一档);
 - **外部强制**:sidecar `ForceCompress`;
 - `compression: "off"`(RunConfig 消融档):全部策略短路,用于裸模型基线对照。
 
@@ -506,6 +507,8 @@ skills:
 | `narrate` | 多模态消息逐出前经 ProviderManager 生成一句文本旁白留置 | 一次廉价调用 |
 | `summarize` | 经 ProviderManager 把被逐出区间摘要成 compact note,**context-aware**:压缩 prompt 含帧任务规格;保留契约 = 架构决策与关键约束(不可摘要)、已修改文件清单、验证状态、未完成 TODO、**标识符逐字保留**(UUID/hash/URL/文件名);摘要模型档位可配;连败熔断(默认 3 次)后退化 truncate | 一次 LLM 调用,有损 |
 | `hierarchical` | 上述按序组合(spill → truncate → summarize),manifest 默认 | — |
+
+**实现状态**(2026-09-28,`agent_os/src/agent_os/context/`):`truncate` = `RollingWindowCompressor`(rolling_window.py:114,注册名 `name = "truncate"`);`spill` = `SpillCompressor`(spill.py:45——非 pinned、超 `spill_threshold_chars`(默认 4000)的 TOOL 消息内容移入 blob store,原地改写为冻结替换串:`[SPILLED]` 标记 + 原始字节数 + `blob://<run_id>/<sha>` ref + head/tail 各 500 字符 + blob_get 分页取回提示;不删消息(evicted=0),svc.blob/run_id 缺失时 no-op);`summarize` = `SummarizeCompressor`(summarize.py:92——复用 rolling 的 atomic_groups/select_eviction_groups 定被逐区间(整组、保留最后一个非 pinned 组),经 `svc.providers.chat` 廉价档模型摘要为 `[COMPRESSED]` compact note,以 SYSTEM 插入原首逐组下标(meta compressed=True,非 pinned 可被后续再逐——有意);连败熔断默认 3 次,熔断开/无 providers/无 model 退化纯截断,marker `[COMPRESSED:truncate]`;LLM 用量落 `ctx.working["_compress_llm_usage"]`);`hierarchical` = `ChainCompressor`(chain.py:18——有序责任链,逐阶段经 estimator 重估、达标短路,report 聚合;实现序 spill → summarize,truncate 兜底内建于 summarize 熔断退化与单巨组硬截断);模式选择 `_MODE_CHAINS`(manager.py:55-60,manifest `context_policy.compress` 优先于 RunConfig.compression,未知模式抛 ValueError);调参经 `[context]` TOML 段(runtime/config.py:303-327);压缩 LLM 用量由 runner `_drain_compress_usage`(runner.py:384,maintain 后)入账帧/run 两级并补发 `post:llm.response`(`"source": "compress"`),`post:compress` 载荷增 `"strategy"`(manager.py:416)。`narrate` **未实现**(多模态契约开口:`Message.content` 是 str,无操作对象)。
 
 ### 7.3 状态注入(Status Bar)
 
@@ -521,7 +524,7 @@ skills:
 1. `pinned` 消息永不移除;
 2. **tool_call/tool_result 配对原子性**:同进同出,绝不产生孤儿 tool result——**在中断路径上同样成立**(占位 tool_result,见 §3.1);
 3. 压缩后 token 估算严格下降;
-4. 压缩动作发 `pre/post:compress` 信号,可记录、可否决;
+4. 压缩动作发 `pre/post:compress` 信号,可记录、可否决(已实现:首个非 Allow verdict 跳过本次压缩——不发 post、不动消息、估算仍更新;force_compress 同路径同否决,manager.py:397-402);
 5. **前缀稳定性**:`build` 输出跨步逐字节稳定——指令体与工具/子技能 schema 的顺序与序列化结果固定,动态信息只经末尾追加,spill 替换串冻结;压缩批量低频,非每轮。验收:golden-file 断言相邻两步请求前缀 diff 为空。
 
 ### 7.5 接口
@@ -541,7 +544,7 @@ CompressionReport = { evicted, before_tokens, after_tokens, cache_invalidation_e
 # marker = "[COMPRESSED]" 幂等标记,防责任链多策略重复处理
 ```
 
-`KernelServices` 提供:token 估算器、ProviderManager(摘要用)、blob store。新策略经 entry point `agent_os.compressors` 注册。
+`KernelServices` 提供:token 估算器、ProviderManager(摘要用)、blob store。新策略经 entry point `agent_os.compressors` 注册。(2026-09-28 落地:`KernelServices.providers` 已接线——`_svc(frame)` 注入装配层的 ProviderManager 与 `frame.run_id`,manager.py:437-448,不再恒为 None;entry point 组已在 `pyproject.toml` 声明并由 builder `_compressor_plugins()` 加载:类无参实例化/实例直接用/按 `.name` 覆盖内置/坏 EP 警告跳过;manifest 里自定义模式名不可用,模式表为内置四档 + off。)
 
 `build` 的组装顺序补注:SYSTEM = 渲染后的技能指令 + 内联能力段(merge 技能,帧首次 build 冻结快照进 `working["_inline_caps"]`,一次性发 `post:context.inline`;SKILL-INLINING.md §4)→ 帧上下文 → 状态栏(ephemeral)。
 
@@ -557,7 +560,7 @@ rolling window:保留 pinned + 最近若干原子组,超目标即从最旧整组
 ```
 
 - 纯函数、无 LLM/blob 依赖,是不变量测试(hypothesis)的最佳载体;
-- **定位警告**:裸 rolling window 是已知的循环诱因(丢早期工具结果 → 重复调用);它只是 `hierarchical` 链的中间层基座,链尾必须有 summarize 或 spill 承接,文档不得读作"推荐做法";
+- **定位警告**:裸 rolling window 是已知的循环诱因(丢早期工具结果 → 重复调用);它只是 `hierarchical` 链的中间层基座,链尾必须有 summarize 或 spill 承接,文档不得读作"推荐做法";本压缩器现为链中 `truncate` 策略(`name = "truncate"`,rolling_window.py:118),"裸 rolling"现指 `compress: "truncate"` 单档;
 - token 估算器随此交付:char/4 粗估 + 按 provider 校准系数 + 多模态口径(图像按分辨率公式),接口预留精确 tokenizer。
 
 ---
@@ -684,7 +687,7 @@ class LogicContext(Protocol):
 
 `invoke` / `call_tool` 全部回到内核分发路径:manifest 白名单检查、信号、记账一样不少。code 技能因此可以做"编排者":确定性控制流 + 按需调 LLM 技能。
 
-SANDBOX 回调通道(设计方向,M6 目标):沙箱内经 **JSON-RPC 代理**获得受限 `LogicContext`——编排脚本(code orchestration)的中间变量留在执行环境,只回传最终结果(token 消耗可降约两个数量级)。约束不变:所有回调回到内核分发路径,白名单、信号、记账一样不少;回调面越大隔离价值越稀释,故通道只暴露 `invoke`/`call_tool` 两个方法。
+SANDBOX 回调通道(设计方向,M6 目标):沙箱内经 **JSON-RPC 代理**获得受限 `LogicContext`——编排脚本(code orchestration)的中间变量留在执行环境,只回传最终结果(token 消耗可降约两个数量级)。约束不变:所有回调回到内核分发路径,白名单、信号、记账一样不少;回调面越大隔离价值越稀释,故通道保持窄面——现为七个方法:`invoke`/`call_tool`/`spawn`/`wait`/`parallel`/`cancel`/`frame_status`(`cancel`/`frame_status` 为 W5 桥接的帧控制面,`spawn`/`wait`/`parallel` 于 2026-09-28 桥接);新增面全部经 syscall 直委托内核闸内管线(spawn 管线/parallel_invoke 全语义,白名单/深度/升权闸不旁路),不新增权限面。
 
 ### 9.4 两个调用方
 
@@ -773,7 +776,7 @@ MemoryEntry = {
 - **通道隔离**(防经验投毒):检索结果经 Context 组装时以独立"参考资料"角色注入,显式声明无指令效力;注入作用域按帧/manifest 声明,不做"一处注入全局生效";写入前审查 + 可溯源 + 可驱逐是安全底线,随契约内建;
 - **存储区域语义**(VFS 四区):私有 scratchpad(帧工作目录,随 run 销毁)/ 共享 workspace(任务级持久,需并发控制)/ 外部挂载(受外部权限约束,读为主)/ 内置只读(技能包);
 - **常驻层**:高价值结构化事实经 `pinned` 注入帧上下文("overview 常驻 + details 按需");
-- **写路径范式**:离线 extract–compare–decide(ADD/UPDATE/DELETE/NOOP),或蒸馏 sidecar(订阅 `run.finished`,触发条件满足时廉价模型蒸馏经验写入);
+- **写路径范式**:离线 extract–compare–decide(ADD/UPDATE/DELETE/NOOP),或蒸馏 sidecar(**已实现** 2026-09-28:`DistillSidecar`,`sidecars/builtins.py:331`;订阅 `run.finished`/`run.aborted`——aborted 恒触发 failure reflection,finished 需该 run 帧树内 TOOL 消息数 > `min_tool_calls`(默认 5)才触发 strategy summary;触发条件满足时廉价模型蒸馏经验写入 Memory);
 - **baseline**(M6,**已实现** 2026-09-27):`LocalFileMemoryService`(`memory/local_file.py`)——每条目一 Markdown 文件 + 手写 frontmatter(tags/source/created_at/freshness/trust/provenance)+ BM25 检索(`memory/rank.py` 唯一实现,principal 过滤与 freshness 失效在打分前),即 `MEMORY.md` 路线:可人读人改、保序、Git 可版本化;工具面 `system.memory.search`/`system.memory.write` 常驻,`[memory] dir` 配置段接线。
 
 ---
@@ -888,7 +891,7 @@ agent_os/                  # 工作区(DESIGN.md / reports/ / ai-agent-book/)
     ├── src/agent_os/
     │   ├── api/v1/            # 契约层:全部 Protocol 与数据模型(唯一跨边界依赖)
     │   ├── kernel/            # runner / stack / dispatch / signals(bus)/ control / run
-    │   ├── context/           # ContextManager + estimator + rolling_window(M3);spill/summarize/narrate 后续
+    │   ├── context/           # ContextManager + estimator + truncate/spill/summarize/chain(M3 + 责任链 2026-09-28);narrate 后续
     │   ├── providers/         # manager + openai_compatible.py(M1)+ mock.py(M0)
     │   ├── tools/             # local_registry.py(decorator+schema 推导)+ builtins + blob store
     │   ├── skills/            # local_file.py(skills.yaml 加载)+ manifest / loader
@@ -917,11 +920,11 @@ agent_os/                  # 工作区(DESIGN.md / reports/ / ai-agent-book/)
 | **M3 Context**(1 周) | ContextManager(组装 + 状态注入 + 前缀稳定性)、token 估算器、RollingWindowCompressor、blob store、不变量测试 | 10 万 token 对话压缩后配对不变量零破坏;golden-file 断言相邻步前缀 diff 为空 |
 | **M4 sidecar 与信号**(1 周) | supervisor、5 个基础 sidecar(budget/loop/stall/guard/scanner)、RunControl、`pre:frame.pop` | 预算超限强停;循环检测先纠偏后强停;veto 生效且理由回写;reviewer 打回弹栈生效 |
 | **M5 可靠性**(持续) | **中断配对修复 + 恢复熔断(P0 洞)**、Telemetry(WAL + 版本头 + 检查点恢复)、Blackboard + spawn 后台帧、stream idle watchdog、`fs_edit`、PythonSandboxLogicKernel + python_exec + CodeScanner | 断电恢复演示;中断注入下配对不变量零破坏;沙箱内资源滥用被限制并正确报错;spawn 快慢模式演示 |
-| **M6 演化**(可选,持续) | Memory 契约 + LocalFile baseline、register() 写入路径 + 验证门、沙箱回调通道、spill/summarize/narrate 高级策略、蒸馏 sidecar | 经验跨 run 复用演示;Agent 自写技能经验证门注册并复用 |
+| **M6 演化**(可选,持续) | Memory 契约 + LocalFile baseline、register() 写入路径 + 验证门、沙箱回调通道、spill/summarize/narrate 高级策略 | 经验跨 run 复用演示;Agent 自写技能经验证门注册并复用 |
 
-> **实现状态核对**(2026-08,对照 `agent_os/src/agent_os/` 代码;2026-08-31、2026-09-27 复核):**M0–M5 已完成;M6 的 Memory baseline 与 register() 写入路径已落地(2026-09-27);M1/M3/M5 遗留占位 stub 已于 2026-09-27 清零(见下「已关闭」)**。各里程碑主体均已交付;以下为仍开口项(2026-09-27 逐条核对,附代码证据):
-> - M6(余项):沙箱回调通道高级形态(沙箱内 `spawn`/`wait`/`board`/`blob` 未过桥、并发 syscall 未支持)、spill/summarize/narrate 高级压缩策略与 hierarchical 责任链(`context/` 仍只有 RollingWindow truncate 一档)、蒸馏 sidecar;register() 留尾:semver ^/~ 依赖求解、DirectorySkillSource 写路径、文件监听热重载、完整重放 + evaluator 验证门;Memory 留尾:context 注入槽(§11.2 常驻层/通道隔离的组装侧)、蒸馏 sidecar 写路径。
-> - 跨里程碑开口:pause 真语义(v1 = 带 `"paused: "` 前缀的 stop,`kernel/control.py:41-44`);外部事件唤醒入口(§17 开放问题 4);恢复熔断通用化(目前仅 outputs 校验有连败熔断,`kernel/runner.py:124`);spawn 的"不说 done"校验 hook(§3.4);`ModelRouter` 动态路由(仅契约,`api/v1/providers.py:141`);logprobs / 多模态 token 精确口径(契约预留,`ProviderCaps.supports_logprobs`);MCP 适配器(entry point 预留);OTLP 导出 / PII 脱敏 hook(`telemetry/` 仅 JSONL);E3/D3 余项(E3 审计面板与 DESIGN §8 引用更新;D3 的派生链最弱一环、EscalationRequest 数据面展示与完整多用户会话映射——D3-lite `[web.tokens]` 已落地,docs/DATA-AUTHZ.md §8)。
+> **实现状态核对**(2026-08,对照 `agent_os/src/agent_os/` 代码;2026-08-31、2026-09-27、2026-09-28 复核):**M0–M5 已完成;M6 的 Memory baseline 与 register() 写入路径已落地(2026-09-27);M1/M3/M5 遗留占位 stub 已于 2026-09-27 清零;§7.2 高级压缩链(spill/summarize/hierarchical)已于 2026-09-28 落地(见下「已关闭」)**。各里程碑主体均已交付;以下为仍开口项(2026-09-27 逐条核对、压缩链条目 2026-09-28 复核,附代码证据):
+> - M6(余项):沙箱回调通道高级形态(沙箱内 `board`/`blob` 未过桥、并发 syscall 未支持)、narrate 高级压缩策略(多模态契约开口;spill/summarize/hierarchical 责任链已落地,见下「已关闭 2026-09-28」);register() 留尾:semver ^/~ 依赖求解、DirectorySkillSource 写路径、文件监听热重载、完整重放 + evaluator 验证门;Memory 留尾:context 注入槽(§11.2 常驻层/通道隔离的组装侧);蒸馏 sidecar 已落地(2026-09-28,见下「已关闭」),留尾:用户纠正/非显然工作流触发(v1 无通用信号)、跨进程去重、run 级用量信号、std/learn 三技能(distill_experience/reflect_on_failure/verify_before_store)。
+> - 跨里程碑开口:pause 真语义(v1 = 带 `"paused: "` 前缀的 stop,`kernel/control.py:41-44`);外部事件唤醒入口(§17 开放问题 4);恢复熔断通用化(outputs 校验(`kernel/runner.py:124`)与 summarize 压缩(`context/summarize.py`)各有连败熔断,未通用化);spawn 的"不说 done"校验 hook(§3.4);`ModelRouter` 动态路由(仅契约,`api/v1/providers.py:141`);logprobs / 多模态 token 精确口径(契约预留,`ProviderCaps.supports_logprobs`);MCP 适配器(entry point 预留);OTLP 导出 / PII 脱敏 hook(`telemetry/` 仅 JSONL);E3/D3 余项(E3 审计面板与 DESIGN §8 引用更新;D3 的派生链最弱一环、EscalationRequest 数据面展示与完整多用户会话映射——D3-lite `[web.tokens]` 已落地,docs/DATA-AUTHZ.md §8)。
 >
 > 已关闭(2026-08-31,P0 四项,1056 passed/1098 collected):① **凭证注入**——`ToolSpec.credentials` + `[credentials]` 配置段(env 间接引用)+ `bind_credentials` 装配钩子,dispatch 按声明键每次现解析(§8.4);② **confirm 两阶段**——内核 tool-confirm 闸门(`kernel/runner.py:_dispatch_call`,§8.2;含偏差说明:批准即 token,不做字面 dry run 二次调用);③ **HumanApproval**(原 M4 项)——下沉为闸门策略载体(`sidecars/builtins.py` `on_signal` 弃权,`[sidecars] human_approval` 配置生效);④ **D2 数据层 authZ**——`[data]` 配置段 + per-subject 域白名单判据 + `data.access.denied/granted` 审计信号(SIGNAL_NAMES 33 个)+ D3-lite `[web.tokens]` 多用户映射(docs/DATA-AUTHZ.md §8)。**行为变化**:无 supervisor 的裸 run 调 `confirm=True`/EXEC 闸门工具(如 `system.file.delete`)现在 fail-closed 拒绝。
 >
@@ -931,7 +934,13 @@ agent_os/                  # 工作区(DESIGN.md / reports/ / ai-agent-book/)
 >
 > 已关闭(2026-09-27,stub 清零 + 真实流式,1336 passed/1385 collected):**清理批**——① 死 stub 删除:`kernel/dispatch.py`(Dispatcher)整文件移除、`kernel/run.py` 的 M0 stub `Run.check_control_flags` 移除(run.py 仅余 Run 句柄)、`tools/builtins.py` 裸 `python_exec` 死函数删除(可用面为 `python_exec_tool` 工厂,canonical 名 `system.python.exec`);② **`ask_user`/`notify_user` 实填**(M1 尾巴):`system.user.ask`/`system.user.notify`(WRITE 档)常驻 `with_builtins`(`tools/local_registry.py:716-717`),宿主回调经装配钩子 `LocalPythonToolRegistry.bind_user_channel(channel)` + `KernelBuilder.user_channel()` 注入(未 bind → NOT_FOUND,同 bind_memory 先例);与 `ask_supervisor` 分工:ask_supervisor = 内核通道(pending 落盘/resume 重问),ask_user = 工具面宿主回调(无 pending 语义);CLI 接线留 TODO(`host/cli/main.py` `_cli_supervisor` 旁);③ **`FileBlobStore`**(M3,`tools/blob.py`):`<root>/<run_id>/<sha256>` 内容寻址落盘,run_id/sha 白名单校验防目录逃逸;`[blob] dir` 配置段接线(`runtime/config.py:569-578`,缺段 = 内存版 InMemoryBlobStore);④ **`merge_limits`**(M5,`logic/limits.py:32`):两级逐字段取紧(None = 该级未设,取另一级;两级都设取更小),三级取紧即链式调用,返回新实例;⑤ **`JsonlTelemetrySink.snapshot()`**(M5,`telemetry/jsonl_exporter.py:112`):WAL 视角快照 `Checkpoint(run_id, seq=已落盘信号数, state={})`——帧树等可重建状态不在 sink 侧重复实现的决策写入 docstring(§10.2 轨迹即全部状态);`JsonlExporter.export/close` 同批实填(全 run 信号汇聚单文件,行缓冲 + close 时 fsync,close 幂等);⑥ resume 收尾缺口修复:`resume_from_checkpoint` 的 finally 补 `_release_run`(`kernel/checkpoint.py:387-394`,与 `run()` 对称,spawn/parallel 登记的后台帧不再滞留);⑦ 空 `[data]` 段装配期 warning(`runtime/config.py:484-493`,行为不变,fail-closed 语义下提示漏配可能)。**真实流式 `stream()`**——`OpenAICompatibleProvider.stream`(`providers/openai_compatible.py:104`;SSE 解析:content/reasoning delta 透传、tool_calls 分片缓冲末帧组装、usage chunk、`[DONE]` 终止、断流 → UNAVAILABLE retryable)与 `ClaudeProvider.stream`(`providers/claude.py:100`;Anthropic 事件序列,thinking/signature/input_json 按块累计)实填,KimiProvider 继承获得;MockProvider 配 `stream_scripts` 时 caps 报 `supports_streaming=True`,脚本支持尾随 ChatChunk(finish_reason/usage);Manager **提交点语义**(`providers/manager.py:195-258`):首 chunk 产出前停滞(`stream_idle_timeout` 秒无新 chunk → 杀流)与 retryable 错误可重试(watchdog 保留),产出后不重试直接上抛,重试耗尽走 fallback 链;`[retry] stream_idle_timeout` 配置接线(`runtime/config.py:590-603`);Runner 侧 `RunConfig.stream: bool = True` 缺省开(`api/v1/run.py:56`,`[run]` TOML 白名单同步),caps 不支持/Mock 无脚本自动回落 chat;`_llm_call`/`_stream_call`(`kernel/runner.py:548-632`)逐 chunk 发 `post:llm.chunk`(payload `{model, seq, text}` + `_sig` 基底,仅 ASYNC 观察),组装与 chat 同形态;**ttft_ms/total_ms 记账落地**(`account` 扩可选参数 `runner.py:2022-2061`,帧/run 两级累加);cost 折算提取为 `ProviderManager._cost_usage`(usage 级,流式终 chunk 与 chat 同价共用);流中 stop → RunAborted、帧级 → SubtreeCancelled,finally `aclose()` 关流,半截消息不入帧。边界保持列明:token 级 UI 未做(hub 环形缓冲 2000 挤占问题留后续)、sidecar 不逐 chunk 仲裁(`post:llm.chunk` 仅 ASYNC)、流中不重试/resume 整步重跑、web_platform 直达 chat 路径未流式化。
 >
-> 另:§14.3 各 entry point 组在 `pyproject.toml` 中仅为注释预留,运行期未发现加载接线。
+> 已关闭(2026-09-28,§7.2 高级压缩链(WS1+WS2),1522 collected = 1473 passed + 10 skipped + 39 xfailed):① **spill**——`SpillCompressor`(`context/spill.py`,name `"spill"`):非 pinned、超 `spill_threshold_chars`(默认 4000)的 TOOL 消息内容移入 blob store,原地改写为冻结替换串(`[SPILLED]` + 原始字节数 + `blob://<run_id>/<sha>` + head/tail 各 500 字符 + blob_get 分页取回提示),不删消息(evicted=0),svc.blob/run_id 缺失时 no-op;② **summarize**——`SummarizeCompressor`(`context/summarize.py`,name `"summarize"`):复用 rolling 的 atomic_groups/select_eviction_groups 定被逐区间(整组、保留最后一个非 pinned 组),经 `svc.providers.chat` 廉价档模型摘要为 `[COMPRESSED]` compact note(SYSTEM 插入原首逐组下标,meta compressed=True,非 pinned 可被后续再逐——有意),context-aware(prompt 含帧任务规格=首条 USER 截 1000 字符 + pinned 约束各截 500)+ 保留契约(架构决策与关键约束/已修改文件清单/验证状态/未完成 TODO/标识符逐字保留 UUID/hash/URL/文件路径/技能名),连败熔断(默认 3)或缺 providers/model 退化 `[COMPRESSED:truncate]` 纯截断,单巨组仍有 `[truncated]` 硬截断兜底,LLM 用量落 `ctx.working["_compress_llm_usage"]`;③ **ChainCompressor**(`context/chain.py`):有序责任链,逐阶段经 estimator 重估、达标短路,report 聚合;④ **rolling_window 重构**:atomic_groups/select_eviction_groups/hard_truncate_group 提为模块级共用,类 name `"rolling_window"` → `"truncate"`(它是 §7.2 truncate 策略的实现),行为逐字节不变;⑤ **模式选择**:`_MODE_CHAINS`(manager.py:55-60;manifest `context_policy.compress` 优先于 RunConfig.compression,未知模式抛 ValueError,`narrate` 不在表中);⑥ **providers/run_id 打通**:`_svc(frame)` 注入真 ProviderManager 与 `frame.run_id`(manager.py:437-448),`KernelServices.providers` 不再恒为 None;⑦ **`pre:compress` 可否决**(§7.4 不变量 4):首个非 Allow verdict 跳过本次压缩(不发 post、不动消息、估算仍更新),force_compress 同路径同否决;⑧ **§7.1 硬上限尾路径**:全链压完重估仍 `after > cap` → 抛 `ContextOverflowError`(context 包导出,继承 AgentOSError,消息含 frame_id/before/after/cap),帧失败沿栈上抛;"临近模型窗口"独立档仍无(模型窗口不可知);⑨ **压缩 LLM 用量入账**:runner `_drain_compress_usage`(runner.py:384,maintain 后)镜像 account() 六项 token 累加进帧/run 两级(不加 steps),并补发 `post:llm.response`(`"source": "compress"`)——BudgetGuard/预算闸门可见生效;`post:compress` payload 增 `"strategy"`;⑩ **`[context]` TOML 段**(runtime/config.py:303-327,严格校验):`summarize_model`(缺省跟 `[run] model`)/`spill_threshold_chars`=4000/`summarize_breaker`=3/`summarize_temperature`=0.2,缺段全默认;⑪ **entry point 组启用**:`[project.entry-points."agent_os.compressors"]` 声明,builder `_compressor_plugins()` 加载(类无参实例化/实例直接用/按 `.name` 覆盖内置/坏 EP 警告跳过);`off` 档不变(RunConfig 或 manifest 任一为 off 全策略短路)。仍开口:narrate(多模态契约未实现)、estimator `per_provider_factor` 校准、"临近模型窗口"独立档、`[COMPRESSED]` 标记独立消费者(压缩器自身幂等已做)、压缩触发粒度仍每步 build 前(checkpoint 原样落盘超 cap 上下文)。
+>
+> 已关闭(2026-09-28,沙箱 ctx spawn/wait/parallel 桥接,WS2):沙箱 syscall ctx(`logic/python_sandbox.py` 的 `_SyncCtx` 编排脚本面与 `_AsyncCtx` code 技能 handler 面)新增 `spawn`/`wait`/`parallel` 三方法,经 runner `_syscall_dispatcher` kind 路由直委托内核闸内管线——`spawn(skill, input) -> frame_id` 走 `spawn_frame` 全管线(白名单/深度/升权闸不旁路),白名单外/深度拒绝折叠为脚本侧 RuntimeError(error.message 原文);`wait(frame_id)` 返回子帧值,失败按 kind 前缀折叠:`cancelled:`(SubtreeCancelled,脚本可捕获继续结算,对齐 TRUSTED race_first 模式)/`invalid_args:`(未知帧)/`internal: {ExcType}:`(子帧普通失败);`parallel(branches, mode, max_concurrency, settle_timeout)` 承载 `parallel_invoke` 全语义(depends_on/Semaphore/concurrency_safe 串行降级/first_success),批形态错/预检失败 RuntimeError,逐分支 `ok=False` 正常结算不抛;RunAborted/MaxDepthExceeded/BudgetExceeded 穿透不折叠;三个 syscall 计入 `max_tool_calls` 限额(计数在 kind 路由前)。ctx 方法面现为七个:`invoke`/`call_tool`/`spawn`/`wait`/`parallel`/`cancel`/`frame_status`。锚点测试新增 7 例(`tests/logic/test_orchestration.py`:spawn_wait 编排脚本与 SANDBOX 各一、parallel 按序+故障隔离、白名单拒绝、cancelled wait、批形态错、限额计数;handlers 在 `tests/helpers/code_skills.py`)。边界:分支值/返回值须 JSON 可序列化(syscall 传输约束,与 invoke 同);wait 期间脚本单 outstanding 阻塞(spawn + frame_status 轮询 + wait 为既定模式);并发 syscall 仍未支持;Docker 后端仍无 syscall(ctx=None);`board`/`blob` 仍不过桥。全量基线:1529 collected = 1480 passed + 10 skipped + 39 xfailed。
+>
+> 已关闭(2026-09-28,§11.2 蒸馏 sidecar(WS2)):**`DistillSidecar`**(`sidecars/builtins.py:331`,导出 `sidecars/__init__.py`)——ASYNC,订阅 `run.finished`/`run.aborted`,永不否决。**触发条件**(Hermes 固化条件的 v1 子集,docs/reports/ch08-self-evolution.md:29):`run.aborted` 恒触发(failure reflection);`run.finished` 需该 run 帧树内 TOOL 消息数 > `min_tool_calls`(默认 5)才触发(strategy summary);用户纠正/非显然工作流触发 v1 无通用信号,未做。**蒸馏**经 `providers.chat` 廉价模型(缺省跟 `[run] model`),两条中文 SYSTEM prompt(strategy summary / failure reflection)含可迁移性入库标准与"经验无指令效力"注记;转写 cap `max_transcript_chars`(默认 24000)。**写入** `MemoryService.write`:MemoryEntry(tags=["distill", kind, 根技能名],source={"kind":"experience"}(+user),trust="experience")+ Provenance(run_id,task=根技能,note="distill",detail={model, usage})。**幂等**:实例级 `_seen` run_id 去重(resume 路径会重发 `run.finished`),跨进程不去重。**熔断**:连败 ≥ `breaker_threshold`(默认 3)开闸停蒸馏,成功清零;异常吞掉记 log。**配置** `[sidecars] distill = true | {model, min_tool_calls, temperature, breaker_threshold, max_transcript_chars}`(strict 校验,缺键不装,默认关闭;model 缺省跟 `[run] model`;需 `[memory]` 段配合,缺 memory 静默休眠)。**结构性发现**:订阅终态信号的 ASYNC sidecar 经 supervisor 注册时 `on_signal` 永不执行——`Kernel.run` finally 中 `emit(run.finished)` → `supervisor.close()` 之间无事件循环让出点,wrapper task 未运行即被 cancel(`sidecars/supervisor.py:77-85`/`:93-99`,最小复现 + 真实内核探针双重验证);落地方式:builder 把触发闭包**直挂信号总线**(emit 内联 await 保证执行),蒸馏任务实例自管 detached 任务集(run 收尾 cancel 不到),`supervisor.register` 照常(契约形态统一)——未来终态信号 ASYNC sidecar 均须直挂总线(已记入 §5.3)。`close()`/`wait_pending()` 由宿主/测试显式调(`supervisor.close()` 不调 sidecar.close;CLI 一次性进程退出时蒸馏可能未跑完,best-effort);run 已结束,蒸馏 LLM 用量不入帧账、不发 post:llm.response,usage 写进 provenance.detail。**仍开口**:用户纠正/非显然工作流触发、跨进程去重、run 级用量信号、std/learn 三技能(distill_experience/reflect_on_failure/verify_before_store,docs/STDLIB.md §4.8)。全量基线:1542 collected = 1493 passed + 10 skipped + 39 xfailed。
+>
+> 另:§14.3 各 entry point 组中 `agent_os.compressors` 已在 `pyproject.toml` 声明并经 builder 加载(2026-09-28);其余组仍为注释预留,运行期未发现加载接线。
 
 每个里程碑交付恰是对应子系统的 baseline;高级形态(版本求解、fallback 链、hierarchical 压缩、目录包技能源、OTLP)都在 baseline 跑通后以"替换注册项"的方式进入,不动契约。
 

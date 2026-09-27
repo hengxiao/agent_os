@@ -15,7 +15,11 @@
     [skills]     → LocalFileSkillRegistry
     [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加);
                    human_approval(WS2)= true 或 { timeout, on_timeout }:
-                   装配 HumanApproval 策略,EXEC 档工具过内核 tool-confirm 闸门
+                   装配 HumanApproval 策略,EXEC 档工具过内核 tool-confirm 闸门;
+                   distill(docs/DESIGN.md §11.2 写路径范式)= true 或 { model?,
+                   min_tool_calls?, temperature?, breaker_threshold?,
+                   max_transcript_chars? }:run 终态后廉价模型蒸馏经验写入 [memory]
+                   (缺省关闭;无 [memory] 段时装配出来也是休眠实例)
     [supervisor] → timeout_s / on_timeout / default_answer(docs/SUPERVISOR.md §6;TOML
                    写不了可调用 handler——此处只加载策略字段,handler 由宿主经
                    build_kernel(supervisor_handler=...) 注入,S2:Web 收件箱
@@ -26,6 +30,10 @@
                    (同 [credentials] 先例;接线后 system.memory.search/write 可用)
     [blob]       → M3 spill 文件存储(§8.4/§7.2):dir = "./blobs"(FileBlobStore
                    根目录);段存在才接线,缺段 = 进程内 InMemoryBlobStore(零破坏)
+    [context]    → §7.2 压缩链调参(WS2):summarize_model(摘要模型,缺省跟 run.model)/
+                   spill_threshold_chars(spill 触发字符阈值,默认 4000)/
+                   summarize_breaker(摘要连败熔断次数,默认 3)/
+                   summarize_temperature(摘要采样温度,默认 0.2);缺段 = 全默认
     [retry]      → ProviderManager 的 max_attempts / backoff_base / stream_idle_timeout
                    (流式 idle 看门狗秒数,缺段保持 Manager 默认 30s)
     [prices]     → 每模型每百万 token 单价({input, output, cache_read?});
@@ -73,9 +81,10 @@ from agent_os.providers.claude import ClaudeProvider
 from agent_os.providers.kimi import KimiProvider
 from agent_os.providers.mock import MockProvider
 from agent_os.providers.openai_compatible import OpenAICompatibleProvider
-from agent_os.runtime.builder import KernelBuilder
+from agent_os.runtime.builder import ContextSection, KernelBuilder
 from agent_os.sidecars.builtins import (
     BudgetGuard,
+    DistillSidecar,
     HumanApproval,
     LoopDetector,
     ToolGuard,
@@ -109,6 +118,15 @@ _RUN_FIELDS = (
 
 class ConfigError(RuntimeError):
     """配置缺失/畸形/装配失败(docs/RUNNERS.md §3.3 退出码 4:宿主/基础设施错误)。"""
+
+
+#: ``[context]`` 支持的字段(§7.2 压缩链调参,WS2;缺段 = 全默认,见 ContextSection)
+_CONTEXT_FIELDS = (
+    "summarize_model",
+    "spill_threshold_chars",
+    "summarize_breaker",
+    "summarize_temperature",
+)
 
 
 class CredentialScope:
@@ -287,6 +305,35 @@ def _credentials(cfg: dict[str, Any]) -> CredentialScope:
     return CredentialScope(table)
 
 
+def _context_section(cfg: dict[str, Any]) -> ContextSection:
+    """``[context]`` 段 → :class:`ContextSection`(§7.2 压缩链调参;缺段 = 全默认)。
+
+    严格未知字段 + 类型校验(同 ``_prices``/``_credentials``/``[blob]`` 先例):
+    键拼错会静默落默认值——spill 阈值/熔断参数错位不痛不痒地失效,宁可装配期炸掉。
+    """
+    unknown = sorted(set(cfg) - set(_CONTEXT_FIELDS))
+    if unknown:
+        raise ConfigError(f"[context] 含未知字段: {unknown}(支持: {list(_CONTEXT_FIELDS)})")
+    model = cfg.get("summarize_model")
+    if model is not None and (not isinstance(model, str) or not model):
+        raise ConfigError(f"[context] summarize_model 须为非空字符串,得到: {model!r}")
+    threshold = cfg.get("spill_threshold_chars", 4000)
+    if not isinstance(threshold, int) or isinstance(threshold, bool) or threshold <= 0:
+        raise ConfigError(f"[context] spill_threshold_chars 须为正整数,得到: {threshold!r}")
+    breaker = cfg.get("summarize_breaker", 3)
+    if not isinstance(breaker, int) or isinstance(breaker, bool) or breaker < 1:
+        raise ConfigError(f"[context] summarize_breaker 须为 >= 1 的整数,得到: {breaker!r}")
+    temperature = cfg.get("summarize_temperature", 0.2)
+    if not isinstance(temperature, (int, float)) or isinstance(temperature, bool) or temperature < 0:
+        raise ConfigError(f"[context] summarize_temperature 须为非负数字,得到: {temperature!r}")
+    return ContextSection(
+        summarize_model=model,
+        spill_threshold_chars=threshold,
+        summarize_breaker=breaker,
+        summarize_temperature=float(temperature),
+    )
+
+
 def _data_policy(cfg: dict[str, Any]) -> DataPolicy:
     """``[data]`` 段 → :class:`DataPolicy`(D2;docs/DATA-AUTHZ.md §3.1/§3.2)。
 
@@ -378,7 +425,7 @@ def web_token_map(cfg: dict[str, Any]) -> dict[str, str]:
 def _sidecars(cfg: dict[str, Any]) -> list[Any]:
     sidecars: list[Any] = []
     unknown = sorted(
-        set(cfg) - {"budget_guard", "loop_detector", "tool_guard_rules", "human_approval"}
+        set(cfg) - {"budget_guard", "loop_detector", "tool_guard_rules", "human_approval", "distill"}
     )
     if unknown:
         raise ConfigError(f"[sidecars] 含未知 sidecar: {unknown}")
@@ -435,6 +482,53 @@ def _sidecars(cfg: dict[str, Any]) -> list[Any]:
             )
         sidecars.append(
             HumanApproval(timeout=float(ha.get("timeout", 600)), on_timeout=on_timeout)
+        )
+    if "distill" in cfg:
+        # §11.2 写路径范式:蒸馏 sidecar。true = 全默认;表形态 strict 校验(照
+        # human_approval 先例:未知键/类型错 ConfigError)。需要 [memory] 段配合:
+        # 无 [memory] 时装配出的实例 bind 不到 memory,休眠不触发
+        d = cfg["distill"]
+        if d is True:
+            d = {}
+        if not isinstance(d, dict):
+            raise ConfigError(
+                f"[sidecars] distill 应为 true 或表"
+                f'(如 {{ model = "kimi/cheap", min_tool_calls = 5 }}),得到: {d!r}'
+            )
+        unknown_d = sorted(
+            set(d) - {"model", "min_tool_calls", "temperature", "breaker_threshold", "max_transcript_chars"}
+        )
+        if unknown_d:
+            raise ConfigError(
+                f"[sidecars] distill 含未知字段: {unknown_d}"
+                f"(支持: ['breaker_threshold', 'max_transcript_chars', 'min_tool_calls', 'model', 'temperature'])"
+            )
+        model = d.get("model")
+        if model is not None and (not isinstance(model, str) or not model):
+            raise ConfigError(f"[sidecars] distill.model 须为非空字符串,得到: {model!r}")
+        ints: dict[str, Any] = {}
+        for key, default in (
+            ("min_tool_calls", 5),
+            ("breaker_threshold", 3),
+            ("max_transcript_chars", 24000),
+        ):
+            val = d.get(key, default)
+            if not isinstance(val, int) or isinstance(val, bool) or val < 0:
+                raise ConfigError(
+                    f"[sidecars] distill.{key} 须为 >= 0 的整数,得到: {val!r}"
+                )
+            ints[key] = val
+        temperature = d.get("temperature", 0.2)
+        if not isinstance(temperature, (int, float)) or isinstance(temperature, bool):
+            raise ConfigError(f"[sidecars] distill.temperature 须为数值,得到: {temperature!r}")
+        sidecars.append(
+            DistillSidecar(
+                model=model,
+                min_tool_calls=ints["min_tool_calls"],
+                temperature=float(temperature),
+                breaker_threshold=ints["breaker_threshold"],
+                max_transcript_chars=ints["max_transcript_chars"],
+            )
         )
     return sidecars
 
@@ -577,6 +671,8 @@ def build_kernel(
         if not isinstance(blob_dir, str) or not blob_dir:
             raise ConfigError(f"[blob] dir 须为非空字符串路径,得到: {blob_dir!r}")
         builder.blob(FileBlobStore(blob_dir))
+    # WS2:[context] 段(§7.2 压缩链调参)——缺段也过一遍校验函数,落全默认 ContextSection
+    builder.context_section(_context_section(cfg.get("context") or {}))
     prices = _prices(cfg.get("prices") or {})
     builder.prices(prices)
     if not prices:

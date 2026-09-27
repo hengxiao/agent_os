@@ -481,8 +481,8 @@ WRITE/EXEC/NET 显式声明 idempotent、`cost_hint` 非空)。新增条目漏�
 
 ### CI 与离线的分界(不可破的线)
 
-现有套件的性质很珍贵:**1448 个测试(1399 passed / 10 条件 skip / 39 xfailed,
-0 失败;`pytest tests --collect-only` 实测收集数)、无需 API key、零 flaky**。
+现有套件的性质很珍贵:**1542 个测试(1493 passed / 10 skipped / 39 xfailed,
+0 失败;`pytest tests --collect-only` 实测口径)、无需 API key、零 flaky**。
 层 1–3 全进 CI;层 4 走 nightly/发版前,需要 key、花钱、报置信区间。
 对抗用例(§7.3a 的"诱导攻击")对 `injection_scan`/`untrusted_content`
 是确定性的——攒注入语料库断言检测是否触发,不需要裁判,进 CI。

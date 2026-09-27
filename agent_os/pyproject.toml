@@ -43,12 +43,16 @@ packages = ["src/agent_os"]
 #   [project.entry-points."agent_os.tools"]          # 新工具
 #   [project.entry-points."agent_os.skills"]         # 新技能源
 #   [project.entry-points."agent_os.sidecars"]       # 新 sidecar
-#   [project.entry-points."agent_os.compressors"]    # 新压缩策略
 #   [project.entry-points."agent_os.logic_kernels"]  # 新逻辑执行后端(JS/Wasm/远程)
 #   [project.entry-points."agent_os.telemetry"]      # 新遥测 exporter
 #   [project.entry-points."agent_os.memory"]         # 新记忆服务
 #   [project.entry-points."agent_os.blackboard"]     # 新黑板后端
 # ---------------------------------------------------------------------------
+
+# 压缩策略组(§7.5;WS2 起由装配层真实加载,见 runtime/builder.py
+# _compressor_plugins):本包自身不注册条目,空组声明占位;第三方包在自身
+# pyproject 声明同组条目(类或实例,按 .name 入注册表,可覆盖内置)即被装配
+[project.entry-points."agent_os.compressors"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

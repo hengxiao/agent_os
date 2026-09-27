@@ -1,36 +1,51 @@
 # Agent OS Web UI 实例配置(instance/)
-# 当前为演示模式:mock 大脑,无 API key 也能跑通 fib 全流程。
-# 切换真实模型:注释掉 [providers.mock],启用 kimi 或 anthropic 区,
-#   export MOONSHOT_API_KEY=sk-...  /  export ANTHROPIC_API_KEY=sk-ant-...
-# 并把 skills.yaml 里技能的 model.prefer 改成你的模型。
+# 当前为真实模型模式:Kimi Code 端点(OpenAI 兼容协议)。
+# 用法:
+#   export MOONSHOT_API_KEY=sk-...
+#   source agent_os/.venv/bin/activate
+#   PYTHONPATH=instance agent-os-web --config instance/agent-os.toml --port 8391
+# 切回无 key 演示:把 [run].model 改回 "mock/fib"、启用下方 [providers.mock],
+# 并把 skills.yaml 里 demo.fib 的 model.prefer 改回 [mock/fib]。
 
 [run]
-model = "mock/fib"
+model = "openai/kimi-for-coding"  # Kimi Code 端点(需 MOONSHOT_API_KEY)
+# model = "mock/fib"              # 无 key 演示档(mock 大脑,离线可跑)
 max_depth = 8
 max_steps = 200
 max_cost = 2.0
 max_wall_time = 1800
 compression = "off"
 
-[providers.mock]
-brain = "brains:fib_brain"
+# Kimi Code 平台(OpenAI 兼容协议),key 走环境变量不落盘
+[providers.openai]
+base_url = "https://api.kimi.com/coding/v1"
+api_key_env = "MOONSHOT_API_KEY"
 
+# 备选:Moonshot 开放平台(api.moonshot.ai 国际站 / api.moonshot.cn 国内站,按量计费)
+# 启用后把 [run].model 与 skills.yaml 的 prefer 改成 "kimi/kimi-k2-thinking"
 # [providers.kimi]
+# base_url = "https://api.moonshot.cn/v1"   # 国内站;国际站可省
+
+# Claude(Anthropic):export ANTHROPIC_API_KEY=sk-ant-...
 # [providers.anthropic]
+
+# 无 key 演示:mock 大脑(brain 为 dotted path,需 PYTHONPATH 含本目录)
+# [providers.mock]
+# brain = "brains:fib_brain"
 
 [tools]
 builtins = true
-python_exec = "docker"          # 本机有 docker;没有就改 "subprocess"
+python_exec = "docker"          # 本机有 docker;没有就改 "subprocess"(不可用时会自动回退并告警)
 
 [skills]
-path = "/home/hengx/agent_os/instance/skills.yaml"
+path = "/home/hengxiao/agent_os/instance/skills.yaml"
 
 [sidecars]
 budget_guard = { max_cost = 2.0 }
 loop_detector = { threshold = 3, max_strikes = 2 }
 
 [telemetry]
-dir = "/home/hengx/agent_os/instance/traces"
+dir = "/home/hengxiao/agent_os/instance/traces"
 
 [retry]
 max_attempts = 3

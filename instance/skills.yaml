@@ -27,7 +27,7 @@ skills:
     - demo.fib
   model:
     prefer:
-    - mock/fib
+    - openai/kimi-for-coding
   context_policy:
     max_tokens: 32000
     compress: false
@@ -38,3 +38,169 @@ skills:
     \ 等于 1,直接返回答案,数列为 [0];若 n 等于 2,数列为 [0, 1]。\n- 否则严格按顺序执行:\n  第一步,调用工具 skill.demo.fib,参数中的\
     \ n 取 n-1,得到前 n-1 个菲波拉契数组成的数列;\n  第二步,调用工具 system.python.exec,用代码计算该数列最后两个元素之和。\n\
     - 把求和结果追加到数列末尾,即得到前 n 个菲波拉契数。\n\n最终答案只输出一个 JSON 对象,唯一字段为 seq,值是整数数组,不要输出其他文字。\n"
+- name: lab.custom
+  version: 0.1.0
+  kind: prompt
+  description: 查询类技能。Use when 需要按 query 检索/推理回答;Do not use when 需要写副作用。
+  inputs:
+    type: object
+    properties:
+      query:
+        type: string
+        description: 查询内容
+    required:
+    - query
+  outputs:
+    type: object
+    properties:
+      answer:
+        type: string
+    required:
+    - answer
+  permissions:
+    tools: []
+    skills: []
+  prompt: '你是查询助手。按输入的 query 回答,最终答案输出 answer 字段(只输出该 JSON)。
+
+    '
+- name: lab.custom2
+  version: 0.1.0
+  kind: prompt
+  description: 查询类技能。Use when 需要按 query 检索/推理回答;Do not use when 需要写副作用。
+  inputs:
+    type: object
+    properties:
+      query:
+        type: string
+        description: 查询内容
+    required:
+    - query
+  outputs:
+    type: object
+    properties:
+      answer:
+        type: string
+    required:
+    - answer
+  permissions:
+    tools: []
+    skills: []
+  prompt: '你是查询助手。按输入的 query 回答,最终答案输出 answer 字段(只输出该 JSON)。
+
+    '
+- version: 0.1.0
+  kind: prompt
+  description: eval 巡检入口。Use when 需要盘点并清理 eval 工作区;Do not use when 只读单个文件。
+  inputs:
+    type: object
+    properties:
+      target_dir:
+        type: string
+    required:
+    - target_dir
+  outputs:
+    type: object
+    properties:
+      status:
+        type: string
+    required:
+    - status
+  permissions:
+    tools: []
+    skills:
+    - eval.plan
+    - eval.execute
+  name: eval.inspect
+  prompt: '你是 eval 巡检员(L1 只读)。先盘点 target_dir,再调 eval.plan 写计划,最后调 eval.execute 执行。被拒绝不要重试,记录后继续,status
+    记 partial。
+
+    '
+- version: 0.1.0
+  kind: prompt
+  description: eval 清理计划写入。Use when 需要把清理计划/巡检日志落盘;Do not use when 要删除文件。
+  inputs:
+    type: object
+    properties:
+      path:
+        type: string
+      content:
+        type: string
+    required:
+    - path
+    - content
+  outputs:
+    type: object
+    properties:
+      written:
+        type: string
+    required:
+    - written
+  permissions:
+    tools:
+    - system.file.write
+    skills: []
+  trust:
+    reversal: 覆盖写前自动 .bak(写工具现状),回滚 = 取回 .bak 重写
+  name: eval.plan
+  prompt: '你是计划书记员(L2 可逆档)。用 system.file.write 把 content 写入 path,返回 written 字段。
+
+    '
+- version: 0.1.0
+  kind: prompt
+  description: eval 清理执行(L3 指名删除)。Use when 清理计划已批准、需要删除指名文件;Do not use when 目标未指名。
+  inputs:
+    type: object
+    properties:
+      targets:
+        type: array
+        items:
+          type: string
+        minItems: 1
+        maxItems: 20
+      dry_run:
+        type: boolean
+    required:
+    - targets
+    - dry_run
+  outputs:
+    type: object
+    properties:
+      destroyed:
+        type: array
+        items:
+          type: string
+    required:
+    - destroyed
+  permissions:
+    tools:
+    - system.file.delete
+    skills: []
+  trust:
+    blast_radius: 仅 targets 指名清单(单次 ≤20);空目标/通配目标报错
+  name: eval.execute
+  prompt: '你是清理执行员(L3 不可逆档)。dry_run=true 只返回将影响清单不执行;false 按 targets 逐个删除,不得增删目标。返回
+    destroyed 字段。
+
+    '
+- name: eval.caller
+  version: 0.1.1
+  kind: prompt
+  description: Use when 测试升权;Do not use when 生产
+  inputs:
+    type: object
+    properties:
+      targets:
+        type: array
+        items:
+          type: string
+    required:
+    - targets
+  outputs:
+    type: object
+  permissions:
+    tools: []
+    skills:
+    - eval.execute
+  trust:
+    blast_radius: dry_run 模式,无实际删除
+  prompt: 你是执行器。收到 input 后,立即调用技能 eval.execute,targets 用输入的值,dry_run 用 true。只做这一件事。

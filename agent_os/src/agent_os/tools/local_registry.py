@@ -24,6 +24,9 @@ D2(docs/DATA-AUTHZ.md §3/§6):``bind_data_policy`` 注入 [data] 策略后,数�
 审计信号,放行判据回写 ``ToolContext.credentials["_authz"]``。
 §W4-3:构造器注册 ``fetch_page``(std/web 工具面,实现与注册时机说明见
 tools/std_web.py)。
+MCP(tools/mcp.py):``_mcp_clients`` 是 ``[mcp.servers]`` eager 装配的 stdio
+client 列表(``connect_and_register`` 装配钩子注入;kernel 寿命——Kernel/registry
+均无 close 钩子,进程清理由各 client 自带 close()/atexit 兜底)。
 """
 
 from __future__ import annotations
@@ -125,6 +128,9 @@ class LocalPythonToolRegistry:
         #: 凭证作用域解析器(WS1;``bind_credentials`` 装配钩子注入;
         #: None = 空作用域,dispatch 注入空 credentials,零破坏)
         self._credentials_resolver: Any = None
+        #: MCP stdio client 列表(tools/mcp.py ``connect_and_register`` 装配钩子注入;
+        #: kernel 寿命;进程清理由 client 自带 close()/atexit 兜底)
+        self._mcp_clients: list[Any] = []
         # §W4-3 std/web:fetch_page 构造器注册(为什么不在 with_builtins:
         # 见 tools/std_web.py 模块 docstring 的 §6.1 闸门联动说明)
         from agent_os.tools.std_web import fetch_page_tool

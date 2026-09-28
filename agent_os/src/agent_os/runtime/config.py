@@ -12,6 +12,11 @@
     [tools.custom] → module = "pkg.mod:func":宿主自定义工具注册钩子,
                    importlib 加载后调用 ``func(registry)``(加载/注册失败抛 ConfigError);
                    声明即授权,RunConfig 权限上限同步提到 EXEC(同 system.python.exec)
+    [mcp.servers.*] → MCP server(stdio)工具面(tools/mcp.py;DESIGN §8.3 供应链清单):
+                   command 必填;eager 装配——装配期拉起子进程 initialize 握手 +
+                   tools/list 并注册全部工具(mcp.<server>.<tool> 命名空间,走全量
+                   dispatch 管线),连接失败 ConfigError 快速失败(防坏 server 静默
+                   缺席致白名单形同虚设);段存在才接线,缺段零破坏
     [skills]     → LocalFileSkillRegistry
     [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加);
                    human_approval(WS2)= true 或 { timeout, on_timeout }:
@@ -58,6 +63,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import re
 import tomllib
 from collections.abc import Callable, Iterable
 from pathlib import Path
@@ -95,6 +101,7 @@ from agent_os.telemetry.jsonl_exporter import JsonlTelemetrySink
 from agent_os.tools.blob import FileBlobStore
 from agent_os.tools.builtins import python_exec_tool
 from agent_os.tools.local_registry import LocalPythonToolRegistry
+from agent_os.tools.mcp import McpError, McpServerSpec, connect_and_register_sync
 
 _log = logging.getLogger("agent_os.runtime.config")
 
@@ -307,6 +314,110 @@ def _credentials(cfg: dict[str, Any]) -> CredentialScope:
             raise ConfigError(f"[credentials] {name!r} 的 env 须为非空字符串(env 变量名,不落盘明文)")
         table[name] = env
     return CredentialScope(table)
+
+
+#: ``[mcp.servers.<name>]`` 支持的字段(tools/mcp.py McpServerSpec 逐字对齐)
+_MCP_SERVER_FIELDS = ("command", "connect_timeout", "confirm", "env", "permission", "timeout")
+
+#: permission 字符串 → Permission(缺省 read,最小授权;升档须显式配置)
+_MCP_PERMISSIONS = {
+    "read": Permission.READ,
+    "write": Permission.WRITE,
+    "net": Permission.NET,
+    "exec": Permission.EXEC,
+}
+
+#: server 名合法字符(进工具命名空间 ``mcp.<server>.<tool>``;同 TOML 裸键字符集)
+_MCP_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _mcp_servers(cfg: dict[str, Any]) -> list[McpServerSpec]:
+    """``[mcp.servers.<name>]`` 段 → :class:`McpServerSpec` 列表(DESIGN §8.3 供应链清单)。
+
+    严格校验(同 ``_credentials``/``_prices`` 先例——server 名/权限拼错会静默
+    缺席或错档,宁可装配期炸掉):command 必填非空 list[str];env 值为 str 字面量
+    或 ``{env = "VAR"}`` 间接引用(连接时现读 os.environ,不落盘明文);
+    permission ∈ read|write|net|exec(缺省 read);timeout/connect_timeout 正数;
+    confirm 布尔;server 名只许 ``[A-Za-z0-9_-]``。
+    """
+    unknown = sorted(set(cfg) - {"servers"})
+    if unknown:
+        raise ConfigError(f"[mcp] 含未知字段: {unknown}(支持: ['servers'])")
+    servers = cfg.get("servers") or {}
+    if not isinstance(servers, dict):
+        raise ConfigError(f"[mcp.servers] 应为表(<name> = {{ command = [...] }}),得到: {servers!r}")
+    specs: list[McpServerSpec] = []
+    for name, raw in servers.items():
+        if not _MCP_NAME_RE.fullmatch(str(name)):
+            raise ConfigError(
+                f"[mcp.servers] server 名 {name!r} 非法"
+                f"(只许 [A-Za-z0-9_-];进工具命名空间 mcp.<server>.<tool>)"
+            )
+        if not isinstance(raw, dict):
+            raise ConfigError(f'[mcp.servers."{name}"] 应为表(如 {{ command = [...] }}),得到: {raw!r}')
+        unknown = sorted(set(raw) - set(_MCP_SERVER_FIELDS))
+        if unknown:
+            raise ConfigError(
+                f'[mcp.servers."{name}"] 含未知字段: {unknown}'
+                f"(支持: {sorted(_MCP_SERVER_FIELDS)})"
+            )
+        command = raw.get("command")
+        if (
+            not isinstance(command, list)
+            or not command
+            or not all(isinstance(c, str) and c for c in command)
+        ):
+            raise ConfigError(
+                f'[mcp.servers."{name}"] command 必填,须为非空字符串数组,得到: {command!r}'
+            )
+        env = raw.get("env") or {}
+        if not isinstance(env, dict):
+            raise ConfigError(f'[mcp.servers."{name}"] env 应为表,得到: {env!r}')
+        for key, value in env.items():
+            ok = isinstance(value, str) or (
+                isinstance(value, dict)
+                and set(value) == {"env"}
+                and isinstance(value["env"], str)
+                and value["env"]
+            )
+            if not ok:
+                raise ConfigError(
+                    f'[mcp.servers."{name}"] env.{key} 须为字符串字面量或 '
+                    f'{{ env = "VAR" }} 间接引用,得到: {value!r}'
+                )
+        permission_raw = raw.get("permission", "read")
+        if not isinstance(permission_raw, str) or permission_raw.lower() not in _MCP_PERMISSIONS:
+            raise ConfigError(
+                f'[mcp.servers."{name}"] permission 须为 read|write|net|exec,'
+                f"得到: {permission_raw!r}"
+            )
+        timeout = raw.get("timeout", 30.0)
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+            raise ConfigError(f'[mcp.servers."{name}"] timeout 须为正数,得到: {timeout!r}')
+        connect_timeout = raw.get("connect_timeout", 10.0)
+        if (
+            not isinstance(connect_timeout, (int, float))
+            or isinstance(connect_timeout, bool)
+            or connect_timeout <= 0
+        ):
+            raise ConfigError(
+                f'[mcp.servers."{name}"] connect_timeout 须为正数,得到: {connect_timeout!r}'
+            )
+        confirm = raw.get("confirm", False)
+        if not isinstance(confirm, bool):
+            raise ConfigError(f'[mcp.servers."{name}"] confirm 须为布尔,得到: {confirm!r}')
+        specs.append(
+            McpServerSpec(
+                name=str(name),
+                command=list(command),
+                env=dict(env),
+                permission=_MCP_PERMISSIONS[permission_raw.lower()],
+                timeout=float(timeout),
+                confirm=confirm,
+                connect_timeout=float(connect_timeout),
+            )
+        )
+    return specs
 
 
 def _context_section(cfg: dict[str, Any]) -> ContextSection:
@@ -578,7 +689,8 @@ def build_kernel(
 
     缺省:无 ``[run]`` 用 RunConfig 默认;无 ``[providers]`` → 空 Manager
     (运行时才报"provider 前缀未注册");无 ``[skills]``/``[telemetry]``/``[sidecars]``
-    对应子系统不接线。启用 ``python_exec``(配置键)即把 RunConfig 全局权限上限提到 EXEC
+    对应子系统不接线;无 ``[mcp]`` 不拉起任何 MCP server(零破坏)。
+    启用 ``python_exec``(配置键)即把 RunConfig 全局权限上限提到 EXEC
     (实际工具名 ``system.python.exec``)。
     (§8.2:工具自报 EXEC 级,不提上限必被分发层拒绝,配置即授权)。
 
@@ -649,6 +761,19 @@ def build_kernel(
             # 与 system.python.exec 同理(§8.2 配置即授权):宿主显式装配自定义工具,
             # 工具自报等级可能达 EXEC,不提上限必被分发层拒绝
             run_cfg.tool_policy = ToolPolicy(max_permission=Permission.EXEC)
+
+    mcp_cfg = cfg.get("mcp")
+    if mcp_cfg is not None:
+        # [mcp] 段存在才接线(同 [credentials]/[memory] 先例;缺段零破坏)。
+        # eager(定案):装配期拉起 server 子进程 + initialize 握手 + tools/list,
+        # 工具以 mcp.<server>.<tool> 注册进 registry(走全量 dispatch 管线);
+        # 连接失败 ConfigError 快速失败——坏 server 静默缺席会让技能白名单形同虚设
+        mcp_specs = _mcp_servers(mcp_cfg)
+        if mcp_specs:
+            try:
+                connect_and_register_sync(registry, mcp_specs)
+            except McpError as e:
+                raise ConfigError(f"[mcp] server 装配失败(eager 连接): {e}") from e
 
     builder = KernelBuilder(run_cfg).tools(registry).logic_kernels(*logic)
     providers = _providers(cfg.get("providers") or {})

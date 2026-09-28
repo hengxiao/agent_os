@@ -360,9 +360,11 @@ ToolGuard 路径模板、MCP 立场。
 - **流式/全双工交互不在 std 范围**(v2 显式化,防止误判为缺口);
 - **Event Trigger 与 User Communication 两类工具**归内核事件面/宿主层,
   std 只收 `ask_human`/`set_timer` 两个跨界点(v2 显式化,v1 是沉默遗漏);
-- **MCP 立场**(v2 表态):std 边界不含 MCP 客户端;生态互操作作为
-  entry point 适配层的候选,单独立项;第三方工具 description 一律按
-  不可信输入审查后才进上下文。
+- **MCP 立场**(v2 表态;2026-09-28 更新):std 边界仍不含 MCP 客户端;
+  生态互操作已由引擎侧 stdio 适配器落地(2026-09-28,`tools/mcp.py`,
+  `[mcp.servers.<name>]` 配置段装配,非 entry point 形态;DESIGN §8.3);
+  第三方工具 description 一律按不可信输入审查后才进上下文(适配器侧已
+  强制:注入扫描命中整段弃用为占位)。
 
 std 边界 = 无外部服务依赖(除 http 通用协议)+ 无重型二进制依赖。
 

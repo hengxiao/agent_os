@@ -84,6 +84,16 @@ backoff_base = 0.5
 [credentials]                          # WS1:凭证作用域;值只存 env 变量名,不落盘明文
 # github = { env = "GITHUB_TOKEN" }    # 工具 ToolSpec.credentials 声明键 → dispatch 每次现解析注入(env 缺席键不出现)
 
+# [mcp.servers.<name>]                 # MCP server(stdio)工具面(tools/mcp.py,DESIGN §8.3);段存在才接线,缺段零破坏
+#   command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/srv"]
+                                       # 必填,非空字符串数组;eager 装配:装配期拉起子进程 initialize 握手 + tools/list,
+                                       # 工具注册为 mcp.<server>.<tool>(走全量 dispatch 管线),连接失败 ConfigError 快速失败
+#   env = { API_KEY = { env = "MCP_API_KEY" } }
+                                       # 可选;子进程不继承宿主 env,值 = 字符串字面量或 { env = "VAR" } 间接引用(连接时现读 os.environ)
+#   permission = "read"                # 缺省 read(最小授权),可升 write|net|exec;confirm = true 则该 server 工具过 tool-confirm 闸门
+#   timeout = 30.0                     # 单次 tools/call 超时秒数;connect_timeout = 10.0 为连接/握手截止
+                                       # (server 名只许 [A-Za-z0-9_-],进工具命名空间;全部键 strict 校验,未知键 ConfigError)
+
 # [data]                               # D2 数据层 authZ(docs/DATA-AUTHZ.md §3);段存在即接线——空段 = 绑定空 policy,
                                        # principals 白名单 fail closed 全拒,启用前务必配齐 domains 与白名单
 # domains = [                          # 表数组:name 必填;sensitivity 缺省 confidential(忘了配 = 最严)

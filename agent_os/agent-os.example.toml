@@ -64,6 +64,24 @@ stream_idle_timeout = 30.0            # 流式停滞 watchdog 秒数:N 秒无新
 # [credentials]
 # github = { env = "GITHUB_TOKEN" }
 
+# —— MCP server 工具面(DESIGN §8.3 供应链清单;stdio,零新依赖;段存在才接线,缺段零破坏)——
+# eager 装配:启动时拉起子进程 initialize 握手 + tools/list,连接失败直接 ConfigError
+# 快速失败(不让坏 server 静默缺席——技能白名单会形同虚设)。工具以 mcp.<server>.<tool>
+# 命名空间注册,走与内置工具相同的全量 dispatch 管线(白名单/ToolGuard/confirm/超时/authZ);
+# 工具描述做注入扫描(命中整段弃用)且恒标 untrusted_source。
+# [mcp.servers.filesystem]
+# command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/srv/share"]
+# permission = "read"                   # server 级权限档(read|write|net|exec,缺省 read 最小授权);
+#                                       # WRITE 及以上档才占帧白名单(READ 档豁免,同内置工具)
+# timeout = 30.0                        # 单次 tools/call 超时秒数(超时杀连接,下次调用自动重连一次)
+# connect_timeout = 10.0                # 装配期握手(initialize + tools/list)超时秒数
+# confirm = false                       # true = 该 server 全部工具过内核 tool-confirm 两阶段闸门
+# env = { API_KEY = { env = "FS_API_KEY" }, DEBUG = "1" }
+#                                       # 子进程环境变量:字符串字面量或 { env = "VAR" } 间接引用
+#                                       # (连接/重连时现读环境变量,不落盘明文,同 [credentials] 先例);
+#                                       # 注意:子进程**不继承**宿主环境变量(供应链最小授权),
+#                                       # PATH/HOME 等需要时须在此显式传
+
 # —— 数据层 authZ(D2,docs/DATA-AUTHZ.md §3;段缺席 = D1"未配置不拦截"语义逐字不动)——
 # 注意:段存在即接线,空段 = 绑定空 policy(principals 白名单 fail closed 全拒),启用前务必配齐
 # [data]

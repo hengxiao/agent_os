@@ -242,6 +242,26 @@
 > opt-in 作用域。**不做**:每步刷新、pinned 独立消息形态、trust 多层过滤、web UI 渲染;
 > **仍开口**:query 用首条 USER 对 JSON input 检索质量一般。上文 §9(Memory)"仍开口"中的
 > "通道隔离的 context 注入槽(组装侧)"据此关闭,dated 原文保留。全量基线:1575 收集 = 1526 passed + 10 skipped + 39 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-28(MCP stdio 适配器落地)**:§8.3 工具侧适配实填——`tools/mcp.py`
+> 零新依赖自实现 newline-delimited JSON-RPC 2.0 客户端(仅 initialize/initialized/
+> tools/list/tools/call;握手 protocolVersion="2024-11-05"),`[mcp.servers.<name>]`
+> 配置段(strict 校验,缺段零破坏)装配期 eager 连接:拉起子进程 → 握手 → tools/list →
+> 全部工具以 `mcp.<server>.<tool>` 命名空间注册,走全量 dispatch 管线(白名单/ToolGuard/
+> confirm/超时/authZ 不变),连接失败 ConfigError 快速失败。IO 模型:装配走
+> `connect_and_register_sync`(阻塞 Popen + select 截止读行 + to_thread,loop 无关——
+> asyncio 子进程管道绑定创建它的 loop,装配 loop ≠ run loop 会打死连接),async 版保留给
+> 测试与 async 嵌入方。进程清理:clients 挂 `registry._mcp_clients` + atexit 兜底,
+> `close()` 幂等杀进程组(killpg SIGKILL + wait 收尸),断管重连一次。供应链清单逐条落地:
+> description 注入扫描命中整段弃用为占位(正则集提取共用 `injection.py`)、干净描述
+> 500 字符截断、`untrusted_source=True`/`concurrency_safe=False` 强制、permission 默认
+> READ 逐 server 可升、confirm 逐 server、子进程不继承宿主 env(`{env="VAR"}` 间接引用
+> 现读 os.environ)、撞名拒覆盖、非法字符名跳过记 warning。测试基线 = 罐头假服务器
+> `tests/helpers/mcp_server.py`。**仍开口**:Streamable HTTP 传输、resources/prompts
+> 原语、懒连接、版本锁定、未与真实 MCP server 互测;`agent_os.tools` EP 组仍预留。
+> 下文 §3(Tool Registry)"未开发"中的"MCP 适配器"据此关闭,dated 原文保留。
+> 全量基线:1595 收集 = 1546 passed + 10 skipped + 39 xfailed,0 失败(两轮复跑确认;
+> 时长受并行会话负载影响波动大,不作为口径)。
 
 ## 一、总览
 
@@ -288,6 +308,7 @@
 
 - **复核 2026-08-24**:`blob_get` 已实现并注册(`tools/builtins.py:422`、`tools/local_registry.py:393/462-463`,别名 `system.blob.get`);`FileBlobStore` 仍是 M3 stub(`tools/blob.py:40/43`,内存版 InMemoryBlobStore 在用);`ask_user`/`notify_user` 仍为 M1 stub;credentials 注入在分发层仍固定填 `{}`(`tools/local_registry.py`);`confirm=True` 仍只声明不强制;归一化 enrichment 仍未做(`local_registry.py` 无 head+tail preview 痕迹)。
 - **复核 2026-09-27(清理批)**:`FileBlobStore` 已落地(`tools/blob.py`,内容寻址落盘 + 白名单防逃逸,`[blob] dir` 配置段接线);`ask_user`/`notify_user` 已实填(`system.user.ask`/`system.user.notify`,WRITE 档,`bind_user_channel` 装配,未 bind → NOT_FOUND;CLI 接线留 TODO);归一化 enrichment 与 ToolSpec 预留字段语义化仍开口。
+- **复核 2026-09-28**:MCP 适配器(stdio,工具侧)已落地——`tools/mcp.py` + `[mcp.servers.<name>]` 配置段,eager 装配、失败 ConfigError,工具以 `mcp.<server>.<tool>` 走全量 dispatch 管线,§8.3 供应链清单逐条落地(详见头部复核块);仍开口:Streamable HTTP、resources/prompts、真实 server 互测;归一化 enrichment 与 ToolSpec 预留字段语义化仍开口。
 
 ### 4. Skill Registry — ✅ ~70%
 

@@ -1,6 +1,6 @@
 # Tools:分发流水线与三层权限交集
 
-> 章次:03 · 状态:核心已实现(分发流水线、三层权限交集、数据闸、凭证注入、confirm 两阶段闸门、路径沙箱均有实现与测试);预留与扩展部分实现(MCP 适配器、流水线级归一化) · 依据:`agent_os/src/agent_os/tools/local_registry.py`、`agent_os/src/agent_os/api/v1/tools.py`、`agent_os/src/agent_os/kernel/runner.py`、`docs/DESIGN.md` §8、`docs/DATA-AUTHZ.md`
+> 章次:03 · 状态:核心已实现(分发流水线、三层权限交集、数据闸、凭证注入、confirm 两阶段闸门、路径沙箱均有实现与测试);MCP 适配器已实现(stdio,2026-09-28,`tools/mcp.py`);预留与扩展部分实现(流水线级归一化) · 依据:`agent_os/src/agent_os/tools/local_registry.py`、`agent_os/src/agent_os/tools/mcp.py`、`agent_os/src/agent_os/api/v1/tools.py`、`agent_os/src/agent_os/kernel/runner.py`、`docs/DESIGN.md` §8、`docs/DATA-AUTHZ.md`
 
 ## 1. 概述
 
@@ -8,7 +8,7 @@ Tool 是 Agent OS 里唯一被允许触碰外部世界的原子能力:无调用�
 
 ## 2. 动机与背景(原因)
 
-**为什么不放进内核。** 微内核判据(F/P/I)要求内核只保留流控制、权限控制与 IPC。工具的"执行"显然不是仲裁点——它是可替换的功能面:本地函数、MCP 服务、远程 API 都该能挂进来。因此设计把注册表定为子系统而非内核部件:内核 `_dispatch_call`(`kernel/runner.py:547`)只做三件事——识别伪工具(`skill.*`/`python_orchestrate`/`ask_supervisor`)、过 manifest 白名单闸、收发 `pre/post:tool.call` 信号——然后把调用连同 `ToolDispatchContext` 一起交给注册表(`runner.py:584-594`)。这就是"契约先行,基线可换"公理在工具面的落点:`Tool` 是一个只有 `spec` 与 `async __call__(args, ctx)` 两个成员的 Protocol(`api/v1/tools.py:171-177`),任何满足它的实现都可替换基线。
+**为什么不放进内核。** 微内核判据(F/P/I)要求内核只保留流控制、权限控制与 IPC。工具的"执行"显然不是仲裁点——它是可替换的功能面:本地函数、MCP 服务、远程 API 都该能挂进来(MCP 一侧已落地:stdio 适配器 `tools/mcp.py`,2026-09-28——`[mcp.servers.<name>]` 配置装配,server 工具以 `mcp.<server>.<tool>` 注册进同一注册表、过同一条流水线,见 §8.3)。因此设计把注册表定为子系统而非内核部件:内核 `_dispatch_call`(`kernel/runner.py:547`)只做三件事——识别伪工具(`skill.*`/`python_orchestrate`/`ask_supervisor`)、过 manifest 白名单闸、收发 `pre/post:tool.call` 信号——然后把调用连同 `ToolDispatchContext` 一起交给注册表(`runner.py:584-594`)。这就是"契约先行,基线可换"公理在工具面的落点:`Tool` 是一个只有 `spec` 与 `async __call__(args, ctx)` 两个成员的 Protocol(`api/v1/tools.py:171-177`),任何满足它的实现都可替换基线。
 
 **为什么是"函数即工具"。** 工具的作者是最懂工具的人,但要求他手写 JSON Schema、权限声明与超时策略,等于把每次修改的成本翻倍,而且 schema 与签名漂移是迟早的事。`LocalPythonToolRegistry` 因此选择 decorator 注册、从签名推导 schema(§8.4):类型注解映射 JSON 基本型,默认值决定 required,docstring 进 description。工具的文档、契约与实现从此只有一份源码。
 
@@ -97,16 +97,17 @@ D1 的兼容策略是明确的设计取舍:**未配置 = 不拦截**。三种情
 
 ## 5. 效果与验证(效果)
 
-测试证据(本章直接相关部分,`agent_os/tests/`,本次运行实测 **362 passed + 39 xfailed**,3.3s):
+测试证据(本章直接相关部分,`agent_os/tests/`,本次运行实测 **359 passed + 39 xfailed**,18.5s):
 
 | 测试文件 | 用例数 | 覆盖 |
 |---|---|---|
 | `tools/test_builtins.py` | 14 | 内置装配、`test_tool_policy_caps_permission`(:189,上限闸)、`test_fs_path_traversal_rejected`(:97,逃逸)、edit 唯一匹配、别名解析、shell 超时钳制无孤儿进程 |
 | `tools/test_data_authz.py` | 23 | `test_dispatch_order_data_before_permission`(:132,闸门次序)、`test_configured_confidential_domain_denied_without_leak`(:150,拒绝不泄漏)、未配置降级(:194)、principal 跨帧不变量(:366)与 checkpoint 往返(:395);D2 增例:policy 绑定后未配置域 confidential、白名单第二判据、net 域 URL 前缀命中/未命中、`data.access.*` 信号 payload、判据回写 `credentials["_authz"]` |
 | `tools/test_credentials.py` | 7 | WS1 凭证注入:声明键注入、未声明/未 bind → 空 dict、env 缺席键不出现、动态解析(env 现改现生效)、注入按声明过滤、凭证不进 checkpoint |
+| `tools/test_mcp.py` | 20 | MCP stdio 适配器(2026-09-28):eager 装配注册、命名空间隔离、description 注入扫描整段弃用、env 间接引用、超时 TIMEOUT、断管重连一次、close 无孤儿进程、撞名拒覆盖 |
 | `tools/test_std_foundation.py` | 9 | workdir 三分区、只读区拒写(:82)、逃逸 hint 可操作(:143)、READ 档契约字段齐备(:213) |
 | `tools/test_std_tools.py` / `test_blob.py` / `test_builtin_side_effects.py` | 17 / 10 / 2 | std 工具行为、blob ref 形态(内存版 + FileBlobStore 落盘/防逃逸)、副作用档推导 |
-| `test_contracts.py` | 60 | ToolSpec 等冻结面契约(§14.1) |
+| `test_contracts.py` | 59 | ToolSpec 等冻结面契约(§14.1) |
 | `test_std_gate.py` | 参数化 | 工具门槛:description 必须写"何时用"、参数必须是 object schema、READ⇒cacheable、双拼写同步 |
 
 39 例 xfail 集中在同一项:`test_parameters_are_documented`——`derive_spec` 从签名推导 schema,尚无逐参数 description 的机制(xfail 理由引实测:该项影响工具调用准确率 72%→90%)。这是被显式标记的已知缺口,不是静默失败。
@@ -121,7 +122,7 @@ D1 的兼容策略是明确的设计取舍:**未配置 = 不拦截**。三种情
 4. **数据层 authZ 的 D3 余项未做。** D2 已落地(2026-08-31:`[data]` 配置段、per-subject 白名单第二判据、net/db 域判定、`data.access.*` 审计信号、判据回写 `credentials["_authz"]`),残余边界:派生链最弱一环与 EscalationRequest 数据面展示仍未实现(归 E3);policy 缺席时保持 D1"未配置不拦截"语义(忘了配 `[data]` 段 = 数据层整体不启用);多用户映射为 D3-lite(`[web.tokens]`),未配置时隔离仍由 run 边界承担。
 5. **类型推导能力有限。** 多支 Union、嵌套泛型、字面量等注解退化为 `{}`——schema 校验对这类参数形同虚设,fail-fast 承诺只覆盖基本型。
 6. **sync 工具的取消是假的。** `asyncio.to_thread` 无法中断线程,TIMEOUT 返回后底层函数可能继续运行;shell_exec 以超时钳制与子进程回收兜底(`test_shell_exec_timeout_clamped_to_spec_no_orphan`),但一般 sync 工具无此待遇。
-7. **MCP 与持久 shell 未接入。** §8.3 的 MCP 适配器、供应链隔离仍是文档承诺;`shell_exec` 是一次性子进程,§8.3 描述的"run 作用域持久会话(cwd/env 跨调用保持)"明确标注为后续里程碑(`with_builtins` docstring,:565-566)——文档与实现口径不同,以代码为准。
+7. **MCP stdio 已接入(留传输与原语开口);持久 shell 未接入。** MCP 适配器已实现(2026-09-28,`tools/mcp.py`:stdio 传输、工具侧、零新依赖自实现 JSON-RPC 客户端,`[mcp.servers]` 配置 eager 装配、失败 ConfigError,工具以 `mcp.<server>.<tool>` 走全量管线;§8.3 供应链清单逐条落地);仍开口:Streamable HTTP 传输、resources/prompts 原语、与真实 MCP server 的互测(测试基线为罐头假服务器 `tests/helpers/mcp_server.py`)。`shell_exec` 仍是一次性子进程,§8.3 描述的"run 作用域持久会话(cwd/env 跨调用保持)"明确标注为后续里程碑(`with_builtins` docstring,:565-566)——文档与实现口径不同,以代码为准。
 8. **回放接线未完成。** `replayable` 的弹出机制已实现并有锚点测试,但记录源(host trace → `replay_records`)的接线"留后续里程碑"(:11-12,:315-316 注释);当前 replay 重放 LLM 侧,工具副作用仍真实发生。
 
 ## 7. 引用

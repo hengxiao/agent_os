@@ -14,7 +14,7 @@
 
 **为什么默认不喂自由文本?** 审批者若消费主模型的自由文本,注入者就有了经 rhetoric 通道影响审批的路径(§5.2 输入最小化原则)。副车默认只收结构化载荷:工具名、参数、调用签名、usage(`sidecars/builtins.py:6-8`);确需更多上下文必须显式声明 `needs_free_text = True` 并自担注入风险。
 
-**为什么有两套预算机制?** 内核记账自带硬兜底:`Kernel.account()` 在每步后检查 RunConfig 的 `max_steps`/`max_cost`,超限直接抛 `BudgetExceeded`(`kernel/runner.py:1230-1252`)——"预算中止判决"按公理 1 本就列在流控制里。BudgetGuard 则是可替换的策略层:阈值独立于 RunConfig、stop 可降级为 pause + 通知(§2.4),供长任务宿主决定加预算还是放弃。测试装配时刻意把 `max_cost` 调到 100,把预算舞台让给 BudgetGuard(`tests/sidecars/test_builtin_sidecars.py:87`)。
+**预算机制为什么分层?** 内核记账自带硬兜底:`Kernel.account()` 在每步后检查 RunConfig 的 `max_steps`/`max_cost`,超限直接抛 `BudgetExceeded`(`kernel/runner.py:2193-2200`)——"预算中止判决"按公理 1 本就列在流控制里。**第三层于 2026-09-28 落地**:manifest `limits.max_steps`/`limits.max_cost` 的帧/子树级内核强制(`kernel/runner.py:2203-2282`;两字段口径有意不同——`max_steps` 限**帧自身**步数,`max_cost` 限**子树求和**花费),与 run 级检查同点(`account()` 末尾,沿 parent_id 链逐祖先)同语义(硬边界,不可被单帧吞掉),超限分档:根帧炸 run,其余 `cancel_subtree` 子树中止、invoke 边界折叠 interrupted、run 继续,触发前发 `budget.exceeded`。BudgetGuard 则是可替换的策略层:阈值独立于 RunConfig、stop 可降级为 pause + 通知(§2.4),供长任务宿主决定加预算还是放弃。测试装配时刻意把 `max_cost` 调到 100,把预算舞台让给 BudgetGuard(`tests/sidecars/test_builtin_sidecars.py:87`)。
 
 ## 3. 问题陈述(解决的问题)
 
@@ -117,7 +117,7 @@ runner 回收 verdicts → _arbitrate_pre:首个非 Allow 生效(runner.py:316-3
 3. **仲裁覆盖不全**:`pre:skill.invoke`(runner.py:857)、`pre:llm.request`(runner.py:411)与 code 技能帧的 `pre:logic.exec`(runner.py:523)当前**只发射不仲裁**——DESIGN §5.1 的"pre 可否决"在这些点是契约先行,实现未跟(以代码为准)。(`pre:compress` 已于 2026-09-28 落地否决:首个非 Allow verdict 跳过本次压缩,context/manager.py:397-402。)
 4. **ASYNC 强停有延迟且状态不进检查点**:`ctl.stop` 在下一个 safe point 才生效,在跑的一步/一个工具调用会完成;BudgetGuard/LoopDetector 的累计器是进程内存,检查点只序列化 run 与帧(`kernel/checkpoint.py:12-16`)——跨进程恢复后侧车累计清零(内核自身的 max_cost 兜底因 `run.state.usage` 入档而存活)。
 5. **Pause verdict 是"带标签的 abort",不是真暂停**(control.py:39-41;docs/DEBUGGER.md §1 原话):BudgetGuard 的 stop→pause 降级在 v1 实际是"换理由中止",可恢复的暂停属于调试器/supervisor 通道。
-6. **`budget.warning`/`budget.exceeded` 在冻结目录里但无人发射**:`account()` 直接抛 BudgetExceeded(runner.py:1249-1252),80% 预警目前只以 Web 进度条客户端语义存在(docs/WEB-UI.md:186)。
+6. **`budget.warning` 在冻结目录里但无人发射**(`budget.exceeded` 已于 2026-09-28 由帧/子树预算强制首发——`account()` 末尾 `_check_subtree_budgets` 触发前发射,runner.py:2264-2276,见 §2 分层与第 01 章):80% 预警目前只以 Web 进度条客户端语义存在(docs/WEB-UI.md:186)。
 7. **LoopDetector 的观察面有两个盲区**:签名是精确哈希,语义等价但参数字面不同的调用不可见;编排脚本内部的 syscall 序列不进 `post:step` 载荷,脚本内死循环它看不见(docs/CODE-ORCHESTRATION.md §4 已列待补)。
 8. **SYNC 副车是关键路径成本**:每个 `pre:tool.call` 最坏要排一条 priority 链、每环 2 秒上限;§16 风险表要求压测预算内才可注册 SYNC。supervisor 的"心跳、重启(仅 ASYNC)"(§5.3)未实现,现只有注册与关停。
 9. **输入最小化靠自律不靠强制**:`needs_free_text=False` 的载荷裁剪未做机制保证(docs/reports/dev-status.md:58);自定义副车的 entry point 注册在 pyproject.toml 里是注释占位,第三方副车只能经代码装配。

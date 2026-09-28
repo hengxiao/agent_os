@@ -86,7 +86,7 @@ SkillManifest 契约全集分组进编辑器,**无隐藏字段**:
 | 契约 | inputs / outputs | JSON Schema 编辑器(复用 schema-view + launch-dialog 的校验) |
 | 指令 | prompt / entry / handler / logic | 代码编辑器(mono 文本域;code 技能显示 handler 路径) |
 | 权限 | permissions.tools / skills / blackboard | 白名单 chips 编辑器(候选来自 registry,带 perm/tier 徽标) |
-| 策略 | model / context_policy / limits | 表单(prefer 模型、max_steps、timeout 等) |
+| 策略 | model / context_policy / limits | 表单(prefer 模型、max_steps、max_cost、timeout 等) |
 | 信任 | trust.confirm / reversal / blast_radius | 表单;推导档实时显示(只读,随 permissions 变化) |
 | 行为 | inline / verifier | 开关/文本;inline 在推导档 ≥L2 时禁用并提示硬闸门 |
 

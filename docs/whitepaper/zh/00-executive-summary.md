@@ -366,7 +366,7 @@ E1/E2 已实现(含 spawn 闸、Web 升权卡片);数据层 authZ D1/D2 已实�
 多用户映射);凭证注入(WS1)与 confirm 两阶段闸门(WS2,HumanApproval
 已下沉)已实现;§3.4 并发三原语齐备(`parallel_invoke` fork/join 落地,
 配套子树级联取消与子树记账读视图);Skill Lab L1-L5 全部落地;
-Web 六主题全部通过契约测试;测试基线 Python 1542 例(1493 passed /
+Web 六主题全部通过契约测试;测试基线 Python 1551 例(1502 passed /
 10 skipped / 39 xfailed)+ 前端 32 个测试文件全绿。已设计未实现:E3 余项(审计面板)、
 D3 余项(派生链最弱一环、EscalationRequest 数据面)、M6 余项(沙箱回调
 通道、narrate 压缩策略(多模态契约开口)、register() 的 semver

@@ -72,6 +72,9 @@
 > 为子树资源占用累计非墙钟),`RunControl.get_subtree_usage`(`kernel/control.py:97-103` +
 > `api/v1/control.py:37`),rca usage_panel 每帧行加 `subtree` 字段(`host/web/rca.py:122-167`);
 > 明确不做:组合子 budget 强制(留 budget 参数工具面)、SkillLimits.max_steps 执行点。
+> (**2026-09-28 更新**:两条均已关闭——manifest `limits.max_steps`/`limits.max_cost` 帧/子树级
+> 内核强制落地,组合子作为 code 技能经 manifest 声明即受内核硬约束;race_first 的 budget 参数
+> 软闸保留,与内核强制正交。见头部最新复核块。)
 > **§3.4 三原语至此齐备**;spawn 的"不说 done"校验 hook 仍未实现,保持开口。
 > ---
 > ⚠️ **复核 2026-09-27(stub 清零 + 真实流式)**:测试 **1385 收集 = 1336 passed + 10 条件 skip + 39 xfailed,0 失败**。
@@ -121,6 +124,8 @@
 > `kernel/logic_context.py:160/168`、`kernel/runner.py:2113` `frame_status_payload`、`_syscall_dispatcher`
 > cancel/frame_status 路由 `:868-872`、`logic/python_sandbox.py:92-125` `_SyncCtx`/`_AsyncCtx` 桥接)。
 > **剩余**:多模态契约、组合子 budget 内核强制、ask_human/set_timer 工具面。
+> (**2026-09-28 更新**:组合子 budget 内核强制已关闭——manifest `limits.max_steps`/`max_cost`
+> 帧/子树级强制落地,见头部最新复核块;多模态契约与 ask_human/set_timer 工具面仍开口。)
 > ---
 > ⚠️ **复核 2026-09-28(§7.2 高级压缩链落地,WS1+WS2)**:测试 **1522 收集 = 1473 passed + 10 skipped + 39 xfailed,0 失败**。
 > `SpillCompressor`(`context/spill.py`,name `"spill"`:非 pinned 超阈值 TOOL 消息移入 blob,
@@ -176,6 +181,25 @@
 > verify_before_store,docs/STDLIB.md §4.8)。下文 §6(Sidecars)、§9(Memory)与 §四 P2 的
 > "蒸馏 sidecar"开口条目据此关闭,正文保留作历史快照。全量基线:1542 收集 =
 > 1493 passed + 10 skipped + 39 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-28(帧/子树级预算内核强制,WS2)**:manifest `limits` 块成为执行点——
+> `limits.max_cost` 新增 additive 字段(`api/v1/skills.py:84`,默认 None;`skills/manifest.py:26-37,82`
+> 解析,非数值/bool 加载期即 SkillLoadError),既有 `limits.max_steps` 启用强制。两字段口径
+> 有意不同:`max_cost` 子树求和(该帧+全部后代 cost 合计),`max_steps` 帧自身步数(全仓既有
+> manifest 均按帧自身口径声明)。机制:`account()` 改 async(`kernel/runner.py:2156`),run 级
+> 检查不动,末尾 `_check_subtree_budgets`(:2203-2282)沿 parent_id 链逐祖先收集预算帧,链上
+> 无预算声明快路径零开销,子树求和复用 `_collect_subtree`;写路径不动(父帧 usage 仍不含子帧,
+> 读侧聚合不变——与原"account() 沿祖先链累加"批注的偏差:取检查侧等效语义)。分档:预算帧
+> 是根 → BudgetExceeded 炸 run;是当前帧 → SubtreeCancelled("budget: ...");是祖先 →
+> cancel_subtree(子树终态,invoke 边界折叠 interrupted,run 继续);触发前发 `budget.exceeded`
+> (`api/v1/signals.py:101` 冻结信号首次发射),每预算帧恰好一次(`_budget_tripped` 防重,
+> 进程态不持久化,resume 幂等)。共用:压缩排干 `_drain_compress_usage` 累加后同查,`ctx.chat`
+> 记账点经 account() 同查。边界:code 帧不检查 stop 标志,随 invoke/wait 边界穿透。demo.fib
+> `max_steps` 8→40(`agent_os/skills/skills.yaml`,装饰声明变强制后的适配)。不改:BudgetGuard
+> (run 级策略层)、race_first 软闸(watchdog 轮询,软/硬正交)、max_wall_time 内核不判、
+> budget.warning(80%)不发射;DESIGN §17 开放问题 1(并行分支预算切分)保持开口。上文
+> 2026-09-27 并发三原语块"明确不做"两条与 std 第 5 波块"剩余"中"组合子 budget 内核强制"
+> 据此关闭,dated 原文保留。全量基线:1551 收集 = 1502 passed + 10 skipped + 39 xfailed,0 失败。
 
 ## 一、总览
 

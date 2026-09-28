@@ -137,7 +137,7 @@ class KernelLogicContext:
             else tc
             for tc in resp.message.tool_calls
         ]
-        self._kernel.account(self._frame, resp.usage)
+        await self._kernel.account(self._frame, resp.usage)
         return resp
 
     async def spawn(self, skill: str, input: dict[str, Any]) -> str:

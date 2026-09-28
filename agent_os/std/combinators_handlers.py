@@ -12,8 +12,12 @@
 - ``subagent_cancel`` / ``subagent_status``:``ctx.cancel`` / ``ctx.frame_status``
   的技能面薄适配(WRITE / READ 语义;副作用限于本 run 帧树,推导档 none)。
 
-明确不做(本波边界):budget 内核强制(``account()`` 沿祖先链累加 + 子树级
-中止,留内核立项)、``cross_check``/``reject_sample``、多模态。
+budget 内核强制已落地(``Kernel._check_subtree_budgets``:manifest
+``limits.max_cost``/``max_steps`` 挂帧,记账点沿祖先链穿透检查,超限子树级
+中止/根帧炸 run;写路径不动——父帧 usage 不含子帧,检查侧读侧聚合)。本模块的
+budget 软闸与之正交(参数工具面,watchdog 轮询)。
+
+明确不做(本波边界):``cross_check``/``reject_sample``、多模态。
 """
 
 from __future__ import annotations

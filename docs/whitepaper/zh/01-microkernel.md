@@ -54,7 +54,9 @@ run_frame(frame)                       # runner.py:389
         (RunConfig.stream 缺省开:caps 支持流式走 _stream_call
         chunk 循环,逐 chunk 发 post:llm.chunk,否则回落 chat;
         dict 形 tool_calls 先入站归一化为 ToolCall,runner.py:456-467)
-     5. 响应入帧 + 记账(account,超 max_steps/max_cost 抛硬失败)     (runner.py:475-476)
+     5. 响应入帧 + 记账(await account:run 级超限抛硬失败;          (runner.py:475-476)
+        续查 manifest limits 帧/子树预算——根帧超限炸 run,
+        其余子树级中止,见本节末段)
      6. 无 tool_calls → outputs 校验:失败写错误观察重试,           (runner.py:477-496)
         连败 2 次(_OUTPUT_VALIDATION_MAX_FAILURES)→ 帧失败上抛
      7. 逐个分发 call;CancelledError → 先写 interrupted 占位        (runner.py:497-508)
@@ -65,7 +67,9 @@ run_frame(frame)                       # runner.py:389
   └─ post:frame.pop,帧 transcript 随协程返回折叠为父帧的一条 tool result
 ```
 
-设计取舍写明两处。其一,**输出修复熔断阈值取 2**(`runner.py:124`):最终答案不合 `outputs` schema 时给模型一次自我纠正的机会(错误观察回写,§3.2 输出修复循环),连败即判帧失败——给少了模型没有修复空间,给多了就是拿 token 赌概率,且违反"恢复路径独立熔断"的硬规则。其二,**记账与预算判决在内核而非 sidecar**(`runner.py:2022-2061`):`max_steps`/`max_cost` 是 RunConfig 的硬边界,必须沿栈上抛为 `RunAborted`/`BudgetExceeded`(`kernel/errors.py:26-34`),不可被单帧吞掉;而 BudgetGuard sidecar 面向的是宿主可配的软降级(stop→pause)场景(docs/DESIGN.md §2.4 故障致死性分层)。
+设计取舍写明两处。其一,**输出修复熔断阈值取 2**(`runner.py:124`):最终答案不合 `outputs` schema 时给模型一次自我纠正的机会(错误观察回写,§3.2 输出修复循环),连败即判帧失败——给少了模型没有修复空间,给多了就是拿 token 赌概率,且违反"恢复路径独立熔断"的硬规则。其二,**记账与预算判决在内核而非 sidecar**(`runner.py:2156-2201`):`max_steps`/`max_cost` 是 RunConfig 的硬边界,必须沿栈上抛为 `RunAborted`/`BudgetExceeded`(`kernel/errors.py:26-34`),不可被单帧吞掉;而 BudgetGuard sidecar 面向的是宿主可配的软降级(stop→pause)场景(docs/DESIGN.md §2.4 故障致死性分层)。
+
+**帧/子树级预算已于 2026-09-28 进入内核强制**(`runner.py:2203-2282` `_check_subtree_budgets`)。挂载点是 manifest 的 `limits` 块:`max_cost` 为新增 additive 字段(默认 None;非数值/bool 在加载期即 `SkillLoadError`,`skills/manifest.py:26-37`),`max_steps` 是既有声明、自此有了执行点。两字段口径有意不同:`max_steps` 限**帧自身** agent loop 步数(全仓既有 manifest 均按此口径声明,与 RunConfig.max_steps"全 run 总步数"对仗),`max_cost` 限**该帧及全部后代**的 cost 求和——花费沿子树累积,预算是"这棵子树总共花多少"。检查点在 `account()` 末尾:run 级检查不动,随后沿 `parent_id` 链逐祖先收集预算帧(链上无预算声明走快路径,零开销;子树求和复用 `_collect_subtree`;`account` 因此改 async——祖先分档要 await `cancel_subtree`;压缩排干 `_drain_compress_usage` 与 `ctx.chat` 记账点同查)。写路径不动:父帧 usage 仍不含子帧,聚合仍发生在读取侧(§4.6 `subtree_usage`)。超限按预算帧位置分档:根帧 → `BudgetExceeded` 炸 run;当前帧 → `SubtreeCancelled("budget: ...")`;祖先 → `cancel_subtree`,子树终态、invoke 边界折叠为 interrupted 错误观察、run 继续。触发前发 `budget.exceeded` 信号(冻结目录 `api/v1/signals.py:101` 的首次发射;payload 含 depth/frame_id/skill 与 max_cost/max_steps/subtree_cost/subtree_steps),每预算帧恰好一次(`_budget_tripped` 防重,进程态不持久化,resume 幂等)。与 BudgetGuard 的分层不变:内核强制是硬边界,BudgetGuard 仍是宿主可配的软降级策略层;`budget.warning`(80%)仍无发射点。
 
 ### 4.3 分发与压栈:一切特权操作的单一闸门
 
@@ -90,11 +94,11 @@ run_frame(frame)                       # runner.py:389
 
 ### 4.6 并发原语:三原语齐备
 
-串行 `await` 是默认形态;`spawn_frame`/`wait_frame`(`runner.py:1530-1563`)实现 §3.4 的后台帧:白名单/深度/升权检查与 invoke 一致(spawn 管线拆为 `_spawn_whitelist_check`/`_spawn_gate`/`_spawn_register` 三段,`runner.py:1464-1542`),子帧经 `asyncio.create_task` 独立运行,join 退化为读终态(异常原样上抛;子树被级联取消时改抛 `SubtreeCancelled`,是否捕获由 code 技能决定),父子经 StatusBoard 交换滚动状态。fork/join 扇出 `parallel_invoke` 已落地(`runner.py:1577-1859`,辅助 `_parallel_branch`/`_parallel_unsafe_tool`/`_parallel_cancelled`/`_parallel_cancel_all` :1860-1931;code 技能侧经 `LogicContext.parallel()` 委托,`kernel/logic_context.py:149-156`,契约 `api/v1/logic.py:222`):起批前串行预检逐分支复用 spawn 前置段;`all_settled` 结构化 gather 永不上抛,`depends_on` 前置失败标 cancelled 不启动;`first_success` done-flag 只赢一次、败方 `cancel_subtree` 级联取消 + `settle_timeout` 等 ack、父侧唯一 join 点幂等结算;硬失败(RunAborted/BudgetExceeded/MaxDepthExceeded)不折叠炸 run;`max_concurrency` 以 Semaphore 封顶。`api/v1/tools.py:105` 预留的 `concurrency_safe` 字段在此迎来首个强制消费:code 分支白名单含未声明工具即串行降级、占满全部并发额度(fail-safe 不拒绝,日志可观察),prompt 分支豁免。配套落地的还有 §5.2 的子树级联取消(`Kernel.cancel_subtree`,`runner.py:1954-1993`;`RunControl.cancel_frame`,`kernel/control.py:63-71`)与子树记账读视图(`Kernel.subtree_usage`,`runner.py:2062-2104`;`RunControl.get_subtree_usage`,`kernel/control.py:97-103`)——前者是 first_success 败方收尾与 `subagent_cancel` 类组合子的引擎地基,后者按子树聚合九字段 Usage,rca usage_panel 每帧行同步加 `subtree` 字段(`host/web/rca.py:122-167`)。
+串行 `await` 是默认形态;`spawn_frame`/`wait_frame`(`runner.py:1530-1563`)实现 §3.4 的后台帧:白名单/深度/升权检查与 invoke 一致(spawn 管线拆为 `_spawn_whitelist_check`/`_spawn_gate`/`_spawn_register` 三段,`runner.py:1464-1551`),子帧经 `asyncio.create_task` 独立运行,join 退化为读终态(异常原样上抛;子树被级联取消时改抛 `SubtreeCancelled`,是否捕获由 code 技能决定),父子经 StatusBoard 交换滚动状态。fork/join 扇出 `parallel_invoke` 已落地(`runner.py:1577-1859`,辅助 `_parallel_branch`/`_parallel_unsafe_tool`/`_parallel_cancelled`/`_parallel_cancel_all` :1860-1931;code 技能侧经 `LogicContext.parallel()` 委托,`kernel/logic_context.py:149-156`,契约 `api/v1/logic.py:222`):起批前串行预检逐分支复用 spawn 前置段;`all_settled` 结构化 gather 永不上抛,`depends_on` 前置失败标 cancelled 不启动;`first_success` done-flag 只赢一次、败方 `cancel_subtree` 级联取消 + `settle_timeout` 等 ack、父侧唯一 join 点幂等结算;硬失败(RunAborted/BudgetExceeded/MaxDepthExceeded)不折叠炸 run;`max_concurrency` 以 Semaphore 封顶。`api/v1/tools.py:105` 预留的 `concurrency_safe` 字段在此迎来首个强制消费:code 分支白名单含未声明工具即串行降级、占满全部并发额度(fail-safe 不拒绝,日志可观察),prompt 分支豁免。配套落地的还有 §5.2 的子树级联取消(`Kernel.cancel_subtree`,`runner.py:1954-1993`;`RunControl.cancel_frame`,`kernel/control.py:63-71`)与子树记账读视图(`Kernel.subtree_usage`,`runner.py:2062-2104`;`RunControl.get_subtree_usage`,`kernel/control.py:97-103`)——前者是 first_success 败方收尾与 `subagent_cancel` 类组合子的引擎地基,后者按子树聚合九字段 Usage,rca usage_panel 每帧行同步加 `subtree` 字段(`host/web/rca.py:122-167`)。
 
 ## 5. 效果与验证(效果)
 
-测试证据(本章直接覆盖面):`tests/kernel/` 16 个文件 137 例 + `tests/telemetry/test_trace_checkpoint.py` 3 例,共 140 例,实测全部通过;全仓 `pytest --collect-only` 收集 1542 例(1493 passed / 10 skipped / 39 xfailed,本次核对时点)。关键锚点:
+测试证据(本章直接覆盖面):`tests/kernel/` 16 个文件 137 例 + `tests/telemetry/test_trace_checkpoint.py` 3 例,共 140 例,实测全部通过;全仓 `pytest --collect-only` 收集 1551 例(1502 passed / 10 skipped / 39 xfailed,本次核对时点)。关键锚点:
 
 - **执行模型纵向切片**(`tests/kernel/test_fib_slice.py`,5 例):递归技能 `demo.fib`(`agent_os/skills/skills.yaml`,fib(n) 先 invoke 自己算 fib(n-1)、再调沙箱工具求和)端到端返回正确数列;帧树形状断言——fib(5) 恰好压 4 帧、深度 1-4、LLM 调用恰好 10 次、沙箱执行恰好 3 次;**帧隔离断言**——父帧第二次请求的消息序列为 `[SYSTEM, USER, ASSISTANT, TOOL]`,子帧整段轨迹折叠为一条 `{"ok": true, "value": {"seq": [0,1,1,2]}}` 工具结果,且同一帧相邻请求的 SYSTEM 前缀逐字节一致;`max_depth=2` 时 fib(4) 抛 `MaxDepthExceeded`;`bad_brain` 连败触发 `OutputValidationError`。
 - **断电恢复**(`tests/telemetry/test_trace_checkpoint.py`,3 例):fib(5) 在第 6 次 LLM 调用处注入断电异常,新内核从检查点恢复后**只补 5 次调用**(`len(mock2.recorded) == 5`)即返回完整数列——"恢复不是重跑"以调用计数钉死;检查点 JSON 含版本头、run.usage、running/done 混合帧状态与完整帧上下文。
@@ -109,7 +113,7 @@ run_frame(frame)                       # runner.py:389
 
 1. **在跑批不随 checkpoint 恢复,分支 usage 不可回滚。** `parallel_invoke` 与 spawn 同形:批不做检查点配对,断电后在跑批不恢复,code 父帧 resume 时整体重跑、批整体重发,调用方须保证幂等(`runner.py:1616-1617`);分支 usage 实时入 run 记账,first_success 败方被级联取消后其消耗不返还——与"进行中的副作用既成事实"的既定语义一致。子树级联取消同为 point-in-time 收集:取消发起后新 spawn 的帧不在取消集内,帧级 stop 标志不持久化。
 2. **pause 的 v1 语义就是 stop。** `RunControlImpl.pause` 仅给理由加 `"paused: "` 前缀(`kernel/control.py:41-43`),不存在"挂起运行中 run、稍后原地继续";要续跑只能走检查点序列化 + resume 重建,且 resume 是从最近检查点重入 loop,不是从暂停指令处精确续行。
-3. **`max_wall_time` 内核不判。** `Kernel.account` 只检查 `max_steps`/`max_cost`(`runner.py:2053-2060`);挂钟上限由 BudgetGuard sidecar 承担(`sidecars/builtins.py:72-73`),且其阈值来自宿主 TOML 配置而非 `RunConfig.max_wall_time` 字段——未装配 sidecar 时 run 的挂钟时长无熔断。
+3. **`max_wall_time` 内核不判。** `Kernel.account` 的 run 级检查只判 RunConfig `max_steps`/`max_cost`(`runner.py:2193-2200`;manifest `limits` 帧/子树预算另查,见 §4.2 末段);挂钟上限由 BudgetGuard sidecar 承担(`sidecars/builtins.py:72-73`),且其阈值来自宿主 TOML 配置而非 `RunConfig.max_wall_time` 字段——未装配 sidecar 时 run 的挂钟时长无熔断。
 4. **spawn 后台帧不随检查点恢复。** `_spawned` 任务表(run 分桶 `dict[run_id, dict[frame_id, (parent_id, task)]]`)与 `_stop_flags`/`_frame_stop_flags` 是进程内状态(`runner.py:226-238`);断电后 spawn 的子树丢失,恢复语义是"code 父帧整体重跑、重新走到 spawn 闸门"(`runner.py:1501` 注释)——后台帧已产生的副作用不重放但也不结算,需调用方自行保证幂等。
 5. **单事件循环,协程级并行。** 并行分支共享同一 asyncio 循环,CPU 密集的 code 技能会阻塞兄弟分支(docs/DESIGN.md §3.4 注明);多机分布式执行是 §17 明示的非目标。
 6. **检查点 schema v1 无迁移路径。** 版本不符直接 `ValueError`(`checkpoint.py:329-330`);格式演进靠"additive 字段 + 缺省值"维持兼容(如 tier/principal 的缺省恢复,`checkpoint.py:234-246`),破坏性变更目前没有答案。

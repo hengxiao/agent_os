@@ -68,7 +68,7 @@ skills:
     max_tokens: 32000
     compress: false
   limits:
-    max_steps: 8
+    max_steps: 40
     timeout: 60
   prompt: "你是菲波拉契数列生成器。输入是 JSON,字段 n 为整数,表示要生成前 n 个菲波拉契数。\n\n规则:\n- base case:若 n\
     \ 等于 1,直接返回答案,数列为 [0];若 n 等于 2,数列为 [0, 1]。\n- 否则严格按顺序执行:\n  第一步,调用工具 skill.demo.fib,参数中的\

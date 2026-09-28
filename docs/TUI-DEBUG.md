@@ -613,5 +613,5 @@ dbg.* copy(§6),布局照 §7 四窗(顶条 + 左栏栈/断点 + 右大窗轨迹
 
 **测试数字**:新增前端测试 2 个文件全绿(解析器 8 组断言 + 冒烟 9 段);
 `static/tests` 全量回归 34 个 .test.mjs 零失败(含 themes-contract 焦点环
-契约——`.dbc-input` 不抑制 outline);`agent_os` pytest 1493 passed /
+契约——`.dbc-input` 不抑制 outline);`agent_os` pytest 1502 passed /
 10 skipped / 39 xfailed 保持绿。ruff 不涉及(零 Python 改动)。

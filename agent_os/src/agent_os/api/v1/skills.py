@@ -66,13 +66,22 @@ class ContextPolicy:
 
 @dataclass
 class SkillLimits:
-    """§2.1 ``limits:`` 块;``retry`` = 整帧重跑上限(§3.2,幂等性由调用方保证)。"""
+    """§2.1 ``limits:`` 块;``retry`` = 整帧重跑上限(§3.2,幂等性由调用方保证)。
+
+    ``max_steps``/``max_cost`` 由内核在记账点沿祖先链穿透检查,超限**子树级中止**
+    (cancel_subtree,不殃及 run);根帧超限炸 run(BudgetExceeded,§3.1 步骤 7 同语义)。
+    口径不同:``max_steps`` 限该帧**自身** agent loop 步数(与 RunConfig.max_steps
+    "全 run 总步数"对仗);``max_cost`` 限该帧**及其全部后代**的花费(子树求和)。
+    None = 不设。
+    """
 
     max_steps: int | None = None
     timeout: float | None = None
     retry: int = 0
     #: 单次编排/沙箱执行的 syscall 上限(docs/CODE-ORCHESTRATION.md §4;None 用内核默认)
     max_tool_calls: int | None = None
+    #: 子树花费上限(美元,additive):该帧及全部后代 cost 求和超限 → 子树级中止;根帧炸 run
+    max_cost: float | None = None
 
 
 @dataclass

@@ -35,6 +35,7 @@ import jsonschema
 
 from agent_os.api.v1 import (
     ASK_SUPERVISOR_TOOL,
+    BUDGET_EXCEEDED,
     ORCHESTRATE_TOOL,
     POST_FRAME_POP,
     POST_FRAME_PUSH,
@@ -231,6 +232,11 @@ class Kernel:
         #: cancel_subtree 置位;safe point 同点检查,命中抛 SubtreeCancelled——
         #: 子树终态,不杀 run;仅 prompt 帧在 safe point 消费,code 帧不检查)
         self._frame_stop_flags: dict[str, str] = {}
+        #: 帧/子树级预算防重表(frame_id 集合;manifest limits.max_cost/max_steps
+        #: 触发即登记,信号恰好一次、取消不重复发)。与 _frame_stop_flags 同先例:
+        #: 帧 id 全局唯一、按触发帧数有界,无清理点;进程态不随 checkpoint 持久化
+        #: (新进程 resume 会再触发一次:cancel ack 幂等 + BudgetExceeded 重抛同语义)
+        self._budget_tripped: set[str] = set()
         #: RunControl 句柄(装配 sidecars 时由 KernelBuilder 注入;pre:step 的
         #: InjectMessage/ForceCompress verdict 经它落地)
         self.ctl: Any = None
@@ -387,7 +393,8 @@ class Kernel:
         压缩器把每次 LLM 调用落 ``frame.context.working["_compress_llm_usage"]``
         (``{"model", "usage"}``;force_compress 与 maintain 共用该键,在本排干点
         一起收)。逐条:token 六项镜像 :meth:`account` 累加进帧/run 两级——
-        **steps 不加**(压缩不是主循环步,预算检查仍在下一步 account 统一做)——
+        **steps 不加**(压缩不是主循环步;run 级预算检查仍在下一步 account 统一做,
+        帧/子树级预算在本排干点累加后即查,压缩花费同样受祖先预算约束)——
         并补发 ``post:llm.response``(``source="compress"``,与主循环发送点
         同形状 + additive),让 BudgetGuard/遥测看到完整成本。
         """
@@ -417,6 +424,7 @@ class Kernel:
                     },
                 )
             )
+        await self._check_subtree_budgets(frame)
 
     @staticmethod
     def _usage_payload(usage: ChatUsage | None) -> dict[str, Any]:
@@ -513,7 +521,7 @@ class Kernel:
                 )
             )
             frame.context.messages.append(resp.message)
-            self.account(frame, resp.usage, ttft_ms=resp.ttft_ms, total_ms=resp.total_ms)
+            await self.account(frame, resp.usage, ttft_ms=resp.ttft_ms, total_ms=resp.total_ms)
             if not resp.message.tool_calls:
                 result, error = _check_output(manifest, resp.message.content)
                 if error is None:
@@ -2145,7 +2153,7 @@ class Kernel:
     # §3.1 步骤 7:记账与预算检查
     # ------------------------------------------------------------------
 
-    def account(
+    async def account(
         self,
         frame: SkillFrame,
         usage: ChatUsage | None,
@@ -2157,6 +2165,12 @@ class Kernel:
 
         ``ttft_ms``/``total_ms``(WS2 流式计时):与 tokens 同点两级累加(求和口径
         见 :meth:`subtree_usage`);chat 路径恒 0,行为与引入前一致。
+
+        run 级检查(max_steps → RunAborted、max_cost → BudgetExceeded)之后做
+        帧/子树级预算检查(:meth:`_check_subtree_budgets`,manifest
+        ``limits.max_cost``/``max_steps`` 执行点)。本方法因此是 async(祖先分档
+        要 await cancel_subtree)——调用点:帧循环 :meth:`_frame_loop` 与
+        :meth:`KernelLogicContext.chat`,两处本就 async。
         """
         frame.usage.steps += 1
         run = self._runs.get(frame.run_id)
@@ -2184,6 +2198,88 @@ class Kernel:
             raise BudgetExceeded(
                 f"run 成本 {run.state.usage.cost:.4f} 超过 max_cost={self.config.max_cost}"
             )
+        await self._check_subtree_budgets(frame)
+
+    async def _check_subtree_budgets(self, frame: SkillFrame) -> None:
+        """帧/子树级预算检查(manifest ``limits.max_cost``/``max_steps`` 执行点)。
+
+        沿 ``parent_id`` 链收集祖先(含自身),逐预算帧(声明了 max_cost/max_steps
+        的帧)判定;链上无预算声明直接返回(快路径,零预算 run 零开销)。判定口径:
+
+        - ``max_cost``:**子树求和**——该帧及全部后代的 cost 合计 > max_cost
+          (``_subtree_usage_sum``;花费沿子树累积,预算是"这棵子树总共花多少");
+        - ``max_steps``:**帧自身**——该帧 ``usage.steps`` > max_steps(该帧自身
+          agent loop 的迭代上限,与 RunConfig.max_steps"全 run 总步数"对仗;
+          既有 manifest 均按此口径声明)。
+
+        触发分档(先登记 ``_budget_tripped`` 防重 + 发 ``budget.exceeded`` 信号,
+        信号恰好一次;一帧触发即返回——链上多预算同时超,最老/近根的先):
+        - 预算帧是根帧(parent_id None)→ raise BudgetExceeded(§3.1 步骤 7
+          同语义,炸 run);
+        - 预算帧是当前帧 → raise SubtreeCancelled(本子树终态,invoke 边界折叠为
+          父帧 interrupted 错误观察,run 继续);
+        - 预算帧是祖先 → ``await self.cancel_subtree(...)``:当前帧在其子树内,
+          prompt 帧在下一个 safe point 终结;**边界**:调用链上的 code 帧不检查
+          帧级 stop 标志(见 :meth:`cancel_subtree`),其终结随 invoke/wait 边界
+          穿透(子帧终态错误观察/SubtreeCancelled 上抛,恢复策略交 code 技能);
+          当前帧是 code 帧时(``ctx.chat`` 记账路径)同理。
+
+        ``_budget_tripped`` 是进程态,不随 checkpoint 持久化:新进程 resume 时
+        同一预算帧会再触发一次,幂等(cancel ack 幂等;BudgetExceeded 重抛同语义);
+        **同进程** resume 则命中防重跳过(该帧级预算不再拦截,run 级检查仍逐次
+        兜底)——与 ``_frame_stop_flags`` 不持久化同旨的进程态边界。
+        """
+        chain: list[SkillFrame] = []
+        node: SkillFrame | None = frame
+        while node is not None:
+            chain.append(node)
+            node = self.stack.get(node.parent_id) if node.parent_id is not None else None
+        budgeted: list[tuple[SkillFrame, Any]] = []
+        for ancestor in chain:
+            limits = self.skills.get(ancestor.skill).manifest.limits
+            if limits is not None and (limits.max_cost is not None or limits.max_steps is not None):
+                budgeted.append((ancestor, limits))
+        if not budgeted:
+            return
+        for budget_frame, limits in reversed(budgeted):  # 最老(近根)先查
+            if budget_frame.frame_id in self._budget_tripped:
+                continue  # 已触发过:子树已终态/在取消,信号不重复发
+            over_steps = (
+                limits.max_steps is not None and budget_frame.usage.steps > limits.max_steps
+            )
+            usage: Usage | None = None
+            over_cost = False
+            if limits.max_cost is not None:
+                usage = self._subtree_usage_sum(budget_frame.frame_id)
+                over_cost = usage.cost > limits.max_cost
+            if not (over_cost or over_steps):
+                continue
+            if usage is None:
+                usage = self._subtree_usage_sum(budget_frame.frame_id)  # 信号 payload 用
+            reason = (
+                f"子树成本 {usage.cost:.4f} 超过 limits.max_cost={limits.max_cost}"
+                if over_cost
+                else f"帧步数 {budget_frame.usage.steps} 超过 limits.max_steps={limits.max_steps}"
+            )
+            self._budget_tripped.add(budget_frame.frame_id)
+            await self.signals.emit(
+                self._sig(
+                    BUDGET_EXCEEDED,
+                    budget_frame,
+                    {
+                        "max_cost": limits.max_cost,
+                        "max_steps": limits.max_steps,
+                        "subtree_cost": usage.cost,
+                        "subtree_steps": usage.steps,
+                    },
+                )
+            )
+            if budget_frame.parent_id is None:
+                raise BudgetExceeded(f"budget: 根帧技能 {budget_frame.skill.name} {reason}")
+            if budget_frame.frame_id == frame.frame_id:
+                raise SubtreeCancelled(f"budget: {reason}")
+            await self.cancel_subtree(budget_frame.frame_id, f"budget: {reason}")
+            return
 
     def subtree_usage(self, frame_id: str) -> Usage:
         """子树记账读视图(WS2):目标帧及全部后代的九字段 Usage 求和。
@@ -2200,12 +2296,22 @@ class Kernel:
         未知 frame_id:记日志并返回零值 Usage(与 inject_message/cancel_subtree
         同旨的防御式语义——读视图不崩调用方)。
 
-        明确不做(WS2 边界):组合子 budget 强制(需 account() 沿祖先链累加 +
-        子树级中止,留待 budget 参数工具面);SkillLimits.max_steps 执行点(单列)。
+        帧/子树级预算强制已实现(:meth:`_check_subtree_budgets`,manifest
+        ``limits.max_cost``/``max_steps`` 执行点):``max_cost`` 检查侧沿祖先链
+        调本求和段(:meth:`_subtree_usage_sum`),写路径不动(父帧 usage 仍不含
+        子帧)——与"聚合发生在读取侧"的既定语义一致;``max_steps`` 口径为帧自身
+        步数,不经求和段。组合子 budget 参数工具面(race_first 软闸 watchdog)
+        仍单列,与本机制正交。
         """
         if self.stack.get(frame_id) is None and self._spawned_entry(frame_id) is None:
             _log.warning("subtree_usage:帧 %s 不存在,返回零值 Usage", frame_id)
             return Usage()
+        return self._subtree_usage_sum(frame_id)
+
+    def _subtree_usage_sum(self, frame_id: str) -> Usage:
+        """子树 usage 求和段(:meth:`subtree_usage` 与帧级预算检查共用):
+        ``_collect_subtree`` 收集 + 九字段累加;不含未知帧防御(调用方保证在册)。
+        """
         total = Usage()
         for fid in self._collect_subtree(frame_id):
             frame = self.stack.get(fid)

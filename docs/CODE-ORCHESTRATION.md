@@ -137,7 +137,7 @@ CodeScanner 照常在 `pre:logic.exec` 扫描脚本源码(veto 点保持)。
 
 | 子系统 | 语义 |
 |---|---|
-| **记账** | 每 syscall = 一次工具调用,记入调用帧 usage;`ctx.invoke` 压子帧,深度/步数照常。run 级 max_steps/max_cost 天然生效 |
+| **记账** | 每 syscall = 一次工具调用,记入调用帧 usage;`ctx.invoke` 压子帧,深度/步数照常。run 级 max_steps/max_cost 天然生效;manifest `limits.max_steps`(帧自身步数)/`limits.max_cost`(子树求和花费)的帧/子树预算 2026-09-28 起同由内核强制,编排帧及其子帧均受约束 |
 | **限额** | 新增 `limits.max_tool_calls`(单次编排的 syscall 上限,默认如 50);墙钟:脚本 wall_time **不含**内核侧执行 syscall 的时间(分别计时,否则一次慢工具就烧光脚本预算) |
 | **信号** | `pre/post:logic.exec` 包住整次执行;每 syscall 照发 `pre/post:tool.call` / `pre/post:skill.invoke`(payload 加 `"via": "orchestrate"`)。LoopDetector 现订阅 post:step 的 calls 列表——需补一条:编排期间以 syscall 序列喂它(或订阅 post:tool.call),防脚本内死循环调用 |
 | **中断** | RunControl stop → 下一条 syscall 返回错误并杀进程 → RunAborted 上抛;CancelledError 路径补 INTERRUPTED 占位(配对原子性,§7.4 不变量 2 由"脚本调用不进上下文"天然免除——进上下文的只有整次编排的单条 tool result) |

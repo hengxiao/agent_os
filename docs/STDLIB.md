@@ -75,7 +75,7 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
 
 1. ~~**子树级联取消**(现只有 run 级 stop)——`race_first` 依赖~~ → **已落地**(2026-09-27):`Kernel.cancel_subtree` + `_collect_subtree` DFS(`kernel/runner.py:1837-1893`)、`RunControl.cancel_frame`(`kernel/control.py:63-71`);`SubtreeCancelled` 独立于 RunAborted——子树终态不杀 run,后台帧经 wait_frame 原样上抛;边界:point-in-time 收集(取消发起后新 spawn 不在集内)、帧级 stop 标志仅 prompt 帧在 safe point 消费且不持久化;
 2. **取消后工具副作用语义**;
-3. **组合子级预算**(§4.5 的 budget 参数需内核按子树切分记账)——**读视图已落地**(2026-09-27):`Kernel.subtree_usage` 九字段求和(`kernel/runner.py:1951-1988`)+ `RunControl.get_subtree_usage`(`kernel/control.py:97-103`);budget 强制(沿祖先链累加 + 子树级中止)仍留 budget 参数工具面立项;
+3. ~~**组合子级预算**(§4.5 的 budget 参数需内核按子树切分记账)~~ → **已落地**(2026-09-27 读视图 + 2026-09-28 内核强制):`Kernel.subtree_usage` 九字段求和(`kernel/runner.py:1951-1988`)+ `RunControl.get_subtree_usage`(`kernel/control.py:97-103`);强制面 = manifest `limits.max_steps`(**帧自身**步数)/`limits.max_cost`(**子树求和**花费)在 `account()` 末尾沿 parent_id 链逐祖先检查(`kernel/runner.py:2203-2282`),超限分档(根帧炸 run / 当前帧 SubtreeCancelled / 祖先 cancel_subtree),触发前发 `budget.exceeded`;**偏差**:写路径不动(父帧 usage 不含子帧),取检查侧等效语义,非批注原话的"沿祖先链累加";§4.5 的 `budget` 参数软闸保留,软/硬正交;并行分支间的预算切分仍开口(DESIGN §17 开放问题 1);
 4. ~~**工作目录不可配置**~~ → **已落地**(§W0-1):`[run] workdir` +
    `read_paths` 只读挂载进 RunConfig,fs/shell 工具共用 `resolve_work_path`
    三段判定;缺省仍为 per-run 临时目录(安全边界不静默放宽)。per-skill
@@ -245,7 +245,7 @@ v1 七件保留:`summarize` `classify` `extract` `translate` `rewrite`
 | `cross_check` | **新增**:只核对原始证据与最终结论、**显式不看中间推理**——破解错误级联;与 fanout_vote(采样)、judge(看推理)是三种机制 |
 | `reject_sample` | **新增**:采 k → 验证器过滤 → 去重 → 配额;`fanout_vote` 选一个,它产出一批合格样本(也是未来 SFT 数据管道)(Ch7) |
 | `pipeline` | **降级为编排脚本示例**(同上;串接就是顺序赋值) |
-| **全体** | 统一 `budget: {max_steps, max_tokens, max_depth}` 参数,超限停并返回部分结果——多 agent 15x token 成本 + 防环 + "步数多不等于结果好"三个问题一个参数(Ch10);**软强制已落地**(2026-09-27,见 `race_first` 行;检查间隔内可超、best-effort),**内核强制留立项** |
+| **全体** | 统一 `budget: {max_steps, max_tokens, max_depth}` 参数,超限停并返回部分结果——多 agent 15x token 成本 + 防环 + "步数多不等于结果好"三个问题一个参数(Ch10);**软强制已落地**(2026-09-27,见 `race_first` 行;检查间隔内可超、best-effort);**内核强制已落地**(2026-09-28,manifest `limits.max_steps`/`limits.max_cost` 由内核在记账点沿祖先链强制——`max_steps` 限帧自身步数、`max_cost` 限子树求和花费,组合子作为 code 技能在 manifest 声明即受硬约束;`budget` 参数软闸保留,软/硬正交) |
 
 **白名单困境已被编排桥消解**(v1 开放问题 2 结案):当初的难题是
 "组合子要 invoke 参数指定的技能,但 permissions.skills 必须静态声明"。
@@ -328,7 +328,7 @@ Ch8/9/10 三章独立要求同一原语,配 `system.file.list` mtime + `system.t
 **P1**:`if_match` 乐观锁、`http_post`、`json_query`、`web_search`、
 `ask_human`、`subagent_cancel/status`(✅ 已落地 2026-09-27)、shell 会话化、`system.skill.search`、
 来源标注三件(source 字段 + untrusted_content + injection_scan)、
-检索纯函数四件 + `contextualize_chunk`、`std/eval` 三件、组合子 budget(软强制 ✅ 2026-09-27) +
+检索纯函数四件 + `contextualize_chunk`、`std/eval` 三件、组合子 budget(软强制 ✅ 2026-09-27,内核强制 ✅ 2026-09-28) +
 race_first(✅ 2026-09-27)/cross_check/reject_sample、`progress_track`、多模态最低限
 (mime + image_ref + describe_image)、`std/learn` 三件、文件版
 `std/memory`、渐进披露约定。
@@ -424,7 +424,9 @@ judge 类技能附加门槛:金标准集(100-200 条)+ Cohen's kappa ≥ 0.7,
    或显式声明 std 永为只读能力库;
 7. inline 组合的 cache key 收敛:use-site 的 style 组合应收敛到少数
    固定集合(防 2^N cache 变体),需要 lint 还是文档约定;
-8. 组合子级 budget 需要内核按子树切分记账的支持,与引擎立项联动;
+8. ~~组合子级 budget 需要内核按子树切分记账的支持,与引擎立项联动~~ →
+   已落地(2026-09-28 内核强制,见 §2 缺口 3);残余开口:并行分支间的
+   预算切分(DESIGN §17 开放问题 1);
 9. **编排脚本的沉淀路径**(v2.1):跑通的一次性脚本要不要经
    `verify_before_store` 固化成 `learned/` code skill——这是自进化闭环
    (§4.8)的最短路径,也直接关联开放问题 6 的写侧治理;

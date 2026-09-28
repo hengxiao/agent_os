@@ -360,7 +360,7 @@ ADD/UPDATE/DELETE/NOOP)/ `memory_consolidate`(周期重构)/ `memory_check`(code
 | `set_timer` | 与 `ask_human` 共用的 checkpoint/resume 通道已随 supervisor 闭环落地;剩余为计时器工具面本身(one-shot + recurring),仍应与 `ask_human` 合并立项摊薄成本 |
 | `subagent_cancel` / `subagent_status` | ~~引擎缺口 1:子树级联取消~~ **引擎地基已落地**(2026-09-27:`Kernel.cancel_subtree`/`RunControl.cancel_frame`,`kernel/runner.py:1837-1893` + `kernel/control.py:63-71`);**组合子本体已落地**(2026-09-27:`std/combinators.yaml` + `combinators_handlers.py` 的 `common.task.subagent_cancel`(WRITE 语义,ctx.cancel ack)/`common.task.subagent_status`(READ 语义,ctx.frame_status;未知帧 status=null)) |
 | `race_first` 组合子 | 引擎地基已落地(2026-09-27:`parallel_invoke` first_success 模式 + 级联取消,`kernel/runner.py:1482-1763`);**组合子本体已落地**(2026-09-27:`std/combinators.yaml` + `combinators_handlers.py` 的 `common.task.race_first`(code TRUSTED)+ 私有批帧 `common.task.race_batch`——批帧给 watchdog 单一可寻址目标) |
-| 组合子统一 `budget` 参数 | 引擎缺口 3 的读视图已落地(2026-09-27:`Kernel.subtree_usage` 九字段求和,`kernel/runner.py:1951-1988`);**软强制已落地**(2026-09-27:`race_first` watchdog 50ms 轮询批帧 `ctx.frame_status` 子树 usage,超限 `ctx.cancel` 返回部分结果——检查间隔内可超、best-effort);budget 的**内核强制**仍留立项 |
+| 组合子统一 `budget` 参数 | 引擎缺口 3 的读视图已落地(2026-09-27:`Kernel.subtree_usage` 九字段求和,`kernel/runner.py:1951-1988`);**软强制已落地**(2026-09-27:`race_first` watchdog 50ms 轮询批帧 `ctx.frame_status` 子树 usage,超限 `ctx.cancel` 返回部分结果——检查间隔内可超、best-effort);**内核强制已落地**(2026-09-28:manifest `limits.max_steps`(帧自身步数)/`limits.max_cost`(子树求和花费)由内核在记账点沿祖先链强制,`kernel/runner.py:2203-2282`;`budget` 参数软闸保留,软/硬正交) |
 | `describe_image` + 多模态最低限 | 契约层:`blob_get` 带 mime + prompt 技能 inputs 支持 `image_ref` |
 | `memory_*` 服务版 | ~~M6 MemoryService~~ **已落地(2026-09-27)**:`LocalFileMemoryService`(`memory/local_file.py`)+ 工具面 `system.memory.search`/`system.memory.write` 常驻 `with_builtins`,`[memory] dir` 配置段接线 |
 
@@ -383,9 +383,10 @@ W0 地基(workdir / 契约四字段 / 错误 hint / if_match / shell 结构化)
                      │
                      └─→ W4-3 std/web · W4-4 std/learn
 
-W5 剩余阻塞在内核立项(多模态契约;组合子 budget 的内核强制;ask_human/set_timer
+W5 剩余阻塞在内核立项(多模态契约;ask_human/set_timer
 工具面——挂起语义已随 supervisor 闭环落地。级联取消/子树记账读视图/组合子本体
-均已落地(2026-09-27,std/combinators.yaml))
+均已落地(2026-09-27,std/combinators.yaml);组合子 budget 的内核强制已落地
+(2026-09-28,manifest limits.max_steps/max_cost 帧/子树级强制))
 ```
 
 **若只做三件**:W0-1(workdir)、W1-1+W1-2(system.file.list/system.file.search)、W0-3(错误 hint)。
@@ -481,7 +482,7 @@ WRITE/EXEC/NET 显式声明 idempotent、`cost_hint` 非空)。新增条目漏�
 
 ### CI 与离线的分界(不可破的线)
 
-现有套件的性质很珍贵:**1542 个测试(1493 passed / 10 skipped / 39 xfailed,
+现有套件的性质很珍贵:**1551 个测试(1502 passed / 10 skipped / 39 xfailed,
 0 失败;`pytest tests --collect-only` 实测口径)、无需 API key、零 flaky**。
 层 1–3 全进 CI;层 4 走 nightly/发版前,需要 key、花钱、报置信区间。
 对抗用例(§7.3a 的"诱导攻击")对 `injection_scan`/`untrusted_content`

@@ -23,6 +23,21 @@ from agent_os.api.v1 import (
 from agent_os.kernel.errors import SkillLoadError
 
 
+def _parse_max_cost(name: str, raw: Any) -> float | None:
+    """``limits.max_cost``(additive):None 或数值(int 上浮为 float)。
+
+    运行期比较是 ``cost > max_cost``,非数值会在记账点炸 TypeError——故类型错
+    在加载期拒绝(同 trust.confirm 的加载期拒绝先例);bool 是 int 子类,单列排除
+    (同 parallel_invoke 的 max_concurrency 校验)。其余 limits 键维持现状不做
+    类型校验,未知键照旧忽略。
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise SkillLoadError(f"技能 {name}: limits.max_cost 应为数值(美元),得到: {raw!r}")
+    return float(raw)
+
+
 def parse_manifest(data: dict[str, Any]) -> SkillManifest:
     """dict → SkillManifest(字段逐字对齐 §2.1,含 verifier/permissions/model/context_policy/limits/logic)。"""
     if not isinstance(data, dict):
@@ -64,6 +79,7 @@ def parse_manifest(data: dict[str, Any]) -> SkillManifest:
             timeout=lim_raw.get("timeout"),
             retry=lim_raw.get("retry", 0),
             max_tool_calls=lim_raw.get("max_tool_calls"),
+            max_cost=_parse_max_cost(name, lim_raw.get("max_cost")),
         )
         if lim_raw
         else None

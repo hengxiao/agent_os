@@ -19,6 +19,7 @@ import pytest
 from agent_os.api.v1 import SkillKind, SkillManifest
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.skills.loader import load_handler, materialize, render_prompt
+from agent_os.skills.manifest import parse_manifest
 
 # ---------------------------------------------------------------------------
 # load_handler
@@ -182,3 +183,37 @@ def test_registry_directory_reload_detects_any_source_change(tmp_path):
         _TWO_FILES["b.yaml"].replace("做二号", "做二号改"), encoding="utf-8"
     )
     assert reg.reload() is True
+
+
+# ---------------------------------------------------------------------------
+# parse_manifest:limits.max_cost(additive 契约字段)
+# ---------------------------------------------------------------------------
+
+
+def _limits_entry(max_cost):
+    """最小合法技能条目,limits 段带待测 max_cost。"""
+    return {
+        "name": "test.max_cost",
+        "kind": "prompt",
+        "description": "占位。Use when 测试;Do not use when 生产。",
+        "permissions": {"tools": [], "skills": []},
+        "prompt": "占位",
+        "limits": {"max_cost": max_cost},
+    }
+
+
+def test_parse_manifest_limits_max_cost_numeric():
+    """limits.max_cost:合法数值解析为 float(int 上浮);缺省为 None。"""
+    m = parse_manifest(_limits_entry(0.5))
+    assert m.limits is not None and m.limits.max_cost == 0.5
+    assert isinstance(m.limits.max_cost, float)
+    m_int = parse_manifest(_limits_entry(2))
+    assert m_int.limits is not None and m_int.limits.max_cost == 2.0
+
+
+def test_parse_manifest_limits_max_cost_bad_type_rejected():
+    """limits.max_cost:字符串/bool 非法类型加载期拒绝(运行期比较会炸 TypeError,
+    故在解析侧 fail-fast;其余 limits 键维持现状不做类型校验)。"""
+    for bad in ("0.5", True):
+        with pytest.raises(SkillLoadError, match="max_cost"):
+            parse_manifest(_limits_entry(bad))

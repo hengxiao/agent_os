@@ -48,8 +48,8 @@
 - **版本约束求解未实现**:DESIGN.md §6.1 承诺 semver 求解,代码只查依赖存在
   (第 02 章注)。
 - **副车仲裁面小于设计**:`pre:skill.invoke`/`pre:llm.request` 只发射不仲裁;
-  `budget.warning/exceeded` 无发射点(第 07 章注;`pre:compress` 已于
-  2026-09-28 落地否决,见第 05 章)。
+  `budget.warning` 无发射点(`budget.exceeded` 已于 2026-09-28 由帧/子树预算
+  强制首发,第 07 章注;`pre:compress` 已于 2026-09-28 落地否决,见第 05 章)。
 - **数据层 D1 偏差(D2 已收敛)**:未配置域 = 不拦截(设计原文为 confidential;
   D2 起 `[data]` policy 在场即恢复 confidential,policy 缺席仍保持 D1 语义);
   `system.shell.exec` 不在数据闸覆盖面(第 10 章注)。

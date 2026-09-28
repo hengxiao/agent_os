@@ -18,8 +18,9 @@
                    装配 HumanApproval 策略,EXEC 档工具过内核 tool-confirm 闸门;
                    distill(docs/DESIGN.md §11.2 写路径范式)= true 或 { model?,
                    min_tool_calls?, temperature?, breaker_threshold?,
-                   max_transcript_chars? }:run 终态后廉价模型蒸馏经验写入 [memory]
-                   (缺省关闭;无 [memory] 段时装配出来也是休眠实例)
+                   max_transcript_chars?, verify? }:run 终态后廉价模型蒸馏经验写入 [memory]
+                   (缺省关闭;无 [memory] 段时装配出来也是休眠实例;verify = 入库前
+                   内容审查档,缺省 true)
     [supervisor] → timeout_s / on_timeout / default_answer(docs/SUPERVISOR.md §6;TOML
                    写不了可调用 handler——此处只加载策略字段,handler 由宿主经
                    build_kernel(supervisor_handler=...) 注入,S2:Web 收件箱
@@ -496,12 +497,13 @@ def _sidecars(cfg: dict[str, Any]) -> list[Any]:
                 f'(如 {{ model = "kimi/cheap", min_tool_calls = 5 }}),得到: {d!r}'
             )
         unknown_d = sorted(
-            set(d) - {"model", "min_tool_calls", "temperature", "breaker_threshold", "max_transcript_chars"}
+            set(d)
+            - {"model", "min_tool_calls", "temperature", "breaker_threshold", "max_transcript_chars", "verify"}
         )
         if unknown_d:
             raise ConfigError(
                 f"[sidecars] distill 含未知字段: {unknown_d}"
-                f"(支持: ['breaker_threshold', 'max_transcript_chars', 'min_tool_calls', 'model', 'temperature'])"
+                f"(支持: ['breaker_threshold', 'max_transcript_chars', 'min_tool_calls', 'model', 'temperature', 'verify'])"
             )
         model = d.get("model")
         if model is not None and (not isinstance(model, str) or not model):
@@ -521,6 +523,9 @@ def _sidecars(cfg: dict[str, Any]) -> list[Any]:
         temperature = d.get("temperature", 0.2)
         if not isinstance(temperature, (int, float)) or isinstance(temperature, bool):
             raise ConfigError(f"[sidecars] distill.temperature 须为数值,得到: {temperature!r}")
+        verify = d.get("verify", True)
+        if not isinstance(verify, bool):
+            raise ConfigError(f"[sidecars] distill.verify 须为布尔,得到: {verify!r}")
         sidecars.append(
             DistillSidecar(
                 model=model,
@@ -528,6 +533,7 @@ def _sidecars(cfg: dict[str, Any]) -> list[Any]:
                 temperature=float(temperature),
                 breaker_threshold=ints["breaker_threshold"],
                 max_transcript_chars=ints["max_transcript_chars"],
+                verify=verify,
             )
         )
     return sidecars

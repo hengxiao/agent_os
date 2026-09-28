@@ -66,9 +66,11 @@ loop_detector = { threshold = 3, max_strikes = 2 }
 # distill = true                       # 蒸馏 sidecar(DESIGN §11.2):run 终态后经廉价模型蒸馏经验写入 Memory——
                                       # run.aborted 恒触发 failure reflection;run.finished 需帧树 TOOL 消息数
                                       # > min_tool_calls 才触发 strategy summary;需 [memory] 段配合(缺则休眠)
-# distill = { model = "kimi/cheap", min_tool_calls = 5, temperature = 0.2, breaker_threshold = 3, max_transcript_chars = 24000 }
+# distill = { model = "kimi/cheap", min_tool_calls = 5, temperature = 0.2, breaker_threshold = 3, max_transcript_chars = 24000, verify = true }
                                       # 或表(strict 校验,未知键报错):model 缺省跟 [run] model;
-                                      # breaker_threshold = 连败熔断阈值(默认 3);max_transcript_chars = 转写总量上限
+                                      # breaker_threshold = 连败熔断阈值(默认 3);max_transcript_chars = 转写总量上限;
+                                      # verify = 入库审查门(默认 true):写 Memory 前同模型 temperature=0.0 复审
+                                      # (指令注入/秘密 PII/可迁移性),fail-closed 拒写且不计连败
 
 [telemetry]
 dir = ".agent-os/traces"

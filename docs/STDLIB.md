@@ -286,6 +286,14 @@ v1 七件保留:`summarize` `classify` `extract` `translate` `rewrite`
 | `reflect_on_failure` | prompt | 失败 → 负例规则 |
 | `verify_before_store` | code | **入库闸门**:重置环境重放 + 验收判定;书:"没有验证门,自我改进循环必然腐烂"(Ch8) |
 
+**实现状态**(✅ 已落地 2026-07-25 W4 波,commit 0de9ffb):`common.learn.distill_experience` /
+`common.learn.reflect_on_failure`(prompt,`agent_os/std/learn.yaml:2-78`)与
+`common.memory.verify`(code,`agent_os/std/memory.yaml:222-259` +
+`agent_os/std/learn_handlers.py:32-44`;旧名 `verify_before_store` 保留为别名,
+`skills/local_file.py:103`);锚点测试 `tests/skills/test_std_domain.py:180-202`。
+落地形态:verify 为结构归一后深比较(重放由调用侧承担);经验路径的入库审查门另由
+DistillSidecar verify 档承担(2026-09-28,fail-closed,见 §10 开放问题 6 注)。
+
 写侧(`skill_write`/`tool_register` + `learned/` 命名空间分层治理)列
 专项讨论(§10);在决定前,std 是只读能力库这一点**显式声明**而非沉默。
 
@@ -330,7 +338,7 @@ Ch8/9/10 三章独立要求同一原语,配 `system.file.list` mtime + `system.t
 来源标注三件(source 字段 + untrusted_content + injection_scan)、
 检索纯函数四件 + `contextualize_chunk`、`std/eval` 三件、组合子 budget(软强制 ✅ 2026-09-27,内核强制 ✅ 2026-09-28) +
 race_first(✅ 2026-09-27)/cross_check/reject_sample、`progress_track`、多模态最低限
-(mime + image_ref + describe_image)、`std/learn` 三件、文件版
+(mime + image_ref + describe_image)、`std/learn` 三件(✅ 已落地 2026-07-25)、文件版
 `std/memory`、渐进披露约定。
 
 **P2 / 专项**:`set_timer`(与 ask_human 合并立项)、服务版 memory(M6,✅ 已落地 2026-09-27)、
@@ -421,7 +429,9 @@ judge 类技能附加门槛:金标准集(100-200 条)+ Cohen's kappa ≥ 0.7,
    倾向不动);
 6. 写侧治理:`skill_write`/`tool_register` + `learned/` 命名空间
    (类型白名单、库上限、`verify_before_store` 强制、人审节奏)——
-   或显式声明 std 永为只读能力库;
+   或显式声明 std 永为只读能力库;(注:经验路径的入库审查已由
+   DistillSidecar verify 档承担(2026-09-28,DESIGN §11.2 蒸馏 sidecar,
+   fail-closed),本条管 learned/ 产物库写侧治理;)
 7. inline 组合的 cache key 收敛:use-site 的 style 组合应收敛到少数
    固定集合(防 2^N cache 变体),需要 lint 还是文档约定;
 8. ~~组合子级 budget 需要内核按子树切分记账的支持,与引擎立项联动~~ →

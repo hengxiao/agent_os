@@ -44,9 +44,11 @@ loop_detector = { threshold = 3, max_strikes = 2 }
 # distill = true                          # 蒸馏 sidecar(DESIGN.md §11.2 写路径范式;缺省关闭):run.aborted 恒触发,
 #                                         # run.finished 需该 run 工具调用数 > 5 才触发;满足时经廉价模型把本次
 #                                         # run 蒸馏成经验条写入 [memory](source.kind="experience",trust="experience")
-# distill = { model = "kimi/cheap", min_tool_calls = 5, temperature = 0.2, breaker_threshold = 3, max_transcript_chars = 24000 }
+# distill = { model = "kimi/cheap", min_tool_calls = 5, temperature = 0.2, breaker_threshold = 3, max_transcript_chars = 24000, verify = true }
 #                                         # 或表(全键可缺省,上行为默认值):model = 蒸馏模型(缺省跟 run.model);
-#                                         # breaker_threshold = 蒸馏连败熔断次数;需配合 [memory] 段,否则装配出休眠实例
+#                                         # breaker_threshold = 蒸馏连败熔断次数;需配合 [memory] 段,否则装配出休眠实例;
+#                                         # verify = 入库前内容审查档(缺省 true:写库前多一次廉价模型审查——指令注入/秘密 PII/
+#                                         # 可迁移性三维,fail-closed 拒写不计连败;置 false 可关,蒸馏产出直写)
 
 [telemetry]
 dir = ".agent-os/traces"

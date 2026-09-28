@@ -99,7 +99,7 @@ The existing tools and skills already map cleanly to the new hierarchy.
 | `memory_extract` | `common.memory.extract` | prompt |
 | `memory_reconcile` | `common.memory.reconcile` | prompt |
 | `memory_check` | `common.memory.check` | prompt |
-| `verify_before_store` | `common.memory.verify` | prompt |
+| `verify_before_store` | `common.memory.verify` | code |
 | `research_one` | `common.research.one` | prompt |
 | `research_iterative` | `common.research.iterative` | prompt |
 | `fetch_page` (skill) | `common.web.fetch_page` | prompt |

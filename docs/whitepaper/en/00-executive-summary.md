@@ -438,7 +438,7 @@ sunk into the kernel) are implemented; the three §3.4 concurrency primitives
 are complete (`parallel_invoke` fork/join landed, together with subtree
 cascade cancel and the subtree accounting read view); Skill Lab
 L1-L5 is complete; all six Web themes pass the contract tests; the test
-baseline is 1551 Python tests (1502 passed, 10 skipped, 39 xfailed,
+baseline is 1557 Python tests (1508 passed, 10 skipped, 39 xfailed,
 0 failures) plus 32 frontend test files, all green.
 Designed but not yet implemented: remaining E3 items (audit panel), the D3
 remainder (delegation-chain weakest link, EscalationRequest data face), the

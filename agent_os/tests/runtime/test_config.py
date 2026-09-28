@@ -186,6 +186,7 @@ def test_distill_true_form_defaults():
     assert d.temperature == 0.2
     assert d.breaker_threshold == 3
     assert d.max_transcript_chars == 24000
+    assert d._verify is True, "verify 档默认开(入库前内容审查)"
     assert d._memory is None, "无 [memory] 段:bind 缺 memory,实例休眠"
 
 
@@ -232,6 +233,19 @@ def test_distill_unknown_subkey_rejected():
 def test_distill_bad_value_type_rejected():
     with pytest.raises(ConfigError, match="distill"):
         build_kernel(_base_cfg(sidecars={"distill": {"min_tool_calls": "5"}}))
+
+
+def test_distill_verify_false_lands():
+    """distill.verify = false → 落位到实例(关入库审查档,蒸馏产出直写)。"""
+    kernel = build_kernel(_base_cfg(sidecars={"distill": {"verify": False}}))
+    d = _distill_of(kernel)
+    assert isinstance(d, DistillSidecar)
+    assert d._verify is False
+
+
+def test_distill_bad_verify_type_rejected():
+    with pytest.raises(ConfigError, match="distill"):
+        build_kernel(_base_cfg(sidecars={"distill": {"verify": "yes"}}))
 
 
 def test_unknown_python_exec_backend_rejected():

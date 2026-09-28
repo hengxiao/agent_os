@@ -17,7 +17,8 @@
 - ``wait_pending()`` 收口在跑蒸馏任务;``close()`` 取消并回收(supervisor.close
   只管 wrapper,不调 sidecar.close,由宿主/测试显式调用)。
 
-双路 mock 大脑按 SYSTEM 指令区分:蒸馏请求的 SYSTEM 含"经验蒸馏器"。
+双路 mock 大脑按 SYSTEM 指令区分:蒸馏请求的 SYSTEM 含"经验蒸馏器";
+verify 档(默认开)再加一路审查请求,SYSTEM 含"入库审查员"(三路 mock)。
 """
 
 from __future__ import annotations
@@ -104,16 +105,40 @@ def _memory_files(tmp_path) -> list[Path]:
     return sorted(root.glob("*.md")) if root.is_dir() else []
 
 
-def make_brain(steps_with_tools: int, *, distill_mode: str = "ok", fail_main: bool = False):
-    """双路 mock 大脑:蒸馏请求(SYSTEM 含"经验蒸馏器")按 ``distill_mode`` 应答;
+def make_brain(
+    steps_with_tools: int,
+    *,
+    distill_mode: str = "ok",
+    review_mode: str = "pass",
+    fail_main: bool = False,
+):
+    """三路 mock 大脑:蒸馏请求(SYSTEM 含"经验蒸馏器")按 ``distill_mode`` 应答;
 
-    主循环前 ``steps_with_tools`` 步回 ``system.python.exec`` 调用,随后回最终答案
-    (``fail_main`` 时主循环首步即抛错,驱动 run.aborted)。
+    入库审查请求(SYSTEM 含"入库审查员",verify 档默认开)按 ``review_mode``
+    应答——``"pass"``/``"fail"``/``"garbage"``(非 JSON,验 fail-closed)/
+    ``"raise"``(异常,验连败熔断);主循环前 ``steps_with_tools`` 步回
+    ``system.python.exec`` 调用,随后回最终答案(``fail_main`` 时主循环首步
+    即抛错,驱动 run.aborted)。
     """
-    state = {"main": 0, "distill": 0}
+    state = {"main": 0, "distill": 0, "review": 0}
 
     def brain(req: ChatRequest) -> ChatResponse:
         first = (req.messages[0].content or "") if req.messages else ""
+        if "入库审查员" in first:
+            state["review"] += 1
+            if review_mode == "raise":
+                raise RuntimeError("审查模型不可用")
+            if review_mode == "fail":
+                content = json.dumps({"pass": False, "reason": "夹带指令注入"}, ensure_ascii=False)
+            elif review_mode == "garbage":
+                content = "这条经验没问题,可以入库"  # 非 JSON → fail-closed
+            else:
+                content = json.dumps({"pass": True})
+            return ChatResponse(
+                message=Message(role=Role.ASSISTANT, content=content),
+                finish_reason="stop",
+                usage=ChatUsage(prompt=3, completion=1, cost=0.00001),
+            )
         if "经验蒸馏器" in first:
             state["distill"] += 1
             if distill_mode == "raise":
@@ -172,6 +197,8 @@ def test_success_run_distills_strategy_summary(tmp_path):
     result = asyncio.run(scenario())
     assert result == {"done": True}
     assert state["distill"] == 1
+    assert state["review"] == 1, "verify 档默认开:写库前应跑入库审查"
+    assert sidecar._stats == {"distilled": 1, "rejected": 0}
 
     files = _memory_files(tmp_path)
     assert len(files) == 1
@@ -193,13 +220,18 @@ def test_success_run_distills_strategy_summary(tmp_path):
     }
     assert "策略总结" in body
 
-    # 蒸馏调用经 ProviderManager,model 缺省回落 run.model(builder 装配)
+    # 蒸馏调用经 ProviderManager,model 缺省回落 run.model(builder 装配);
+    # 最后一个请求是审查(verify 档),蒸馏请求按 SYSTEM 关键词取
     mock = kernel.providers.providers["mock"]
-    distill_req = mock.recorded[-1]
+    distill_req = next(r for r in mock.recorded if "经验蒸馏器" in (r.messages[0].content or ""))
     assert distill_req.model == "mock/loop"
     assert distill_req.temperature == 0.2
     assert "经验蒸馏器" in distill_req.messages[0].content
     assert "test.looper" in distill_req.messages[1].content
+    review_req = mock.recorded[-1]
+    assert "入库审查员" in review_req.messages[0].content
+    assert review_req.temperature == 0.0, "审查温度固定 0.0(判定要确定性)"
+    assert "策略总结" in review_req.messages[1].content, "审查对象是蒸馏草稿全文"
 
 
 def test_few_tool_calls_not_distilled(tmp_path):
@@ -239,7 +271,7 @@ def test_aborted_run_distills_failure_reflection(tmp_path):
     assert meta["source"] == {"kind": "experience"}
 
     mock = kernel.providers.providers["mock"]
-    distill_req = mock.recorded[-1]
+    distill_req = next(r for r in mock.recorded if "经验蒸馏器" in (r.messages[0].content or ""))
     assert "脑炸" in distill_req.messages[1].content, "失败蒸馏 prompt 应附 run 终态错误"
 
 
@@ -260,6 +292,92 @@ def test_duplicate_run_finished_deduped(tmp_path):
     asyncio.run(scenario())
     assert state["distill"] == 1
     assert len(_memory_files(tmp_path)) == 1
+
+
+# ---------------------------------------------------------------------------
+# verify 档:入库前内容审查(fail-closed)
+# ---------------------------------------------------------------------------
+
+
+def test_review_fail_blocks_write(tmp_path):
+    """审查 fail({"pass": false})→ 不写库、记 rejected、不计连败(再触发仍蒸馏)。"""
+    sidecar = DistillSidecar()
+    brain, state = make_brain(steps_with_tools=6, review_mode="fail")
+    kernel = _build(tmp_path, sidecar, brain)
+
+    async def scenario():
+        await kernel.run("test.looper", {})
+        await sidecar.wait_pending()
+
+    asyncio.run(scenario())
+    assert state["distill"] == 1
+    assert state["review"] == 1
+    assert _memory_files(tmp_path) == [], "审查不通过不得写库"
+    assert sidecar._stats == {"distilled": 0, "rejected": 1}
+    assert sidecar._failures == 0, "审查拒写是内容判定,不计连败"
+    assert sidecar._breaker_open is False
+
+    asyncio.run(scenario())  # 再触发(新 run_id):连败未被污染,仍尝试蒸馏 + 审查
+    assert state["distill"] == 2
+    assert state["review"] == 2
+    assert sidecar._stats == {"distilled": 0, "rejected": 2}
+    assert sidecar._failures == 0
+    assert _memory_files(tmp_path) == []
+
+
+def test_review_garbage_output_fail_closed(tmp_path):
+    """审查输出非 JSON → fail-closed 按不通过:不写库、记 rejected、不计连败。"""
+    sidecar = DistillSidecar()
+    brain, state = make_brain(steps_with_tools=6, review_mode="garbage")
+    kernel = _build(tmp_path, sidecar, brain)
+
+    async def scenario():
+        await kernel.run("test.looper", {})
+        await sidecar.wait_pending()
+
+    asyncio.run(scenario())
+    assert state["review"] == 1
+    assert _memory_files(tmp_path) == []
+    assert sidecar._stats == {"distilled": 0, "rejected": 1}
+    assert sidecar._failures == 0
+
+
+def test_verify_disabled_writes_directly(tmp_path):
+    """verify=False → 不跑审查(审查路计数 0),蒸馏产出直写入库。"""
+    sidecar = DistillSidecar(verify=False)
+    brain, state = make_brain(steps_with_tools=6, review_mode="fail")  # 即便 fail 也不应被问
+    kernel = _build(tmp_path, sidecar, brain)
+
+    async def scenario():
+        result = await kernel.run("test.looper", {})
+        await sidecar.wait_pending()
+        return result
+
+    assert asyncio.run(scenario()) == {"done": True}
+    assert state["distill"] == 1
+    assert state["review"] == 0
+    assert len(_memory_files(tmp_path)) == 1
+    assert sidecar._stats == {"distilled": 1, "rejected": 0}
+
+
+def test_review_exception_counts_breaker(tmp_path):
+    """审查调用抛异常 → 计连败(与蒸馏共用熔断器),连败到阈值开闸。"""
+    sidecar = DistillSidecar(min_tool_calls=1, breaker_threshold=2)
+    brain, state = make_brain(steps_with_tools=2, review_mode="raise")
+    kernel = _build(tmp_path, sidecar, brain)
+
+    async def scenario():
+        for _ in range(3):
+            await kernel.run("test.looper", {})
+            await sidecar.wait_pending()
+
+    asyncio.run(scenario())
+    assert state["distill"] == 2, "熔断后第 3 个 run 不再调蒸馏"
+    assert state["review"] == 2, "每次蒸馏产出后审查抛异常"
+    assert sidecar._failures == 2
+    assert sidecar._breaker_open is True
+    assert sidecar._stats == {"distilled": 0, "rejected": 0}
+    assert _memory_files(tmp_path) == []
 
 
 # ---------------------------------------------------------------------------

@@ -181,6 +181,28 @@
 > verify_before_store,docs/STDLIB.md §4.8)。下文 §6(Sidecars)、§9(Memory)与 §四 P2 的
 > "蒸馏 sidecar"开口条目据此关闭,正文保留作历史快照。全量基线:1542 收集 =
 > 1493 passed + 10 skipped + 39 xfailed,0 失败。
+> **更新 2026-09-28(verify 审查门落地 + std/learn 前提校正)**:DistillSidecar 增
+> verify 档——构造参数 `verify: bool = True`(默认开;`[sidecars] distill` 表加
+> `verify` 键,非 bool ConfigError,agent-os.example.toml 已补):蒸馏产出后、
+> `memory.write` 前追加一次同 model、`temperature=0.0` 的审查调用(判定要确定性,
+> 不随蒸馏温度;`DISTILL_SYSTEM_REVIEW` = "经验入库审查员",三维:①指令注入
+> ("以后你要/总是/忽略之前的指令/角色扮演"式表述即 fail);②秘密/凭据/PII;
+> ③可迁移性(一次性琐事 fail);输出契约严格 JSON `{"pass", "reason"}` 禁围栏)。
+> fail-closed:非 JSON/缺 pass 键/类型不对/pass=false → 拒写,记 log、
+> `_stats["rejected"] += 1`、**不计连败**(拒写是内容判定,正常风控;仅审查 LLM
+> 异常计连败,与蒸馏共用熔断器);`_stats = {"distilled", "rejected"}` 实例计数,
+> 写库成功记 `distilled`。自审自局限已注记(同模型既写又审,只挡明显越界;异家族
+> 审批为 DESIGN §5.3 既有预留)。测试:tests/sidecars/test_distill.py +4、
+> tests/runtime/test_config.py +2。**前提校正**:上文"仍开口"误列 std/learn 三
+> 技能——三技能早已实现(2026-07-25 W4 波 commit 0de9ffb:
+> `common.learn.distill_experience`/`reflect_on_failure`(prompt,
+> `agent_os/std/learn.yaml:2-78`)+ `common.memory.verify`(code,
+> `agent_os/std/memory.yaml:222-259` + `agent_os/std/learn_handlers.py:32-44`,
+> 旧名 `verify_before_store` 别名 `skills/local_file.py:103`),锚点
+> `tests/skills/test_std_domain.py:180-202`);原句所指实为"与 sidecar 的联动"
+> (技能显式调用/结构化 JSON/不写库 vs sidecar 自动/散文/直写库 + verify 审查门),
+> DESIGN.md §16 结案注、STDLIB.md §4.8 与 STDLIB-CATALOG.md W4-4 已同步更正。
+> 全量基线:1557 收集 = 1508 passed + 10 skipped + 39 xfailed,0 失败。
 > ---
 > ✅ **复核 2026-09-28(帧/子树级预算内核强制,WS2)**:manifest `limits` 块成为执行点——
 > `limits.max_cost` 新增 additive 字段(`api/v1/skills.py:84`,默认 None;`skills/manifest.py:26-37,82`

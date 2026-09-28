@@ -341,11 +341,22 @@ ADD/UPDATE/DELETE/NOOP)/ `memory_consolidate`(周期重构)/ `memory_check`(code
 - **坑**:`citation_style` 管的是**输出侧**格式,不能替代**输入侧**隔离——
   每个感知工具都是注入入口,包裹标记是零成本的第一道防线。
 
-#### W4-4 `std/learn`
+#### W4-4 `std/learn` — 已实现
+
+已落地(2026-07-25 W4 波,commit 0de9ffb):`common.learn.distill_experience` /
+`common.learn.reflect_on_failure`(prompt,`agent_os/std/learn.yaml:2-78`)+
+`common.memory.verify`(code,`agent_os/std/memory.yaml:222-259` +
+`agent_os/std/learn_handlers.py:32-44`;旧名 `verify_before_store` 经别名表映射,
+`skills/local_file.py:103`),锚点测试 `tests/skills/test_std_domain.py:180-202`。
+落地形态与下述设计稿的偏差:`common.memory.verify` 做结构归一后的深比较
+(replay_result/expected 由调用方传入),"重置环境 + 重放"由调用侧承担;经验路径的
+入库审查另由 DistillSidecar verify 档承担(2026-09-28,DESIGN §11.2 蒸馏 sidecar)。
+与蒸馏 sidecar 的分工:技能 = 显式调用、产结构化 JSON、不写库;sidecar = 自动触发、
+散文经验、直写库 + verify 审查门。
 
 `distill_experience` / `reflect_on_failure` / `verify_before_store`。
 
-- `verify_before_store` 是**入库闸门**:重置环境 + 重放 + 验收判定。
+- `verify_before_store` 是**入库闸门**(设计稿:重置环境 + 重放 + 验收判定)。
   书的论断很硬:没有验证门,自我改进循环必然腐烂。
 - **与编排的连接**(开放问题 9):跑通的一次性编排脚本 + `verify_before_store`
   → `learned/` code skill,这是自进化闭环的最短路径。
@@ -482,7 +493,7 @@ WRITE/EXEC/NET 显式声明 idempotent、`cost_hint` 非空)。新增条目漏�
 
 ### CI 与离线的分界(不可破的线)
 
-现有套件的性质很珍贵:**1551 个测试(1502 passed / 10 skipped / 39 xfailed,
+现有套件的性质很珍贵:**1557 个测试(1508 passed / 10 skipped / 39 xfailed,
 0 失败;`pytest tests --collect-only` 实测口径)、无需 API key、零 flaky**。
 层 1–3 全进 CI;层 4 走 nightly/发版前,需要 key、花钱、报置信区间。
 对抗用例(§7.3a 的"诱导攻击")对 `injection_scan`/`untrusted_content`

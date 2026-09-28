@@ -439,15 +439,16 @@ data.access.* audit signals, D3-lite the `[web.tokens]` multi-user mapping);
 credential injection (WS1) and the two-phase confirm gate (WS2, HumanApproval
 sunk into the kernel) are implemented; the three §3.4 concurrency primitives
 are complete (`parallel_invoke` fork/join landed, together with subtree
-cascade cancel and the subtree accounting read view); Skill Lab
+cascade cancel and the subtree accounting read view); the multimodal
+contract (`Message.parts`, additive) and the narrate compression strategy
+have landed; Skill Lab
 L1-L5 is complete; all six Web themes pass the contract tests; the test
-baseline is 1595 Python tests (1546 passed, 10 skipped, 39 xfailed,
+baseline is 1626 Python tests (1577 passed, 10 skipped, 39 xfailed,
 0 failures) plus 32 frontend test files, all green.
 Designed but not yet implemented: remaining E3 items (audit panel), the D3
 remainder (delegation-chain weakest link, EscalationRequest data face), the
-M6 remainder (sandbox callback channel, the narrate compression strategy
-(multimodal contract open), and register()'s semver solving / directory write
-path / hot reload / full replay+evaluator gate), the
+M6 remainder (sandbox callback channel and register()'s semver
+solving / directory write path / hot reload / full replay+evaluator gate), the
 motion playback layer (theme contract test #5), multi-file skill_set
 promotion, and handler source promotion.
 

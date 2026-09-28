@@ -122,7 +122,7 @@ D1 的兼容策略是明确的设计取舍:**未配置 = 不拦截**。三种情
 4. **数据层 authZ 的 D3 余项未做。** D2 已落地(2026-08-31:`[data]` 配置段、per-subject 白名单第二判据、net/db 域判定、`data.access.*` 审计信号、判据回写 `credentials["_authz"]`),残余边界:派生链最弱一环与 EscalationRequest 数据面展示仍未实现(归 E3);policy 缺席时保持 D1"未配置不拦截"语义(忘了配 `[data]` 段 = 数据层整体不启用);多用户映射为 D3-lite(`[web.tokens]`),未配置时隔离仍由 run 边界承担。
 5. **类型推导能力有限。** 多支 Union、嵌套泛型、字面量等注解退化为 `{}`——schema 校验对这类参数形同虚设,fail-fast 承诺只覆盖基本型。
 6. **sync 工具的取消是假的。** `asyncio.to_thread` 无法中断线程,TIMEOUT 返回后底层函数可能继续运行;shell_exec 以超时钳制与子进程回收兜底(`test_shell_exec_timeout_clamped_to_spec_no_orphan`),但一般 sync 工具无此待遇。
-7. **MCP stdio 已接入(留传输与原语开口);持久 shell 未接入。** MCP 适配器已实现(2026-09-28,`tools/mcp.py`:stdio 传输、工具侧、零新依赖自实现 JSON-RPC 客户端,`[mcp.servers]` 配置 eager 装配、失败 ConfigError,工具以 `mcp.<server>.<tool>` 走全量管线;§8.3 供应链清单逐条落地);仍开口:Streamable HTTP 传输、resources/prompts 原语、与真实 MCP server 的互测(测试基线为罐头假服务器 `tests/helpers/mcp_server.py`)。`shell_exec` 仍是一次性子进程,§8.3 描述的"run 作用域持久会话(cwd/env 跨调用保持)"明确标注为后续里程碑(`with_builtins` docstring,:565-566)——文档与实现口径不同,以代码为准。
+7. **MCP stdio 已接入(留传输与原语开口);持久 shell 未接入。** MCP 适配器已实现(2026-09-28,`tools/mcp.py`:stdio 传输、工具侧、零新依赖自实现 JSON-RPC 客户端,`[mcp.servers]` 配置 eager 装配、失败 ConfigError,工具以 `mcp.<server>.<tool>` 走全量管线;§8.3 供应链清单逐条落地);仍开口:Streamable HTTP 传输、resources/prompts 原语、与真实 MCP server 的互测(测试基线为罐头假服务器 `tests/helpers/mcp_server.py`);image/resource 块 → `Message.parts` 契约已就绪(2026-09-28,DESIGN §4.1),生产侧接线留开口。`shell_exec` 仍是一次性子进程,§8.3 描述的"run 作用域持久会话(cwd/env 跨调用保持)"明确标注为后续里程碑(`with_builtins` docstring,:565-566)——文档与实现口径不同,以代码为准。
 8. **回放接线未完成。** `replayable` 的弹出机制已实现并有锚点测试,但记录源(host trace → `replay_records`)的接线"留后续里程碑"(:11-12,:315-316 注释);当前 replay 重放 LLM 侧,工具副作用仍真实发生。
 
 ## 7. 引用

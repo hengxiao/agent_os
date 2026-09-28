@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 
@@ -30,12 +31,14 @@ import pytest
 
 from agent_os.api.v1 import (
     ChatRequest,
+    ContentPart,
     Message,
     ProviderError,
     ProviderErrorKind,
     Role,
 )
 from agent_os.providers.claude import ClaudeProvider
+from agent_os.tools.blob import InMemoryBlobStore
 
 
 def _payload(*, blocks, stop_reason="end_turn", usage=None):
@@ -327,6 +330,92 @@ def test_stream_truncated_without_message_stop_raises_unavailable():
         asyncio.run(_collect(p, _stream_req()))
     assert exc_info.value.kind is ProviderErrorKind.UNAVAILABLE
     assert exc_info.value.retryable is True
+
+
+# ---------------------------------------------------------------------------
+# WS1 多模态 parts:image base64 block 与降级占位
+# ---------------------------------------------------------------------------
+
+
+def test_vision_parts_as_base64_image_block():
+    """caps 恒 vision;blob 接线后 USER parts → content 块数组(text + image base64)。"""
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json=_payload(blocks=[{"type": "text", "text": "好"}]))
+
+    async def main():
+        blob = InMemoryBlobStore()
+        ref = await blob.put(b"jpeg-bytes", "run-1")
+        p = ClaudeProvider(api_key="k", client=_client(handler), blob=blob)
+        assert p.capabilities().supports_vision is True
+        await p.chat(ChatRequest(
+            model="anthropic/m",
+            messages=[Message(
+                role=Role.USER, content="这是什么",
+                parts=[ContentPart(mime="image/jpeg", ref=ref)],
+            )],
+        ))
+
+    asyncio.run(main())
+    content = seen["body"]["messages"][0]["content"]
+    assert content[0] == {"type": "text", "text": "这是什么"}
+    assert content[1] == {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/jpeg",
+            "data": base64.b64encode(b"jpeg-bytes").decode("ascii"),
+        },
+    }
+
+
+def test_system_parts_placeholder_in_system_string():
+    """system 消息不进 messages(仅文本):其 parts 一律降级为 system 文本尾的占位行。"""
+    seen: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json=_payload(blocks=[{"type": "text", "text": "好"}]))
+
+    async def main():
+        blob = InMemoryBlobStore()
+        ref = await blob.put(b"img", "run-1")
+        p = ClaudeProvider(api_key="k", client=_client(handler), blob=blob)
+        await p.chat(ChatRequest(
+            model="anthropic/m",
+            messages=[
+                Message(role=Role.SYSTEM, content="你是助手。", parts=[ContentPart(ref=ref)]),
+                Message(role=Role.USER, content="你好"),
+            ],
+        ))
+        return ref
+
+    ref = asyncio.run(main())
+    assert seen["body"]["system"] == f"你是助手。\n[图片 image/png ref={ref} 未随请求发送]"
+    assert all(m["role"] != "system" for m in seen["body"]["messages"])
+
+
+def test_claude_missing_blob_ref_placeholder_not_crash():
+    """blob 缺 ref / 未接线:part 落显式占位行(纯文本),请求不炸。"""
+    bodies: list[dict] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(req.content))
+        return httpx.Response(200, json=_payload(blocks=[{"type": "text", "text": "好"}]))
+
+    msg = Message(role=Role.USER, content="图", parts=[ContentPart(ref="blob://run-1/missing")])
+    # blob 接线但缺 ref
+    p = ClaudeProvider(api_key="k", client=_client(handler), blob=InMemoryBlobStore())
+    asyncio.run(p.chat(ChatRequest(model="anthropic/m", messages=[msg])))
+    # blob 未接线
+    p2 = ClaudeProvider(api_key="k", client=_client(handler))
+    asyncio.run(p2.chat(ChatRequest(model="anthropic/m", messages=[msg])))
+
+    expected = "图\n[图片 image/png ref=blob://run-1/missing 未随请求发送]"
+    for body in bodies:
+        assert body["messages"][0]["content"] == expected
 
 
 # ---------------------------------------------------------------------------

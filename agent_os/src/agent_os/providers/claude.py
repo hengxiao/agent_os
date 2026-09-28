@@ -14,6 +14,10 @@ OpenAICompatibleProvider(§4.3"值得独立实现"):
   CONTEXT_OVERFLOW;529(overloaded)/5xx → UNAVAILABLE(retryable);自身不重试(重试在 Manager)。
 - 线格式:工具名发出时经 ``naming.mangle_name``(``.``→``__``)编码,响应解析时反向解码——
   Anthropic 函数名仅允许 ``[a-zA-Z0-9_-]``。
+- WS1 多模态(``supports_vision=True``):消息 ``parts`` 序列化为 image block
+  (``source.type="base64"``);blob 未接线/解析失败的 part 落显式占位行
+  (``providers/parts.py``,blob.get 是 async,chat/stream 开头预解析);
+  system 消息不进 messages,其 parts 一律降级为 system 文本尾的占位行。
 """
 
 from __future__ import annotations
@@ -39,6 +43,7 @@ from agent_os.api.v1 import (
 )
 
 from .naming import mangle_name, unmangle_name
+from .parts import image_blocks, placeholders_for, resolve_image_parts
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 _DEFAULT_MAX_TOKENS = 4096
@@ -58,6 +63,7 @@ class ClaudeProvider:
         client: httpx.AsyncClient | None = None,
         anthropic_version: str = "2023-06-01",
         default_max_tokens: int = _DEFAULT_MAX_TOKENS,
+        blob: Any | None = None,
     ) -> None:
         if name is not None:
             self.name = name
@@ -66,6 +72,8 @@ class ClaudeProvider:
         self.anthropic_version = anthropic_version
         self.default_max_tokens = default_max_tokens
         self._client = client
+        # WS1:多模态 parts 的 blob 通道(builder 装配注入;缺省 None = parts 占位降级)
+        self.blob = blob
 
     def capabilities(self) -> ProviderCaps:
         return ProviderCaps(
@@ -82,7 +90,7 @@ class ClaudeProvider:
             "anthropic-version": self.anthropic_version,
             "content-type": "application/json",
         }
-        body = self._request_body(req)
+        body = self._request_body(req, await self._resolve_parts(req.messages))
         try:
             if self._client is not None:
                 resp = await self._client.post(f"{self.base_url}/v1/messages", json=body, headers=headers)
@@ -112,7 +120,7 @@ class ClaudeProvider:
             "anthropic-version": self.anthropic_version,
             "content-type": "application/json",
         }
-        body = {**self._request_body(req), "stream": True}
+        body = {**self._request_body(req, await self._resolve_parts(req.messages)), "stream": True}
         try:
             if self._client is not None:
                 async with self._client.stream(
@@ -237,10 +245,32 @@ class ClaudeProvider:
     # 请求序列化(契约 → Anthropic 格式)
     # ------------------------------------------------------------------
 
-    def _request_body(self, req: ChatRequest) -> dict[str, Any]:
+    async def _resolve_parts(
+        self, messages: list[Message]
+    ) -> dict[int, list[dict[str, Any] | None]]:
+        """多模态 parts 预解析(WS1):blob.get 是 async,请求序列化保持同步。
+
+        caps 恒 vision(类级声明);blob 未接线时返回空表(序列化侧逐 part 落占位行)。
+        """
+        if not self.capabilities().supports_vision or self.blob is None:
+            return {}
+        return await resolve_image_parts(messages, self.blob, _claude_image_block)
+
+    def _request_body(
+        self,
+        req: ChatRequest,
+        resolved: dict[int, list[dict[str, Any] | None]] | None = None,
+    ) -> dict[str, Any]:
         model = req.model.removeprefix(f"{self.name}/")
-        system_parts = [m.content for m in req.messages if m.role is Role.SYSTEM and m.content]
-        messages = self._convert_messages([m for m in req.messages if m.role is not Role.SYSTEM])
+        # system 顶层独立(仅文本):system 消息一般无 parts,有也一律落占位行附尾
+        system_parts = [
+            m.content + (placeholders_for(m.parts, None) if m.parts else "")
+            for m in req.messages
+            if m.role is Role.SYSTEM and (m.content or m.parts)
+        ]
+        messages = self._convert_messages(
+            [m for m in req.messages if m.role is not Role.SYSTEM], resolved
+        )
         body: dict[str, Any] = {
             "model": model,
             "max_tokens": req.max_tokens or self.default_max_tokens,
@@ -261,9 +291,17 @@ class ClaudeProvider:
             body["temperature"] = req.temperature
         return body
 
-    @staticmethod
-    def _convert_messages(messages: list[Message]) -> list[dict[str, Any]]:
-        """连续 TOOL 消息合并进同一条 user 消息(Anthropic 要求 tool_result 在 user 内)。"""
+    def _convert_messages(
+        self,
+        messages: list[Message],
+        resolved: dict[int, list[dict[str, Any] | None]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """连续 TOOL 消息合并进同一条 user 消息(Anthropic 要求 tool_result 在 user 内)。
+
+        WS1:带 parts 的 USER 消息 → content 块数组(text + image base64 block);
+        解析失败/未接线的 part 落显式占位行;ASSISTANT 的 parts 不回传图片
+        (响应侧恒文本),占位行附其文本块尾。
+        """
         out: list[dict[str, Any]] = []
         for m in messages:
             if m.role is Role.TOOL:
@@ -281,13 +319,23 @@ class ClaudeProvider:
                         "thinking": m.reasoning,
                         "signature": m.meta.get("signature", ""),
                     })
-                if m.content:
-                    blocks.append({"type": "text", "text": m.content})
+                text = m.content
+                if m.parts:
+                    text += placeholders_for(m.parts, None)
+                if text:
+                    blocks.append({"type": "text", "text": text})
                 blocks.extend(
                     {"type": "tool_use", "id": tc.id, "name": mangle_name(tc.name), "input": tc.args}
                     for tc in m.tool_calls
                 )
                 out.append({"role": "assistant", "content": blocks})
+                continue
+            if m.parts:
+                part_blocks = (resolved or {}).get(id(m))
+                text = m.content + placeholders_for(m.parts, part_blocks)
+                images = image_blocks(part_blocks)
+                content: Any = [{"type": "text", "text": text}, *images] if images else text
+                out.append({"role": m.role.value, "content": content})
                 continue
             out.append({"role": m.role.value, "content": m.content})
         return out
@@ -356,6 +404,11 @@ class ClaudeProvider:
         if status == 529 or status >= 500:
             return ProviderError(ProviderErrorKind.UNAVAILABLE, message, retryable=True)
         return ProviderError(ProviderErrorKind.INVALID, f"HTTP {status}: {message}", retryable=False)
+
+
+def _claude_image_block(mime: str, b64: str) -> dict[str, Any]:
+    """单个 image part 的 Anthropic wire block(base64 source)。"""
+    return {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}
 
 
 def _parse_partial_json(raw: str) -> dict[str, Any]:

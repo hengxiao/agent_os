@@ -241,6 +241,12 @@ def test_mock_capabilities_streaming_flag():
     assert MockProvider(stream_scripts=[[("a", 0.0)]]).capabilities().supports_streaming is True
 
 
+def test_mock_capabilities_vision_flag():
+    """WS1:supports_vision kwarg 开关,缺省 False(同 stream_scripts 的 caps 门控先例)。"""
+    assert MockProvider().capabilities().supports_vision is False
+    assert MockProvider(supports_vision=True).capabilities().supports_vision is True
+
+
 def test_mock_stream_trailing_terminal_chunk():
     """脚本项可为 ChatChunk(原样透传):尾随终 chunk 携带 finish_reason/usage 记账锚点。"""
     terminal = ChatChunk(finish_reason="stop", usage=ChatUsage(prompt=3, completion=2))

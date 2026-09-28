@@ -128,6 +128,8 @@
 > **剩余**:多模态契约、组合子 budget 内核强制、ask_human/set_timer 工具面。
 > (**2026-09-28 更新**:组合子 budget 内核强制已关闭——manifest `limits.max_steps`/`max_cost`
 > 帧/子树级强制落地,见头部最新复核块;多模态契约与 ask_human/set_timer 工具面仍开口。)
+> (**2026-09-28 再更新**:多模态契约已关闭——`Message.parts` additive + provider parts
+> 序列化 + narrate 策略落地,见头部最新复核块;ask_human/set_timer 工具面仍开口。)
 > ---
 > ⚠️ **复核 2026-09-28(§7.2 高级压缩链落地,WS1+WS2)**:测试 **1522 收集 = 1473 passed + 10 skipped + 39 xfailed,0 失败**。
 > `SpillCompressor`(`context/spill.py`,name `"spill"`:非 pinned 超阈值 TOOL 消息移入 blob,
@@ -262,6 +264,28 @@
 > 下文 §3(Tool Registry)"未开发"中的"MCP 适配器"据此关闭,dated 原文保留。
 > 全量基线:1595 收集 = 1546 passed + 10 skipped + 39 xfailed,0 失败(两轮复跑确认;
 > 时长受并行会话负载影响波动大,不作为口径)。
+> ---
+> ✅ **复核 2026-09-28(多模态契约 + narrate 压缩策略落地,WS1+WS2)**:§4.1 契约 additive
+> 扩展——`ContentPart{type="image", mime, ref=blob://<run_id>/<sha>}` + `Message.parts`
+> (缺省 None、位置最后,位置参数兼容;content 仍是纯文本投影,parts 元素生成后不可变),
+> checkpoint 仅 parts 非空落键、读容错缺键 None(CHECKPOINT_VERSION 不动);estimator
+> 多模态粗估 `IMAGE_PART_TOKENS`=1024/图(精确口径 = provider usage/`token_counter`
+> 仍开口);OpenAI/Claude 序列化 parts(blob.get → base64;OpenAI image_url data URI、
+> Claude image base64 block;共享件 `providers/parts.py`,`_resolve_parts` async 预解析),
+> `supports_vision` 且 blob 在场才走图、否则 content 尾部显式占位(不静默丢),builder
+> 装配 blob 到 provider,Mock 加 supports_vision 开关,Claude system 消息 parts 恒占位;
+> `NarrateCompressor`(`context/narrate.py`,name `"narrate"`)——被逐区间 parts 消息原地
+> 改道,一次廉价 chat 批量生成逐句旁白(JSON 数组,容忍一层围栏),畸形/数量不符退化占位
+> `[多模态内容已逐出:{mime} ×N]` + meta narrated="fallback"(不静默丢,计连败),成功则
+> content=旁白、parts=None、meta narrated=True,evicted=0、marker `[NARRATED]`,usage
+> 收到响应即落账(含畸形轮),连败熔断口径同 summarize;模式表 `"narrate": ["narrate",
+> "truncate"]` 新增、`hierarchical` 改 `["spill", "narrate", "summarize"]`(narrate 在
+> summarize 前——摘要器拿到旁白而非占位),与 summarize 同模型档([context] 无新键),
+> Skill Lab 下拉补 narrate。降级语义如实:无 vision caps 的摘要模型拿到占位文本,旁白质量
+> 随之降级。**仍开口**:MCP image 块 → parts 接线与 http_fetch 二进制(生产源,契约已就绪)、
+> 多模态 token 精确口径、narrate 质量依赖摘要模型 vision 能力。上文 std 第 5 波块"剩余"
+> 的"多模态契约"与下文 §5(Context)复核注的 narrate/多模态 token 粗估口径据此关闭,
+> dated 原文保留。全量基线:1626 收集 = 1577 passed + 10 skipped + 39 xfailed,0 失败。
 
 ## 一、总览
 
@@ -326,6 +350,7 @@
 未开发(§7.2 策略表中只实现了 truncate 一档):**spill**(blob ref/preview/替换串冻结)、**summarize**(context-aware、保留契约、连败熔断)、**narrate**(多模态旁白)、**hierarchical** 责任链组合;contextualized preview;压缩缓存失效核算;多模态 token 口径;驱逐价值序。
 
 - **复核 2026-09-28**:spill/summarize/hierarchical 责任链已落地(见头部复核块与 docs/DESIGN.md §7.2 实现状态);仍开口:narrate(多模态契约)、contextualized preview、压缩缓存失效核算、多模态 token 口径、驱逐价值序。
+- **复核 2026-09-28(多模态批)**:narrate 已落地(`context/narrate.py`;hierarchical 链改序 spill→narrate→summarize,模式表新增 narrate 档),多模态契约 `Message.parts` additive 落地、估算器粗估分支 `IMAGE_PART_TOKENS`=1024/图入估算器(见头部复核块);仍开口:contextualized preview、压缩缓存失效核算、多模态 token **精确**口径、驱逐价值序、MCP image 块 → parts 接线、http_fetch 二进制。
 
 ### 6. Sidecars — ✅ ~80%
 
@@ -413,3 +438,4 @@
    (**复核 2026-09-27**:Memory 与 register()(带验证门)已落地;M6 剩余为沙箱回调通道高级形态、spill/summarize/narrate、蒸馏 sidecar 与 register() 留尾四项。)
 
    (**复核 2026-09-28**:蒸馏 sidecar 已落地(见头部复核块);M6 剩余为沙箱回调通道高级形态、narrate 压缩策略与 register() 留尾,蒸馏留尾:用户纠正/非显然工作流触发、跨进程去重、run 级用量信号、std/learn 三技能。)
+   (**复核 2026-09-28(多模态批)**:narrate 压缩策略已落地(见头部复核块);M6 剩余为沙箱回调通道高级形态与 register() 留尾。)

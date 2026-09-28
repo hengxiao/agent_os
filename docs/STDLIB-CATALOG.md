@@ -394,10 +394,11 @@ W0 地基(workdir / 契约四字段 / 错误 hint / if_match / shell 结构化)
                      │
                      └─→ W4-3 std/web · W4-4 std/learn
 
-W5 剩余阻塞在内核立项(多模态契约;ask_human/set_timer
+W5 剩余阻塞在内核立项(ask_human/set_timer
 工具面——挂起语义已随 supervisor 闭环落地。级联取消/子树记账读视图/组合子本体
 均已落地(2026-09-27,std/combinators.yaml);组合子 budget 的内核强制已落地
-(2026-09-28,manifest limits.max_steps/max_cost 帧/子树级强制))
+(2026-09-28,manifest limits.max_steps/max_cost 帧/子树级强制);多模态契约已落地
+(2026-09-28,Message.parts additive + provider parts 序列化,生产源接线留开口))
 ```
 
 **若只做三件**:W0-1(workdir)、W1-1+W1-2(system.file.list/system.file.search)、W0-3(错误 hint)。
@@ -493,7 +494,7 @@ WRITE/EXEC/NET 显式声明 idempotent、`cost_hint` 非空)。新增条目漏�
 
 ### CI 与离线的分界(不可破的线)
 
-现有套件的性质很珍贵:**1595 个测试(1546 passed / 10 skipped / 39 xfailed,
+现有套件的性质很珍贵:**1626 个测试(1577 passed / 10 skipped / 39 xfailed,
 0 失败;`pytest tests --collect-only` 实测口径)、无需 API key、零 flaky**。
 层 1–3 全进 CI;层 4 走 nightly/发版前,需要 key、花钱、报置信区间。
 对抗用例(§7.3a 的"诱导攻击")对 `injection_scan`/`untrusted_content`

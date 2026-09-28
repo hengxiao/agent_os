@@ -1,6 +1,6 @@
 # Context:组装、压缩与前缀稳定性
 
-> 章次:05 · 状态:已实现(含 spill/summarize/hierarchical 责任链;narrate 未实现——多模态契约开口) · 依据:`docs/DESIGN.md` §7、`agent_os/src/agent_os/context/manager.py`、`agent_os/src/agent_os/context/rolling_window.py`、`agent_os/src/agent_os/context/spill.py`、`agent_os/src/agent_os/context/summarize.py`、`agent_os/src/agent_os/context/chain.py`、`agent_os/src/agent_os/context/estimator.py`、`agent_os/src/agent_os/api/v1/context.py`
+> 章次:05 · 状态:已实现(含 spill/narrate/summarize/hierarchical 责任链) · 依据:`docs/DESIGN.md` §7、`agent_os/src/agent_os/context/manager.py`、`agent_os/src/agent_os/context/rolling_window.py`、`agent_os/src/agent_os/context/spill.py`、`agent_os/src/agent_os/context/narrate.py`、`agent_os/src/agent_os/context/summarize.py`、`agent_os/src/agent_os/context/chain.py`、`agent_os/src/agent_os/context/estimator.py`、`agent_os/src/agent_os/api/v1/context.py`
 
 ## 1. 概述
 
@@ -29,7 +29,7 @@ Context 子系统是帧上下文(`FrameContext`)的全权管理者:每次 LLM �
 
 ### 4.1 契约面
 
-`api/v1/context.py` 冻结四个符号:`ContextManager` 协议(`build`/`maintain`,:20-29)、`Compressor` 协议(`name` + `compress(ctx, target_tokens, svc)`,:33-40)、`CompressionReport`(evicted/before/after/cache_invalidation_estimate/marker,:44-54)、`KernelServices`(estimator/providers/blob,:58-67)。新压缩策略的注册面设计为 entry point `agent_os.compressors`——契约先行,基线可换;该组已在 `pyproject.toml` 声明并由 builder `_compressor_plugins()` 加载(2026-09-28:类无参实例化/实例直接用/按 `.name` 覆盖内置/坏 EP 警告跳过);manifest 里自定义模式名不可用(模式表内置四档 + off),第三方策略按名覆盖内置。
+`api/v1/context.py` 冻结四个符号:`ContextManager` 协议(`build`/`maintain`,:20-29)、`Compressor` 协议(`name` + `compress(ctx, target_tokens, svc)`,:33-40)、`CompressionReport`(evicted/before/after/cache_invalidation_estimate/marker,:44-54)、`KernelServices`(estimator/providers/blob,:58-67)。新压缩策略的注册面设计为 entry point `agent_os.compressors`——契约先行,基线可换;该组已在 `pyproject.toml` 声明并由 builder `_compressor_plugins()` 加载(2026-09-28:类无参实例化/实例直接用/按 `.name` 覆盖内置/坏 EP 警告跳过);manifest 里自定义模式名不可用(模式表内置五档 + off),第三方策略按名覆盖内置。
 
 ### 4.2 build:组装流水线
 
@@ -96,7 +96,7 @@ Memory 检索结果进帧组装的读取侧通道(`docs/DESIGN.md` §11.2 通道
 
 ### 4.8 估算器:口径唯一
 
-`TokenEstimator`(estimator.py):char/4 粗估 + 每消息固定开销 4 token(:14) + tool_calls 参数 JSON 折算,`calibration` 系数全局可调。它与 ProviderManager 共用同一口径(§4.2)——压缩水位判断与计费估算不会出现两套数字。`per_provider_factor` 预留各家 tokenizer 偏差的折算入口(:38-43)。
+`TokenEstimator`(estimator.py):char/4 粗估 + 每消息固定开销 4 token(:14) + tool_calls 参数 JSON 折算 + parts 多模态折算(`len(parts) * IMAGE_PART_TOKENS`,1024/图粗估,:18/:39),`calibration` 系数全局可调。它与 ProviderManager 共用同一口径(§4.2)——压缩水位判断与计费估算不会出现两套数字。`per_provider_factor` 预留各家 tokenizer 偏差的折算入口(:38-43)。
 
 ### 4.9 策略链:设计全景与实现落点
 
@@ -106,8 +106,8 @@ Memory 检索结果进帧组装的读取侧通道(`docs/DESIGN.md` §11.2 通道
 | `truncate`(rolling window) | 已实现 | 本章 4.7;注册名 `name = "truncate"` |
 | `spill` | 已实现 | `context/spill.py`:超阈值(默认 4000 字符,`[context]` 段可配)的非 pinned TOOL 消息内容移入 blob store,原地冻结替换串(`[SPILLED]` + 原始字节数 + `blob://<run_id>/<sha>` ref + head/tail 各 500 字符 + blob_get 分页取回提示),不删消息;svc.blob/run_id 缺失时 no-op |
 | `summarize` | 已实现 | `context/summarize.py`:被逐区间经 `svc.providers.chat` 廉价档摘要为 `[COMPRESSED]` compact note(context-aware:帧任务规格 + pinned 约束;保留契约:决策/文件清单/验证状态/TODO/标识符逐字),连败熔断(默认 3)或缺 providers/model 退化 `[COMPRESSED:truncate]` 纯截断 |
-| `hierarchical`(责任链默认) | 已实现 | `ChainCompressor`(chain.py):spill → summarize 有序链,逐阶段重估、达标短路;模式表 `_MODE_CHAINS`(manager.py:55-60),manifest `compress` 优先于 RunConfig;`KernelServices.providers` 已接线(`_svc(frame)` 注入 ProviderManager 与 run_id,manager.py:437-448) |
-| `narrate` | 未实现 | 多模态契约开口(`Message.content` 是 str,无操作对象) |
+| `hierarchical`(责任链默认) | 已实现 | `ChainCompressor`(chain.py):spill → narrate → summarize 有序链,逐阶段重估、达标短路;模式表 `_MODE_CHAINS`(manager.py:76-83),manifest `compress` 优先于 RunConfig;`KernelServices.providers` 已接线(`_svc(frame)` 注入 ProviderManager 与 run_id,manager.py:437-448) |
+| `narrate` | 已实现 | `context/narrate.py`:被逐区间内 parts 消息原地改道——一次廉价 chat 批量生成逐句旁白(JSON 数组),content=旁白、parts=None、meta narrated=True,不删消息(evicted=0,marker `[NARRATED]`);输出畸形/连败熔断(口径同 summarize)退化占位 `[多模态内容已逐出:{mime} ×N]`(meta narrated="fallback") |
 
 ## 5. 效果与验证(效果)
 
@@ -128,7 +128,7 @@ Memory 检索结果进帧组装的读取侧通道(`docs/DESIGN.md` §11.2 通道
 
 1. **裸 rolling window(truncate 单档)是已知循环诱因**:丢早期工具结果 → 模型重复调用已丢的工具。源码与 §7.6 都自带定位警告——它只是 hierarchical 链的中间层基座,链尾必须有 summarize 或 spill 承接,**不得读作推荐做法**;链已实现(2026-09-28,§4.9),生产形态应经 manifest `compress` 选 spill/summarize/hierarchical 链,`truncate` 单档仅作基线与消融对照。
 2. **被驱逐信息的可恢复性分档**:spill 可恢复——内容在 blob store,替换串附 `blob://` ref 与 blob_get 分页取回提示;summarize 有损——原区间不可恢复,compact note 只留保留契约要点;纯 truncate 驱逐仍不可恢复。
-3. **char/4 是粗估**:对代码、中文、JSON 密集的上下文偏差可观,cap 判断可能提前或滞后触发;`per_provider_factor` 恒返回 1.0(estimator.py:44),校准系数是占位接口。§7.6 提到的"多模态口径(图像按分辨率公式)"在估算器中没有实现分支——以代码为准,多模态估算未落地。
+3. **char/4 是粗估**:对代码、中文、JSON 密集的上下文偏差可观,cap 判断可能提前或滞后触发;`per_provider_factor` 恒返回 1.0(estimator.py:44),校准系数是占位接口。多模态估算已落地粗估分支——parts 按 `IMAGE_PART_TOKENS`=1024/图折算(estimator.py:18/:39);provider usage / `token_counter` 精确口径仍开口,§7.6 旧述"按分辨率公式"已随之更正。
 4. **§7.1 硬上限尾路径已实现,"临近模型窗口"独立档仍开口**:全链压完重估仍 `after > cap` → 抛 `ContextOverflowError`(manager.py:63/:421-424),帧失败上抛;但 cap 仍只有一档(manifest `max_tokens` 或默认 128_000,manager.py:111/:355-357),"临近模型窗口"档因模型窗口不可知未实现,真正撞窗口的兜底仍依赖 provider 报错。
 5. **状态栏只实现了"短轨迹逐轮替换"一支**:§7.3 设计了"长轨迹持久追加(完全保缓存)"分支,代码中状态消息每步重建、尾部 ephemeral 追加,等价于逐轮替换;设计中的"当前时间、工具调用计数"字段也未出现在状态行(manager.py:209-215)。以代码为准。
 6. **hint 策略硬编码**:20% 阈值(`LOW_BUDGET_RATIO`)与两条文案写死在 manager 里,技能无法按自身任务形态配置收敛策略;状态栏信任模型(模型无条件信任)放大了这条固定策略的影响面。
@@ -139,5 +139,5 @@ Memory 检索结果进帧组装的读取侧通道(`docs/DESIGN.md` §11.2 通道
 
 - 设计文档:`docs/DESIGN.md` §7(Context 子系统)、§4.2(token 口径唯一)、§3.1(agent loop);`docs/SKILL-INLINING.md` §4(组装/冻结/消融);`docs/SUPERVISOR.md` §2.1(ask_supervisor 呈现条件);`docs/CODE-ORCHESTRATION.md` §2.1(orchestrate 伪工具)
 - 契约:`agent_os/src/agent_os/api/v1/context.py`、`agent_os/src/agent_os/api/v1/frames.py`(FrameContext/Usage)
-- 实现:`agent_os/src/agent_os/context/manager.py`、`agent_os/src/agent_os/context/rolling_window.py`、`agent_os/src/agent_os/context/spill.py`、`agent_os/src/agent_os/context/summarize.py`、`agent_os/src/agent_os/context/chain.py`、`agent_os/src/agent_os/context/estimator.py`;调用点 `agent_os/src/agent_os/kernel/runner.py:490-493`、`agent_os/src/agent_os/kernel/control.py:23-24`
-- 测试:`agent_os/tests/context/test_context.py`、`agent_os/tests/context/test_inline_merge.py`、`agent_os/tests/context/test_spill.py`、`agent_os/tests/context/test_summarize.py`、`agent_os/tests/context/test_chain.py`、`agent_os/tests/kernel/test_fib_slice.py`、`agent_os/tests/kernel/test_compress_usage.py`
+- 实现:`agent_os/src/agent_os/context/manager.py`、`agent_os/src/agent_os/context/rolling_window.py`、`agent_os/src/agent_os/context/spill.py`、`agent_os/src/agent_os/context/narrate.py`、`agent_os/src/agent_os/context/summarize.py`、`agent_os/src/agent_os/context/chain.py`、`agent_os/src/agent_os/context/estimator.py`;调用点 `agent_os/src/agent_os/kernel/runner.py:490-493`、`agent_os/src/agent_os/kernel/control.py:23-24`
+- 测试:`agent_os/tests/context/test_context.py`、`agent_os/tests/context/test_inline_merge.py`、`agent_os/tests/context/test_spill.py`、`agent_os/tests/context/test_narrate.py`、`agent_os/tests/context/test_summarize.py`、`agent_os/tests/context/test_chain.py`、`agent_os/tests/kernel/test_fib_slice.py`、`agent_os/tests/kernel/test_compress_usage.py`

@@ -367,12 +367,12 @@ E1/E2 已实现(含 spawn 闸、Web 升权卡片);数据层 authZ D1/D2 已实�
 白名单、net/db 域判定与 data.access.* 审计信号,D3-lite `[web.tokens]`
 多用户映射);凭证注入(WS1)与 confirm 两阶段闸门(WS2,HumanApproval
 已下沉)已实现;§3.4 并发三原语齐备(`parallel_invoke` fork/join 落地,
-配套子树级联取消与子树记账读视图);Skill Lab L1-L5 全部落地;
-Web 六主题全部通过契约测试;测试基线 Python 1595 例(1546 passed /
+配套子树级联取消与子树记账读视图);多模态契约(`Message.parts`
+additive)与 narrate 压缩策略已落地;Skill Lab L1-L5 全部落地;
+Web 六主题全部通过契约测试;测试基线 Python 1626 例(1577 passed /
 10 skipped / 39 xfailed)+ 前端 32 个测试文件全绿。已设计未实现:E3 余项(审计面板)、
 D3 余项(派生链最弱一环、EscalationRequest 数据面)、M6 余项(沙箱回调
-通道、narrate 压缩策略(多模态契约开口)、register() 的 semver
-求解/目录写路径/热重载/完整重放+evaluator 门)、
+通道、register() 的 semver 求解/目录写路径/热重载/完整重放+evaluator 门)、
 动效播放层(主题契约测试第 5 项)、多文件 skill_set 归并、handler 源码进生产。
 
 路线原则:契约先行、基线可换、闸门守出口;每一项新能力先回答

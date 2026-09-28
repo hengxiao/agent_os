@@ -1,7 +1,7 @@
 """token 估算器(docs/DESIGN.md §7.6;M3)。
 
-char/4 粗估 + 按 provider 校准系数 + 多模态口径(图像按分辨率公式);
-接口预留精确 tokenizer(provider ``token_counter`` 优先,§4.2 口径唯一)。
+char/4 粗估 + 按 provider 校准系数 + 多模态口径(图像 part 按 ``IMAGE_PART_TOKENS``
+统一粗估,无分辨率数据);接口预留精确 tokenizer(provider ``token_counter`` 优先,§4.2 口径唯一)。
 """
 
 from __future__ import annotations
@@ -12,6 +12,10 @@ from agent_os.api.v1 import Message
 
 #: 每条消息的固定开销(token;角色/字段等元数据粗估)
 PER_MESSAGE_OVERHEAD = 4
+
+#: 单个多模态 part 的粗估 token 数(WS1):无分辨率数据的统一口径;
+#: 精确计量留开口给 provider usage / ``token_counter``(§4.2 口径唯一)
+IMAGE_PART_TOKENS = 1024
 
 
 class TokenEstimator:
@@ -25,11 +29,14 @@ class TokenEstimator:
         return max(1, len(text) // 4)
 
     def estimate_message(self, msg: Message) -> int:
-        """单条消息 = 固定开销 + content 估算 + tool_calls 参数 JSON 长度折算。"""
+        """单条消息 = 固定开销 + content 估算 + tool_calls 参数 JSON 长度折算
+        + parts 多模态折算(``len(parts) * IMAGE_PART_TOKENS``;None 零开销)。"""
         total = PER_MESSAGE_OVERHEAD + self.estimate_text(msg.content or "")
         for call in msg.tool_calls:
             args = json.dumps(call.args, ensure_ascii=False, sort_keys=True)
             total += self.estimate_text(args)
+        if msg.parts:
+            total += len(msg.parts) * IMAGE_PART_TOKENS
         return int(total * self.calibration)
 
     def estimate(self, messages: list[Message]) -> int:

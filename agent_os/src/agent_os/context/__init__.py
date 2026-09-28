@@ -3,6 +3,7 @@
 from .chain import ChainCompressor
 from .estimator import TokenEstimator
 from .manager import ContextManager, ContextOverflowError
+from .narrate import NarrateCompressor
 from .rolling_window import RollingWindowCompressor
 from .spill import SpillCompressor
 from .summarize import SummarizeCompressor
@@ -11,6 +12,7 @@ __all__ = [
     "ChainCompressor",
     "ContextManager",
     "ContextOverflowError",
+    "NarrateCompressor",
     "RollingWindowCompressor",
     "SpillCompressor",
     "SummarizeCompressor",

@@ -51,6 +51,7 @@ from agent_os.api.v1 import (
     RUN_ABORTED,
     RUN_FINISHED,
     RUN_STARTED,
+    ContentPart,
     FrameContext,
     FrameStatus,
     Grant,
@@ -86,7 +87,7 @@ def _usage_from_dict(data: dict[str, Any]) -> Usage:
 
 
 def _message_to_dict(msg: Message) -> dict[str, Any]:
-    return {
+    data: dict[str, Any] = {
         "role": msg.role.value,
         "content": msg.content,
         "tool_calls": [
@@ -98,9 +99,14 @@ def _message_to_dict(msg: Message) -> dict[str, Any]:
         "source": msg.source.value,
         "meta": msg.meta,
     }
+    if msg.parts:
+        # WS1 additive:parts 非空才落键(旧档无此键,读出 None;schema v1 不变)
+        data["parts"] = [{"type": p.type, "mime": p.mime, "ref": p.ref} for p in msg.parts]
+    return data
 
 
 def _message_from_dict(data: dict[str, Any]) -> Message:
+    parts_raw = data.get("parts")
     return Message(
         role=Role(data["role"]),
         content=data.get("content", ""),
@@ -113,6 +119,17 @@ def _message_from_dict(data: dict[str, Any]) -> Message:
         reasoning=data.get("reasoning"),
         source=Source(data.get("source", "system")),
         meta=data.get("meta", {}),
+        # 缺键容错(None):旧 checkpoint 无 parts;条目逐键取缺省(同 tool_calls 口径)
+        parts=[
+            ContentPart(
+                type=p.get("type", "image"),
+                mime=p.get("mime", "image/png"),
+                ref=p.get("ref", ""),
+            )
+            for p in parts_raw
+        ]
+        if parts_raw is not None
+        else None,
     )
 
 

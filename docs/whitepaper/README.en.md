@@ -27,7 +27,7 @@
 | [02](en/02-skills.md) | Skills: manifest contract, loading pipeline, pseudo-tools & the inline purity gate | implemented |
 | [03](en/03-tools.md) | Tools: dispatch pipeline, three-way permission intersection, side_effect declarations, path sandbox | implemented |
 | [04](en/04-logic-kernel.md) | Logic Kernel & orchestration sandbox: trust routing, syscall channel, no privilege elevation | implemented |
-| [05](en/05-context.md) | Context: assembly, compression (truncate/spill/summarize chain), prefix-cache stability | implemented (narrate open) |
+| [05](en/05-context.md) | Context: assembly, compression (truncate/spill/narrate/summarize chain), prefix-cache stability | implemented |
 | [06](en/06-determinism.md) | Signals, telemetry & determinism engineering: 36-signal catalog, WAL, checkpoint/resume/replay/diff | implemented |
 | [07](en/07-sidecars.md) | Sidecars: signal-driven supervision, verdict arbitration matrix, dual budget layers | partial (HumanApproval sunk into the kernel tool-confirm gate) |
 | [08](en/08-supervisor.md) | Supervisor: ruling router, suspend-answer-resume loop, three host channels | implemented |

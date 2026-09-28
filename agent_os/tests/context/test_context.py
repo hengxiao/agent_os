@@ -26,6 +26,7 @@ from hypothesis import strategies as st
 from agent_os.api.v1 import (
     POST_COMPRESS,
     PRE_COMPRESS,
+    ContentPart,
     FrameContext,
     Message,
     Role,
@@ -36,8 +37,9 @@ from agent_os.api.v1 import (
     ToolCall,
     Veto,
 )
-from agent_os.context.estimator import TokenEstimator
+from agent_os.context.estimator import IMAGE_PART_TOKENS, TokenEstimator
 from agent_os.context.manager import ContextManager, ContextOverflowError
+from agent_os.context.narrate import NarrateCompressor
 from agent_os.context.rolling_window import RollingWindowCompressor
 from agent_os.context.spill import SpillCompressor
 from agent_os.context.summarize import SummarizeCompressor
@@ -122,6 +124,17 @@ def test_estimator_scales_with_content():
     assert big > small
     assert est.estimate_text("abcd" * 100) >= 100
     assert est.estimate([]) == 0
+
+
+def test_estimator_image_parts_surcharge():
+    """WS1:parts 按 IMAGE_PART_TOKENS 折算(每 part +1024);parts None 零开销。"""
+    est = TokenEstimator()
+    base = est.estimate_message(Message(role=Role.USER, content="hi"))
+    assert IMAGE_PART_TOKENS == 1024
+    with_parts = est.estimate_message(
+        Message(role=Role.USER, content="hi", parts=[ContentPart(), ContentPart()])
+    )
+    assert with_parts - base == 2 * IMAGE_PART_TOKENS
 
 
 # ---------------------------------------------------------------------------
@@ -381,10 +394,10 @@ def test_maintain_without_compressor_updates_estimate_only(tmp_path):
 
 
 def _chain_manager(reg, *, bus: _RecordingBus | None = None):
-    """注册表三段齐全(spill/truncate/summarize)的 manager + 录制总线。
+    """注册表四段齐全(spill/truncate/narrate/summarize)的 manager + 录制总线。
 
-    summarize 不配模型(providers 也为 None)→ 内部退化 truncate(§7.2),
-    但责任链身份(post:compress 的 strategy 名)不受影响。
+    summarize/narrate 不配模型(providers 也为 None)→ 内部退化(§7.2:truncate /
+    占位),但责任链身份(post:compress 的 strategy 名)不受影响。
     """
     bus = bus or _RecordingBus()
     mgr = ContextManager(
@@ -394,6 +407,7 @@ def _chain_manager(reg, *, bus: _RecordingBus | None = None):
         compressors={
             "spill": SpillCompressor(threshold_chars=200, head_chars=50, tail_chars=50),
             "truncate": RollingWindowCompressor(),
+            "narrate": NarrateCompressor(model=None),
             "summarize": SummarizeCompressor(model=None),
         },
         estimator=TokenEstimator(),
@@ -418,11 +432,12 @@ def _oversized_frame(n: int = 40, size: int = 400) -> SkillFrame:
         ("truncate", "truncate"),
         ("spill", "spill+truncate"),
         ("summarize", "summarize"),
-        ("hierarchical", "spill+summarize"),
+        ("narrate", "narrate+truncate"),
+        ("hierarchical", "spill+narrate+summarize"),
     ],
 )
 def test_mode_selects_registered_chain(tmp_path, mode, strategy):
-    """四种模式按 _MODE_CHAINS 取注册表阶段组链;post:compress 带实际 strategy 名。"""
+    """五种模式按 _MODE_CHAINS 取注册表阶段组链;post:compress 带实际 strategy 名。"""
     reg = _registry(tmp_path, mode=mode)
     mgr, bus = _chain_manager(reg)
     frame = _oversized_frame()

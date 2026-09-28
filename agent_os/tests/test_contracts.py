@@ -84,13 +84,27 @@ def test_flat_reexport() -> None:
         "Tool", "ToolSpec", "ToolContext", "ToolResult", "SkillManifest", "Sidecar",
         "Signal", "RunControl", "ContextManager", "Compressor", "LogicKernel",
         "TelemetrySink", "MemoryService", "Blackboard", "Envelope", "RunConfig",
-        "MemoryPrincipal",
+        "MemoryPrincipal", "ContentPart",
     ):
         assert hasattr(v1, name), f"agent_os.api.v1 缺少 re-export: {name}"
     # 同名消歧(M6):平铺命名空间的 Principal 是数据层形态(subject/issuer/attrs);
     # memory 形态(user/tenant)只经 MemoryPrincipal 别名到达
     assert v1.Principal is not v1.MemoryPrincipal
     assert v1.MemoryPrincipal is memory_mod.Principal
+
+
+def test_message_parts_additive() -> None:
+    """WS1 additive(§4.1):ContentPart 可默认实例化;Message.parts 缺省 None 且位置参数兼容。"""
+    from agent_os.api.v1 import ContentPart, Message, Role
+
+    part = ContentPart()
+    assert part.type == "image" and part.mime == "image/png" and part.ref == ""
+    assert Message().parts is None
+    # 位置参数兼容:parts 放最后,既有位置调用形态不受影响
+    msg = Message(Role.USER, "看图")
+    assert msg.content == "看图" and msg.parts is None
+    msg2 = Message(role=Role.USER, content="看图", parts=[ContentPart(ref="blob://r/abc")])
+    assert msg2.parts is not None and msg2.parts[0].ref == "blob://r/abc"
 
 
 def test_default_instantiation() -> None:
@@ -268,3 +282,19 @@ def test_full_chain_builds_with_memory(tmp_path) -> None:
     kernel = builder.build()
     assert kernel.memory is memory, "memory(M6)应接线到 kernel.memory"
     assert kernel.tools._memory is memory, "memory 应经 bind_memory 注入工具 registry(§11.2)"
+
+
+def test_builder_wires_blob_into_vision_providers(tmp_path) -> None:
+    """WS1:builder 在 blob 就绪点把 blob store 注入声明了 blob 槽位的适配器
+    (ProviderManager 只是门面,接线直达实例;无槽位的 provider 不接线)。"""
+    from agent_os.providers import MockProvider, OpenAICompatibleProvider
+    from agent_os.runtime import KernelBuilder
+    from agent_os.tools.blob import InMemoryBlobStore
+
+    blob = InMemoryBlobStore()
+    vision = OpenAICompatibleProvider(base_url="https://api.example.com/v1", supports_vision=True)
+    mock = MockProvider()
+    builder = KernelBuilder().providers(vision, mock).blob(blob)
+    builder.build()
+    assert vision.blob is blob, "声明 blob 槽位的适配器应接到 builder 的 blob store"
+    assert not hasattr(mock, "blob"), "无 blob 槽位的 provider 不应被强塞属性"

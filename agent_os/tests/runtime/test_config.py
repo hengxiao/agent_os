@@ -28,6 +28,7 @@ from agent_os.api.v1 import (
     ToolPolicy,
 )
 from agent_os.context import (
+    NarrateCompressor,
     RollingWindowCompressor,
     SpillCompressor,
     SummarizeCompressor,
@@ -795,17 +796,22 @@ def test_memory_recall_type_errors_rejected():
 
 
 def test_context_section_absent_uses_defaults():
-    """缺 [context] 段 = 全默认:注册表三段齐全,summarize 模型跟 run.model,providers 接线。"""
+    """缺 [context] 段 = 全默认:注册表四段齐全,summarize 模型跟 run.model,providers 接线。"""
     kernel = build_kernel(_base_cfg())
     compressors = kernel.context._compressors
-    assert set(compressors) == {"spill", "truncate", "summarize"}
+    assert set(compressors) == {"spill", "truncate", "narrate", "summarize"}
     assert isinstance(compressors["spill"], SpillCompressor)
     assert isinstance(compressors["truncate"], RollingWindowCompressor)
+    assert isinstance(compressors["narrate"], NarrateCompressor)
     assert isinstance(compressors["summarize"], SummarizeCompressor)
     assert compressors["spill"]._threshold_chars == 4000
     assert compressors["summarize"]._model == "mock/fib"  # 缺省跟 run.model
     assert compressors["summarize"]._breaker_threshold == 3
     assert compressors["summarize"]._temperature == 0.2
+    # narrate 与 summarize 同模型档(§7.2 同为廉价文本生成)
+    assert compressors["narrate"]._model == "mock/fib"
+    assert compressors["narrate"]._breaker_threshold == 3
+    assert compressors["narrate"]._temperature == 0.2
     assert kernel.context._providers is kernel.providers  # ProviderManager 注入(§7.5)
 
 
@@ -826,6 +832,10 @@ def test_context_section_explicit_values():
     assert compressors["summarize"]._breaker_threshold == 5
     assert compressors["summarize"]._temperature == 0.7
     assert compressors["spill"]._threshold_chars == 8000
+    # narrate 与 summarize 同模型档,同组调参一并生效
+    assert compressors["narrate"]._model == "mock/cheap"
+    assert compressors["narrate"]._breaker_threshold == 5
+    assert compressors["narrate"]._temperature == 0.7
 
 
 def test_context_section_unknown_field_rejected():

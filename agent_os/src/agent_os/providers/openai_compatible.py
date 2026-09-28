@@ -6,6 +6,9 @@ CONTEXT_OVERFLOW、5xx/超时→UNAVAILABLE;自身不重试(重试在 ProviderMa
 reasoning 字段 round-trip(请求带 ``reasoning_content``,响应映射回 ``Message.reasoning``)。
 线格式:工具/函数名发出时经 ``naming.mangle_name``(``.``→``__``)编码,响应解析时反向解码——
 OpenAI 兼容端点不接受点分函数名。
+WS1 多模态:``supports_vision=True`` 且 blob 接线时,消息 ``parts`` 序列化为
+OpenAI parts 数组(text + ``image_url`` data URI);否则逐 part 落显式占位行
+(``providers/parts.py``,blob.get 是 async,chat/stream 开头预解析)。
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from agent_os.api.v1 import (
 )
 
 from .naming import mangle_name, unmangle_name
+from .parts import image_blocks, placeholders_for, resolve_image_parts
 
 
 class OpenAICompatibleProvider:
@@ -38,6 +42,8 @@ class OpenAICompatibleProvider:
 
     ``client`` 可注入自带 transport 的 ``httpx.AsyncClient``(测试用 MockTransport);
     缺省时每次请求临时建 client。``base_url`` 不带尾斜杠亦可,端点 = ``{base_url}/chat/completions``。
+    ``supports_vision`` 按后端能力声明(缺省 False);``blob`` 为 parts 解析的
+    blob store(builder 装配注入,缺省 None = parts 一律占位降级)。
     """
 
     name: str = "openai"
@@ -50,6 +56,8 @@ class OpenAICompatibleProvider:
         name: str | None = None,
         client: httpx.AsyncClient | None = None,
         api_key_env: str | None = None,
+        blob: Any | None = None,
+        supports_vision: bool = False,
     ) -> None:
         if name is not None:
             self.name = name
@@ -59,6 +67,9 @@ class OpenAICompatibleProvider:
         # 动态 key(15 分钟 OAuth token 教训):给了 env 名就每次调用现读,
         # token_refresh 续期 os.environ 后下一调用即生效;显式 api_key 仍钉死
         self._api_key_env = api_key_env
+        # WS1:多模态 parts 的 blob 通道与 vision 能力位(缺省关,按后端声明)
+        self.blob = blob
+        self._supports_vision = supports_vision
 
     @property
     def api_key(self) -> str | None:
@@ -74,13 +85,14 @@ class OpenAICompatibleProvider:
     def capabilities(self) -> ProviderCaps:
         return ProviderCaps(
             supports_tools=True,
+            supports_vision=self._supports_vision,
             supports_streaming=True,
             cot_protocol="reasoning_content",
         )
 
     async def chat(self, req: ChatRequest) -> ChatResponse:
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
-        body = self._request_body(req)
+        body = self._request_body(req, await self._resolve_parts(req.messages))
         try:
             if self._client is not None:
                 resp = await self._client.post(
@@ -111,7 +123,7 @@ class OpenAICompatibleProvider:
         """
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         body = {
-            **self._request_body(req),
+            **self._request_body(req, await self._resolve_parts(req.messages)),
             "stream": True,
             "stream_options": {"include_usage": True},
         }
@@ -222,12 +234,27 @@ class OpenAICompatibleProvider:
     # 请求序列化(契约 → OpenAI 格式)
     # ------------------------------------------------------------------
 
-    def _request_body(self, req: ChatRequest) -> dict[str, Any]:
+    async def _resolve_parts(
+        self, messages: list[Message]
+    ) -> dict[int, list[dict[str, Any] | None]]:
+        """多模态 parts 预解析(WS1):blob.get 是 async,请求序列化保持同步。
+
+        vision caps + blob 接线齐备才解析;否则空表(序列化侧逐 part 落占位行)。
+        """
+        if not self.capabilities().supports_vision or self.blob is None:
+            return {}
+        return await resolve_image_parts(messages, self.blob, _openai_image_block)
+
+    def _request_body(
+        self,
+        req: ChatRequest,
+        resolved: dict[int, list[dict[str, Any] | None]] | None = None,
+    ) -> dict[str, Any]:
         prefix = f"{self.name}/"
         model = req.model.removeprefix(prefix)
         body: dict[str, Any] = {
             "model": model,
-            "messages": [self._message_to_openai(m) for m in req.messages],
+            "messages": [self._message_to_openai(m, resolved) for m in req.messages],
         }
         if req.tools:
             body["tools"] = [
@@ -240,11 +267,22 @@ class OpenAICompatibleProvider:
             body["max_tokens"] = req.max_tokens
         return body
 
-    @staticmethod
-    def _message_to_openai(m: Message) -> dict[str, Any]:
+    def _message_to_openai(
+        self,
+        m: Message,
+        resolved: dict[int, list[dict[str, Any] | None]] | None = None,
+    ) -> dict[str, Any]:
         if m.role is Role.TOOL:
             return {"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content}
-        out: dict[str, Any] = {"role": m.role.value, "content": m.content}
+        content: Any = m.content
+        if m.parts:
+            # WS1:有解析成功的 part → content 变 parts 数组(text + image_url);
+            # 失败/未解析的 part 落显式占位行附在文本尾(逐 part 一行)
+            blocks = (resolved or {}).get(id(m))
+            text = m.content + placeholders_for(m.parts, blocks)
+            images = image_blocks(blocks)
+            content = [{"type": "text", "text": text}, *images] if images else text
+        out: dict[str, Any] = {"role": m.role.value, "content": content}
         if m.tool_calls:
             out["tool_calls"] = [
                 {
@@ -314,6 +352,11 @@ class OpenAICompatibleProvider:
         if status >= 500:
             return ProviderError(ProviderErrorKind.UNAVAILABLE, message, retryable=True)
         return ProviderError(ProviderErrorKind.INVALID, f"HTTP {status}: {message}", retryable=False)
+
+
+def _openai_image_block(mime: str, b64: str) -> dict[str, Any]:
+    """单个 image part 的 OpenAI wire block(data URI 内嵌 base64)。"""
+    return {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
 
 
 def _parse_arguments(raw: Any) -> dict[str, Any]:

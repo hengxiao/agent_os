@@ -77,7 +77,9 @@ _MODE_CHAINS = {
     "truncate": ["truncate"],
     "spill": ["spill", "truncate"],
     "summarize": ["summarize"],
-    "hierarchical": ["spill", "summarize"],
+    "narrate": ["narrate", "truncate"],
+    # narrate 在 summarize 前:多模态消息先改道为旁白文本,摘要器拿到旁白而非占位
+    "hierarchical": ["spill", "narrate", "summarize"],
 }
 
 

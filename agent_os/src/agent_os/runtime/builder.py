@@ -32,6 +32,7 @@ from agent_os.api.v1 import (
     derive_skill_tier,
 )
 from agent_os.context.manager import ContextManager
+from agent_os.context.narrate import NarrateCompressor
 from agent_os.context.rolling_window import RollingWindowCompressor
 from agent_os.context.spill import SpillCompressor
 from agent_os.context.summarize import SummarizeCompressor
@@ -256,7 +257,7 @@ class KernelBuilder:
         """组装 Kernel(注入信号总线 / FrameStack / RunControl 等内核件)。
 
         装配边界:缺省补 ContextManager
-        (M3:§7.2 注册表装配 spill/truncate/summarize 三段 + ProviderManager 注入
+        (M3:§7.2 注册表装配 spill/truncate/narrate/summarize 四段 + ProviderManager 注入
         + entry point ``agent_os.compressors`` 插件按 name 覆盖 + 状态注入
         + pre/post:compress 信号,§7);
         logic_kernels 按 TrustLevel 索引装配为 LogicKernelRouter(§9.2);
@@ -267,7 +268,8 @@ class KernelBuilder:
         (§11.2:memory_search/memory_write 数据源,bind 模式同 bind_skills);
         user_channel(M1,§8.3)经 bind_user_channel 注入工具 registry
         (system.user.ask/notify 的宿主回调);
-        blob(M3)经 bind_blob 替换工具 registry 的 spill store(缺省进程内);
+        blob(M3)经 bind_blob 替换工具 registry 的 spill store(缺省进程内),
+        并注入声明了 blob 槽位的 provider 适配器(WS1 多模态 parts 解析通道);
         supervisor(S1)有 handler 才装配 SupervisorManager 挂到 kernel.supervisor
         (docs/SUPERVISOR.md §2.3;仅预置策略字段时不装配,运行时按"未装配"报 not_found);
         human_approval(WS2,docs/SUPERVISOR.md §10):sidecar 列表中的 HumanApproval
@@ -343,6 +345,13 @@ class KernelBuilder:
             compressors: dict[str, Any] = {
                 "spill": SpillCompressor(threshold_chars=ctx_cfg.spill_threshold_chars),
                 "truncate": RollingWindowCompressor(),
+                # narrate 与 summarize 同模型档(§7.2 同为廉价文本生成);
+                # 无可用 providers 时 narrate 自动退化占位(不静默丢)
+                "narrate": NarrateCompressor(
+                    model=ctx_cfg.summarize_model or self.config.model or None,
+                    breaker_threshold=ctx_cfg.summarize_breaker,
+                    temperature=ctx_cfg.summarize_temperature,
+                ),
                 "summarize": SummarizeCompressor(
                     # 缺省跟主模型走;无可用 providers 时 summarize 自动退化 truncate(§7.2)
                     model=ctx_cfg.summarize_model or self.config.model or None,
@@ -379,6 +388,12 @@ class KernelBuilder:
             tools.bind_user_channel(self._user_channel)  # M1 §8.3:system.user.ask/notify 的宿主回调(bind 模式,同 bind_memory)
         if self._blob is not None and hasattr(tools, "bind_blob"):
             tools.bind_blob(self._blob)  # M3:spill 的 blob store(缺省 = 进程内 InMemoryBlobStore)
+        if self._blob is not None:
+            # WS1:多模态 parts 序列化的 blob 通道——ProviderManager 只是门面,
+            # 直接挂到实际适配器实例(声明了 blob 槽位的才接;缺省 None = 占位降级)
+            for provider in self._providers:
+                if hasattr(provider, "blob"):
+                    provider.blob = self._blob
         if self._telemetry is not None:
             # §5.1:Telemetry 是总线的特权订阅者(全量订阅),不算 sidecar
             bus.subscribe("*", self._telemetry.record)

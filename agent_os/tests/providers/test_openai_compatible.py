@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 
 import httpx
@@ -14,6 +15,7 @@ import pytest
 
 from agent_os.api.v1 import (
     ChatRequest,
+    ContentPart,
     Message,
     ProviderError,
     ProviderErrorKind,
@@ -21,6 +23,7 @@ from agent_os.api.v1 import (
     ToolCall,
 )
 from agent_os.providers.openai_compatible import OpenAICompatibleProvider
+from agent_os.tools.blob import InMemoryBlobStore
 
 
 def _openai_response(payload, status: int = 200, headers: dict | None = None):
@@ -311,3 +314,131 @@ def test_stream_transport_error_maps_unavailable():
         asyncio.run(_collect(p, _stream_req()))
     assert exc_info.value.kind is ProviderErrorKind.UNAVAILABLE
     assert exc_info.value.retryable is True
+
+
+# ---------------------------------------------------------------------------
+# WS1 多模态 parts:vision 序列化(image_url data URI)与降级占位
+# ---------------------------------------------------------------------------
+
+
+def _capture_client(seen: dict) -> httpx.AsyncClient:
+    payload = {
+        "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+    }
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json=payload)
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def test_vision_parts_serialized_as_image_url():
+    """supports_vision + blob 接线:parts → content parts 数组(text + image_url data URI)。"""
+    seen: dict = {}
+
+    async def main():
+        blob = InMemoryBlobStore()
+        ref = await blob.put(b"\x89PNG-bytes", "run-1")
+        p = OpenAICompatibleProvider(
+            base_url="https://api.example.com/v1", api_key="k",
+            client=_capture_client(seen), blob=blob, supports_vision=True,
+        )
+        assert p.capabilities().supports_vision is True
+        await p.chat(ChatRequest(
+            model="openai/gpt-v",
+            messages=[Message(role=Role.USER, content="这是什么", parts=[ContentPart(ref=ref)])],
+        ))
+
+    asyncio.run(main())
+    content = seen["body"]["messages"][0]["content"]
+    assert content[0] == {"type": "text", "text": "这是什么"}
+    b64 = base64.b64encode(b"\x89PNG-bytes").decode("ascii")
+    assert content[1] == {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+
+
+def test_vision_disabled_falls_back_to_placeholder():
+    """缺省 supports_vision=False:parts 不进 wire,content 尾部逐 part 显式占位行。"""
+    seen: dict = {}
+    p = OpenAICompatibleProvider(
+        base_url="https://api.example.com/v1", api_key="k", client=_capture_client(seen)
+    )
+    assert p.capabilities().supports_vision is False
+    msg = Message(
+        role=Role.USER, content="这是什么",
+        parts=[ContentPart(mime="image/jpeg", ref="blob://run-1/deadbeef")],
+    )
+    asyncio.run(p.chat(ChatRequest(model="openai/gpt-x", messages=[msg])))
+    content = seen["body"]["messages"][0]["content"]
+    assert content == "这是什么\n[图片 image/jpeg ref=blob://run-1/deadbeef 未随请求发送]"
+
+
+def test_vision_without_blob_falls_back_to_placeholder():
+    """supports_vision=True 但 blob 未接线:全部 part 占位,content 保持纯文本。"""
+    seen: dict = {}
+    p = OpenAICompatibleProvider(
+        base_url="https://api.example.com/v1", api_key="k",
+        client=_capture_client(seen), supports_vision=True,
+    )
+    msg = Message(role=Role.USER, content="图", parts=[ContentPart(ref="blob://run-1/ab")])
+    asyncio.run(p.chat(ChatRequest(model="openai/gpt-v", messages=[msg])))
+    content = seen["body"]["messages"][0]["content"]
+    assert content == "图\n[图片 image/png ref=blob://run-1/ab 未随请求发送]"
+
+
+def test_vision_missing_blob_ref_placeholder_not_crash():
+    """blob 缺 ref:该 part 落占位行(不炸请求),其余 part 照常进 wire。"""
+    seen: dict = {}
+
+    async def main():
+        blob = InMemoryBlobStore()
+        good = await blob.put(b"img", "run-1")
+        p = OpenAICompatibleProvider(
+            base_url="https://api.example.com/v1", api_key="k",
+            client=_capture_client(seen), blob=blob, supports_vision=True,
+        )
+        msg = Message(
+            role=Role.USER, content="两张",
+            parts=[ContentPart(ref="blob://run-1/missing"), ContentPart(ref=good)],
+        )
+        await p.chat(ChatRequest(model="openai/gpt-v", messages=[msg]))
+
+    asyncio.run(main())
+    content = seen["body"]["messages"][0]["content"]
+    assert content[0] == {
+        "type": "text",
+        "text": "两张\n[图片 image/png ref=blob://run-1/missing 未随请求发送]",
+    }
+    b64 = base64.b64encode(b"img").decode("ascii")
+    assert content[1] == {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+    assert len(content) == 2, f"失败 part 只占位不进 wire:{content}"
+
+
+def test_vision_parts_also_serialized_in_stream():
+    """流式路径同一预解析(chat/stream 开头都调 _resolve_parts)。"""
+    seen: dict = {}
+    events = [
+        {"choices": [{"index": 0, "delta": {"content": "好"}}]},
+        {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1}},
+        "[DONE]",
+    ]
+
+    async def main():
+        blob = InMemoryBlobStore()
+        ref = await blob.put(b"img", "run-1")
+        p = OpenAICompatibleProvider(
+            base_url="https://api.example.com/v1", api_key="k",
+            client=_sse_client(_sse_payload(*events), seen=seen), blob=blob, supports_vision=True,
+        )
+        req = ChatRequest(
+            model="openai/gpt-v",
+            messages=[Message(role=Role.USER, content="看", parts=[ContentPart(ref=ref)])],
+        )
+        return [c async for c in p.stream(req)]
+
+    chunks = asyncio.run(main())
+    assert chunks, "流照常收尾"
+    content = seen["body"]["messages"][0]["content"]
+    assert content[0] == {"type": "text", "text": "看"}
+    assert content[1]["type"] == "image_url"

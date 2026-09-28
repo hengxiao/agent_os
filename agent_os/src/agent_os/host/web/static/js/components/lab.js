@@ -247,7 +247,7 @@ export function editorHtml(view) {
     _field("modelTemperature", "model.temperature", _text("modelTemperature", f.modelTemperature)) +
     _field("cpMaxTokens", "context_policy.max_tokens", _text("cpMaxTokens", f.cpMaxTokens)) +
     _field("cpCompress", "context_policy.compress",
-      _select("cpCompress", f.cpCompress, ["hierarchical", "off", "truncate", "spill", "summarize"])) +
+      _select("cpCompress", f.cpCompress, ["hierarchical", "off", "truncate", "spill", "narrate", "summarize"])) +
     _field("limMaxSteps", "limits.max_steps", _text("limMaxSteps", f.limMaxSteps)) +
     _field("limTimeout", "limits.timeout", _text("limTimeout", f.limTimeout)) +
     _field("limRetry", "limits.retry", _text("limRetry", f.limRetry)) +

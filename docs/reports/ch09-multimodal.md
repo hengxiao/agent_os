@@ -251,6 +251,11 @@ Q1:端到端语音 Agent 的可观测性系统怎么设计?Q9:快思考驱动的
    经 ProviderManager 生成一句文本旁白留置(AOI 第三组件的压缩化),作为"驱逐时改道"hook
    挂在 RollingWindowCompressor 基座上;压缩策略可读取 Provider caps 按模型调图像 token 预算。
    并在 §7 职责补一句:压缩兼负延迟控制。
+   (**落地注记 2026-09-28**:本条主体已落地——`Message.parts` 多模态契约(additive)、
+   `narrate` 策略(`context/narrate.py`:逐出前批量旁白 + 连败熔断退化占位,链序
+   spill→narrate→summarize)、估算器 `IMAGE_PART_TOKENS`=1024/图粗估;"按 caps 分模型调
+   图像 token 预算"与精确口径(provider usage/token_counter)仍开口;详见 dev-status.md
+   头部复核块与 ../DESIGN.md §7.2/§16。)
 5. **【P2|§8.3、§8.4;Tool Registry】**`shell_exec` 加持久会话 + 哨兵判完成 + 可配超时;
    新增 `str_replace_editor` 式安全编辑工具;examples/ 提供 computer-use 参考工具集
    (按长宽比选分辨率 + 双向坐标缩放、DOM/SoM 双路定位),明确属工具实现而非内核职责。

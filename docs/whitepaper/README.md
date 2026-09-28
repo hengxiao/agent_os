@@ -24,7 +24,7 @@
 | [02](zh/02-skills.md) | Skills:manifest 契约、加载流水线、伪工具与内联纯度闸门 | 已实现 |
 | [03](zh/03-tools.md) | Tools:分发流水线、三层权限交集、side_effect 声明、路径沙箱 | 已实现 |
 | [04](zh/04-logic-kernel.md) | Logic Kernel 与编排沙箱:信任路由、syscall 通道、无权限提升 | 已实现 |
-| [05](zh/05-context.md) | Context:组装、压缩(truncate/spill/summarize 责任链)、前缀缓存稳定性 | 已实现(narrate 未实现) |
+| [05](zh/05-context.md) | Context:组装、压缩(truncate/spill/narrate/summarize 责任链)、前缀缓存稳定性 | 已实现 |
 | [06](zh/06-determinism.md) | 信号、Telemetry 与确定性工程:36 信号目录、WAL、checkpoint/resume/replay/diff | 已实现 |
 | [07](zh/07-sidecars.md) | Sidecars:信号驱动监督、verdict 仲裁矩阵、双预算结构 | 部分实现(HumanApproval 已下沉为内核 tool-confirm 闸门) |
 | [08](zh/08-supervisor.md) | Supervisor:裁决路由、挂起-作答-恢复闭环、三宿主通道 | 已实现 |

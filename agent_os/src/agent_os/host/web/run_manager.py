@@ -232,20 +232,22 @@ def signal_row(sig: Signal) -> dict[str, Any]:
 
 def message_row(msg: Message) -> dict[str, Any]:
     """Message → JSON 安全 dict(与 checkpoint.json 的 messages 行同形,P3 帧检视用)。"""
-    return _jsonable(
-        {
-            "role": msg.role.value,
-            "content": msg.content,
-            "tool_calls": [
-                {"id": tc.id, "name": tc.name, "args": tc.args} for tc in msg.tool_calls
-            ],
-            "tool_call_id": msg.tool_call_id,
-            "name": msg.name,
-            "reasoning": msg.reasoning,
-            "source": msg.source.value,
-            "meta": msg.meta,
-        }
-    )
+    row: dict[str, Any] = {
+        "role": msg.role.value,
+        "content": msg.content,
+        "tool_calls": [
+            {"id": tc.id, "name": tc.name, "args": tc.args} for tc in msg.tool_calls
+        ],
+        "tool_call_id": msg.tool_call_id,
+        "name": msg.name,
+        "reasoning": msg.reasoning,
+        "source": msg.source.value,
+        "meta": msg.meta,
+    }
+    if msg.parts:
+        # WS1 additive:与 checkpoint._message_to_dict 同口径(parts 非空才落键)
+        row["parts"] = [{"type": p.type, "mime": p.mime, "ref": p.ref} for p in msg.parts]
+    return _jsonable(row)
 
 
 class SignalHub:

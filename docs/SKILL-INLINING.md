@@ -135,7 +135,8 @@ merge **不是** C++ 那种"语义保证不变"的优化——执行主体从被
 
 1. 取调用方 manifest `permissions.skills` 中 `inline: true` 的技能,
    按**列表声明序**排列(确定性,不按字典序——作者控制优先级);
-2. SYSTEM = `render_prompt(caller.prompt, input)` + 内联能力段:
+2. SYSTEM = `render_prompt(caller.prompt, input)` + 内联能力段(若 manifest
+   `context_policy.recall` 开启,尾部再追加经验参考冻结快照段,见 DESIGN §7.5/§11.2):
 
    ```
    ## 内联能力(直接运用,无需调用)

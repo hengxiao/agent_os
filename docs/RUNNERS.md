@@ -99,6 +99,9 @@ backoff_base = 0.5
 # [memory]                             # M6 记忆子系统(docs/DESIGN.md §11):段存在才接线,缺段完全不 bind
 # dir = "./memory"                     # LocalFileMemoryService 根目录(每条目一 Markdown + frontmatter);
                                        # 接线后 system.memory.search/write 经 bind_memory 装配(未装配调 NOT_FOUND)
+# recall_k = 3                         # 经验注入槽检索条数(2026-09-28;另需 manifest context_policy.recall: true
+# recall_entry_chars = 800             # 才启用,默认关、缺声明零检索零信号;三键 strict 校验)
+# recall_total_chars = 2000            # 每条注入字符上限 / 注入段总字符上限;缺段或未 bind → 槽位跳过
 
 # [blob]                               # M3 spill 文件存储(docs/DESIGN.md §8.4/§7.2):段存在才接线,
                                        # 缺段 = 进程内 InMemoryBlobStore(零破坏)

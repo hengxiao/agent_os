@@ -232,7 +232,9 @@ Memory:跨 run 记忆与知识,检索层做权限过滤(与数据 authZ 同判�
 local_file.py`:每条目一 Markdown + frontmatter,principal 过滤 → freshness →
 BM25;`[memory] dir` 配置段接线,`system.memory.search/write` 工具常驻);
 蒸馏写路径亦已通(2026-09-28,`DistillSidecar`:run 终态后经廉价模型
-蒸馏经验写入 Memory,触发条件与直挂总线注记见第 7 章)。
+蒸馏经验写入 Memory,触发条件与直挂总线注记见第 7 章);读取侧注入槽
+亦已通(2026-09-28,manifest `context_policy.recall` opt-in:帧首次
+build 检索一次,经验参考段冻结进 SYSTEM)。
 Blackboard:run 内帧间状态与
 消息的共享内存,并发控制,供 fork/join 并行的帧交换中间结果;
 `LocalBlackboard`(CAS + pub/sub)为已实现基线。
@@ -366,7 +368,7 @@ E1/E2 已实现(含 spawn 闸、Web 升权卡片);数据层 authZ D1/D2 已实�
 多用户映射);凭证注入(WS1)与 confirm 两阶段闸门(WS2,HumanApproval
 已下沉)已实现;§3.4 并发三原语齐备(`parallel_invoke` fork/join 落地,
 配套子树级联取消与子树记账读视图);Skill Lab L1-L5 全部落地;
-Web 六主题全部通过契约测试;测试基线 Python 1557 例(1508 passed /
+Web 六主题全部通过契约测试;测试基线 Python 1575 例(1526 passed /
 10 skipped / 39 xfailed)+ 前端 32 个测试文件全绿。已设计未实现:E3 余项(审计面板)、
 D3 余项(派生链最弱一环、EscalationRequest 数据面)、M6 余项(沙箱回调
 通道、narrate 压缩策略(多模态契约开口)、register() 的 semver

@@ -46,7 +46,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_os.api.v1 import (
     MemoryEntry,
-    MemoryPrincipal,
     Permission,
     Provenance,
     SkillArtifact,
@@ -57,6 +56,7 @@ from agent_os.api.v1 import (
     ToolResult,
 )
 from agent_os.kernel.errors import SkillLoadError
+from agent_os.memory import to_memory_principal
 from agent_os.skills.gate import GateError
 from agent_os.skills.manifest import parse_manifest
 from agent_os.tools.builtins import _check_if_match
@@ -762,17 +762,6 @@ def _memory_not_assembled() -> ToolResult:
     )
 
 
-def _memory_principal(principal: Any) -> MemoryPrincipal | None:
-    """ToolContext.principal(数据层 subject/issuer/attrs 形态)→ memory principal(user=subject)。
-
-    None(v1 单用户语义)原样透传 = 检索全通;身份在场时只映射 user,
-    tenant 留待多租户里程碑(subject 形如 "user:hengxiao",原样进 source.user)。
-    """
-    if principal is None:
-        return None
-    return MemoryPrincipal(user=getattr(principal, "subject", None) or None)
-
-
 def memory_search_tool(*, name: str = "system.memory.search", registry: LocalPythonToolRegistry) -> Tool:
     """构造 ``system.memory.search``(§11.2 M6;READ):BM25 检索跨 run 持久记忆。
 
@@ -798,7 +787,7 @@ def memory_search_tool(*, name: str = "system.memory.search", registry: LocalPyt
             return _invalid("query 为空", "给关键词,如 \"retry 教训\"、\"user preference\"")
         if k < 1:
             return _invalid(f"k 必须 >= 1(收到 {k})", "调大 k")
-        principal = _memory_principal(ctx.principal if ctx is not None else None)
+        principal = to_memory_principal(ctx.principal if ctx is not None else None)
         entries = await service.search(text, k, principal)
         results = [
             {
@@ -858,7 +847,7 @@ def memory_write_tool(*, name: str = "system.memory.write", registry: LocalPytho
             return _invalid("content 为空", "给要沉淀的经验正文,如 \"flaky 测试先复跑再判失败\"")
         if ttl_s < 0:
             return _invalid(f"ttl_s 必须 >= 0(收到 {ttl_s})", "0 = 不过期")
-        principal = _memory_principal(ctx.principal if ctx is not None else None)
+        principal = to_memory_principal(ctx.principal if ctx is not None else None)
         source: dict[str, Any] = {"kind": "experience"}
         if principal is not None and principal.user:
             source["user"] = principal.user

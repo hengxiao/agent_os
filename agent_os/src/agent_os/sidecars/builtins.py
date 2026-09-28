@@ -544,7 +544,7 @@ class DistillSidecar:
                     return
             # 写入约定同 system.memory.write(tools/std.py):kind=experience 强制
             # source tagging + trust="experience"(经验条目不具指令效力,§11.1);
-            # principal 在场时映射 source.user(同 _memory_principal:只映射 user)
+            # principal 在场时映射 source.user(同 to_memory_principal:只映射 user)
             source: dict[str, Any] = {"kind": "experience"}
             subject = getattr(getattr(root, "principal", None), "subject", None)
             if subject:

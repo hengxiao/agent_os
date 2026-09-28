@@ -82,7 +82,7 @@ from agent_os.providers.claude import ClaudeProvider
 from agent_os.providers.kimi import KimiProvider
 from agent_os.providers.mock import MockProvider
 from agent_os.providers.openai_compatible import OpenAICompatibleProvider
-from agent_os.runtime.builder import ContextSection, KernelBuilder
+from agent_os.runtime.builder import ContextSection, KernelBuilder, MemorySection
 from agent_os.sidecars.builtins import (
     BudgetGuard,
     DistillSidecar,
@@ -128,6 +128,9 @@ _CONTEXT_FIELDS = (
     "summarize_breaker",
     "summarize_temperature",
 )
+
+#: ``[memory]`` 支持的字段(§11;dir = 存储接线,recall_* = 经验参考段调参,缺键 = 全默认)
+_MEMORY_FIELDS = ("dir", "recall_k", "recall_entry_chars", "recall_total_chars")
 
 
 class CredentialScope:
@@ -332,6 +335,32 @@ def _context_section(cfg: dict[str, Any]) -> ContextSection:
         spill_threshold_chars=threshold,
         summarize_breaker=breaker,
         summarize_temperature=float(temperature),
+    )
+
+
+def _memory_section(cfg: dict[str, Any]) -> MemorySection:
+    """``[memory]`` 段 → :class:`MemorySection`(经验参考段 recall 调参;缺键 = 全默认)。
+
+    严格未知字段 + 类型校验(同 ``_context_section`` 先例):recall 三键拼错会静默
+    落默认值——检索条数/截断口径错位不痛不痒地失效,宁可装配期炸掉。
+    recall 段还需 manifest ``context_policy.recall: true`` 才启用(opt-in)。
+    """
+    unknown = sorted(set(cfg) - set(_MEMORY_FIELDS))
+    if unknown:
+        raise ConfigError(f"[memory] 含未知字段: {unknown}(支持: {list(_MEMORY_FIELDS)})")
+    recall_k = cfg.get("recall_k", 3)
+    if not isinstance(recall_k, int) or isinstance(recall_k, bool) or recall_k < 1:
+        raise ConfigError(f"[memory] recall_k 须为 >= 1 的整数,得到: {recall_k!r}")
+    entry_chars = cfg.get("recall_entry_chars", 800)
+    if not isinstance(entry_chars, int) or isinstance(entry_chars, bool) or entry_chars < 1:
+        raise ConfigError(f"[memory] recall_entry_chars 须为 >= 1 的整数,得到: {entry_chars!r}")
+    total_chars = cfg.get("recall_total_chars", 2000)
+    if not isinstance(total_chars, int) or isinstance(total_chars, bool) or total_chars < 1:
+        raise ConfigError(f"[memory] recall_total_chars 须为 >= 1 的整数,得到: {total_chars!r}")
+    return MemorySection(
+        recall_k=recall_k,
+        recall_entry_chars=entry_chars,
+        recall_total_chars=total_chars,
     )
 
 
@@ -658,14 +687,14 @@ def build_kernel(
     memory_cfg = cfg.get("memory")
     if memory_cfg is not None:
         # M6:[memory] 段存在才接线(同 [credentials] 先例);缺席完全不 bind。
-        # 严格未知字段(同 _prices/_credentials):dir 拼错会静默写到别的目录
-        unknown_mem = sorted(set(memory_cfg) - {"dir"})
-        if unknown_mem:
-            raise ConfigError(f"[memory] 含未知字段: {unknown_mem}(支持: ['dir'])")
+        # 严格未知字段 + recall_* 类型校验在 _memory_section(同 _context_section
+        # 先例):dir 拼错会静默写到别的目录,recall 调参拼错会静默落默认值
+        section = _memory_section(memory_cfg)
         mem_dir = memory_cfg.get("dir") or "./memory"
         if not isinstance(mem_dir, str):
             raise ConfigError(f"[memory] dir 须为字符串路径,得到: {mem_dir!r}")
         builder.memory(LocalFileMemoryService(mem_dir))
+        builder.memory_section(section)
     blob_cfg = cfg.get("blob")
     if blob_cfg is not None:
         # M3:[blob] 段存在才接线(同 [memory] 先例);缺段 = 进程内 InMemoryBlobStore(零破坏)。

@@ -119,7 +119,7 @@ runner ── emit(pre:tool.call) ──▶ SignalBus(按订阅序 await)
 
 ## 5. 效果与验证(效果)
 
-调试器测试三层共 **44 例**:内核原语 `tests/kernel/test_debug.py`(14 例)、CLI REPL `tests/cli/test_debug.py`(12 例)、Web API `tests/web/test_debug_api.py`(18 例),全部在项目基线(Python 1557 例 + 前端 32 个测试文件)内常绿。停点断言共用同一事实锚点:`demo.fib` n=3 的信号序列(F1 step1 → invoke F2(一步即弹)→ F1 step2 内 `pre:tool.call(system.python.exec)` → F1 step3 终答 → F1 pop)(`tests/web/test_debug_api.py:21-24`)。关键断言:
+调试器测试三层共 **44 例**:内核原语 `tests/kernel/test_debug.py`(14 例)、CLI REPL `tests/cli/test_debug.py`(12 例)、Web API `tests/web/test_debug_api.py`(18 例),全部在项目基线(Python 1575 例 + 前端 32 个测试文件)内常绿。停点断言共用同一事实锚点:`demo.fib` n=3 的信号序列(F1 step1 → invoke F2(一步即弹)→ F1 step2 内 `pre:tool.call(system.python.exec)` → F1 step3 终答 → F1 pop)(`tests/web/test_debug_api.py:21-24`)。关键断言:
 
 - **全流程**(`test_debug_full_flow`):启动即断(hits 累计、帧栈非空)→ step_into 进子帧(depth=2,frame_id 变化)→ step_out 停在子帧 `pre:frame.pop` → continue 命中 tool_call 断点(`reason="breakpoint"`)→ live 帧检视读到内存态 messages → modify 把 `code` 改为 `"result = 41"`,run 跑完,**结果随改后参数变化**:`{"seq": [0, 1, 41]}`;run 结束会话自动 detached(:84-145);
 - **step_over 边界**:同帧下一条 pre:step 停(中间跨过整个子帧);帧尾停在 `pre:frame.pop`(:148-174);

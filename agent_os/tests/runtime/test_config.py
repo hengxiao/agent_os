@@ -749,6 +749,46 @@ def test_memory_write_search_roundtrip_via_kernel(tmp_path):
     assert any("flaky" in r["content"] for r in found.value["results"]), "写入后应可检索闭环"
 
 
+def test_memory_recall_keys_wire_to_context_manager(tmp_path):
+    """[memory] recall 三键 + memory 服务装配进默认 ContextManager(段启用还需 manifest opt-in)。"""
+    kernel = build_kernel(
+        _base_cfg(
+            memory={
+                "dir": str(tmp_path / "memory"),
+                "recall_k": 5,
+                "recall_entry_chars": 120,
+                "recall_total_chars": 500,
+            },
+        )
+    )
+    assert kernel.context._memory is kernel.memory, "memory 服务传入默认 ContextManager"
+    assert kernel.context._recall_k == 5
+    assert kernel.context._recall_entry_chars == 120
+    assert kernel.context._recall_total_chars == 500
+
+
+def test_memory_recall_defaults_when_keys_absent(tmp_path):
+    """recall 三键缺省 = 全默认(3/800/2000);缺 [memory] 段时 ContextManager.memory 为 None。"""
+    kernel = build_kernel(_base_cfg(memory={"dir": str(tmp_path / "memory")}))
+    assert (kernel.context._recall_k, kernel.context._recall_entry_chars) == (3, 800)
+    assert kernel.context._recall_total_chars == 2000
+
+    bare = build_kernel(_base_cfg())
+    assert bare.context._memory is None, "缺段:recall 帧冻结 None 快照(opt-in 双重闸门)"
+
+
+def test_memory_recall_type_errors_rejected():
+    """严格先例(同 _context_section):recall 三键类型/取值非法 → ConfigError。"""
+    with pytest.raises(ConfigError, match=r"\[memory\] recall_k 须为"):
+        build_kernel(_base_cfg(memory={"recall_k": "3"}))
+    with pytest.raises(ConfigError, match=r"\[memory\] recall_k 须为"):
+        build_kernel(_base_cfg(memory={"recall_k": True}))
+    with pytest.raises(ConfigError, match=r"\[memory\] recall_entry_chars 须为"):
+        build_kernel(_base_cfg(memory={"recall_entry_chars": 0}))
+    with pytest.raises(ConfigError, match=r"\[memory\] recall_total_chars 须为"):
+        build_kernel(_base_cfg(memory={"recall_total_chars": -1}))
+
+
 # ---------------------------------------------------------------------------
 # [context] 段(WS2,§7.2):压缩链调参;缺段 = 全默认;严格未知字段/类型校验
 # ---------------------------------------------------------------------------

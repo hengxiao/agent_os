@@ -177,12 +177,15 @@ def test_frozen_fields_present() -> None:
     assert chunk.delta is None and chunk.finish_reason is None and chunk.usage is None
     assert signals.BLACKBOARD_PUBLISH == "blackboard.publish"
     assert signals.BLACKBOARD_WRITE == "blackboard.write"
-    # 运行期注册信号(§6.2;WS-C):pre 可否决 / post 观察;目录全集 33 → 35
+    # 运行期注册信号(§6.2;WS-C):pre 可否决 / post 观察;目录全集 33 → 35 → 36
     assert signals.PRE_SKILL_REGISTER == "pre:skill.register"
     assert signals.POST_SKILL_REGISTER == "post:skill.register"
     assert signals.PRE_SKILL_REGISTER in signals.SIGNAL_NAMES
     assert signals.POST_SKILL_REGISTER in signals.SIGNAL_NAMES
-    assert len(signals.SIGNAL_NAMES) == 35
+    # 经验参考段组装信号(additive):帧首次 build 快照时一次性发射
+    assert signals.POST_CONTEXT_RECALL == "post:context.recall"
+    assert signals.POST_CONTEXT_RECALL in signals.SIGNAL_NAMES
+    assert len(signals.SIGNAL_NAMES) == 36
 
     # compression: "off" 消融档存在(默认值是 hierarchical,档位语义见 §7.1)
     assert RunConfig(compression="off").compression == "off"

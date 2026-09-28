@@ -30,7 +30,7 @@
 
 ### 4.1 信号目录与总线
 
-信号命名 `<阶段>:<事件>`;`pre:` 前缀表示同步可否决,`post:` 表示异步观察(§5.1)。目录冻结在契约层(`api/v1/signals.py:53-151`,35 个名字进 `SIGNAL_NAMES` 供契约测试断言;D2 新增 `data.access.denied/granted`,WS-C 新增 `pre/post:skill.register`),结构为 `Signal{name, run_id, frame_id, payload, ts}`(`api/v1/signals.py:154-162`)。订阅模式支持三种:`"*"` 全量、精确名、`"prefix.*"` 后缀通配(`kernel/signals.py:19-25`)。总线 `emit` 按订阅序 await 全部匹配 handler 并收集返回值;handler 异常吞掉记日志——订阅者故障不得拖垮 run(`kernel/signals.py:41-56`)。
+信号命名 `<阶段>:<事件>`;`pre:` 前缀表示同步可否决,`post:` 表示异步观察(§5.1)。目录冻结在契约层(`api/v1/signals.py:53-151`,36 个名字进 `SIGNAL_NAMES` 供契约测试断言;D2 新增 `data.access.denied/granted`,WS-C 新增 `pre/post:skill.register`,2026-09-28 新增 `post:context.recall`),结构为 `Signal{name, run_id, frame_id, payload, ts}`(`api/v1/signals.py:154-162`)。订阅模式支持三种:`"*"` 全量、精确名、`"prefix.*"` 后缀通配(`kernel/signals.py:19-25`)。总线 `emit` 按订阅序 await 全部匹配 handler 并收集返回值;handler 异常吞掉记日志——订阅者故障不得拖垮 run(`kernel/signals.py:41-56`)。
 
 ### 4.2 数据流与裁决链
 

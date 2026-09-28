@@ -28,7 +28,7 @@
 | [03](en/03-tools.md) | Tools: dispatch pipeline, three-way permission intersection, side_effect declarations, path sandbox | implemented |
 | [04](en/04-logic-kernel.md) | Logic Kernel & orchestration sandbox: trust routing, syscall channel, no privilege elevation | implemented |
 | [05](en/05-context.md) | Context: assembly, compression (truncate/spill/summarize chain), prefix-cache stability | implemented (narrate open) |
-| [06](en/06-determinism.md) | Signals, telemetry & determinism engineering: 35-signal catalog, WAL, checkpoint/resume/replay/diff | implemented |
+| [06](en/06-determinism.md) | Signals, telemetry & determinism engineering: 36-signal catalog, WAL, checkpoint/resume/replay/diff | implemented |
 | [07](en/07-sidecars.md) | Sidecars: signal-driven supervision, verdict arbitration matrix, dual budget layers | partial (HumanApproval sunk into the kernel tool-confirm gate) |
 | [08](en/08-supervisor.md) | Supervisor: ruling router, suspend-answer-resume loop, three host channels | implemented |
 | [09](en/09-escalation.md) | Escalation: three trust tiers, the gate, grants, clean-context invariant | implemented (E1/E2) |

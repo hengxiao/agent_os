@@ -19,6 +19,7 @@ __all__ = [
     "DATA_ACCESS_GRANTED",
     "POST_COMPRESS",
     "POST_CONTEXT_INLINE",
+    "POST_CONTEXT_RECALL",
     "POST_FRAME_POP",
     "POST_FRAME_PUSH",
     "POST_LLM_CHUNK",
@@ -94,6 +95,9 @@ POST_COMPRESS = "post:compress"
 #: 内联能力段组装(帧首次 build 快照时一次性发射;docs/SKILL-INLINING.md §7)
 POST_CONTEXT_INLINE = "post:context.inline"
 
+#: 经验参考段组装(帧首次 build 快照时一次性发射)
+POST_CONTEXT_RECALL = "post:context.recall"
+
 BLACKBOARD_PUBLISH = "blackboard.publish"  # 黑板读写可审计(§12)
 BLACKBOARD_WRITE = "blackboard.write"
 
@@ -139,6 +143,7 @@ SIGNAL_NAMES: tuple[str, ...] = (
     PRE_COMPRESS,
     POST_COMPRESS,
     POST_CONTEXT_INLINE,
+    POST_CONTEXT_RECALL,
     BLACKBOARD_PUBLISH,
     BLACKBOARD_WRITE,
     BUDGET_WARNING,

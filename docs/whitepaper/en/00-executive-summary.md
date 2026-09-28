@@ -280,7 +280,10 @@ by principal and freshness before BM25, wired via the `[memory] dir` config
 section with the `system.memory.search/write` tools resident. The distillation
 write path is also live (2026-09-28, `DistillSidecar`: after a run's terminal
 signal, a cheap model distills the run into an experience entry in Memory —
-trigger conditions and the direct-bus wiring note are in chapter 07).
+trigger conditions and the direct-bus wiring note are in chapter 07). The
+read-side injection slot is live as well (2026-09-28, manifest
+`context_policy.recall` opt-in: Memory is searched once on the frame's first
+build, and the experience-reference section is frozen into SYSTEM).
 
 ## 5. Trust & Safety Model
 
@@ -438,7 +441,7 @@ sunk into the kernel) are implemented; the three §3.4 concurrency primitives
 are complete (`parallel_invoke` fork/join landed, together with subtree
 cascade cancel and the subtree accounting read view); Skill Lab
 L1-L5 is complete; all six Web themes pass the contract tests; the test
-baseline is 1557 Python tests (1508 passed, 10 skipped, 39 xfailed,
+baseline is 1575 Python tests (1526 passed, 10 skipped, 39 xfailed,
 0 failures) plus 32 frontend test files, all green.
 Designed but not yet implemented: remaining E3 items (audit panel), the D3
 remainder (delegation-chain weakest link, EscalationRequest data face), the

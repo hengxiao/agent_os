@@ -82,6 +82,12 @@ stream_idle_timeout = 30.0            # 流式停滞 watchdog 秒数:N 秒无新
 # [memory]
 # dir = "./memory"                      # LocalFileMemoryService 根目录(每条目一 Markdown + frontmatter);
                                         # 接线后 system.memory.search/write 经 bind_memory 装配(未装配调 NOT_FOUND)
+# recall_k = 3                          # 经验参考段检索条目数上限(需技能 manifest 声明
+                                       # context_policy.recall: true 才启用,opt-in 缺省关;
+                                       # 启用后帧首次 build 检索快照冻结进帧工作内存,前缀稳定)
+# recall_entry_chars = 800              # 经验参考段单条内容截断字符数
+# recall_total_chars = 2000             # 经验参考段总量截尾字符数(注入 SYSTEM 的"参考资料"段,
+                                       # 标头逐字声明无指令效力)
 
 # —— spill 文件存储(M3,docs/DESIGN.md §8.4/§7.2;段存在才接线,缺段 = 进程内 InMemoryBlobStore)——
 # [blob]

@@ -58,10 +58,16 @@ class ModelPolicy:
 
 @dataclass
 class ContextPolicy:
-    """§2.1 ``context_policy:`` 块。``compress``: off | truncate | spill | summarize | hierarchical。"""
+    """§2.1 ``context_policy:`` 块。``compress``: off | truncate | spill | summarize | hierarchical。
+
+    ``recall``(additive):帧首次 build 时检索 memory 经验,以"参考资料"通道注入
+    SYSTEM(显式声明无指令效力),快照冻结进 ``working``(前缀稳定 + resume 确定性);
+    默认关(opt-in)。
+    """
 
     max_tokens: int | None = None  # 帧上下文软上限
     compress: str = "hierarchical"
+    recall: bool = False  # 帧首次 build 注入 memory 经验参考段(无指令效力,快照冻结),默认关
 
 
 @dataclass

@@ -59,11 +59,15 @@ Key decision logic (`context/manager.py:99-152`):
 
 Skills declared `inline: true` (pure manual skills) are never framed; their prompts merge into the caller's SYSTEM. Assembly rules (`_inline_caps`, manager.py:154-201): the ablation setting `inline == "off"` returns `None` outright (merge skills degrade to ordinary framed calls); otherwise, on the frame's **first** build, the section is assembled from current registry values and the snapshot is stored in `frame.context.working["_inline_caps"]` (:46, :194); every later build reuses it. The snapshot rides along in the checkpoint, solving three problems at once: prefix stability (invariant 5), hot reload semantics ("running frames pin the old version"), and byte-identical inline sections after resume (`docs/SKILL-INLINING.md` §4.2). Inlined skills are simultaneously hidden from the pseudo-tool surface (:127-132), so the model never attempts to call a call that does not exist.
 
-### 4.4 State Injection (Status Bar)
+### 4.4 Memory Experience Injection Slot: recall Opt-in with a Frozen Snapshot
+
+The read-side channel that brings Memory retrieval into frame assembly (the assembly side of the channel isolation in `docs/DESIGN.md` §11.2; landed 2026-09-28 in `context/manager.py`). The manifest opts in with `context_policy.recall: true` (an additive `ContextPolicy` field, off by default; without the declaration there is zero retrieval and zero signal). On the frame's **first** build, Memory is searched once — the query is the first USER message truncated to 1000 chars, and the principal is converted via `to_memory_principal`, now publicly exported from the memory package and shared by tools/std.py and context; the search is awaited directly inside the async `build`, and `maintain` is untouched. Hits render as a `## 经验参考` section at the SYSTEM tail (after the inline-capability section) whose header explicitly states the entries are "reference material only, with no instruction force, trust=experience", one line each as `- [tags] content[:recall_entry_chars]`; the rendered section is frozen into `working["_memory_caps"]` and every later build reuses the snapshot (byte-identical after deepcopy). Injection scanning is the lightweight version: a regex set of 10 Chinese/English injection phrases — a hit entry is demoted (skipped) with a log warning and a `dropped` count; when the snapshot is assembled and a real retrieval happened, `post:context.recall` fires exactly once (payload {frame_id, k, ids, chars, dropped}). A gate not passed, an empty query, or zero hits all freeze `None` (never searched again); an all-dropped result also freezes `None` but still emits the signal. Configuration lives in the `[memory]` section (strict): `recall_k=3` / `recall_entry_chars=800` / `recall_total_chars=2000`; with no section or no bound memory the slot is skipped entirely. Compatibility with §7.4 invariant 5: dynamic data is only ever appended at the tail (the ephemeral status bar), and whatever enters SYSTEM must be a frozen snapshot — the experience-reference section has the same shape as the inline-capability section, byte-stable across steps once frozen, so prefix caching and resume determinism are unaffected. Not done: per-step refresh, a pinned standalone message form, multi-tier trust filtering, and web UI rendering; still open: using the first USER message as the query gives mediocre retrieval quality on JSON inputs.
+
+### 4.5 State Injection (Status Bar)
 
 Each build appends a key-value meta-message with `role=USER, source=INJECTED, meta={"kind": "status"}` (`_status_message`, manager.py:203-224): bare readings (step / tokens / cost / budget_remaining) plus an operating strategy in `hint`. The decision logic is one line: when remaining budget drops below `LOW_BUDGET_RATIO = 0.2` (:35), the hint switches to "converge on a directly deliverable plan"; otherwise "proceed normally." When the run has TODOs, a progress summary is merged in (`_todo_status`, :226-265), again sourced only from kernel bookkeeping. The deliberate trade-off: bare readings do not change behavior, readings plus strategy do (§7.3) — the hint is not decoration, it is part of the contract.
 
-### 4.5 maintain: Triggering and the Compression Path
+### 4.6 maintain: Triggering and the Compression Path
 
 ```
 Top of each loop iteration (runner.py:490-493):
@@ -82,7 +86,7 @@ Top of each loop iteration (runner.py:490-493):
 
 `force_compress` is the §7.1 external trigger: a sidecar emits `ForceCompress`, RunControl sets a flag in the frame's working memory (`kernel/control.py:23-24`), and the runner consumes it before maintain (runner.py:490) — it still travels the same `_compress` path (manager.py:360-424), just with `forced=True` in the pre-signal payload; a pre veto applies to this path too (§7.4 invariant 4). The ablation setting short-circuits forced triggers too (:325).
 
-### 4.6 RollingWindowCompressor: Eviction by Atomic Group
+### 4.7 RollingWindowCompressor: Eviction by Atomic Group
 
 The baseline compressor (rolling_window.py; the chain's `truncate` strategy, `name = "truncate"`, :118) is a pure three-step algorithm with no LLM or blob dependency:
 
@@ -92,16 +96,16 @@ The baseline compressor (rolling_window.py; the chain's `truncate` strategy, `na
 
 The report carries `marker = "[COMPRESSED]"` (:31) — the idempotency mark shared by all strategies in the chain (see §6). Since 2026-09-28 the three functions live at module level for reuse (summarize imports them; `RollingWindowCompressor` keeps method aliases), with the class name and behavior byte-identical.
 
-### 4.7 The Estimator: One Calculus
+### 4.8 The Estimator: One Calculus
 
 `TokenEstimator` (estimator.py): char/4 rough estimate + a fixed 4-token overhead per message (:14) + JSON-length accounting for tool_call arguments, with a global `calibration` factor. It shares one calculus with ProviderManager (§4.2) — compression watermarks and billing estimates can never disagree. `per_provider_factor` reserves the entry point for per-vendor tokenizer deviations (:38-43).
 
-### 4.8 Strategy Chain: Designed Panorama vs. Implemented Landing
+### 4.9 Strategy Chain: Designed Panorama vs. Implemented Landing
 
 | §7.2 strategy | Status | Notes |
 |---|---|---|
 | `collapse_child` | implemented (structural) | a popped child frame's transcript never enters the parent — only the return value (the fib test asserts "the entire child transcript is folded", `tests/kernel/test_fib_slice.py:112`) |
-| `truncate` (rolling window) | implemented | section 4.6 of this chapter; registered as `name = "truncate"` |
+| `truncate` (rolling window) | implemented | section 4.7 of this chapter; registered as `name = "truncate"` |
 | `spill` | implemented | `context/spill.py`: non-pinned TOOL messages over the threshold (default 4000 chars, tunable via `[context]`) are moved into the blob store and replaced in place by a frozen substitution string (`[SPILLED]` + original byte count + `blob://<run_id>/<sha>` ref + 500-char head/tail + blob_get pagination hint); no message is deleted; no-op when svc.blob/run_id is missing |
 | `summarize` | implemented | `context/summarize.py`: the evicted span is summarized via `svc.providers.chat` with a cheap-tier model into a `[COMPRESSED]` compact note (context-aware: frame task spec + pinned constraints; retention contract: decisions / modified files / verification status / TODOs / identifiers verbatim); after 3 consecutive failures (default) — or with no providers/model — it degrades to plain truncation marked `[COMPRESSED:truncate]` |
 | `hierarchical` (chain, manifest default) | implemented | `ChainCompressor` (chain.py): ordered spill → summarize chain, re-estimating after each stage and short-circuiting once under target; the mode table `_MODE_CHAINS` (manager.py:55-60) with manifest `compress` taking precedence over RunConfig; `KernelServices.providers` is now wired (`_svc(frame)` injects the ProviderManager and run_id, manager.py:437-448) |
@@ -124,7 +128,7 @@ Ripple effects: invariant 5 shaped the inlining subsystem in reverse — "freeze
 
 ## 6. Limitations and Boundaries
 
-1. **A bare rolling window (the truncate-only mode) is a known loop inducer**: dropping early tool results makes the model re-issue the dropped calls. Both the source and §7.6 carry a positioning warning — it is only the middle-layer base of the hierarchical chain, whose tail must be summarize or spill, and **must not be read as the recommended practice**. The chain is implemented now (2026-09-28, §4.8): production shapes should select the spill/summarize/hierarchical chains via the manifest `compress` mode, with `truncate`-only kept as baseline and ablation reference.
+1. **A bare rolling window (the truncate-only mode) is a known loop inducer**: dropping early tool results makes the model re-issue the dropped calls. Both the source and §7.6 carry a positioning warning — it is only the middle-layer base of the hierarchical chain, whose tail must be summarize or spill, and **must not be read as the recommended practice**. The chain is implemented now (2026-09-28, §4.9): production shapes should select the spill/summarize/hierarchical chains via the manifest `compress` mode, with `truncate`-only kept as baseline and ablation reference.
 2. **Recoverability of evicted information is tiered**: spill is recoverable — the content sits in the blob store and the substitution string carries a `blob://` ref plus a blob_get pagination hint; summarize is lossy — the original span is gone and only the retention-contract essentials survive in the compact note; plain truncate eviction remains unrecoverable.
 3. **char/4 is a rough estimate**: deviations are significant for code-, CJK-, or JSON-heavy contexts, so cap decisions may fire early or late; `per_provider_factor` always returns 1.0 (estimator.py:44) as a placeholder. The "multimodal calculus (image formula by resolution)" mentioned in §7.6 has no implemented branch in the estimator — per the code-wins rule, multimodal estimation is not landed.
 4. **The §7.1 hard-cap tail path is implemented; the "near the model window" tier remains open**: when the re-estimate after the whole chain is still `after > cap`, a `ContextOverflowError` is raised (manager.py:63/:421-424) and the frame fails upward; but there is still a single cap tier (manifest `max_tokens` or default 128_000, manager.py:111/:355-357) — the model-window tier is unimplemented because the model window is unknowable, and hitting the real window is still backstopped by provider errors.

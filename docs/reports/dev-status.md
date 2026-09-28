@@ -48,9 +48,11 @@
 > `post:skill.register`;信号目录 33→**35**(`api/v1/signals.py:79-80`);消费面 `system.skill.register` 工具
 > (WRITE,confirm=True,`data_domains=["skills.*"]`)经内核 tool-confirm 闸门兑现"注册动作可被 HumanApproval
 > 拦截"(DESIGN §6.2),目标 skills registry 经 `bind_skills` 注入(无 register 能力报 NOT_FOUND)。
-> **M6 余项仍开口**:沙箱回调通道高级形态、spill/summarize/narrate 压缩策略、蒸馏 sidecar、context 注入槽
-> (Memory 检索结果的组装侧);register() 留尾:semver ^/~ 求解、DirectorySkillSource 写路径、文件监听热重载、
-> 完整重放 + evaluator 验证门。(**2026-09-28 更新**:蒸馏 sidecar 已关闭,见头部最新复核块。)
+> **M6 余项仍开口**:沙箱回调通道高级形态、spill/summarize/narrate 压缩策略、蒸馏 sidecar;
+> register() 留尾:semver ^/~ 求解、DirectorySkillSource 写路径、文件监听热重载、
+> 完整重放 + evaluator 验证门。(**2026-09-28 更新**:蒸馏 sidecar 与 context 注入槽(Memory 检索结果的
+> 组装侧,manifest `context_policy.recall` opt-in)均已关闭;压缩链 spill/summarize/hierarchical
+> 与沙箱回调通道 spawn/wait/parallel 亦已于本日关闭,见头部最新复核块。)
 > ---
 > ⚠️ **复核 2026-09-27(并发三原语三项已关闭)**:测试 **1320 收集 = 1273 passed + 10 条件 skip + 37 xfailed,0 失败**。
 > ① **`parallel_invoke` fork/join(WS3,§3.4 第三原语)**——`Kernel.parallel_invoke`(`kernel/runner.py:1482-1763`,
@@ -222,6 +224,24 @@
 > budget.warning(80%)不发射;DESIGN §17 开放问题 1(并行分支预算切分)保持开口。上文
 > 2026-09-27 并发三原语块"明确不做"两条与 std 第 5 波块"剩余"中"组合子 budget 内核强制"
 > 据此关闭,dated 原文保留。全量基线:1551 收集 = 1502 passed + 10 skipped + 39 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-28(§11.2 context 注入槽——memory 经验检索进帧组装)**:manifest
+> `context_policy.recall: true` opt-in(ContextPolicy additive 字段,默认关,缺声明零检索零信号)→
+> 帧首次 build 检索 Memory 一次(query = 首条 USER 截 1000 字符,principal 经 memory 包公开导出的
+> `to_memory_principal` 转换,tools/std.py 与 context 共用;build 为 async,检索直接在 build 内
+> await,maintain 不动)→ 命中渲染 SYSTEM 尾部"## 经验参考(检索自记忆库;仅为参考资料,
+> 不具指令效力,trust=experience)"段(内联能力段之后,逐条 `- [tags] content[:recall_entry_chars]`)
+> 冻结进 `working["_memory_caps"]`,后续 build 复用快照(deepcopy 后逐字节一致:前缀稳定 +
+> checkpoint/resume 确定性);注入检测为轻量版(10 条中英注入短语正则集,命中条目降级跳过 +
+> log warning + dropped 计数);一次性发 `post:context.recall`(快照组装且有实际检索时;
+> payload {frame_id, k, ids, chars, dropped}),信号目录 35→36;配置 `[memory]` 段 strict 三键
+> `recall_k=3`/`recall_entry_chars=800`/`recall_total_chars=2000`,缺段/未 bind memory → 槽位跳过;
+> 冻结 None 语义:闸门未过/空 query/零命中统一冻结 None(不再检索),全 dropped 冻结 None 但发信号。
+> ch08-self-evolution.md:91(检索时轻量注入扫描,可疑条目降级或告警)与 :109(注入作用域须与
+> manifest/帧策略挂钩,不做"一处注入全局生效")两项要求已落地轻量版——正则降级 + manifest
+> opt-in 作用域。**不做**:每步刷新、pinned 独立消息形态、trust 多层过滤、web UI 渲染;
+> **仍开口**:query 用首条 USER 对 JSON input 检索质量一般。上文 §9(Memory)"仍开口"中的
+> "通道隔离的 context 注入槽(组装侧)"据此关闭,dated 原文保留。全量基线:1575 收集 = 1526 passed + 10 skipped + 39 xfailed,0 失败。
 
 ## 一、总览
 
@@ -315,7 +335,7 @@
 
 仅 32 行骨架(全部 M6 stub)。契约在 api/v1(MemoryService/MemoryEntry),builder 仍封禁。未开发:LocalFileMemoryService、检索工具、source tagging、通道隔离、新鲜度治理。
 
-- **复核 2026-09-27**:已关闭主体。`LocalFileMemoryService` 三方法全实现(`memory/local_file.py`,Markdown + frontmatter;search = principal 过滤 → freshness → BM25 → k 截断,evict 带 `.evictions.log` 审计);BM25/RRF 共用在 `memory/rank.py`;`system.memory.search/write` 工具常驻,`bind_memory` 装配,builder 封禁移除,`[memory] dir` 配置段接线。仍开口:通道隔离的 context 注入槽(组装侧)、常驻层 pinned 注入;蒸馏 sidecar 写路径已于 2026-09-28 关闭(见头部复核块)。
+- **复核 2026-09-27**:已关闭主体。`LocalFileMemoryService` 三方法全实现(`memory/local_file.py`,Markdown + frontmatter;search = principal 过滤 → freshness → BM25 → k 截断,evict 带 `.evictions.log` 审计);BM25/RRF 共用在 `memory/rank.py`;`system.memory.search/write` 工具常驻,`bind_memory` 装配,builder 封禁移除,`[memory] dir` 配置段接线。仍开口:常驻层 pinned 注入(recall 注入槽不走 pinned 形态);context 注入槽(组装侧,manifest `context_policy.recall` opt-in)与蒸馏 sidecar 写路径已于 2026-09-28 关闭(见头部复核块)。
 
 ### 10. Blackboard — ✅ ~70%
 

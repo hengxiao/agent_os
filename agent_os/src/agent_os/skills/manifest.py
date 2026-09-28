@@ -68,7 +68,11 @@ def parse_manifest(data: dict[str, Any]) -> SkillManifest:
     )
     cp_raw = data.get("context_policy")
     context_policy = (
-        ContextPolicy(max_tokens=cp_raw.get("max_tokens"), compress=cp_raw.get("compress", "hierarchical"))
+        ContextPolicy(
+            max_tokens=cp_raw.get("max_tokens"),
+            compress=cp_raw.get("compress", "hierarchical"),
+            recall=bool(cp_raw.get("recall", False)),
+        )
         if cp_raw
         else None
     )

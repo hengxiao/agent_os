@@ -63,6 +63,20 @@ class ContextSection:
     summarize_temperature: float = 0.2  # 摘要采样温度
 
 
+@dataclass
+class MemorySection:
+    """``[memory]`` 段(docs/DESIGN.md §11)的装配形态:经验参考段(recall)调参。
+
+    只在装配默认 ContextManager 时生效(同 :class:`ContextSection` 先例);recall 段
+    还需 manifest ``context_policy.recall: true`` 才启用(opt-in,缺省关)。
+    字段缺省值与 TOML 段缺键时的全默认一致。
+    """
+
+    recall_k: int = 3  # 检索条目数上限
+    recall_entry_chars: int = 800  # 单条内容截断字符数
+    recall_total_chars: int = 2000  # 经验参考段总量截尾字符数
+
+
 def _compressor_plugins() -> dict[str, Any]:
     """entry point ``agent_os.compressors`` 插件加载(docs/DESIGN.md §7.5/§14.3)。
 
@@ -112,6 +126,7 @@ class KernelBuilder:
         self._debug_controller: Any = None
         self._retry: dict[str, Any] = {}
         self._context_section: ContextSection | None = None
+        self._memory_section: MemorySection | None = None
 
     def providers(self, *providers: Any) -> KernelBuilder:
         self._providers.extend(providers)
@@ -151,6 +166,14 @@ class KernelBuilder:
 
     def memory(self, service: Any) -> KernelBuilder:
         self._memory = service
+        return self
+
+    def memory_section(self, section: MemorySection) -> KernelBuilder:
+        """``[memory]`` 段的 recall 调参:装配默认 ContextManager 时传入(同 context_section 先例)。
+
+        嵌入方自装 ContextManager(``.context()``)时本段不生效——recall 调参由嵌入方自负。
+        """
+        self._memory_section = section
         return self
 
     def user_channel(self, channel: Any) -> KernelBuilder:
@@ -316,6 +339,7 @@ class KernelBuilder:
             context = self._context
         else:
             ctx_cfg = self._context_section or ContextSection()
+            mem_cfg = self._memory_section or MemorySection()
             compressors: dict[str, Any] = {
                 "spill": SpillCompressor(threshold_chars=ctx_cfg.spill_threshold_chars),
                 "truncate": RollingWindowCompressor(),
@@ -338,6 +362,12 @@ class KernelBuilder:
                 # S2(docs/SUPERVISOR.md §2.1):ask_supervisor 伪工具 schema 只在装了
                 # supervisor 通道时呈现给 LLM;嵌入方自带 context manager 时自行决定
                 supervisor=sup_manager is not None,
+                # 经验参考段(manifest context_policy.recall opt-in):memory 缺省 None
+                # = recall 帧冻结 None 快照;三键来自 [memory] 段(缺省全默认)
+                memory=self._memory,
+                recall_k=mem_cfg.recall_k,
+                recall_entry_chars=mem_cfg.recall_entry_chars,
+                recall_total_chars=mem_cfg.recall_total_chars,
             )
         if hasattr(tools, "bind_signals"):
             tools.bind_signals(bus)

@@ -38,3 +38,40 @@ skills:
         description: 交接包 {schema, task, facts, constraints, artifacts}
   permissions: {}
   handler: transform:make_handoff
+- name: common.task.set_timer
+  version: 1.0.0
+  kind: code
+  description: '安排一次性/周期计时器(经 system.timer.set 内核原语):到点把 "[timer 到点]
+    {note}" 注入调用帧上下文,立即返回 timer_id,计时在后台不占当前步骤。Use when
+    需要定时复查/周期轮询兜底,如 {"interval_seconds": 300, "count": 3, "note": "检查构建
+    状态"} → {"timer_id": "..."} 后继续干别的,到点自会收到提醒;Do not use when 能就地
+    等到结果(直接等工具返回更便宜)——计时器只在"现在没结果、稍后要看"时有意义。
+    one-shot 传 delay_seconds,周期传 interval_seconds(count 缺省无限,run 收尾自动取消),
+    两者二选一,下限钳制 0.5s。返回 {"timer_id": str}。'
+  inputs:
+    type: object
+    properties:
+      delay_seconds:
+        type: number
+        description: one-shot 延迟秒数(与 interval_seconds 二选一;下限钳制 0.5)
+      interval_seconds:
+        type: number
+        description: 周期间隔秒数(与 delay_seconds 二选一;下限钳制 0.5)
+      count:
+        type: integer
+        description: 周期触发次数上限(仅 recurring 有意义;缺省 = 无限,run 收尾自动取消)
+      note:
+        type: string
+        description: 到点提醒文本(注入消息的正文,写清"到点要看什么")
+  outputs:
+    type: object
+    properties:
+      timer_id:
+        type: string
+        description: 计时器 id(本 run 内有效;进程重启即丢,不持久化)
+    required:
+    - timer_id
+  permissions:
+    tools:
+    - system.timer.set
+  handler: task_handlers:set_timer

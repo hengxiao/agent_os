@@ -17,7 +17,10 @@ tool result 写回、帧重入 loop。在整体架构中,它是微内核外置�
 **ask_human 为什么不够。** STDLIB W5 曾设想一条"挂起 run → 人回答 → 恢复"的
 `ask_human` 通道,它有两个结构性局限(`docs/SUPERVISOR.md` §1.1):上级被锁定为
 "人",无法表达"调用我的那个程序";实现被误读为 **run 级**挂起,而真正常用的粒度
-是**帧级**——只有提问的帧该等答案,兄弟分支不应被冻结。
+是**帧级**——只有提问的帧该等答案,兄弟分支不应被冻结。**注**(2026-09-28):
+`ask_human` 的 std 形态已落地为 `common.user.ask_human`(`std/user.yaml`,
+包装 `system.user.ask` 宿主回调通道,CLI/Web 均已接线)——它走工具面宿主
+回调,挂起/恢复语义仍由本章的 supervisor 闭环承担,两者分工不变。
 
 **caller 语义的 v1 → v2 修正。** v1 把默认上级设计为"父帧的 LLM",在调用栈内部
 做 YIELD 让渡;v2 经指正后把 caller 重新定义为**整个 agent 的调用方**(启动本 run
@@ -148,7 +151,7 @@ manager.py:179)、`supervisor.timeout`。channel 标签由 handler 的
 
 ## 5. 效果与验证(效果)
 
-**测试证据**(全绿,属 Python 1643 例基线的一部分):
+**测试证据**(全绿,属 Python 1670 例基线的一部分):
 
 - `tests/kernel/test_supervisor.py`:**12 例**,覆盖 §9 锚点清单的内核侧——handler
   闭环、就地挂起(挂起期间父帧 await 点不动)、pending ask 阻止 run 提前判完成、

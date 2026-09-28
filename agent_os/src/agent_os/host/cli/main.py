@@ -14,7 +14,9 @@ S2 增量(docs/SUPERVISOR.md v2 §2.3):CLI 宿主通道——run/resume 装配�
 ``_cli_supervisor`` handler,run 挂起时把 question JSON 写 stderr(coding agent
 可解析),从 stdin 读一行作答,单命令进程内闭环;跨进程 pending/answer 子命令
 在单进程 CLI 下无收件箱可查,异步收件箱形态由 Web 宿主承载。replay 不注入
-(回放按 trace 记录值走,不问第二次,§4)。
+(回放按 trace 记录值走,不问第二次,§4)。M1 增量(§8.3):system.user.ask/
+notify 的宿主通道 ``_CliUserChannel``(与 ``_cli_supervisor`` 同构的
+stdin/stderr 协议)随同一开关注入,replay 同样不注入。
 """
 
 from __future__ import annotations
@@ -86,10 +88,30 @@ async def _cli_supervisor(question: Question) -> dict[str, Any]:
 #: §5/S3 ``supervisor.ask`` 信号通道标签(SupervisorManager 读取)
 _cli_supervisor.supervisor_channel = "cli"
 
-# TODO(M1 接线):system.user.ask/system.user.notify 的宿主通道尚未接到 CLI——
-# 装配形态已就位(LocalPythonToolRegistry.bind_user_channel / KernelBuilder.user_channel),
-# CLI 通道可用与 _cli_supervisor 同构的 stdin/stderr 协议实现 ask/notify 回调后,
-# 在 _build_kernel 装配链上注入;未接线前调用两工具按"user 通道未装配"报 NOT_FOUND。
+
+class _CliUserChannel:
+    """M1(§8.3)CLI 宿主用户通道:与 ``_cli_supervisor`` 同构的 stdin/stderr 协议。
+
+    ``ask``:stderr 打印 ``[user] {question}`` + stdin 读一行返回答(coding agent
+    可解析的协议行,单命令进程内闭环);stdin EOF → EOFError(工具侧经 dispatch
+    归一 INTERNAL,§8.1 分发边界)。``notify``:单向,只打印不读答。
+    """
+
+    async def ask(self, question: str) -> str:
+        print(f"[user] {question}", file=sys.stderr, flush=True)
+        line = await asyncio.to_thread(sys.stdin.readline)
+        if line == "":
+            raise EOFError("stdin EOF:读不到用户回答")
+        return line.strip()
+
+    async def notify(self, message: str) -> None:
+        print(f"[user] {message}", file=sys.stderr, flush=True)
+
+
+# M1 接线(§8.3):system.user.ask/system.user.notify 的宿主通道已接到 CLI——
+# _CliUserChannel(stdin/stderr 协议,与 _cli_supervisor 同构)在 _build_kernel
+# 装配链上经 build_kernel(user_channel=...) 注入;replay 不注入(回放按 trace
+# 记录值走,不问第二次,同 supervisor 通道的 §4 语义)。
 
 def _build_kernel(
     config: str,
@@ -106,12 +128,15 @@ def _build_kernel(
     ``[run].checkpoint_interval``(每 N 步周期 checkpoint,0=关);与 inline 同路径。
 
     ``supervisor``(S2,§2.3):注入 CLI 宿主通道(``_cli_supervisor``);replay
-    传 False——回放按 trace 记录值走,不应阻塞等 stdin(§4)。
+    传 False——回放按 trace 记录值走,不应阻塞等 stdin(§4)。M1(§8.3)同理:
+    用户通道(``_CliUserChannel``,system.user.ask/notify 的宿主回调)随同一
+    开关注入——回放不接线,两工具按"user 通道未装配"报 NOT_FOUND。
     """
     handler = _cli_supervisor if supervisor else None
+    channel = _CliUserChannel() if supervisor else None
     try:
         if inline is None and checkpoint_interval is None:
-            return build_kernel(config, supervisor_handler=handler)
+            return build_kernel(config, supervisor_handler=handler, user_channel=channel)
         cfg = load_config(config)
         run_section = dict(cfg.get("run") or {})
         if inline is not None:
@@ -119,7 +144,7 @@ def _build_kernel(
         if checkpoint_interval is not None:
             run_section["checkpoint_interval"] = checkpoint_interval
         cfg["run"] = run_section
-        return build_kernel(cfg, supervisor_handler=handler)
+        return build_kernel(cfg, supervisor_handler=handler, user_channel=channel)
     except SkillLoadError:
         raise
     except Exception as e:  # 装配失败统一归基础设施错(§3.3 退出码 4)

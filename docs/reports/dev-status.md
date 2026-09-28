@@ -131,6 +131,9 @@
 > 帧/子树级强制落地,见头部最新复核块;多模态契约与 ask_human/set_timer 工具面仍开口。)
 > (**2026-09-28 再更新**:多模态契约已关闭——`Message.parts` additive + provider parts
 > 序列化 + narrate 策略落地,见头部最新复核块;ask_human/set_timer 工具面仍开口。)
+> (**2026-09-28 三更新**:ask_human/set_timer 工具面已关闭——`system.timer.set` 内核原语 +
+> `common.user.ask_human`/`common.task.set_timer` std 形态 + CLI/Web 宿主接线落地,
+> 见头部最新复核块。)
 > ---
 > ⚠️ **复核 2026-09-28(§7.2 高级压缩链落地,WS1+WS2)**:测试 **1522 收集 = 1473 passed + 10 skipped + 39 xfailed,0 失败**。
 > `SpillCompressor`(`context/spill.py`,name `"spill"`:非 pinned 超阈值 TOOL 消息移入 blob,
@@ -319,6 +322,30 @@
 > 仍开口:D3 跨 run 自动派生(引擎无触发点)、完整多用户会话映射、
 > `_settle_unpaired_calls` 规则 2 escalated 键缝隙。上文 2026-08-31 复核块
 > "仍未做"两条据此关闭,dated 原文保留。全量基线:1643 收集 = 1594 passed + 10 skipped + 39 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-28(ask_human/set_timer 工具面 + std 形态 + 宿主接线)**:
+> ① **`system.timer.set` 内核原语**——`tools/timer.py`(`TimerService` asyncio
+> 任务表按 run_id 分桶 + `timer_set_tool`,WRITE 档):one-shot `delay_seconds` /
+> recurring `interval_seconds`+`count`(缺省无限),二选一缺/并给 INVALID_ARGS,
+> 下限钳 0.5s,立即返回 timer_id;到点经 `ctl.inject_message` 向调用帧注入
+> `[timer 到点] {note}(timer_id=…,第 N 次[/共 M 次])`(USER/INJECTED),帧终态
+> 静默弃;run 收尾 `_release_run` 取消本 run 计时器;进程态不持久化(resume
+> 重武装留开口);sleep 可注入(假钟测试)。
+> ② **宿主接线**——CLI `_CliUserChannel`(与 `_cli_supervisor` 同构 stdin/stderr,
+> 随 supervisor 开关注入,replay 不接线);Web `_InboxUserChannel`:ask 复用收件箱
+> (`Question(kind="user-ask")`,既有 pending/answer 闭环),notify no-op——
+> `user.notify` 信号上移工具层(`bind_signals` 补发,run/frame 归因,trace/SSE
+> 可见,CLI 同享)。
+> ③ **std 两技能**——`common.user.ask_human`(`std/user.yaml` + `user_handlers.py`,
+> 包装 `system.user.ask`,Constrain 两触发语义落 description)/ `common.task.set_timer`
+> (`std/task.yaml` + `task_handlers.py`,包装 `system.timer.set`),过 std gate。
+> ④ **注册位置偏差**——三工具注册点在构造器(`LocalPythonToolRegistry.__init__`,
+> §6.1 闸门联动,同 fetch_page 先例);builder build 末尾 `bind_timer(kernel.ctl)`
+> 恒装配(无 sidecar/debug 时补装 RunControlImpl);未 bind → NOT_FOUND 语义不变。
+> **仍开口**:挂起/未启动 run 唤醒(DESIGN §17 开放问题 4)、定时器持久化/resume
+> 重武装、`monitor_shell`/`connect_channel`、TUI 接线。上文 std 第 5 波块"剩余"
+> 中的"ask_human/set_timer 工具面"与 §3(Tool Registry)复核注的 user 通道
+> "CLI 接线留 TODO"据此关闭,dated 原文保留。全量基线:1670 收集 = 1620 passed + 10 skipped + 40 xfailed,0 失败。
 
 ## 一、总览
 

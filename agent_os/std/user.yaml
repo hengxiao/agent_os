@@ -1,0 +1,32 @@
+skills:
+- name: common.user.ask_human
+  version: 1.0.0
+  kind: code
+  description: '停下来向宿主用户提问并等待回答(经 system.user.ask 工具面;CLI stdin/stderr
+    协议、Web 收件箱)。Use when 连续失败拿不准方向、或高风险/不可逆操作前需要人拍板,如
+    {"question": "检测到生产库,确认继续清空吗?", "context": "将影响 3 张表"} → {"answer":
+    "继续"};Do not use when 常规决策——能自己定的别问(问人是最贵的"工具"),权限/升权
+    裁决走 ask_supervisor 内核通道(伪工具)而不是本技能。返回 {"answer": str}。'
+  inputs:
+    type: object
+    properties:
+      question:
+        type: string
+        description: 要问用户的问题(说清要什么回答)
+      context:
+        type: string
+        description: 可选,佐证背景(拼进问题文本一起呈现给用户)
+    required:
+    - question
+  outputs:
+    type: object
+    properties:
+      answer:
+        type: string
+        description: 用户的回答文本
+    required:
+    - answer
+  permissions:
+    tools:
+    - system.user.ask
+  handler: user_handlers:ask_human

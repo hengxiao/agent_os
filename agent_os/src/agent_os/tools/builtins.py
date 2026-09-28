@@ -533,7 +533,11 @@ def notify_user_tool(*, name: str = "system.user.notify", registry: Any) -> Tool
     """构造 ``system.user.notify``(User Communication 类,§8.3):经宿主回调单向通知用户。
 
     单向语义:不等回答、无回答载荷;回调通道与 ``system.user.ask`` 同源
-    (``bind_user_channel`` 装配,未 bind → NOT_FOUND)。
+    (``bind_user_channel`` 装配,未 bind → NOT_FOUND)。WS1:通知落地后工具层
+    经装配的信号总线(``bind_signals``)补发 ``user.notify`` 信号(带 run/frame
+    归因,telemetry 全量订阅落 trace)——宿主回调负责"让人看到",信号负责
+    "让 trace/SSE 看到"(宿主通道契约只有 ``notify(message)`` 一个槽位,
+    run 归因只能在工具层做)。
     """
 
     async def notify_user(message: str, ctx: ToolContext | None = None) -> str | ToolResult:
@@ -549,6 +553,17 @@ def notify_user_tool(*, name: str = "system.user.notify", registry: Any) -> Tool
         done = notify(message)
         if inspect.isawaitable(done):
             await done
+        # 通知已落地:补 trace 信号(run/frame 归因;总线未装配的嵌入方跳过,零破坏)
+        bus = getattr(registry, "_signals_bus", None)
+        if bus is not None and ctx is not None:
+            await bus.emit(
+                Signal(
+                    name="user.notify",
+                    run_id=ctx.run_id,
+                    frame_id=ctx.frame_id,
+                    payload={"message": message},
+                )
+            )
         return "已通知用户"
 
     spec = derive_spec(

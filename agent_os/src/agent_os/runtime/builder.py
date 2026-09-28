@@ -279,6 +279,9 @@ class KernelBuilder:
         model 缺省回落 run.model;终态信号直挂总线(supervisor 的 ASYNC wrapper
         在 run 收尾 close 时等不到运行,见下方装配注释);
         debug_controller(P1)给了就把它挂到信号总线(直接订阅,见 kernel/debug.py);
+        timer(WS1,§8.3 扩展):tools 提供 ``bind_timer`` 时把 kernel.ctl 绑进
+        TimerService(system.timer.set 的 fire 注入通道;ctl 未装时补装
+        RunControlImpl,同 debug_controller 先例);
         装配期权限闸门(§6.1):manifest 声明的工具必须在注册表中,缺失即拒绝加载。
         """
         bus = InProcessSignalBus()
@@ -443,4 +446,10 @@ class KernelBuilder:
             if kernel.ctl is None:
                 kernel.ctl = RunControlImpl(kernel)
             self._debug_controller.attach(bus, kernel.ctl)
+        if hasattr(tools, "bind_timer"):
+            # WS1:system.timer.set 的 fire 注入通道——无 sidecar/debug 时 ctl 未装,
+            # 补装 RunControlImpl(同 debug_controller 先例),保证计时到点能注入
+            if kernel.ctl is None:
+                kernel.ctl = RunControlImpl(kernel)
+            tools.bind_timer(kernel.ctl)
         return kernel

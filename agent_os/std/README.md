@@ -9,6 +9,8 @@
 - `text.yaml` → `common.text.*` + `common.hash.*` + `common.table.*`
 - `retrieval.yaml` → `common.retrieval.*`
 - `security.yaml` → `common.security.*` / `task.yaml` → `common.task.*`
+  (含 WS1 `set_timer`,薄适配 `system.timer.set` 内核原语)
+- `user.yaml` → `common.user.*`(WS1 `ask_human`,薄适配 `system.user.ask`)
 - `style.yaml` → `common.style.*` / `eval.yaml` → `common.eval.*`
 - `dev.yaml` → `common.dev.*` / `web.yaml` → `common.web.*`
 - `research.yaml` → `common.research.*` / `memory.yaml` → `common.memory.*`

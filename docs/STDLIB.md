@@ -88,7 +88,7 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
 
 ## 3. Tool 层
 
-### 3.1 现状(25 个,文档补正)
+### 3.1 现状(26 个,文档补正)
 
 `system.file.read`(READ,**已带行号前缀与 offset/limit**)/ `system.file.write` /
 `system.file.edit`(WRITE,**已是 old→new 唯一匹配,失败区分未命中与多处命中**;write/edit
@@ -101,7 +101,9 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
 **M6 服务版已落地**,write 自动打 source/provenance)/ `system.skill.register`(WRITE,
 声明 confirm,运行期注册带验证门)/ `common.web.fetch_page` / `blob_get`(READ)/
 `system.user.ask` / `system.user.notify`(WRITE,宿主回调经 `bind_user_channel` 装配,
-未 bind → NOT_FOUND;CLI 接线留 TODO)/ `python_exec`(EXEC,经 Logic Kernel 沙箱)/
+未 bind → NOT_FOUND;CLI/Web 宿主通道已接线(2026-09-28),notify 落地后工具层补发
+`user.notify` 信号)/ `system.timer.set`(WRITE,一次性/周期计时器,fire 注入通道经
+`bind_timer` 装配,未 bind → NOT_FOUND)/ `python_exec`(EXEC,经 Logic Kernel 沙箱)/
 `python_orchestrate`(伪工具,见 §3.3)。
 (v1 文档漏写了 system.file.read/system.file.edit 的既有契约,书 Ch5 恰好把这两条列为
 编辑成功率的决定因素——已实现,补文档即可。)
@@ -140,12 +142,12 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
 | **P1** | `http_post` | NET | 与 fetch 分开注册(分级授权);**非幂等,必须 key-based 或 pre-check 两阶段**(Ch4) |
 | **P1** | `json_query` | READ(纯) | jq 式路径查询;"不要让模型在上下文里做聚合"(Ch2) |
 | **P1** | `web_search` | NET | **v1 P2 → P1**:书两处列为基础三件套(Ch4 主动发现 / Ch8 自进化入口);实现保持"无 key 则不注册" |
-| **P1** | `ask_human` | 特殊档 | **v1 P2 → P1**:Constrain 层唯一 std 落地点(失败阈值 + 高风险操作两触发,Ch1);与 `set_timer` 合并立项(共用 checkpoint/resume 通道) |
+| **✅ 已落地** | `ask_human`(std 形态 `common.user.ask_human`) | 特殊档 | **2026-09-28 落地**:`std/user.yaml` + `user_handlers.py`,包装 `system.user.ask` 工具面(WRITE,宿主回调经 `bind_user_channel` 装配,CLI/Web 宿主通道已接线),inputs `{question, context?}`;Constrain 层唯一 std 落地点,失败阈值 + 高风险操作两触发语义落 description(Ch1);原"与 `set_timer` 合并立项共用 checkpoint/resume 通道"未采用(到点=注入,见 SUPERVISOR.md §10 开放问题 2) |
 | **P1** | `subagent_cancel` / `subagent_status` | 特殊档 | 引擎有 spawn/wait 无 cancel 工具面;"任务失去意义即止损"(Ch4),`race_first` 依赖它 |
 | **P1** | `system.shell.exec` 会话化 | EXEC | `session_id` 持久会话(保 cd/venv/环境变量)+ 后台执行/`shell_monitor` 形态(Ch5) |
 | **✅ 已落地** | `system.skill.search` | READ | 按子串/关键词检索已注册技能/工具(结果带权限信息);纯读零依赖;技能过百后"选择"变"发现"(Ch4/8) |
 | **✅ 已落地** | `python_orchestrate` | EXEC(内核拦截式伪工具) | LLM 编排脚本在沙箱执行,脚本内经 syscall 中介调用白名单工具/子技能,中间变量不过上下文;实机验证:13 次工具调用 = 2 个 LLM 步、父帧只多 1 条 229 字节 tool result。见 [CODE-ORCHESTRATION.md](CODE-ORCHESTRATION.md);`python_exec` 保持纯计算不变 |
-| **P2** | `set_timer` | 特殊档 | one-shot + recurring;与 `ask_human` 同通道 |
+| **✅ 已落地** | `set_timer`(工具面 `system.timer.set` + std 形态 `common.task.set_timer`) | 特殊档 | **2026-09-28 落地**:`tools/timer.py`(one-shot `delay_seconds` / recurring `interval_seconds`+`count` 缺省无限,二选一缺/并给 INVALID_ARGS,下限钳 0.5s,立即返回 timer_id;到点经 `ctl.inject_message` 向调用帧注入 `[timer 到点]`,帧终态静默弃,run 收尾取消,进程态不持久化——resume 重武装留开口)+ `std/task.yaml`/`task_handlers.py` 包装;**偏差**:未走挂起/checkpoint 通道(到点=注入,InjectMessage 已闭环,SUPERVISOR.md §10 开放问题 2) |
 | **✅ 已落地** | `memory_search` / `memory_write` | READ / WRITE | 服务版(M6,2026-09-27):注册名 `system.memory.search` / `system.memory.write`(旧名为别名),`LocalFileMemoryService` 后端,经 `bind_memory` 装配、`[memory] dir` 配置段接线(未装配报 NOT_FOUND);**memory_write 自动打 source/provenance(模型不可伪造),走 dispatch 天然过 ToolGuard/tool-confirm 信任审查**(Ch8 记忆投毒);文件版记忆与它互补:std 四件套是管线与纪律,MemoryService 是存储与治理,见 §4.7 |
 | **P2** | `read_document` | READ | PDF/Word 纯文本抽取(统一 file_type 参数);若因二进制依赖不收,在 §7 显式写明 |
 
@@ -334,14 +336,14 @@ Ch8/9/10 三章独立要求同一原语,配 `system.file.list` mtime + `system.t
 (`map_over` 移出 P0——编排脚本已覆盖,§4.5。)
 
 **P1**:`if_match` 乐观锁、`http_post`、`json_query`、`web_search`、
-`ask_human`、`subagent_cancel/status`(✅ 已落地 2026-09-27)、shell 会话化、`system.skill.search`、
+`ask_human`(✅ 已落地 2026-09-28)、`subagent_cancel/status`(✅ 已落地 2026-09-27)、shell 会话化、`system.skill.search`、
 来源标注三件(source 字段 + untrusted_content + injection_scan)、
 检索纯函数四件 + `contextualize_chunk`、`std/eval` 三件、组合子 budget(软强制 ✅ 2026-09-27,内核强制 ✅ 2026-09-28) +
 race_first(✅ 2026-09-27)/cross_check/reject_sample、`progress_track`、多模态最低限
 (mime + image_ref + describe_image)、`std/learn` 三件(✅ 已落地 2026-07-25)、文件版
 `std/memory`、渐进披露约定。
 
-**P2 / 专项**:`set_timer`(与 ask_human 合并立项)、服务版 memory(M6,✅ 已落地 2026-09-27)、
+**P2 / 专项**:`set_timer`(✅ 已落地 2026-09-28,与 ask_human 同批)、服务版 memory(M6,✅ 已落地 2026-09-27)、
 `read_document`、写侧治理(`learned/` 分层)、文件系统四区约定 +
 ToolGuard 路径模板、MCP 立场。
 
@@ -359,7 +361,9 @@ ToolGuard 路径模板、MCP 立场。
   (`agent_os.tools` / `agent_os.skills`);
 - **流式/全双工交互不在 std 范围**(v2 显式化,防止误判为缺口);
 - **Event Trigger 与 User Communication 两类工具**归内核事件面/宿主层,
-  std 只收 `ask_human`/`set_timer` 两个跨界点(v2 显式化,v1 是沉默遗漏);
+  std 只收 `ask_human`/`set_timer` 两个跨界点(v2 显式化,v1 是沉默遗漏;
+  **两跨界点均已落地 2026-09-28**——`common.user.ask_human` 包装
+  `system.user.ask`、`common.task.set_timer` 包装 `system.timer.set`,见 §3.3);
 - **MCP 立场**(v2 表态;2026-09-28 更新):std 边界仍不含 MCP 客户端;
   生态互操作已由引擎侧 stdio 适配器落地(2026-09-28,`tools/mcp.py`,
   `[mcp.servers.<name>]` 配置段装配,非 entry point 形态;DESIGN §8.3);

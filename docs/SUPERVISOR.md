@@ -242,7 +242,12 @@ manifest 侧只需 `permissions.tools` 声明 `ask_supervisor`。
    `sidecars/builtins.py` 的 `HumanApproval.on_signal` 改为弃权,类保留为策略
    载体,`[sidecars] human_approval = true | {timeout, on_timeout}` 配置在装配期
    映射 SupervisorManager 策略。
-2. `set_timer` 是否复用"挂起 + 外部事件唤醒"通道(结构上兼容,单独立项)?
+2. ~~`set_timer` 是否复用"挂起 + 外部事件唤醒"通道(结构上兼容,单独立项)?~~
+   **已答(2026-09-28):不复用**——`system.timer.set` 已落地(`tools/timer.py`,
+   one-shot/recurring),到点 = 经 `ctl.inject_message` 向目标帧注入
+   `[timer 到点] {note}` 消息(USER/INJECTED;InjectMessage 通道此前已闭环),
+   而非挂起-恢复;计时器为进程态、不随 checkpoint 持久化(resume 重武装留开口);
+   挂起/未启动 run 的外部事件唤醒仍是 DESIGN.md §17 开放问题 4。
 3. `options` 之外的自由文本与结构化答案(schema 化 answer)要不要分级?
 4. urgency=high 在收件箱里要不要打断性呈现(而不仅是排序)?
 5. handler 是 per-run 注入还是 per-frame 可覆盖(粗粒度 v1 只到 run)?

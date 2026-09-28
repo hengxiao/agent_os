@@ -684,6 +684,7 @@ def build_kernel(
     *,
     extra_sidecars: Iterable[Any] = (),
     supervisor_handler: Any = None,
+    user_channel: Any = None,
 ) -> Any:
     """按 docs/RUNNERS.md §2.1 把 ``agent-os.toml``(或等价 dict)装配为 Kernel。
 
@@ -703,6 +704,11 @@ def build_kernel(
     SupervisorManager;不传则维持 S1 行为(仅预置策略,运行时 ask 报
     not_found,fail-closed)。Web 宿主传 InboxChannel(默认通道),
     CLI 传 stderr/stdin 协议 handler。
+
+    ``user_channel``(M1,§8.3):宿主注入的用户通道(带 ``ask(question)`` /
+    ``notify(message)`` 方法的对象,同步/async 均可),经
+    ``KernelBuilder.user_channel`` → ``tools.bind_user_channel`` 接线;
+    不传则 system.user.ask/notify 调用报"user 通道未装配"结构化错误。
     """
     cfg = load_config(config) if isinstance(config, (str, Path)) else dict(config)
     run_cfg = _run_config(cfg.get("run") or {})
@@ -806,6 +812,10 @@ def build_kernel(
             supervisor_handler,
             **{k: sup_cfg[k] for k in ("timeout_s", "on_timeout", "default_answer") if k in sup_cfg},
         )
+    if user_channel is not None:
+        # M1 §8.3:system.user.ask/notify 的宿主回调通道(handler 同写不进 TOML,
+        # 由宿主注入,同 supervisor_handler 先例)
+        builder.user_channel(user_channel)
     telemetry_dir = (cfg.get("telemetry") or {}).get("dir")
     if telemetry_dir:
         builder.telemetry(JsonlTelemetrySink(telemetry_dir))

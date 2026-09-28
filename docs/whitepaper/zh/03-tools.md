@@ -93,24 +93,25 @@ D1 的兼容策略是明确的设计取舍:**未配置 = 不拦截**。三种情
 
 ### 4.6 内置工具面与别名迁移
 
-`with_builtins`(:558-749)装配 22 件规范名工具(fs 八件、shell、net 两件、blob、time、todo 三件、skill.search、skill.register、memory 两件、user 两件——`system.user.ask`/`system.user.notify` 经 `bind_user_channel` 装配宿主回调,未 bind → NOT_FOUND,CLI 接线留 TODO),构造器另注册 `fetch_page`(:132,与 §6.1 闸门联动,原因见 `tools/std_web.py` 模块 docstring)。命名采用层级空间(`system.file.read`),旧扁平名(`fs_read`)经 `register_alias` 保留为别名,同一函数体多规名共存(:155-168)——分层命名迁移期不破坏存量技能。契约字段的声明有硬闸门:READ 档工具必须声明 `idempotent/cacheable/concurrent_safe`,`side_effect` 推导规则下 delete/kill 类必须显式标 `irreversible`(TIER-STANDARDS §1,:729-731 注释),`cost_hint` 只写量级不写绝对秒数。
+`with_builtins`(:642-835)装配 20 件规范名工具(fs 八件、shell、net 两件、blob、time、todo 三件、skill.search、skill.register、memory 两件);构造器注册四件(:144-159):`fetch_page`(与 §6.1 闸门联动,原因见 `tools/std_web.py` 模块 docstring)、`system.user.ask`/`system.user.notify`(经 `bind_user_channel` 装配宿主回调,未 bind → NOT_FOUND;CLI 接线已落地(2026-09-28,`_CliUserChannel` 与 `_cli_supervisor` 同构、随 supervisor 开关注入,replay 不接线),notify 落地后工具层补发 `user.notify` 信号)、`system.timer.set`(2026-09-28,一次性/周期计时器,到点经 `ctl.inject_message` 向调用帧注入,fire 通道经 `bind_timer` 装配、builder build 末尾恒装配,未 bind → NOT_FOUND)——user 两件与 timer 挂构造器而非 with_builtins 是 §6.1 闸门联动(std 域文件声明其 permissions.tools,空工具表装配不能缺,同 fetch_page 先例)。命名采用层级空间(`system.file.read`),旧扁平名(`fs_read`)经 `register_alias` 保留为别名,同一函数体多规名共存(`register_alias` :181,别名登记 :707 起逐工具进行)——分层命名迁移期不破坏存量技能。契约字段的声明有硬闸门:READ 档工具必须声明 `idempotent/cacheable/concurrent_safe`,`side_effect` 推导规则下 delete/kill 类必须显式标 `irreversible`(TIER-STANDARDS §1,:729-731 注释),`cost_hint` 只写量级不写绝对秒数。
 
 ## 5. 效果与验证(效果)
 
-测试证据(本章直接相关部分,`agent_os/tests/`,本次运行实测 **359 passed + 39 xfailed**,18.5s):
+测试证据(本章直接相关部分,`agent_os/tests/tools/ tests/test_contracts.py tests/test_std_gate.py`,本次运行实测 **393 passed + 40 xfailed**,20.5s):
 
 | 测试文件 | 用例数 | 覆盖 |
 |---|---|---|
 | `tools/test_builtins.py` | 14 | 内置装配、`test_tool_policy_caps_permission`(:189,上限闸)、`test_fs_path_traversal_rejected`(:97,逃逸)、edit 唯一匹配、别名解析、shell 超时钳制无孤儿进程 |
-| `tools/test_data_authz.py` | 23 | `test_dispatch_order_data_before_permission`(:132,闸门次序)、`test_configured_confidential_domain_denied_without_leak`(:150,拒绝不泄漏)、未配置降级(:194)、principal 跨帧不变量(:366)与 checkpoint 往返(:395);D2 增例:policy 绑定后未配置域 confidential、白名单第二判据、net 域 URL 前缀命中/未命中、`data.access.*` 信号 payload、判据回写 `credentials["_authz"]` |
+| `tools/test_data_authz.py` | 23 | `test_dispatch_order_data_before_permission`(:132,闸门次序)、`test_configured_confidential_domain_denied_without_leak`(:150,拒绝不泄漏)、未配置降级(:194)、principal 跨帧不变量(:366)与 checkpoint 往返(:395);D2 增例:policy 绑定后未配置域 confidential、白名单第二判据、net 域 URL 前缀命中/未命中、`data.access.*` 信号 payload、判据回写 `credentials["_authz"]`;via 派生链逐环判定(2026-09-28) |
 | `tools/test_credentials.py` | 7 | WS1 凭证注入:声明键注入、未声明/未 bind → 空 dict、env 缺席键不出现、动态解析(env 现改现生效)、注入按声明过滤、凭证不进 checkpoint |
 | `tools/test_mcp.py` | 20 | MCP stdio 适配器(2026-09-28):eager 装配注册、命名空间隔离、description 注入扫描整段弃用、env 间接引用、超时 TIMEOUT、断管重连一次、close 无孤儿进程、撞名拒覆盖 |
+| `tools/test_timer.py` / `test_user_channel.py` / `test_memory_tools.py` | 10 / 6 / 6 | 计时器(到点注入/计数/收尾取消/钳制)、user 通道(未 bind NOT_FOUND、sync/async 回调)、memory 工具面(2026-09-28 收口) |
 | `tools/test_std_foundation.py` | 9 | workdir 三分区、只读区拒写(:82)、逃逸 hint 可操作(:143)、READ 档契约字段齐备(:213) |
 | `tools/test_std_tools.py` / `test_blob.py` / `test_builtin_side_effects.py` | 17 / 10 / 2 | std 工具行为、blob ref 形态(内存版 + FileBlobStore 落盘/防逃逸)、副作用档推导 |
 | `test_contracts.py` | 59 | ToolSpec 等冻结面契约(§14.1) |
 | `test_std_gate.py` | 参数化 | 工具门槛:description 必须写"何时用"、参数必须是 object schema、READ⇒cacheable、双拼写同步 |
 
-39 例 xfail 集中在同一项:`test_parameters_are_documented`——`derive_spec` 从签名推导 schema,尚无逐参数 description 的机制(xfail 理由引实测:该项影响工具调用准确率 72%→90%)。这是被显式标记的已知缺口,不是静默失败。
+40 例 xfail 集中在同一项:`test_parameters_are_documented`——`derive_spec` 从签名推导 schema,尚无逐参数 description 的机制(xfail 理由引实测:该项影响工具调用准确率 72%→90%)。这是被显式标记的已知缺口,不是静默失败。
 
 真实配置示例:`instance/agent-os.toml` + `instance/skills.yaml` 是宿主侧装配形态;`agent_os/examples/workspace_janitor` 等示例技能的白名单直接消费本权限模型。**涟漪效应**:① 工具 schema 顺序固定(注册序,`schemas_for` :182-189)是 §7.4 前缀缓存不变量 5 的数据源;② `ToolErrorKind.retryable` 供 LoopDetector 与模型区分"该重试"与"该换策略"(`tools.py:53-62`);③ `side_effect` 推导是技能信任档递归取 max 的叶子值,工具声明质量直接决定升权判定的质量;④ 沙箱内 syscall 通道复用同一条 `_dispatch_call`(`runner.py:694-763`),编排代码无权限提升旁路;⑤ `specs()` 是 Web UI Tools 浏览器的数据源(:172-175)。
 

@@ -69,6 +69,7 @@ The following mapping applies to current built-in tools and standard-library ski
 | `blob_get` | `system.blob.get` | Kernel blob-store primitive |
 | `ask_user` | `system.user.ask` | Kernel user-interaction primitive |
 | `notify_user` | `system.user.notify` | Kernel user-interaction primitive |
+| — | `system.timer.set` | Kernel timer primitive (added with this convention; no legacy alias) |
 | `fetch_page` | `common.web.fetch_page` | Reusable web utility |
 | `extract_json` | `common.text.extract_json` | Reusable text utility |
 | `template_render` | `common.text.template_render` | Reusable text utility |
@@ -90,6 +91,8 @@ The following mapping applies to current built-in tools and standard-library ski
 | `redact_pii` | `common.security.redact_pii` | Reusable security utility |
 | `identifier_guard` | `common.text.identifier_guard` | Reusable text utility |
 | `make_handoff` | `common.task.make_handoff` | Reusable task utility |
+| `ask_human` | `common.user.ask_human` | Reusable user-interaction utility (std wrapper over `system.user.ask`) |
+| `set_timer` | `common.task.set_timer` | Reusable task utility (std wrapper over `system.timer.set`) |
 | `date_normalize` | `common.text.date_normalize` | Reusable text utility |
 | `citation_check` | `common.text.citation_check` | Reusable text utility |
 | `run_tests` | `common.dev.run_tests` | Reusable development utility |
@@ -183,6 +186,7 @@ system.task.todo_read
 system.skill.search
 system.user.ask
 system.user.notify
+system.timer.set
 ```
 
 ### `common` — standard library

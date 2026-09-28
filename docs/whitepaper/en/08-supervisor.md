@@ -22,7 +22,11 @@ form "suspend run → human answers → resume", with two structural limitations
 (`docs/SUPERVISOR.md` §1.1): the superior was hard-wired to "a human", unable to express
 "the program that called me"; and the implementation was misread as **run-level**
 suspension, whereas the commonly needed granularity is **frame-level** — only the asking
-frame should wait; sibling branches must not freeze.
+frame should wait; sibling branches must not freeze. **Note** (2026-09-28): `ask_human`'s
+std form has landed as `common.user.ask_human` (`std/user.yaml`, wrapping the
+`system.user.ask` host-callback channel, wired on both CLI and Web) — it rides the tool
+surface; suspend/resume semantics remain with this chapter's supervisor loop, and the
+division of labor is unchanged.
 
 **The v1 → v2 correction of "caller".** v1 designed the default superior as the *parent
 frame's LLM*, with a YIELD hand-off inside the call stack. v2, after correction,
@@ -171,7 +175,7 @@ is an escalation nobody guards.
 
 ## 5. Effects and Verification (What)
 
-**Test evidence** (all green, part of the 1643-case Python baseline):
+**Test evidence** (all green, part of the 1670-case Python baseline):
 
 - `tests/kernel/test_supervisor.py`: **12 cases** covering the kernel side of the §9
   anchor list — handler round-trip; in-place suspension (the parent's await point does

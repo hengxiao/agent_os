@@ -137,12 +137,26 @@ class LocalPythonToolRegistry:
         #: MCP stdio client 列表(tools/mcp.py ``connect_and_register`` 装配钩子注入;
         #: kernel 寿命;进程清理由 client 自带 close()/atexit 兜底)
         self._mcp_clients: list[Any] = []
+        #: WS1 system.timer.set 的计时器调度表(fire 注入通道 ctl 由 KernelBuilder
+        #: 经 bind_timer 注入;未 bind 时调用报"timer 服务未装配"结构化错误)
         # §W4-3 std/web:fetch_page 构造器注册(为什么不在 with_builtins:
         # 见 tools/std_web.py 模块 docstring 的 §6.1 闸门联动说明)
         from agent_os.tools.std_web import fetch_page_tool
 
         self.register(fetch_page_tool(registry=self))
         self.register_alias("fetch_page", "common.web.fetch_page")
+        # M1/WS1 构造器注册(同一 §6.1 闸门联动,理由同上):std/user·std/task 技能的
+        # permissions.tools 声明 system.user.ask/system.timer.set,而既有锚点
+        # (test_std_transform/test_std_nlp 等)用空工具表加载同一批 std 域文件——
+        # 挂在 with_builtins 会让那些装配红掉。宿主通道/计时服务未 bind 时调用
+        # 报"未装配"结构化错误(NOT_FOUND),语义与挂在 with_builtins 逐字一致
+        from agent_os.tools.builtins import ask_user_tool, notify_user_tool
+        from agent_os.tools.timer import TimerService, timer_set_tool
+
+        self._timers = TimerService()
+        self.register(ask_user_tool(name="system.user.ask", registry=self))
+        self.register(notify_user_tool(name="system.user.notify", registry=self))
+        self.register(timer_set_tool(name="system.timer.set", registry=self))
 
     def tool(
         self, *, name: str | None = None, permission: Permission = Permission.READ, timeout: float = 30.0, **spec_kw: Any
@@ -248,6 +262,15 @@ class LocalPythonToolRegistry:
         缺省(未 bind)= 工具在场但按"user 通道未装配"报结构化错误,行为与引入前一致。
         """
         self._user_channel = channel
+
+    def bind_timer(self, ctl: Any) -> None:
+        """装配钩子(WS1,同 bind_user_channel 先例):给 TimerService 注入 fire 的帧消息注入通道。
+
+        ctl 形态:``agent_os.api.v1.RunControl`` 实现(内核 ``RunControlImpl``);
+        KernelBuilder 在 build 后(kernel/ctl 就位)调用。缺省(未 bind)=
+        工具在场但按"timer 服务未装配"报结构化错误,行为与引入前一致。
+        """
+        self._timers.bind(ctl)
 
     def bind_blob(self, store: Any) -> None:
         """装配钩子(M3,同 bind_memory 先例):替换 spill 的 blob store(如文件版 FileBlobStore)。
@@ -599,8 +622,10 @@ class LocalPythonToolRegistry:
 
         不删的话 ``mkdtemp`` 的结果只增不减——长驻宿主会把 /tmp 塞满
         (审计发现:全仓原先无任何 rmtree)。已配置 workdir(§W0-1 分区)时
-        不属本注册表所有,不动。
+        不属本注册表所有,不动。WS1:顺带取消该 run 全部在册计时器(进程态,
+        不随 checkpoint 持久化,见 tools/timer.py)。
         """
+        self._timers.release_run(run_id)
         wd = self._workdirs.pop(run_id, None)
         if wd:
             shutil.rmtree(wd, ignore_errors=True)
@@ -634,19 +659,22 @@ class LocalPythonToolRegistry:
         同样经 ``bind_skills`` 注入(未 bind 或不支持 register 时调用报"未装配"结构化错误)。
         M1:system.user.ask/system.user.notify(§8.3 User Communication)的宿主回调经
         ``bind_user_channel`` 注入(未 bind 调用报"user 通道未装配"结构化错误,同 memory 先例)。
+        WS1:system.timer.set(§8.3 扩展,一次性/周期计时器)的 fire 注入通道经
+        ``bind_timer`` 注入(未 bind 调用报"timer 服务未装配"结构化错误,同 user 通道先例)。
+        这三个工具的**注册点在构造器**(不在本方法):std 域文件声明了它们的
+        permissions.tools,§6.1 闸门联动要求空工具表也能装配(同 fetch_page 先例,
+        见 __init__ 注释);本方法拿到的是构造器已装好的面,不再重复注册。
         Phase 3(library-design-plan §4.2/§4.4):system.file.stat(读/写决策前探查)/system.file.delete
         (高危,confirm=True,仅文件与空目录)/system.file.mkdir(parents/exist_ok,幂等)/
         system.net.http_request(非 GET 通用 HTTP,与 http_fetch 共用执行体);新工具无旧名,不设别名。
         """
         from agent_os.tools.builtins import (
-            ask_user_tool,
             blob_get,
             fs_edit,
             fs_read,
             fs_write,
             http_fetch_tool,
             http_request_tool,
-            notify_user_tool,
             shell_exec,
         )
         from agent_os.tools.std import (
@@ -769,11 +797,10 @@ class LocalPythonToolRegistry:
         # 未 bind 或 registry 不支持 register 时调用报"未装配"结构化错误,同 memory
         # 工具先例);新工具无旧名,不设别名(Phase 3 先例)
         reg.register(skill_register_tool(name="system.skill.register", registry=reg))
-        # M1(§8.3 User Communication):工具面常驻,宿主回调通道由 KernelBuilder 经
-        # bind_user_channel 注入(未 bind 时调用报"user 通道未装配"结构化错误,
-        # 同 memory 工具先例);新工具无旧名,不设别名
-        reg.register(ask_user_tool(name="system.user.ask", registry=reg))
-        reg.register(notify_user_tool(name="system.user.notify", registry=reg))
+        # M1(§8.3 User Communication)/WS1(timer):system.user.ask/system.user.notify/
+        # system.timer.set 的注册点在**构造器**(§6.1 闸门联动,见 __init__ 注释与
+        # with_builtins docstring);通道/服务仍由 KernelBuilder 经 bind_user_channel/
+        # bind_timer 注入(未 bind 调用报"未装配"结构化错误);均无旧名,不设别名
         # —— Phase 3 补齐(library-design-plan §4.2/§4.4;新工具无旧名,不设别名)——
         reg.tool(
             name="system.file.stat",

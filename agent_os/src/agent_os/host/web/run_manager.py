@@ -78,6 +78,14 @@ P5 增量(时间旅行):``start_debug_replay_session``——``POST /api/debug/se
 在装配后 ``replace_providers`` 换回放内核(host/shared/replay.py 边界:
 LLM Mock 回放,工具真实重跑);``overrides`` 增 ``checkpoint_interval``
 (周期 checkpoint,RunConfig 同名字段,0=关)。
+
+M1 增量(§8.3 User Communication;tests/web/test_user_channel.py 锚点):
+
+- 每个内核 post-build 接 :class:`_InboxUserChannel`(system.user.ask/notify
+  的宿主回调):ask 复用 supervisor 收件箱(``kind="user-ask"``,同一
+  pending/answer 管路);notify 回调 no-op——可观测面在工具层补发的
+  ``user.notify`` 信号(带 run/frame 归因,经 per-run hub 进 SSE、经
+  telemetry 落 trace.jsonl;收件箱无免答条目形态)。
 """
 
 from __future__ import annotations
@@ -88,6 +96,7 @@ import json
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
@@ -101,6 +110,7 @@ from agent_os.api.v1 import (
     Message,
     Mode,
     Principal,
+    Question,
     RunControl,
     Signal,
     web_single_user_principal,
@@ -140,7 +150,9 @@ class _StopBridge:
     M4 起 KernelBuilder **有 sidecar 才**装配 ``kernel.ctl``(RunControlImpl);
     Web 的 stop(``POST /api/runs/{id}/stop`` → ``ctl.stop``)要求每个 run 的内核
     都有 ctl,与配置文件是否声明 sidecar 无关。本 sidecar 不订阅任何信号,
-    唯一作用是让 builder 走 sidecar 装配路径。
+    唯一作用是让 builder 走 sidecar 装配路径。(WS1 起 builder 在 tools 提供
+    ``bind_timer`` 时也会补装 ctl——timer fire 注入通道;本桥保留,覆盖嵌入方
+    自装无 ``bind_timer`` 的 registry 形态,零破坏。)
     """
 
     name: ClassVar[str] = "_stop_bridge"
@@ -151,6 +163,41 @@ class _StopBridge:
 
     async def on_signal(self, sig: Signal, ctl: RunControl) -> Allow:
         return Allow()
+
+
+class _InboxUserChannel:
+    """M1(§8.3)Web 宿主用户通道:``system.user.ask``/``system.user.notify`` 的回调。
+
+    ``ask``:复用 supervisor 收件箱(:class:`InboxChannel`)闭环——问题包装成
+    ``Question(kind="user-ask")`` 进 pending 挂起,前端经既有
+    ``GET /api/supervisor/pending`` / ``POST /api/supervisor/{id}/answer``
+    管路作答(同一收件箱,按 kind 区分渲染);options=None 即自由文本作答。
+    run_id/frame_id 通道契约拿不到(bind_user_channel 的 ``ask(question: str)``
+    形状),留空——收件箱行以 question_id 寻址,不依赖这两个字段。
+
+    ``notify``:no-op。收件箱没有免答通知条目形态(每条 pending 都等回答),
+    而单向通知的可观测面已由工具层兜底——``system.user.notify`` 落地后向内核
+    总线补发 ``user.notify`` 信号(带 run/frame 归因;tools/builtins.py),
+    Web 侧经 per-run hub(``"*"`` 订阅)进 SSE、经 telemetry 落 trace.jsonl,
+    宿主回调无需再做什么(这是"最薄形态"的定案,docs 见工具 docstring)。
+    """
+
+    def __init__(self, inbox: InboxChannel) -> None:
+        self._inbox = inbox
+
+    async def ask(self, question: str) -> str:
+        answer = await self._inbox(
+            Question(
+                question_id=f"user-{uuid.uuid4().hex[:12]}",
+                question=question,
+                kind="user-ask",
+            )
+        )
+        return str(answer.get("answer", ""))
+
+    async def notify(self, message: str) -> None:
+        """单向通知:可观测面在工具层的 ``user.notify`` 信号(trace/SSE),此处无操作。"""
+
 
 
 class RunValidationError(RuntimeError):
@@ -426,6 +473,10 @@ class RunManager:
 
         ``supervisor_handler``(S2):run 级注入的 supervisor 通道;缺省回落
         装配级 handler,再缺省回落进程共享 InboxChannel(§2.3 选择顺序)。
+
+        M1(§8.3):每个内核 post-build 经 ``bind_user_channel`` 接 Web 宿主
+        用户通道(:class:`_InboxUserChannel`;ask 复用收件箱;notify 的
+        可观测面在工具层 ``user.notify`` 信号,回调 no-op)。
         """
         handler = supervisor_handler
         if handler is None:
@@ -435,18 +486,25 @@ class RunManager:
         with self._assemble_lock:
             base = self._base_config(skill_set)
             if not overrides:
-                return build_kernel(
+                kernel = build_kernel(
                     base, extra_sidecars=[_StopBridge()], supervisor_handler=handler
                 )
-            cfg = load_config(base) if isinstance(base, (str, Path)) else dict(base)
-            run_section = dict(cfg.get("run") or {})
-            for key in OVERRIDE_FIELDS:
-                if key in overrides and overrides[key] is not None:
-                    run_section[key] = overrides[key]
-            cfg["run"] = run_section
-            return build_kernel(
-                cfg, extra_sidecars=[_StopBridge()], supervisor_handler=handler
-            )
+            else:
+                cfg = load_config(base) if isinstance(base, (str, Path)) else dict(base)
+                run_section = dict(cfg.get("run") or {})
+                for key in OVERRIDE_FIELDS:
+                    if key in overrides and overrides[key] is not None:
+                        run_section[key] = overrides[key]
+                cfg["run"] = run_section
+                kernel = build_kernel(
+                    cfg, extra_sidecars=[_StopBridge()], supervisor_handler=handler
+                )
+        # M1(§8.3):Web 宿主用户通道——ask 复用收件箱(kind="user-ask");
+        # notify 的可观测面在工具层 user.notify 信号(trace/SSE),通道回调 no-op
+        # (形态定案见 _InboxUserChannel docstring)
+        if hasattr(kernel.tools, "bind_user_channel"):
+            kernel.tools.bind_user_channel(_InboxUserChannel(self._inbox))
+        return kernel
 
     def _principal(self) -> Any:
         """数据层身份(docs/DATA-AUTHZ.md §2.2):Web 单用户模式 = 部署者。

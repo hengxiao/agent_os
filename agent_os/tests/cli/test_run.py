@@ -142,3 +142,63 @@ def test_cli_resume_from_checkpoint(tmp_path, capsys):
                        "--artifacts", str(tmp_path / "runs"), "--json")
     assert rc == 0
     assert out["result"] == {"seq": [0, 1, 1, 2, 3]}
+
+
+# ---------------------------------------------------------------------------
+# M1 用户通道(§8.3):_CliUserChannel stdin/stderr 协议 + _build_kernel 接线
+# ---------------------------------------------------------------------------
+
+
+def test_cli_user_channel_ask_reads_stdin(monkeypatch, capsys):
+    """ask:stderr 打印 [user] 问题行 + stdin 读一行作答(与 _cli_supervisor 同构)。"""
+    import io
+    import sys
+
+    from agent_os.host.cli.main import _CliUserChannel
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("  继续  \n"))
+    out = asyncio.run(_CliUserChannel().ask("确认覆盖现有文件吗?"))
+    assert out == "继续", "回答须 strip 后原样返回"
+    err = capsys.readouterr().err
+    assert "[user] 确认覆盖现有文件吗?" in err
+
+
+def test_cli_user_channel_notify_one_way(capsys):
+    """notify:单向语义——只打印,不读 stdin。"""
+    from agent_os.host.cli.main import _CliUserChannel
+
+    asyncio.run(_CliUserChannel().notify("已完成 3/5"))
+    err = capsys.readouterr().err
+    assert "[user] 已完成 3/5" in err
+
+
+def test_cli_user_channel_ask_eof_raises(monkeypatch, capsys):
+    """stdin EOF → EOFError(工具侧经 dispatch 归一 INTERNAL,§8.1 分发边界)。"""
+    import io
+    import sys
+
+    from agent_os.host.cli.main import _CliUserChannel
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    with pytest.raises(EOFError):
+        asyncio.run(_CliUserChannel().ask("q?"))
+
+
+def test_build_kernel_wires_user_channel(tmp_path):
+    """_build_kernel 装配链:默认(supervisor=True)注入 _CliUserChannel 进 tools registry。"""
+    from agent_os.host.cli.main import _build_kernel, _CliUserChannel
+
+    cfg = _write_config(tmp_path, builtins=True)
+    kernel = _build_kernel(str(cfg))
+    assert isinstance(kernel.tools._user_channel, _CliUserChannel), (
+        "run/resume 装配须把 CLI 用户通道经 bind_user_channel 注入 registry"
+    )
+
+
+def test_build_kernel_replay_leaves_user_channel_unbound(tmp_path):
+    """replay(supervisor=False)不接线:回放按 trace 记录值走,不问第二次(§4)。"""
+    from agent_os.host.cli.main import _build_kernel
+
+    cfg = _write_config(tmp_path, builtins=True)
+    kernel = _build_kernel(str(cfg), supervisor=False)
+    assert kernel.tools._user_channel is None

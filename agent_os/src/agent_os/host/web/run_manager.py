@@ -14,7 +14,9 @@
 R4 增量(§4.3/§4.4):
 
 - 每个内核装配时附带 :class:`_StopBridge`(no-op ASYNC sidecar),保证
-  ``kernel.ctl`` 恒存在 → ``stop_run`` 经 ``ctl.stop`` 在下一个 safe point 中止;
+  ``kernel.ctl`` 恒存在 → ``stop_run`` 经 ``ctl.stop`` 在下一个 safe point 中止
+  (WS2:``pause_run`` 经同一通道 ``ctl.pause`` 在下一个 safe point 挂起,
+  RunRecord 归 ``paused``,可 resume);
 - ``resume_run``:用同一 config 新建内核,经 host/shared 的 ``execute_resume``
   从该 run 的 checkpoint.json 恢复,产物与内存态写回原 run;resume 期间换一只
   新 hub(原 hub 已在首次 run 结束时关闭),SSE 可继续观察;
@@ -713,6 +715,24 @@ class RunManager:
         if ctl is None:
             return False
         await ctl.stop(run_id, "web stop")
+        return True
+
+    async def pause_run(self, run_id: str, reason: str = "web pause") -> bool:
+        """``POST pause``(WS2 pause 真语义):``RunControl.pause`` 置挂起标志,run 在
+        下一个 safe point 抛 ``RunPaused`` 挂起(落 PAUSED + checkpoint,可 resume)。
+
+        语义/形状同 :meth:`stop_run`:仅内存态 running 才置标志,否则 → ``False``
+        (路由层归 409);``ctl.pause`` 只写挂起标志表,跨线程 await 无事件循环
+        亲和性问题。reason 缺省 ``"web pause"``,原样进 ``run.paused`` payload 与
+        RunRecord error(``"RunPaused: <reason>"``)。
+        """
+        state = self.state_of(run_id)
+        if state is None or state.get("status") != "running":
+            return False
+        ctl = getattr(state.get("kernel"), "ctl", None)
+        if ctl is None:
+            return False
+        await ctl.pause(run_id, reason)
         return True
 
     async def resume_run(self, run_id: str) -> dict[str, Any]:

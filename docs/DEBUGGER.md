@@ -31,8 +31,10 @@
 且订阅序在 Telemetry/SignalHub **之后**(订阅顺序即记录顺序):暂停发生前,
 该信号已落 `trace.jsonl`、已推 SSE,前端看到的轨迹永远包含暂停点本身。
 
-`Pause` verdict 不复用:它现状是"带标签的 abort"(服务 BudgetGuard 降级
-通知),不是真暂停。
+`Pause` verdict 不复用:它已真化为 checkpoint 恢复型挂起(2026-09-29:RunPaused →
+Run 边界 PAUSED + run.paused,可 resume,服务 BudgetGuard `action="pause"` 降级)——
+那是"落盘-重建"形态;调试暂停要求进程内原地冻结同一事件循环(emit 阻塞,
+run 保持 RUNNING),形态与通道都不同,不共用。
 
 其他保证:
 

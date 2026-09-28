@@ -572,11 +572,18 @@ def _sidecars(cfg: dict[str, Any]) -> list[Any]:
         raise ConfigError(f"[sidecars] 含未知 sidecar: {unknown}")
     if "budget_guard" in cfg:
         bg = cfg["budget_guard"] or {}
+        action = bg.get("action", "stop")
+        if action not in ("stop", "pause"):
+            raise ConfigError(
+                f'[sidecars] budget_guard.action 应为 "stop" 或 "pause"(§2.4 '
+                f"stop→pause 降级),得到: {action!r}"
+            )
         sidecars.append(
             BudgetGuard(
                 max_cost=bg.get("max_cost"),
                 max_steps=bg.get("max_steps"),
                 max_wall_time=bg.get("max_wall_time"),
+                action=action,
             )
         )
     if "loop_detector" in cfg:

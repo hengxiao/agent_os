@@ -1,7 +1,7 @@
 /* ⌘K 命令条(docs/WEB-UI.md §5 键盘):居中 Modal,顶部输入 + fuzzy 过滤列表,
    ↑/↓ 移动高亮,Enter 执行,Esc / 遮罩点击关闭;打开聚焦输入,关闭还原焦点。
-   命令可见性(Stop 仅 running / Resume·定位首个错误 仅异常 run)由调用方
-   在打开前按上下文过滤,本组件只渲染收到的命令集。
+   命令可见性(Stop·Pause 仅 running / Resume 非 running 含 paused /
+   定位首个错误 仅异常 run)由调用方在打开前按上下文过滤,本组件只渲染收到的命令集。
 
    纯数据 + 纯函数(不碰 DOM,node 单测可载):
      COMMANDS                      命令注册表(§5:New Run / Stop / Resume / Reload /
@@ -15,6 +15,7 @@ import { esc } from "../util.js";
 export const COMMANDS = [
   { id: "new-run", title: "New Run", hint: "发起新运行", glyph: "+" },
   { id: "stop", title: "Stop", hint: "中止当前 run(不可逆)", glyph: "■" },
+  { id: "pause", title: "Pause", hint: "暂停当前 run(可 Resume 恢复,WS2)", glyph: "⏸" },
   { id: "resume", title: "Resume", hint: "从 checkpoint 恢复当前 run", glyph: "▶" },
   { id: "reload-skills", title: "Reload Skills", hint: "热重载技能文件", glyph: "↻" },
   { id: "goto-runs", title: "跳 Runs", hint: "运行列表", glyph: "R" },

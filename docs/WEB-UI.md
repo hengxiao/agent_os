@@ -185,8 +185,8 @@ live 跟随最新信号);call 行可折叠子树(+N 子指令计数,depth>4 默�
 
 - **进度条区**(Workbench 顶部,仅 running 时显示):live 脉冲点、已用时长(秒级走动)、steps 与 cost 双 ProgressBar(占 max_steps/max_cost 比例;超 80% 转 `--warn` 色,与 BudgetGuard 阈值语义一致);
 - **帧树实时生长**:新帧以滑入动画出现,running 帧显示旋转指示(不止文本"运行中");
-- **时间线自动跟随**(见 §4.2 规则 2);**Stop 按钮常驻进度条右侧**(确认后调 `/stop`,按钮转 loading → Toast 结果);
-- 结束瞬间:进度条区替换为结果 Banner(done 绿 / failed 红 / aborted 紫),live 指示熄灭,SSE 收到 `event: end` 后停止追加。
+- **时间线自动跟随**(见 §4.2 规则 2);**Stop 按钮常驻进度条右侧**(确认后调 `/stop`,不可逆提示,按钮转 loading → Toast 结果);**Pause 按钮与 Stop 并列**(2026-09-29,调 `/pause`,可恢复故无确认条,"暂停中…"相位);
+- 结束瞬间:进度条区替换为结果 Banner(done 绿 / failed 红 / aborted 紫 / paused 黄),live 指示熄灭,SSE 收到 `event: end` 后停止追加。
 
 ### 4.4 RCA 模式
 
@@ -257,7 +257,7 @@ live 跟随最新信号);call 行可折叠子树(+N 子指令计数,depth>4 默�
 
 - **三态齐全**:每面板 loading(Skeleton)/ empty(引导语,Skills 空时提示"在 agent-os.toml 配置 skills.path")/ error(Toast + 面板内重试);
 - **live 指示**:SSE 连接中 = TopBar 蓝点脉冲;断开 = 黄点 + "已断开,点击重连";进行中的 run 列表项也有 mini 脉冲(不打开页面也能看到它在跑);
-- **键盘**:`j/k` 上/下一条信号,`gg/G` 首/尾,`/` 搜索,`⌘J` 定位首个错误,`⌘K` 命令条(New Run / Stop / Resume / Reload / 跳 Skills / 跳 Tools),`?` 快捷键面板;
+- **键盘**:`j/k` 上/下一条信号,`gg/G` 首/尾,`/` 搜索,`⌘J` 定位首个错误,`⌘K` 命令条(New Run / Pause / Stop / Resume / Reload / 跳 Skills / 跳 Tools),`?` 快捷键面板;
 - **操作反馈**:stop/resume/reload 均为"按钮 loading → Toast 结果";stop 需确认(不可逆提示);New Run 的校验错误**内联**(编辑器行号 + 底部错误条),不弹 Toast;
 - **时间格式**:相对时间 + title 绝对时间;live 时长秒级更新;
 - **复制**:run_id、skill manifest、tool spec、帧上下文、单条消息、错误全文,全部一键复制。

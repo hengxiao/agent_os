@@ -89,9 +89,11 @@ YIELD 机制——父帧照常停在自己的 await 点,兄弟 spawn 帧照常�
 (`kernel/runner.py:604-611`)。run 完成判定因此天然安全:run 只在整棵帧树返回后
 才置 DONE,handler 未回答期间状态保持 RUNNING(同处注释)。**注**:`docs/SUPERVISOR.md`
 §2.2 称"所有活跃帧挂起时 run 转 PAUSED、帧 status = SUSPENDED";代码中 supervisor
-路径**不做任何状态迁移**(`RunStatus.PAUSED`、`FrameStatus.SUSPENDED` 枚举存在于
-`api/v1/run.py:60`、`api/v1/frames.py:48`,但仅调试器等其他路径使用)。本章以代码
-为准:"挂起"是 await 阻塞,不是状态机迁移;"等待上级"在 Web 上由收件箱 pending
+路径**不做任何状态迁移**(`FrameStatus.SUSPENDED` 仍是预留枚举
+(`api/v1/frames.py:47`);`RunStatus.PAUSED`(`api/v1/run.py:64`)自 2026-09-29 起
+由 RunControl.pause 通道接线——checkpoint 恢复型挂起,见第 07 章——与本 await
+通道是两条独立通道)。本章以代码
+为准:supervisor 路径的"挂起"是 await 阻塞,不是状态机迁移;"等待上级"在 Web 上由收件箱 pending
 列表呈现,而非 run 状态字段。
 
 **通道选择顺序**(`docs/SUPERVISOR.md` §2.3,实现于
@@ -151,7 +153,7 @@ manager.py:179)、`supervisor.timeout`。channel 标签由 handler 的
 
 ## 5. 效果与验证(效果)
 
-**测试证据**(全绿,属 Python 1670 例基线的一部分):
+**测试证据**(全绿,属 Python 1681 例基线的一部分):
 
 - `tests/kernel/test_supervisor.py`:**12 例**,覆盖 §9 锚点清单的内核侧——handler
   闭环、就地挂起(挂起期间父帧 await 点不动)、pending ask 阻止 run 提前判完成、
@@ -177,10 +179,12 @@ manager.py:179)、`supervisor.timeout`。channel 标签由 handler 的
 
 ## 6. 局限性与边界(局限性)
 
-1. **状态迁移未实现(文档与代码出入)**:`docs/SUPERVISOR.md` §2.2 的"run 转
-   PAUSED / 帧置 SUSPENDED"在代码中不存在;挂起纯由 await 表达。代价:无法按
-   run 状态过滤"等待上级"的 run,UI 只能依赖收件箱 pending 列表;状态枚举里的
-   PAUSED/SUSPENDED 对 supervisor 路径是死字母。
+1. **supervisor 路径状态迁移未实现(文档与代码出入)**:`docs/SUPERVISOR.md` §2.2 的"run 转
+   PAUSED / 帧置 SUSPENDED"在 supervisor 路径代码中不存在;挂起纯由 await 表达。代价:无法按
+   run 状态过滤"等待上级"的 run,UI 只能依赖收件箱 pending 列表。两通道划清
+   (2026-09-29):`RunStatus.PAUSED` 已由 RunControl.pause 通道接线(checkpoint 恢复型,
+   可 resume),不再是全仓死字母;但对 supervisor await 通道,PAUSED/SUSPENDED
+   仍无写入点(有意未迁移,见 docs/SUPERVISOR.md §2.2)。
 2. **§9 锚点清单未全覆盖**:第 7 条"spawn 后台帧提问只挂起该分支"无专项测试
    (`tests/kernel/test_blackboard_spawn.py` 只测 spawn 本身);该性质目前由"就地
    挂起不触碰其他帧"的结构论证支撑,而非断言。

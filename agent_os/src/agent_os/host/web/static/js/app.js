@@ -40,6 +40,7 @@ import {
   wbNavEdge,
   wbNavSignal,
   wbRcaAvailable,
+  wbRequestPause,
   wbRequestStop,
   wbResumable,
   wbRunning,
@@ -489,6 +490,7 @@ async function reloadSkills() {
 function availableCommands() {
   return COMMANDS.filter((c) => {
     if (c.id === "stop") return wbRunning();
+    if (c.id === "pause") return wbRunning(); // WS2:pause 仅 running 可发
     if (c.id === "resume") return wbResumable();
     if (c.id === "jump-error") return wbRcaAvailable();
     return true; // New Run / Reload Skills / 跳页:所有页面可用
@@ -498,6 +500,7 @@ function availableCommands() {
 function execCommand(id) {
   if (id === "new-run") openLaunchDialog();
   else if (id === "stop") wbRequestStop(); // 复用 live bar 不可逆确认条(§5)
+  else if (id === "pause") wbRequestPause(); // WS2:可恢复,直接 POST /pause
   else if (id === "resume") wbDoResume();
   else if (id === "reload-skills") reloadSkills();
   else if (id === "goto-runs") location.hash = "#/runs";

@@ -2,8 +2,10 @@
 
 固定约定:
 
-- ``pause(run_id, reason)``:v1 语义同 stop,理由带 ``"paused: "`` 前缀,
-  下一个 ``pre:step`` safe point 抛 ``RunAborted``;
+- ``pause(run_id, reason)``:可恢复挂起(v2 真语义,docs/DESIGN.md :940)——
+  下一个 safe point 抛 ``RunPaused``,Run 边界落 ``RunStatus.PAUSED``、发
+  ``run.paused``(不发 ``run.aborted``),理由原样(不拼 ``"paused: "`` 前缀),
+  可经 checkpoint/resume 恢复;
 - ``inject_message(frame_id, msg)``:向指定帧上下文追加消息;非 Message 入参
   包装为 ``role=USER, source=INJECTED``;帧不存在时丢弃并记日志,不崩 run;
 - ``force_compress(frame_id)``:在帧工作内存置 ``_force_compress`` 标志
@@ -22,6 +24,7 @@ from typing import Any, ClassVar
 import pytest
 
 from agent_os.api.v1 import (
+    RUN_PAUSED,
     Allow,
     ChatRequest,
     ChatResponse,
@@ -30,15 +33,16 @@ from agent_os.api.v1 import (
     Message,
     Mode,
     Role,
+    RunStatus,
     Signal,
     Source,
     ToolCall,
 )
 from agent_os.kernel.control import FORCE_COMPRESS_KEY
-from agent_os.kernel.errors import RunAborted, SubtreeCancelled
+from agent_os.kernel.errors import RunAborted, RunPaused, SubtreeCancelled
 from agent_os.providers.mock import MockProvider
 from tests.helpers.brains import fib_brain
-from tests.helpers.kernels import FIB_SKILLS_YAML, assemble
+from tests.helpers.kernels import FIB_SKILLS_YAML, assemble, record_all
 
 
 class _Probe:
@@ -77,20 +81,50 @@ def _kernel_with(probe: _Probe, brain=fib_brain):
 
 
 # ---------------------------------------------------------------------------
-# pause
+# pause / stop
 # ---------------------------------------------------------------------------
 
 
-def test_pause_aborts_with_prefixed_reason():
-    """pause 在下一个 safe point 中止 run,理由带 "paused: " 前缀(§5.2)。"""
+def test_pause_suspends_resumable_run():
+    """pause 在下一个 safe point 挂起 run:抛 RunPaused(理由原样,无前缀)、
+    落 RunStatus.PAUSED、发 run.paused(不发 run.aborted)——可经 resume 恢复
+    (docs/DESIGN.md :940)。"""
 
     async def act(sig, ctl, notes):
         await ctl.pause(sig.run_id, "人工暂停排查")
 
     probe = _Probe("post:llm.response", act)
     kernel, _ = _kernel_with(probe)
-    with pytest.raises(RunAborted, match="paused: 人工暂停排查"):
+    seen = record_all(kernel)
+    with pytest.raises(RunPaused, match="^人工暂停排查$"):
         asyncio.run(kernel.run("demo.fib", {"n": 3}))
+
+    run = next(iter(kernel._runs.values()))
+    assert run.state.status is RunStatus.PAUSED
+    names = [s.name for s in seen]
+    assert "run.aborted" not in names, "挂起不得发 run.aborted"
+    paused = [s for s in seen if s.name == RUN_PAUSED]
+    assert len(paused) == 1
+    assert paused[0].payload == {"reason": "人工暂停排查"}
+
+
+def test_stop_aborts_run_unchanged():
+    """stop 路径回归:仍落 ABORTED、发 run.aborted(不发 run.paused)。"""
+
+    async def act(sig, ctl, notes):
+        await ctl.stop(sig.run_id, "人工强停")
+
+    probe = _Probe("post:llm.response", act)
+    kernel, _ = _kernel_with(probe)
+    seen = record_all(kernel)
+    with pytest.raises(RunAborted, match="人工强停"):
+        asyncio.run(kernel.run("demo.fib", {"n": 3}))
+
+    run = next(iter(kernel._runs.values()))
+    assert run.state.status is RunStatus.ABORTED
+    names = [s.name for s in seen]
+    assert "run.aborted" in names
+    assert "run.paused" not in names
 
 
 # ---------------------------------------------------------------------------

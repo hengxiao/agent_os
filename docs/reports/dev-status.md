@@ -346,6 +346,30 @@
 > 重武装、`monitor_shell`/`connect_channel`、TUI 接线。上文 std 第 5 波块"剩余"
 > 中的"ask_human/set_timer 工具面"与 §3(Tool Registry)复核注的 user 通道
 > "CLI 接线留 TODO"据此关闭,dated 原文保留。全量基线:1670 收集 = 1620 passed + 10 skipped + 40 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-29(pause 真语义落地,WS1 内核 + WS2 Web)**:DESIGN §16 跨里程碑
+> 开口第一条"pause 真语义"据此关闭。
+> ① **形态裁决**——checkpoint 恢复型:宿主 finalize 照常落 checkpoint,恢复走既有
+> resume(新内核 config 可换,§2.4"加预算再继续"本义);进程内 await 挂起形态未采用。
+> ② **内核**——`RunPaused(RunAborted)`(`kernel/errors.py`,理由原样不再拼
+> `"paused: "` 前缀);`ctl.pause` 写独立 `_pause_flags`,两处 safe point(pre:step
+> 循环开头/流式 chunk 循环)**stop 优先**(先查 stop 抛 RunAborted,后查 pause 抛
+> RunPaused);run 边界特判落 PAUSED、发 `run.paused`(payload {"reason"},不发
+> run.aborted),resume 边界同构(链式挂起);`Pause` verdict 在 pre:step/pre:tool.call
+> 两处仲裁点真化;`RUN_PAUSED = "run.paused"` 信号(目录 36→37);
+> `BudgetGuard(action="stop"|"pause")` + `[sidecars] budget_guard` action 键(strict)
+> ——§2.4 stop→pause 降级补票。
+> ③ **Web**——RunRecord 状态归口 `done|failed|aborted|paused`(`host/shared/runrecord.py`);
+> `POST /api/runs/{id}/pause`(可选 {"reason"},缺省 "web pause";仅 running 生效,
+> 非 running 409/未知 404),resume 对 paused 天然兼容;前端 live bar Pause 按钮、
+> "pausing" 相位、paused warn Banner(带 Resume ▶)、⌘K 加 pause、status pill
+> paused 槽。CLI 退出码 paused 落 else 3 不变。
+> ④ **两通道划清**——RunControl.pause = checkpoint 恢复型挂起(PAUSED 有写入点);
+> supervisor ask 的 await 就地挂起与调试会话挂起是另两条通道,run 保持 RUNNING
+> (docs/SUPERVISOR.md §2.2 已修订);supervisor await 路径的 PAUSED 迁移有意未做。
+> **仍开口**:外部事件唤醒(§17 开放问题 4)、CLI pause 子命令(一次性前台,用
+> BudgetGuard action 或 web)、run 列表 paused 筛选 chips。
+> 全量基线:1681 收集 = 1638 passed + 10 skipped + 40 xfailed,0 失败。
 
 ## 一、总览
 

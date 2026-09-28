@@ -14,9 +14,11 @@
      open 时清空重折叠保幂等),SSE 不可用回退 2s 轮询 detail+signals;帧树随
      frame.push/pop 实时生长(新帧滑入,running 帧旋转指示);轨迹随信号增量重算
      (buildTraceRows 全量纯函数,O(n) 足够轻)并自动跟随
-     (视窗在底则跟随,上翻暂停并浮现"回到底部");Stop → 不可逆确认条 → POST
-     /stop → loading → Toast;结束(SSE event:end 或轮询发现终态)→ 进度条区
-     替换为结果 Banner(done 绿 / failed 红 / aborted 紫),live 熄灭,停止追加。
+     (视窗在底则跟随,上翻暂停并浮现"回到底部");Pause → POST /pause(可恢复,
+     无确认条,WS2);Stop → 不可逆确认条 → POST /stop → loading → Toast;结束
+     (SSE event:end 或轮询发现终态)→ 进度条区替换为结果 Banner(done 绿 /
+     failed 红 / aborted 紫 / paused 黄),live 熄灭,停止追加;挂起 run 页头
+     出"已暂停 + reason + Resume"Banner(rca-panel.pausedBannerHtml)。
      SSE onerror(§5):store.liveConn 转 "down"(TopBar 黄点 + "已断开,点击重连",
      点击经 reconnectLive() 重建该 run 的 SSE),同时回退轮询保数据不断。
 
@@ -78,7 +80,7 @@ import {
   mergeSignal,
   mountLiveBar,
 } from "./components/progress-bar.js";
-import { planRcaJump, rcaBannerHtml, vetoCardHtml } from "./components/rca-panel.js";
+import { planRcaJump, pausedBannerHtml, rcaBannerHtml, vetoCardHtml } from "./components/rca-panel.js";
 import { mountEscalationsPanel } from "./components/escalations-panel.js";
 import { mountUsagePanel } from "./components/usage-panel.js";
 
@@ -554,6 +556,8 @@ function renderHeader() {
     `</div>` +
     // §4.4 异常 Banner:status + error 摘要 + 定位首个错误 ⌘J + Resume ▶
     (status === "failed" || status === "aborted" ? rcaBannerHtml(status, d.error) : "") +
+    // WS2 挂起 Banner:已暂停 + reason(RunPaused: ...)透传 + Resume ▶(非错误,无定位)
+    (status === "paused" ? pausedBannerHtml(d.error) : "") +
     waitBannerHtml();
 }
 
@@ -689,7 +693,7 @@ function startLive() {
   // REST 快照(初始 signals)先折叠进 live 状态:帧树/进度与时间线同源
   for (const s of wb.signals) mergeSignal(live.state, s);
   refreshLiveTree();
-  live.bar = mountLiveBar(wb.els.live, { onStop: doStop });
+  live.bar = mountLiveBar(wb.els.live, { onStop: doStop, onPause: doPause });
   live.bar.update(deriveProgress(wb.detail, wb.signals));
   live.bar.setElapsed(fmtElapsed(live.startMs, Date.now()));
   live.tickId = setInterval(() => {
@@ -822,7 +826,9 @@ async function finishLive() {
     // 终态帧树:优先 checkpoint 重建的真实帧;产物半写窗口回退 live 帧(标终态)
     let frames = wb.detail?.frames ?? [];
     if (!frames.length && live.state.frames.length) {
-      const st = wb.detail?.status === "aborted" ? "aborted" : wb.detail?.status === "failed" ? "failed" : "done";
+      const st = ["aborted", "failed", "paused"].includes(wb.detail?.status)
+        ? wb.detail.status
+        : "done";
       frames = live.state.frames.map((f) => (f.status === "running" ? { ...f, status: st } : f));
     }
     wb.roots = buildFrameTree(frames, pushOrder(wb.signals));
@@ -867,6 +873,19 @@ async function doStop() {
     return true;
   } catch (e) {
     toast(e.message ?? "stop 失败", "error");
+    return false;
+  }
+}
+
+/* Pause 流(WS2 pause 真语义):可恢复,无需确认条;成功后等 safe point 挂起
+   (轮询/SSE 发现 status=paused → finishLive → 挂起 Banner + 页头 paused pill) */
+async function doPause() {
+  try {
+    await postJson(`/api/runs/${encodeURIComponent(wb.runId)}/pause`);
+    toast("已请求暂停,run 将在下一个 safe point 挂起(可 Resume 恢复)", "success");
+    return true;
+  } catch (e) {
+    toast(e.message ?? "pause 失败", "error");
     return false;
   }
 }
@@ -963,6 +982,12 @@ export function wbRequestStop() {
   if (!wbRunning()) return false;
   wb.live?.bar?.requestStop();
   return true;
+}
+
+/* ⌘K Pause(WS2):可恢复,直接发 POST /pause(不走确认条) */
+export function wbRequestPause() {
+  if (!wbRunning()) return false;
+  return doPause();
 }
 
 /* ⌘K Resume(§5):仅 run 详情页可用 */

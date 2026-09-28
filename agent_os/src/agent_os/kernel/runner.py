@@ -4,7 +4,8 @@ S1 ask_supervisor 拦截/就地挂起/回答注入与 resume 重问,docs/SUPERVI
 WS2 tool-confirm 两阶段闸门,docs/DESIGN.md §8.2 + docs/SUPERVISOR.md §10;
 WS3 parallel_invoke fork/join,docs/DESIGN.md §3.4 第三原语)。
 
-agent loop 顺序:safe point(run 中止标志)→ pre:step 检查点(verdict 仲裁,§5.2)
+agent loop 顺序:safe point(run 中止/挂起标志:stop→RunAborted、pause→RunPaused,
+同置时 stop 优先)→ pre:step 检查点(verdict 仲裁,§5.2)
 → 强制压缩检查 → context.maintain/build → providers.chat(RunConfig.stream 开且
 provider caps 支持流式时改走 stream chunk 循环:逐 chunk 发 post:llm.chunk、
 safe point 同款取消查表、ttft/total 计时入账;否则回落 chat 原路径)→
@@ -13,7 +14,8 @@ confirm/EXEC 工具过 tool-confirm 闸门挂起等人审;工具走 Tool Registr
 ``skill.*`` 压栈)→ post:step(调用签名列表)→
 记账与预算检查。弹栈前 ``pre:frame.pop`` 同步可否决(§3.1 pop())。
 
-硬失败传播边界(§3.2):MaxDepthExceeded / RunAborted(含 BudgetExceeded)不可被
+硬失败传播边界(§3.2):MaxDepthExceeded / RunAborted(含 BudgetExceeded,含
+RunPaused——Run 边界特判落 PAUSED 而非 ABORTED,docs/DESIGN.md :940)不可被
 单帧吞掉,沿调用栈弹到 Run 边界;其余子帧异常折叠为父帧的错误观察。
 """
 
@@ -56,6 +58,7 @@ from agent_os.api.v1 import (
     PRE_TOOL_CALL,
     RUN_ABORTED,
     RUN_FINISHED,
+    RUN_PAUSED,
     RUN_STARTED,
     SKILL_ESCALATION_DENIED,
     TIER_IRREVERSIBLE,
@@ -111,6 +114,7 @@ from agent_os.kernel.errors import (
     MaxDepthExceeded,
     OutputValidationError,
     RunAborted,
+    RunPaused,
     SkillLoadError,
     SubtreeCancelled,
     ToolDispatchError,
@@ -232,9 +236,14 @@ class Kernel:
         #: supervisor 通道的缺省策略(见 KernelBuilder.build)
         self.human_approval = human_approval
         self._runs: dict[str, Run] = {}
-        #: run 中止标志表(dict[run_id, reason];RunControl.stop/pause 置位,
+        #: run 中止标志表(dict[run_id, reason];RunControl.stop 置位,
         #: runner 在 pre:step safe point 检查并抛 RunAborted,§3.1/§5.2)
         self._stop_flags: dict[str, str] = {}
+        #: run 挂起标志表(dict[run_id, reason];RunControl.pause 置位,
+        #: safe point 同点检查抛 RunPaused——Run 边界落 PAUSED、可 resume,
+        #: docs/DESIGN.md :940;同 stop 同置时 stop 优先(更硬,落 ABORTED);
+        #: run 收尾由 _release_run 清理,同进程 resume 不会立即再挂起)
+        self._pause_flags: dict[str, str] = {}
         #: 帧级 stop 标志表(dict[frame_id, reason];RunControl.cancel_frame 经
         #: cancel_subtree 置位;safe point 同点检查,命中抛 SubtreeCancelled——
         #: 子树终态,不杀 run;仅 prompt 帧在 safe point 消费,code 帧不检查)
@@ -296,6 +305,17 @@ class Kernel:
         try:
             try:
                 result = await self.run_frame(root)
+            except RunPaused as e:
+                # 可恢复挂起(docs/DESIGN.md :940):落 PAUSED 而非 ABORTED,发
+                # run.paused(不发 run.aborted);finally 照常收尾,宿主 finalize
+                # 落 checkpoint 后可经 resume 恢复。注意必须放在通用
+                # ``except Exception`` 之前——RunPaused 是 RunAborted 子类
+                run.state.status = RunStatus.PAUSED
+                run.state.error = f"{type(e).__name__}: {e}"
+                await self.signals.emit(
+                    Signal(name=RUN_PAUSED, run_id=run.run_id, payload={"reason": str(e)})
+                )
+                raise
             except Exception as e:
                 run.state.status = (
                     RunStatus.ABORTED if isinstance(e, RunAborted) else RunStatus.FAILED
@@ -329,6 +349,9 @@ class Kernel:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
+        # 挂起标志一次性生效:run 收尾即清理,同进程 resume 不会立即再挂起
+        # (跨进程 resume 本就看新内核的空表;标志本身不随 checkpoint 持久化)
+        self._pause_flags.pop(run_id, None)
         for subsystem, method in ((self.telemetry, "close_run"), (self.tools, "release_run")):
             fn = getattr(subsystem, method, None)
             if fn is None:
@@ -382,7 +405,8 @@ class Kernel:
             # pre:step 否决即中止(§5.2)
             raise RunAborted(verdict.reason)
         if isinstance(verdict, Pause):
-            raise RunAborted(f"paused: {verdict.reason}")
+            # 可恢复挂起(docs/DESIGN.md :940):理由原样上抛,Run 边界落 PAUSED
+            raise RunPaused(verdict.reason)
         if isinstance(verdict, InjectMessage) and self.ctl is not None:
             await self.ctl.inject_message(verdict.frame_id, verdict.msg)
         elif isinstance(verdict, ForceCompress) and self.ctl is not None:
@@ -488,10 +512,15 @@ class Kernel:
         manifest = skill_obj.manifest
         output_failures = 0
         while True:
-            # safe point(§3.1):先查 run 中止标志(RunControl.stop/pause,§5.2)
+            # safe point(§3.1):先查 run 中止标志(RunControl.stop,§5.2)再查挂起
+            # 标志(RunControl.pause)——同置时 stop 优先(更硬:ABORTED 不可恢复,
+            # pause 落 PAUSED 可 resume,docs/DESIGN.md :940)
             reason = self._stop_flags.get(frame.run_id)
             if reason is not None:
                 raise RunAborted(reason)
+            pause_reason = self._pause_flags.get(frame.run_id)
+            if pause_reason is not None:
+                raise RunPaused(pause_reason)
             # 帧级 stop 标志(cancel_subtree 置位):子树终态,抛 SubtreeCancelled——
             # 分支取消不杀 run,与上面的 run 中止严格分界(§5.2 cancel_frame)
             frame_reason = self._frame_stop_flags.get(frame.frame_id)
@@ -617,8 +646,9 @@ class Kernel:
 
         - 每 chunk 发 ``post:llm.chunk``(仅 ASYNC 观察;``_sig`` 基底 +
           ``{model, seq, text}``,text 取 ``delta.content``,seq 从 0 递增);
-        - 取消与 safe point 同点语义:逐 chunk 查 ``_stop_flags``/``_frame_stop_flags``
-          (纯 dict 读),命中抛 RunAborted/SubtreeCancelled——组装缓冲随之丢弃,
+        - 取消与 safe point 同点语义:逐 chunk 查 ``_stop_flags``/``_pause_flags``/
+          ``_frame_stop_flags``(纯 dict 读),命中抛 RunAborted/RunPaused/
+          SubtreeCancelled——组装缓冲随之丢弃,
           半截 assistant 消息不 append(§7.4 配对不变量安全);
         - 计时:``time.monotonic()`` 记 t0,首 chunk 记 ttft、流尽记 total,
           落在 ``ChatResponse.ttft_ms/total_ms``,由 :meth:`account` 两级累加;
@@ -640,10 +670,14 @@ class Kernel:
         stream = self.providers.stream(req)
         try:
             async for chunk in stream:
-                # safe point 同款查表(纯 dict 读,§5.2):流中 stop/cancel 立即生效
+                # safe point 同款查表(纯 dict 读,§5.2):流中 stop/pause/cancel
+                # 立即生效;同 pre:step 的顺序——stop 优先于 pause(更硬)
                 reason = self._stop_flags.get(frame.run_id)
                 if reason is not None:
                     raise RunAborted(reason)
+                pause_reason = self._pause_flags.get(frame.run_id)
+                if pause_reason is not None:
+                    raise RunPaused(pause_reason)
                 frame_reason = self._frame_stop_flags.get(frame.frame_id)
                 if frame_reason is not None:
                     raise SubtreeCancelled(frame_reason)
@@ -778,7 +812,8 @@ class Kernel:
         if isinstance(verdict, Stop):
             raise RunAborted(verdict.reason)
         if isinstance(verdict, Pause):
-            raise RunAborted(f"paused: {verdict.reason}")
+            # 可恢复挂起(docs/DESIGN.md :940):理由原样上抛,Run 边界落 PAUSED
+            raise RunPaused(verdict.reason)
         if isinstance(verdict, Modify):
             call.args.update(verdict.patch)  # pre 可改参数(§5.1)
         # WS2 tool-confirm 闸门(docs/DESIGN.md §8.2 两阶段语义;docs/SUPERVISOR.md §10):

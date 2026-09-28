@@ -12,7 +12,7 @@
 
 **为什么不放进内核 loop**:微内核判据三条(没有它 loop 无法推进 / 它是权限否决仲裁点 / 它是子系统间唯一公共通道)调试器一条都不满足——它是纯观察者加偶发干预者。因此以 `KernelBuilder.debug_controller()` 可选装配,缺省 `None` 时不订阅任何信号(`kernel/debug.py:3-21`)。内核边界没有为调试需求扩大一分。
 
-**为什么不经 SidecarSupervisor**:这是最关键的一次路由决策。sidecar 的 SYNC 通道有 2s 超时且 fail-closed(`sidecars/supervisor.py`,见 `docs/DEBUGGER.md:28-30`)——交互式暂停必然超时被判否决;且两者语义不同:sidecar 是规则化监督(毫秒级、自动),调试器是交互式控制(分钟级、人驱动)。`Pause` verdict 也不复用:它现状是"带标签的 abort"(服务 BudgetGuard 降级通知),不是真暂停(`docs/DEBUGGER.md:34-35`)。于是 `DebugController` 直接订阅总线,且订阅序在 Telemetry/SignalHub **之后**(订阅顺序即记录顺序):暂停发生前,该信号已落 `trace.jsonl`、已推 SSE,前端看到的轨迹永远包含暂停点本身(`kernel/debug.py:18-20`)。
+**为什么不经 SidecarSupervisor**:这是最关键的一次路由决策。sidecar 的 SYNC 通道有 2s 超时且 fail-closed(`sidecars/supervisor.py`,见 `docs/DEBUGGER.md:28-30`)——交互式暂停必然超时被判否决;且两者语义不同:sidecar 是规则化监督(毫秒级、自动),调试器是交互式控制(分钟级、人驱动)。`Pause` verdict 也不复用:它已真化为 checkpoint 恢复型挂起(2026-09-29:RunPaused → PAUSED + run.paused,服务 BudgetGuard `action="pause"` 降级),而调试暂停是进程内 emit 阻塞形态(run 保持 RUNNING),两条通道不共用(`docs/DEBUGGER.md:34-35`)。于是 `DebugController` 直接订阅总线,且订阅序在 Telemetry/SignalHub **之后**(订阅顺序即记录顺序):暂停发生前,该信号已落 `trace.jsonl`、已推 SSE,前端看到的轨迹永远包含暂停点本身(`kernel/debug.py:18-20`)。
 
 **为什么是 GDB 语义**:映射表已把 run 定位为进程、SkillFrame 栈定位为调用栈,GDB 就是最自然的调试心智模型——断点、step into/over/out、SIGINT 暂停都是被验证过三十年的交互语义,重新发明一套只会增加学习成本。
 
@@ -119,7 +119,7 @@ runner ── emit(pre:tool.call) ──▶ SignalBus(按订阅序 await)
 
 ## 5. 效果与验证(效果)
 
-调试器测试三层共 **44 例**:内核原语 `tests/kernel/test_debug.py`(14 例)、CLI REPL `tests/cli/test_debug.py`(12 例)、Web API `tests/web/test_debug_api.py`(18 例),全部在项目基线(Python 1670 例 + 前端 32 个测试文件)内常绿。停点断言共用同一事实锚点:`demo.fib` n=3 的信号序列(F1 step1 → invoke F2(一步即弹)→ F1 step2 内 `pre:tool.call(system.python.exec)` → F1 step3 终答 → F1 pop)(`tests/web/test_debug_api.py:21-24`)。关键断言:
+调试器测试三层共 **44 例**:内核原语 `tests/kernel/test_debug.py`(14 例)、CLI REPL `tests/cli/test_debug.py`(12 例)、Web API `tests/web/test_debug_api.py`(18 例),全部在项目基线(Python 1681 例 + 前端 32 个测试文件)内常绿。停点断言共用同一事实锚点:`demo.fib` n=3 的信号序列(F1 step1 → invoke F2(一步即弹)→ F1 step2 内 `pre:tool.call(system.python.exec)` → F1 step3 终答 → F1 pop)(`tests/web/test_debug_api.py:21-24`)。关键断言:
 
 - **全流程**(`test_debug_full_flow`):启动即断(hits 累计、帧栈非空)→ step_into 进子帧(depth=2,frame_id 变化)→ step_out 停在子帧 `pre:frame.pop` → continue 命中 tool_call 断点(`reason="breakpoint"`)→ live 帧检视读到内存态 messages → modify 把 `code` 改为 `"result = 41"`,run 跑完,**结果随改后参数变化**:`{"seq": [0, 1, 41]}`;run 结束会话自动 detached(:84-145);
 - **step_over 边界**:同帧下一条 pre:step 停(中间跨过整个子帧);帧尾停在 `pre:frame.pop`(:148-174);

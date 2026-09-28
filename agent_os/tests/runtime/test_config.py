@@ -41,7 +41,7 @@ from agent_os.runtime.config import (
     load_skillsets,
     web_token_map,
 )
-from agent_os.sidecars import DistillSidecar, HumanApproval
+from agent_os.sidecars import BudgetGuard, DistillSidecar, HumanApproval
 from tests.helpers.kernels import FIB_SKILLS_YAML
 
 
@@ -96,6 +96,37 @@ def test_unknown_sidecar_rejected():
 def test_bad_tool_guard_rule_shape_rejected():
     with pytest.raises(ConfigError, match="tool_guard_rules"):
         build_kernel(_base_cfg(sidecars={"tool_guard_rules": [["system.shell.exec", "rm"]]}))
+
+
+# ---------------------------------------------------------------------------
+# [sidecars] budget_guard.action(§2.4 stop→pause 降级):装配 + strict 校验
+# ---------------------------------------------------------------------------
+
+
+def _budget_guard_of(kernel) -> BudgetGuard | None:
+    sidecars = kernel.sidecars.sidecars if kernel.sidecars is not None else []
+    return next((s for s in sidecars if isinstance(s, BudgetGuard)), None)
+
+
+def test_budget_guard_action_defaults_to_stop():
+    """缺省 action="stop"(行为与引入该键前一致)。"""
+    kernel = build_kernel(_base_cfg(sidecars={"budget_guard": {"max_cost": 1.0}}))
+    bg = _budget_guard_of(kernel)
+    assert bg is not None and bg.action == "stop"
+
+
+def test_budget_guard_action_pause_assembled():
+    """action="pause" 装配生效:超限降级为可恢复挂起(docs/DESIGN.md :940)。"""
+    kernel = build_kernel(
+        _base_cfg(sidecars={"budget_guard": {"max_cost": 1.0, "action": "pause"}})
+    )
+    bg = _budget_guard_of(kernel)
+    assert bg is not None and bg.action == "pause"
+
+
+def test_budget_guard_bad_action_rejected():
+    with pytest.raises(ConfigError, match="budget_guard"):
+        build_kernel(_base_cfg(sidecars={"budget_guard": {"action": "bogus"}}))
 
 
 # ---------------------------------------------------------------------------

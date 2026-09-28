@@ -3,6 +3,7 @@
    纯函数(不碰 DOM,node 单测可载):
      planRcaJump(rca, frames, signals)  定位动线规划 → { frameId, signalIndex, messageIndex, step, reason }
      rcaBannerHtml(status, error)       顶部 Banner(status + error 摘要 + 定位/Resume 按钮)
+     pausedBannerHtml(reason)           挂起 Banner(WS2:已暂停 + reason + Resume;非错误无定位)
      vetoCardHtml(firstError)           veto 归因卡片(裁决来源 / 理由全文 / 被否决参数 JSON 折叠+复制)
    动线执行(取数 / selection / 滚动 / 脉冲)由 workbench 承担。
 
@@ -87,6 +88,24 @@ export function rcaBannerHtml(status, error) {
     `<button class="copy-btn" data-action="copy" data-copy="${esc(full)}"` +
     ` data-copy-label="已复制错误全文" data-tip="复制错误全文" aria-label="复制错误全文">${COPY_SVG}</button>` +
     `<button class="btn" data-action="wb-rca-jump" data-tip="定位首个错误(⌘J)">定位首个错误 ⌘J</button>` +
+    `<button class="btn" data-action="wb-resume" data-tip="从 checkpoint 恢复运行">Resume ▶</button>` +
+    `</div></div>`
+  );
+}
+
+/* ── 挂起 Banner(WS2 pause 真语义:已暂停 + reason + Resume;无定位——
+      paused 不是错误,RCA 不适用)── */
+
+export function pausedBannerHtml(reason) {
+  const full = String(reason ?? "已暂停");
+  const summary = full.length > ERROR_SUMMARY ? `${full.slice(0, ERROR_SUMMARY)}…` : full;
+  return (
+    `<div class="banner rca-banner wb-paused" data-tone="warn" role="alert">` +
+    `<span class="banner-icon" aria-hidden="true">⏸</span>` +
+    `<div class="banner-main">` +
+    `<span class="banner-title">run paused — <span title="${esc(full)}">${esc(summary)}</span></span>` +
+    `</div>` +
+    `<div class="rca-actions">` +
     `<button class="btn" data-action="wb-resume" data-tip="从 checkpoint 恢复运行">Resume ▶</button>` +
     `</div></div>`
   );

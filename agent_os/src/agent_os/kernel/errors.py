@@ -13,6 +13,7 @@ __all__ = [
     "MaxDepthExceeded",
     "OutputValidationError",
     "RunAborted",
+    "RunPaused",
     "SkillLoadError",
     "SubtreeCancelled",
     "ToolDispatchError",
@@ -25,6 +26,16 @@ class AgentOSError(Exception):
 
 class RunAborted(AgentOSError):
     """预算/强停类硬失败(§3.2):不可被单帧吞掉,一路弹栈到 Run 边界。"""
+
+
+class RunPaused(RunAborted):
+    """可恢复挂起(docs/DESIGN.md :940;RunControl.pause / Pause verdict 触发)。
+
+    继承 RunAborted:传播语义与硬失败一致(不可被单帧吞掉、沿调用栈弹到 Run
+    边界);Run 边界特判落 ``RunStatus.PAUSED`` 而非 ABORTED、发 ``run.paused``
+    信号(不发 ``run.aborted``),宿主 finalize 照常落 checkpoint,经
+    ``Kernel.resume`` 恢复。理由原样上抛,不再拼 ``"paused: "`` 前缀。
+    """
 
 
 class BudgetExceeded(RunAborted):

@@ -18,6 +18,9 @@ STATUS_DONE = "done"
 STATUS_FAILED = "failed"
 STATUS_ABORTED = "aborted"
 
+#: 可恢复挂起态(WS1/WS2 pause 真语义):非终态——checkpoint 已落盘,经 resume 恢复
+STATUS_PAUSED = "paused"
+
 
 def make_record(
     *,

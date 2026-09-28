@@ -279,6 +279,15 @@ class LabPackagePromoteBody(BaseModel):
     warnings_ack: bool = False
 
 
+class PauseBody(BaseModel):
+    """``POST /api/runs/{id}/pause`` 请求体(WS2):挂起理由,缺省 ``"web pause"``。
+
+    原样进 ``run.paused`` payload 与 RunRecord error(``"RunPaused: <reason>"``)。
+    """
+
+    reason: str | None = None
+
+
 class DebugBreakpointBody(BaseModel):
     """``POST /api/debug/sessions/{sid}/breakpoints`` 请求体:kind + 名字 glob。"""
 
@@ -730,6 +739,16 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"找不到 run: {run_id}")
         if not await manager.stop_run(run_id):
             raise HTTPException(status_code=409, detail=f"run {run_id} 已结束,无法 stop")
+        return {"ok": True}
+
+    @app.post("/api/runs/{run_id}/pause")
+    async def pause_run(run_id: str, body: PauseBody | None = None) -> dict[str, Any]:
+        """pause(WS2):RunControl.pause,run 在下一个 safe point 挂起(可 resume)。"""
+        if manager.state_of(run_id) is None and not _run_dir(root, run_id).is_dir():
+            raise HTTPException(status_code=404, detail=f"找不到 run: {run_id}")
+        reason = (body.reason if body else None) or "web pause"
+        if not await manager.pause_run(run_id, reason):
+            raise HTTPException(status_code=409, detail=f"run {run_id} 不在进行,无法 pause")
         return {"ok": True}
 
     @app.post("/api/runs/{run_id}/resume")

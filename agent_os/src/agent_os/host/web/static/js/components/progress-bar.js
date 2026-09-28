@@ -1,7 +1,8 @@
 /* Live 进度区(docs/WEB-UI.md §4.3):进行中 run 的 Workbench 顶部变体——
    live 脉冲点、已用时长(秒级走动)、steps 与 cost 双 ProgressBar(占
    max_steps/max_cost 比例;>80% 转 --warn 色,与 BudgetGuard 阈值语义一致)、
-   右侧常驻 Stop 按钮(确认条 → loading → 结束态替换为结果 Banner)。
+   右侧常驻 Pause/Stop 按钮(Pause 可恢复直发,WS2;Stop 确认条 → loading →
+   结束态替换为结果 Banner)。
 
    纯函数(不碰 DOM,node 单测可载):
      deriveProgress(detail, signals)  进度派生 {steps, stepsMax, cost, costMax, stepsWarn, costWarn}
@@ -121,8 +122,9 @@ function barHtml(kind, label, text, value, max, warn) {
   );
 }
 
-/* 进度条区(§4.3):live 脉冲点 + 已用时长 + 双 ProgressBar + 右侧 Stop。
-   phase: "live"(Stop 常驻)/ "confirm"(不可逆确认条)/ "stopping"(loading)。 */
+/* 进度条区(§4.3):live 脉冲点 + 已用时长 + 双 ProgressBar + 右侧 Pause/Stop。
+   phase: "live"(Pause/Stop 常驻)/ "confirm"(不可逆确认条)/ "stopping"(loading)
+   / "pausing"(pause 已请求,等下一个 safe point,WS2)。 */
 export function liveBarHtml(prog, { elapsed = "—", phase = "live" } = {}) {
   const stepsText = prog.stepsMax > 0 ? `${prog.steps}/${prog.stepsMax}` : `${prog.steps}/—`;
   const costText =
@@ -135,8 +137,11 @@ export function liveBarHtml(prog, { elapsed = "—", phase = "live" } = {}) {
       `<button class="btn" data-lb="cancel">取消</button>`;
   } else if (phase === "stopping") {
     stopArea = `<button class="btn btn-danger" disabled aria-busy="true">中止中…</button>`;
+  } else if (phase === "pausing") {
+    stopArea = `<button class="btn" disabled aria-busy="true">暂停中…</button>`;
   } else {
     stopArea =
+      `<button class="btn" data-lb="pause" data-tip="暂停该 run(可 Resume 恢复,WS2)">Pause</button>` +
       `<button class="btn btn-danger" data-lb="stop" data-tip="中止该 run(不可逆)">Stop</button>`;
   }
   return (
@@ -150,26 +155,30 @@ export function liveBarHtml(prog, { elapsed = "—", phase = "live" } = {}) {
   );
 }
 
-/* 结束态(§4.3):进度条区替换为结果 Banner(done 绿 / failed 红 / aborted 紫),
-   live 脉冲随之熄灭(整个 live-bar 被替换)。 */
+/* 结束态(§4.3):进度条区替换为结果 Banner(done 绿 / failed 红 / aborted 紫 /
+   paused 黄,WS2),live 脉冲随之熄灭(整个 live-bar 被替换)。 */
 export function endBannerHtml(status, error) {
   const s = String(status ?? "unknown");
   const body = error ? esc(String(error)) : "";
   if (s === "done") return banner("ok", "run done — 已完成", body);
   if (s === "aborted") return banner("aborted", `run aborted — ${esc(String(error ?? "已中止"))}`);
   if (s === "failed") return banner("danger", `run failed — ${esc(String(error ?? "未知错误"))}`);
+  if (s === "paused") return banner("warn", `run paused — ${esc(String(error ?? "已暂停,可 Resume 恢复"))}`);
   return banner("info", `run ${esc(s)}`, body);
 }
 
 /* ── DOM 挂载(唯一碰 DOM 的部分)──────────────────────────────
-   mountLiveBar(container, { onStop }) → { update, setElapsed, end, destroy }。
+   mountLiveBar(container, { onStop, onPause }) → { update, setElapsed, end, destroy }。
    Stop 流(§4.3/§5):Stop → 确认条(不可逆提示)→ onStop()(workbench 调
    POST /stop 并 Toast 结果)→ 按钮 loading;onStop 返回 false 退回确认前。
+   Pause 流(WS2):Pause → 立即 onPause()(POST /pause,可恢复无需确认条)→
+   "暂停中…" loading,run 在下一个 safe point 挂起后由 workbench end() 收尾;
+   onPause 返回 false 退回 live。
    结束由 workbench 侦测(SSE end / 轮询)后调 end(status, error)。 */
-export function mountLiveBar(container, { onStop } = {}) {
+export function mountLiveBar(container, { onStop, onPause } = {}) {
   let prog = deriveProgress(null, []);
   let elapsed = "—";
-  let phase = "live"; // live | confirm | stopping | ended
+  let phase = "live"; // live | confirm | stopping | pausing | ended
 
   const render = () => {
     if (phase === "ended") return; // end() 自行写入 Banner
@@ -192,6 +201,15 @@ export function mountLiveBar(container, { onStop } = {}) {
       Promise.resolve(onStop?.()).then((ok) => {
         if (ok === false && phase === "stopping") {
           phase = "live"; // stop 失败(如已结束):回到 live,Toast 由 workbench 给
+          render();
+        }
+      });
+    } else if (act === "pause" && phase === "live") {
+      phase = "pausing";
+      render();
+      Promise.resolve(onPause?.()).then((ok) => {
+        if (ok === false && phase === "pausing") {
+          phase = "live"; // pause 失败(如已结束):回到 live,Toast 由 workbench 给
           render();
         }
       });

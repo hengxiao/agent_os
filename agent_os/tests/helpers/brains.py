@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from agent_os.api.v1 import (
     ChatRequest,
@@ -111,6 +112,16 @@ def danger_brain(req: ChatRequest) -> ChatResponse:
 def loop_brain(req: ChatRequest) -> ChatResponse:
     """无限循环调用(用于 stop / 循环检测测试)。"""
     return _calls(ToolCall(id="c1", name="system.python.exec", args={"code": "print(1)"}))
+
+
+def slow_fib_brain(req: ChatRequest) -> ChatResponse:
+    """fib_brain 的慢速版(每次调用睡 50ms):给 Web pause 测试留出挂起窗口。
+
+    fib(3) 全程 4 次调用 ≈ 200ms+:run 启动后立即 POST pause,下一个 safe point
+    (pre:step)必命中挂起;resume 换新内核(无挂起标志)正常跑完。
+    """
+    time.sleep(0.05)
+    return fib_brain(req)
 
 
 _cut_state = {"calls": 0}

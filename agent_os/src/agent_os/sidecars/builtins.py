@@ -44,7 +44,9 @@ _log = logging.getLogger(__name__)
 class BudgetGuard:
     """§5.4:订阅 ``post:llm.response``;累计成本/步数/时长,超限 → ``ctl.stop()``
 
-    (长任务宿主可配 stop→pause 降级,§2.4)。按 run_id 独立累计。"""
+    (长任务宿主可配 stop→pause 降级,§2.4:``action="pause"`` 时改调
+    ``ctl.pause()``——run 落 PAUSED 可 resume,docs/DESIGN.md :940)。
+    按 run_id 独立累计。"""
 
     name: ClassVar[str] = "budget_guard"
     subscriptions: ClassVar[list[SignalPattern]] = ["post:llm.response"]
@@ -52,15 +54,22 @@ class BudgetGuard:
     priority: ClassVar[int] = 100
     needs_free_text: ClassVar[bool] = False
 
+    #: 超限动作白名单(§2.4):stop = 强停(缺省);pause = 可恢复挂起
+    ACTIONS: ClassVar[tuple[str, ...]] = ("stop", "pause")
+
     def __init__(
         self,
         max_cost: float | None = None,
         max_steps: int | None = None,
         max_wall_time: float | None = None,
+        action: str = "stop",
     ) -> None:
+        if action not in self.ACTIONS:
+            raise ValueError(f"BudgetGuard action 须为 {self.ACTIONS},得到: {action!r}")
         self.max_cost = max_cost
         self.max_steps = max_steps
         self.max_wall_time = max_wall_time
+        self.action = action
         self._cost: dict[str, float] = {}
         self._steps: dict[str, int] = {}
         self._started: dict[str, float] = {}
@@ -86,7 +95,11 @@ class BudgetGuard:
             reason = f"BudgetGuard: 挂钟时长 {now - started:.1f}s 超上限 {self.max_wall_time}s"
         if reason is not None:
             self._stopped.add(run_id)
-            await ctl.stop(run_id, reason)
+            if self.action == "pause":
+                # stop→pause 降级(§2.4):可恢复挂起,run 落 PAUSED 可 resume
+                await ctl.pause(run_id, reason)
+            else:
+                await ctl.stop(run_id, reason)
         return Allow()
 
 

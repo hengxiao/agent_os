@@ -9,7 +9,8 @@
 
 错误归类锚点(§3.3):run 未开始即抛的校验类异常(SkillLoadError:根帧输入不合
 schema、技能寻址失败)原样上抛,由宿主归退出码 2;run 开始后的异常一律捕获进
-RunRecord(``failed``/``aborted`` → 退出码 3)。
+RunRecord(``failed``/``aborted`` → 退出码 3;``RunPaused`` 特判归 ``paused``——
+可恢复挂起,checkpoint 照常落盘,WS2)。
 """
 
 from __future__ import annotations
@@ -26,10 +27,11 @@ from agent_os.host.shared.runrecord import (
     STATUS_ABORTED,
     STATUS_DONE,
     STATUS_FAILED,
+    STATUS_PAUSED,
     make_record,
 )
 from agent_os.kernel.checkpoint import CHECKPOINT_VERSION, PeriodicCheckpointer
-from agent_os.kernel.errors import RunAborted
+from agent_os.kernel.errors import RunAborted, RunPaused
 
 
 def _write_json(path: Path, doc: Any) -> None:
@@ -99,8 +101,9 @@ def execute_run(
     """跑一个 run 并落产物(§2.2),返回 RunRecord dict(§3.3)。
 
     订阅 ``run.started`` 捕获 run_id;status 判定:正常返回 → ``done``,
-    RunAborted 及其子类 → ``aborted``,其余异常 → ``failed``
-    (error = ``"Type: message"``)。run 未开始(无 run_id)的异常原样上抛。
+    RunPaused(先于 RunAborted 特判,WS2)→ ``paused``,其余 RunAborted 子类
+    → ``aborted``,其余异常 → ``failed``(error = ``"Type: message"``,
+    挂起理由同格式透传)。run 未开始(无 run_id)的异常原样上抛。
     ``RunConfig.checkpoint_interval > 0`` 时挂载周期 checkpoint 订阅者
     (Debugger P5;覆盖写"最近现场",kernel/checkpoint.py)。
     ``principal``(docs/DATA-AUTHZ.md §2.2):宿主认证后的调用方身份,透传给
@@ -120,6 +123,10 @@ def execute_run(
     status, result, error = STATUS_DONE, None, None
     try:
         result = asyncio.run(kernel.run(skill, input, principal=principal))
+    except RunPaused as e:
+        # 可恢复挂起(WS2):RunPaused 是 RunAborted 子类,必须先于 RunAborted 特判;
+        # checkpoint/finalize 照常(reason 照 error 先例透传,resume 数据源)
+        status, error = STATUS_PAUSED, f"{type(e).__name__}: {e}"
     except RunAborted as e:
         status, error = STATUS_ABORTED, f"{type(e).__name__}: {e}"
     except Exception as e:  # 宿主边界故意兜底:run 失败归 RunRecord,不炸宿主(§3.3)
@@ -167,6 +174,9 @@ def execute_resume(
     status, result, error = STATUS_DONE, None, None
     try:
         result = asyncio.run(kernel.resume(str(path)))
+    except RunPaused as e:
+        # 链式挂起(resume 中再次 pause):与 execute_run 同归口(WS2)
+        status, error = STATUS_PAUSED, f"{type(e).__name__}: {e}"
     except RunAborted as e:
         status, error = STATUS_ABORTED, f"{type(e).__name__}: {e}"
     except Exception as e:  # noqa: BLE001 — 与 execute_run 同旨:失败归 RunRecord(§3.3)

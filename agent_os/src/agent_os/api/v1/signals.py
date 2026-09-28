@@ -42,6 +42,7 @@ __all__ = [
     "PRE_TOOL_CALL",
     "RUN_ABORTED",
     "RUN_FINISHED",
+    "RUN_PAUSED",
     "RUN_STARTED",
     "SIGNAL_NAMES",
     "SKILL_ESCALATION_DENIED",
@@ -55,6 +56,9 @@ __all__ = [
 RUN_STARTED = "run.started"
 RUN_FINISHED = "run.finished"
 RUN_ABORTED = "run.aborted"
+#: 可恢复挂起(docs/DESIGN.md :940):pause 生效时 Run 边界落 PAUSED 并发本信号
+#: (payload {"reason"},**不发** run.aborted);宿主 finalize 照常落 checkpoint,可 resume
+RUN_PAUSED = "run.paused"
 
 PRE_FRAME_PUSH = "pre:frame.push"
 POST_FRAME_PUSH = "post:frame.push"
@@ -120,6 +124,7 @@ SIGNAL_NAMES: tuple[str, ...] = (
     RUN_STARTED,
     RUN_FINISHED,
     RUN_ABORTED,
+    RUN_PAUSED,
     PRE_FRAME_PUSH,
     POST_FRAME_PUSH,
     PRE_FRAME_POP,

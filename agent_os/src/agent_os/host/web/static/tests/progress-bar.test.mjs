@@ -1,7 +1,8 @@
 /* progress-bar.js 纯逻辑单测(docs/WEB-UI.md §4.3 Live 进度):
    deriveProgress(steps/cost 双轨派生、比例与 80% warn 阈值、usage 回退)、
    mergeSignal(SSE 增量合并:帧生长 / 帧 chips / pop / aborted / 幂等)、
-   fmtElapsed(秒级时长)、liveBarHtml/endBannerHtml(渲染结构与结束态 Banner)。
+   fmtElapsed(秒级时长)、liveBarHtml/endBannerHtml(渲染结构与结束态 Banner;
+   WS2:Pause 按钮 / pausing loading / paused 黄 Banner)。
    运行:node static/tests/progress-bar.test.mjs(无需 DOM、无第三方依赖)。 */
 
 import assert from "node:assert/strict";
@@ -141,6 +142,7 @@ const sig = (name, frame_id, payload = {}) => ({
   assert.doesNotMatch(html, /pb-steps is-warn/, "steps 条未超阈值不 warn");
   assert.match(html, /width:80%/, "steps 条比例宽度");
   assert.match(html, /data-lb="stop"/, "Stop 按钮常驻");
+  assert.match(html, /data-lb="pause"/, "Pause 按钮常驻(WS2)");
 
   const noMax = liveBarHtml(
     { steps: 3, stepsMax: 0, cost: 0.1, costMax: 0, stepsWarn: false, costWarn: false },
@@ -160,15 +162,26 @@ const sig = (name, frame_id, payload = {}) => ({
     { phase: "stopping" }
   );
   assert.match(stopping, /中止中…/, "stop loading 态");
+  const pausing = liveBarHtml(
+    { steps: 0, stepsMax: 0, cost: 0, costMax: 0, stepsWarn: false, costWarn: false },
+    { phase: "pausing" }
+  );
+  assert.match(pausing, /暂停中…/, "pause loading 态(WS2)");
+  assert.doesNotMatch(pausing, /data-lb="pause"/, "pausing 态按钮禁用(无 data-lb)");
 }
 
-/* ── endBannerHtml:结束态 Banner(done 绿 / failed 红 / aborted 紫)── */
+/* ── endBannerHtml:结束态 Banner(done 绿 / failed 红 / aborted 紫 / paused 黄)── */
 {
   assert.match(endBannerHtml("done"), /data-tone="ok"/);
   assert.match(endBannerHtml("done"), /run done/);
   assert.match(endBannerHtml("failed", "Boom: x"), /data-tone="danger"/);
   assert.match(endBannerHtml("failed", "Boom: x"), /Boom: x/);
   assert.match(endBannerHtml("aborted", "web stop"), /data-tone="aborted"/);
+  const paused = endBannerHtml("paused", "RunPaused: web pause");
+  assert.match(paused, /data-tone="warn"/, "paused 黄(WS2)");
+  assert.match(paused, /run paused/);
+  assert.match(paused, /RunPaused: web pause/, "挂起理由透传");
+  assert.match(endBannerHtml("paused"), /已暂停/, "理由缺失兜底文案");
   assert.doesNotMatch(endBannerHtml("done"), /live-dot/, "结束态无 live 脉冲(熄灭)");
 }
 

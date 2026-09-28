@@ -50,6 +50,7 @@ from agent_os.api.v1 import (
     POST_STEP,
     RUN_ABORTED,
     RUN_FINISHED,
+    RUN_PAUSED,
     RUN_STARTED,
     ContentPart,
     FrameContext,
@@ -67,7 +68,7 @@ from agent_os.api.v1 import (
     ToolErrorKind,
     Usage,
 )
-from agent_os.kernel.errors import RunAborted
+from agent_os.kernel.errors import RunAborted, RunPaused
 from agent_os.kernel.run import Run
 
 #: checkpoint JSON schema 版本(§10.2 schema 版本化)
@@ -340,7 +341,8 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
 
     恢复期间 signals 照常发射;根帧完成时结算 Run 并发射 ``run.finished``
     (不补发 ``run.started``);失败路径与 :meth:`Kernel.run` 同构
-    (FAILED/ABORTED + ``run.aborted``)。
+    (FAILED/ABORTED + ``run.aborted``;``RunPaused`` 落 PAUSED + ``run.paused``,
+    docs/DESIGN.md :940)。
     """
     doc = json.loads(Path(path).read_text(encoding="utf-8"))
     if doc.get("v") != CHECKPOINT_VERSION:
@@ -394,6 +396,15 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
         run.state.result = root.result
         await kernel.signals.emit(Signal(name=RUN_FINISHED, run_id=run.run_id, payload={}))
         return root.result
+    except RunPaused as e:
+        # 可恢复挂起(docs/DESIGN.md :940):与 Kernel.run 边界同语义——落 PAUSED、
+        # 发 run.paused(不发 run.aborted),可再次 checkpoint/resume(链式挂起)
+        run.state.status = RunStatus.PAUSED
+        run.state.error = f"{type(e).__name__}: {e}"
+        await kernel.signals.emit(
+            Signal(name=RUN_PAUSED, run_id=run.run_id, payload={"reason": str(e)})
+        )
+        raise
     except Exception as e:
         run.state.status = RunStatus.ABORTED if isinstance(e, RunAborted) else RunStatus.FAILED
         run.state.error = f"{type(e).__name__}: {e}"

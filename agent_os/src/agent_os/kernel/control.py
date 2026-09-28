@@ -4,11 +4,13 @@
 ``get_frame_tree`` 是 sidecar(代码)→内核的 pull,不耗 token。
 
 语义:stop 置 run 中止标志(runner 在 ``pre:step`` safe point 检查并抛
-``RunAborted``);pause 在 v1 同 stop,理由带 ``"paused: "`` 前缀;
-inject_message 向指定帧上下文追加 USER/INJECTED 消息;force_compress 在帧上
-置标志,runner 在 maintain 前检查并强制执行一次压缩(§7.1 外部强制触发);
-cancel_frame 级联取消目标帧所在子树(后台帧 task.cancel();调用链 prompt 帧
-置帧级 stop 标志,safe point 抛 ``SubtreeCancelled``),子树终态不杀 run。
+``RunAborted``);pause 置 run 挂起标志(同一 safe point 抛 ``RunPaused``,
+Run 边界落 PAUSED + 发 ``run.paused``,可经 checkpoint/resume 恢复,
+docs/DESIGN.md :940);inject_message 向指定帧上下文追加 USER/INJECTED 消息;
+force_compress 在帧上置标志,runner 在 maintain 前检查并强制执行一次压缩
+(§7.1 外部强制触发);cancel_frame 级联取消目标帧所在子树(后台帧
+task.cancel();调用链 prompt 帧置帧级 stop 标志,safe point 抛
+``SubtreeCancelled``),子树终态不杀 run。
 """
 
 from __future__ import annotations
@@ -39,8 +41,13 @@ class RunControlImpl:
         self._kernel._stop_flags[run_id] = reason
 
     async def pause(self, run_id: str, reason: str) -> None:
-        """v1 语义同 stop,理由带 ``"paused: "`` 前缀(§5.2)。"""
-        await self.stop(run_id, f"paused: {reason}")
+        """置 run 挂起标志;下一个 safe point 抛 ``RunPaused``(v2 真语义)。
+
+        Run 边界落 ``RunStatus.PAUSED`` + 发 ``run.paused``(不发
+        ``run.aborted``),宿主 finalize 照常落 checkpoint,经 resume 恢复
+        (docs/DESIGN.md :940)。理由原样记录,不再拼 ``"paused: "`` 前缀。
+        """
+        self._kernel._pause_flags[run_id] = reason
 
     async def inject_message(self, frame_id: str, msg: Message) -> None:
         """向指定帧上下文追加消息;非 Message 入参包装为 ``USER``/``INJECTED``。"""

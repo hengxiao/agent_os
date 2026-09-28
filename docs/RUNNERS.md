@@ -135,12 +135,12 @@ backoff_base = 0.5
 .agent-os/runs/<run_id>/
 ├── meta.json         # {run_id, skill, input, config 摘要, started_at, host: "cli"|"web"}
 ├── trace.jsonl       # Telemetry WAL(版本头,全部信号)
-├── checkpoint.json   # 结束/中止时自动快照(帧含完整上下文)
+├── checkpoint.json   # 结束/中止/挂起(paused)时自动快照(帧含完整上下文)
 └── result.json       # {status, result, error, usage 汇总}
 ```
 
 - `trace.jsonl` 由 JsonlTelemetrySink 按 run 写入,runner 在 run 结束后归档到该目录;
-- `checkpoint.json` 由 runner 在 `run.finished`/`run.aborted` 时调 `kernel.checkpoint(run_id, path)`;
+- `checkpoint.json` 由 runner 在 `run.finished`/`run.aborted`/`run.paused` 时调 `kernel.checkpoint(run_id, path)`;
 - **checkpoint 是 RCA 与 resume 的数据源**:帧的完整上下文(模型每一步看到了什么)都在里面。
 
 ### 2.3 调试数据分类法(两个 runner 共用)
@@ -222,7 +222,7 @@ agent-os lab validate <name> [--config agent-os.toml] [--json]
 ```json
 {
   "run_id": "r-...",
-  "status": "done | failed | aborted",
+  "status": "done | failed | aborted | paused",
   "result": { "...": "技能返回值" },
   "error": null,
   "usage": { "steps": 10, "prompt_tokens": 0, "completion_tokens": 0,
@@ -294,7 +294,8 @@ GET    /api/runs/{id}                → RunRecord 详情(status/result/error/us
 GET    /api/runs/{id}/signals?kind=&after=  → 信号时间线(分页;kind=llm|tool|frame|sidecar|all)
 GET    /api/runs/{id}/frames/{fid}   → 帧完整上下文(messages 逐条、usage、input/result/error)
 POST   /api/runs/{id}/stop           → RunControl.stop
-POST   /api/runs/{id}/resume         → 从 checkpoint 恢复
+POST   /api/runs/{id}/pause          → RunControl.pause(可恢复挂起;可选 {"reason"},缺省 "web pause";仅 running 生效,否则 409)
+POST   /api/runs/{id}/resume         → 从 checkpoint 恢复(aborted/paused 均可)
 GET    /api/runs/{id}/stream         → SSE:先回放缓冲,后实时信号
 GET    /api/skills                   → 已加载技能清单(manifest 摘要)
 POST   /api/skills/reload            → 热重载 skills.yaml

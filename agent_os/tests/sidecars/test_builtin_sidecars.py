@@ -8,11 +8,13 @@
 - **Veto 理由回写**(§5.2):``pre:tool.call`` 被 Veto 时跳过分发,理由以
   ``{"ok": False, "error": {"kind": "vetoed", "message": reason, "retryable": False}}``
   写入帧上下文;``pre:frame.pop`` 被 Veto 时,把理由作为纠偏观察写入帧上下文并继续 loop;
-- RunControl:stop(置中止标志,下一个 safe point 生效)/pause(v1 同 stop,理由带 "paused:")/
+- RunControl:stop(置中止标志,下一个 safe point 生效)/pause(置挂起标志,safe
+  point 抛 RunPaused,落 PAUSED 可 resume,docs/DESIGN.md :940)/
   inject_message(向指定帧上下文追加 USER 消息)/force_compress/get_frame_tree/get_usage;
 - 信号载荷扩充:``post:llm.response`` 带 usage;``post:step`` 带本步调用签名列表
   ``calls: [{"name", "sig"}]``(sig = name+args 哈希);
 - BudgetGuard(ASYNC, post:llm.response):累计成本超限 → ctl.stop;
+  ``action="pause"`` 降级 → ctl.pause(§2.4,超限 run 落 PAUSED 可恢复);
 - LoopDetector(ASYNC, post:step):同签名连续 threshold 次 → inject_message 纠偏(带操作指令),
   再犯 max_strikes 次 → ctl.stop;
 - StallDetector(ASYNC, post:step):相邻 step 间隔超 max_idle(clock 可注入)→ 先纠偏再 stop;
@@ -39,12 +41,13 @@ from agent_os.api.v1 import (
     Permission,
     Role,
     RunConfig,
+    RunStatus,
     Signal,
     ToolCall,
     ToolPolicy,
     Veto,
 )
-from agent_os.kernel.errors import RunAborted
+from agent_os.kernel.errors import RunAborted, RunPaused
 from agent_os.logic.inprocess import InProcessLogicKernel
 from agent_os.logic.python_sandbox import PythonSandboxLogicKernel
 from agent_os.providers.mock import MockProvider
@@ -59,6 +62,7 @@ from agent_os.sidecars import (
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.builtins import python_exec_tool
 from agent_os.tools.local_registry import LocalPythonToolRegistry
+from tests.helpers.kernels import record_all
 
 LOOPER_YAML = """
 skills:
@@ -168,6 +172,29 @@ def test_budget_guard_stops_run(tmp_path):
     kernel = _build(tmp_path, BudgetGuard(max_cost=0.05), brain=loop_brain(cost=0.02))
     with pytest.raises(RunAborted, match="BudgetGuard"):
         run(kernel)
+
+
+def test_budget_guard_pauses_run_when_action_pause(tmp_path):
+    """stop→pause 降级(§2.4;docs/DESIGN.md :940):超限 → ctl.pause,落 PAUSED、
+    发 run.paused(理由带 BudgetGuard 前缀,不发 run.aborted),可 resume。"""
+    kernel = _build(
+        tmp_path, BudgetGuard(max_cost=0.05, action="pause"), brain=loop_brain(cost=0.02)
+    )
+    seen = record_all(kernel)
+    with pytest.raises(RunPaused, match="^BudgetGuard"):
+        run(kernel)
+
+    run_rec = next(iter(kernel._runs.values()))
+    assert run_rec.state.status is RunStatus.PAUSED
+    paused = [s for s in seen if s.name == "run.paused"]
+    assert len(paused) == 1 and paused[0].payload["reason"].startswith("BudgetGuard")
+    assert not [s for s in seen if s.name == "run.aborted"]
+
+
+def test_budget_guard_rejects_bogus_action():
+    """action 白名单(stop|pause)之外 → ValueError(§2.4;装配期炸掉不静默)。"""
+    with pytest.raises(ValueError, match="action"):
+        BudgetGuard(action="bogus")
 
 
 def test_loop_detector_injects_then_stops(tmp_path):

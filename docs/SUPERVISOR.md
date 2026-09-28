@@ -85,10 +85,13 @@ code 技能可经 `ctx.call_tool("ask_supervisor", ...)` 走同一仲裁路径
   兄弟 spawn 帧照常运行;
 - **配对原子性零特判**:挂起期间子帧的 ask 调用只是"未完成的调用",
   恢复时答案作为其 tool result 写回,配对自然闭合(不变量 2 天然成立);
-- **run 状态**:设计形态是"所有活跃帧都被挂起时 run 转 PAUSED";**实现注**:
-  `RunStatus.PAUSED` 同样是预留枚举,全仓无写入点——handler 未答期间 run
-  保持 RUNNING(runner.py:674-675:run 只在整棵帧树返回后才置 DONE,
-  "无 pending ask"由 await 结构满足),部分挂起时其余帧照常推进。
+- **run 状态**:设计形态是"所有活跃帧都被挂起时 run 转 PAUSED";**实现注**(2026-09-29 修订):
+  `RunStatus.PAUSED` 已由 RunControl.pause 通道接线(checkpoint 恢复型挂起,
+  docs/DESIGN.md §5.2)——但 **supervisor ask 通道不做状态迁移**:handler 未答期间 run
+  保持 RUNNING(runner.py:328:run 只在整棵帧树返回后才置 DONE,
+  "无 pending ask"由 await 结构满足),部分挂起时其余帧照常推进。两通道划清:
+  RunControl.pause = 落 PAUSED 的可恢复挂起;supervisor await 就地挂起(与调试会话
+  挂起同形态)run 保持 RUNNING,PAUSED 对本通道仍无写入点(有意未迁移)。
 
 ### 2.3 路由:到 agent 的调用方
 
@@ -109,8 +112,8 @@ supervisor 子系统把问题(含 context/options/urgency)送达调用方通道:
   `{"answer": ..., "decided_by": ...}` 作为提问帧那条 pending
   `ask_supervisor` 调用的 tool result 写回该帧上下文,**重新进入该帧的
   agent loop**——帧带着答案继续;
-- run 无 PAUSED 状态转换(§2.2 实现注:`RunStatus.PAUSED` 预留未接线),
-  全程 RUNNING 至收尾。
+- run 无 PAUSED 状态转换(§2.2 实现注:supervisor ask 通道不触发 PAUSED 迁移;
+  PAUSED 的写入点在 RunControl.pause 通道),全程 RUNNING 至收尾。
 
 ### 2.5 嵌套监督(调用方是另一个 agent)
 

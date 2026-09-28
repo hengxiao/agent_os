@@ -104,11 +104,13 @@ judgment is therefore structurally safe: a run turns DONE only after the whole f
 returns, and its status stays RUNNING while the handler has not answered (comment at the
 same location). **Note**: `docs/SUPERVISOR.md` §2.2 states that "when all active frames
 are suspended the run turns PAUSED" and the frame's "status = SUSPENDED"; the supervisor
-path performs **no status transitions** in code (`RunStatus.PAUSED` and
-`FrameStatus.SUSPENDED` exist as enum members at `api/v1/run.py:60` and
-`api/v1/frames.py:47`, but only other paths such as the debugger use them). This chapter
-follows the code: suspension is await-blocking, not a state-machine migration; "waiting
-on the superior" is surfaced via the inbox pending list, not a run status field.
+path performs **no status transitions** in code (`FrameStatus.SUSPENDED` remains a
+reserved enum member at `api/v1/frames.py:47`; `RunStatus.PAUSED` (`api/v1/run.py:64`)
+has been wired by the RunControl.pause channel since 2026-09-29 — a checkpoint-resumable
+suspension, see ch. 07 — a separate channel from this await path). This chapter
+follows the code: on the supervisor path, suspension is await-blocking, not a state-machine
+migration; "waiting on the superior" is surfaced via the inbox pending list, not a run
+status field.
 
 **Channel selection order** (`docs/SUPERVISOR.md` §2.3, implemented in
 `host/web/run_manager.py:418-425`): run-level injected handler → assembly-level handler →
@@ -175,7 +177,7 @@ is an escalation nobody guards.
 
 ## 5. Effects and Verification (What)
 
-**Test evidence** (all green, part of the 1670-case Python baseline):
+**Test evidence** (all green, part of the 1681-case Python baseline):
 
 - `tests/kernel/test_supervisor.py`: **12 cases** covering the kernel side of the §9
   anchor list — handler round-trip; in-place suspension (the parent's await point does
@@ -205,11 +207,15 @@ breakpoint suspend-resume reuses the same in-place-suspension pattern (noted in
 loop: every point needing authority outside the agent converges on this one routing port.
 ## 6. Limitations and Boundaries (Limits)
 
-1. **Status migration not implemented (doc/code divergence)**: the "run turns PAUSED /
-   frame becomes SUSPENDED" language of `docs/SUPERVISOR.md` §2.2 does not exist in code;
-   suspension is expressed purely by await. Cost: runs "waiting on the superior" cannot
-   be filtered by run status — UIs must rely on the inbox pending list; the PAUSED and
-   SUSPENDED enum members are dead letters for the supervisor path.
+1. **Status migration not implemented on the supervisor path (doc/code divergence)**: the
+   "run turns PAUSED / frame becomes SUSPENDED" language of `docs/SUPERVISOR.md` §2.2 does
+   not exist in the supervisor code path; suspension is expressed purely by await. Cost:
+   runs "waiting on the superior" cannot be filtered by run status — UIs must rely on the
+   inbox pending list. Two channels, kept distinct (2026-09-29): `RunStatus.PAUSED` is now
+   wired by the RunControl.pause channel (checkpoint-resumable suspension), so it is no
+   longer a dead letter repo-wide; for the supervisor await channel, however,
+   PAUSED/SUSPENDED still have no write sites (deliberately not migrated; see
+   docs/SUPERVISOR.md §2.2).
 2. **The §9 anchor list is not fully covered**: item 7 ("a question from a spawned
    background frame suspends only that branch") has no dedicated test
    (`tests/kernel/test_blackboard_spawn.py` covers spawn itself only); the property rests

@@ -194,7 +194,7 @@ RunConfig = {
 }
 ```
 
-Run 是预算、权限、信号的作用域边界;一个 Run 一棵帧树。**故障致死性分层**:provider/工具的单点重试上限不是长任务的熔断器(可配大),`max_steps`/`max_cost`/`max_wall_time` 才是;BudgetGuard 的 stop 可降级为 pause + 通知,由宿主决定加预算还是放弃。
+Run 是预算、权限、信号的作用域边界;一个 Run 一棵帧树。**故障致死性分层**:provider/工具的单点重试上限不是长任务的熔断器(可配大),`max_steps`/`max_cost`/`max_wall_time` 才是;BudgetGuard 的 stop 可降级为 pause + 通知,由宿主决定加预算还是放弃(已落地 2026-09-29:`[sidecars] budget_guard` 增 `action = "stop" | "pause"` 键,strict 校验;pause = checkpoint 恢复型挂起,resume 时新内核 config 可换——"加预算再继续"本义,见 §5.2/§5.4)。
 
 ---
 
@@ -368,7 +368,7 @@ ProviderError = { kind: RATE_LIMIT | CONTEXT_OVERFLOW | AUTH | UNAVAILABLE | INV
 内核在每个关键节点发信号。命名采用 `<阶段>:<事件>`,`pre:` 前缀表示**同步可否决**,`post:` 表示异步观察。
 
 ```
-run.started / run.finished / run.aborted
+run.started / run.finished / run.aborted / run.paused   # paused = 可恢复挂起(2026-09-29,checkpoint 恢复型,§5.2)
 pre:frame.push        post:frame.push        pre:frame.pop(弹栈前可否决)  post:frame.pop
 pre:step              post:step              # 每帧每步一次,sidecar 的主检查点
 pre:llm.request       post:llm.response      post:llm.chunk(流式,仅 ASYNC)
@@ -411,6 +411,8 @@ class RunControl(Protocol):   # 内核暴露给 sidecar 的特权接口(仅此�
     async def get_usage(self, run_id) -> Usage: ...
 ```
 
+- **pause 真语义(2026-09-29 落地,checkpoint 恢复型)**:`ctl.pause` 写独立 `_pause_flags`(不再借 stop,理由原样不拼 `"paused: "` 前缀);两处 safe point(`pre:step` 循环开头与流式 chunk 循环)**stop 优先**——先查 stop 抛 `RunAborted`、后查 pause 抛 `RunPaused`(继承 RunAborted,`kernel/errors.py`);Run 边界特判(在通用 RunAborted 前):落 `RunStatus.PAUSED`、发 `run.paused`(payload `{"reason"}`)、**不发** `run.aborted`、re-raise,宿主 finalize 照常落 checkpoint,经既有 resume 恢复(新内核 config 可换——§2.4"加预算再继续"本义);resume 边界同构(链式挂起)。`Pause` verdict 在两处仲裁点(`pre:step`/`pre:tool.call`)同语义真化为 `RunPaused`。**两通道划清**:supervisor ask 的 await 就地挂起与调试会话挂起是另外两条通道,run 保持 RUNNING(docs/SUPERVISOR.md §2.2);进程内 await 挂起形态未采用为 RunControl.pause 的语义。
+
 ### 5.3 监督语义(可靠性关键)
 
 - **SYNC sidecar** 在关键路径上执行,有超时(默认 2s);自身抛异常时**默认 fail-closed**(视为 Veto),可配置 fail-open;
@@ -423,7 +425,7 @@ class RunControl(Protocol):   # 内核暴露给 sidecar 的特权接口(仅此�
 
 | Sidecar | 订阅 | 行为 |
 |---|---|---|
-| BudgetGuard | `post:llm.response` | 累计成本/步数/时长,超限 → `ctl.stop()`(长任务宿主可配 stop→pause 降级) |
+| BudgetGuard | `post:llm.response` | 累计成本/步数/时长,超限 → `ctl.stop()`;`[sidecars] budget_guard` 的 `action` 键(strict,2026-09-29 落地)可配 stop→pause 降级(§2.4,pause = checkpoint 恢复型挂起) |
 | LoopDetector | `post:step` | 重复调用模式(同工具同参 N 次)→ `inject_message` 带操作策略纠偏,再犯 → `stop` |
 | StallDetector | `post:step` | 帧级静默超时(长期无进展)→ inject 纠偏 → stop |
 | ToolGuard | `pre:tool.call` | 规则表(工具名/参数模式)→ `Veto`。**能力上限声明:正则/关键字对 shell 组合爆炸无效,`shell_exec` 的防护主体是沙箱(§9.2)+ 权限(§8.2);语义解析器作为后续替换实现预留** |
@@ -935,9 +937,9 @@ agent_os/                  # 工作区(DESIGN.md / reports/ / ai-agent-book/)
 | **M5 可靠性**(持续) | **中断配对修复 + 恢复熔断(P0 洞)**、Telemetry(WAL + 版本头 + 检查点恢复)、Blackboard + spawn 后台帧、stream idle watchdog、`fs_edit`、PythonSandboxLogicKernel + python_exec + CodeScanner | 断电恢复演示;中断注入下配对不变量零破坏;沙箱内资源滥用被限制并正确报错;spawn 快慢模式演示 |
 | **M6 演化**(可选,持续) | Memory 契约 + LocalFile baseline、register() 写入路径 + 验证门、沙箱回调通道、spill/summarize/narrate 高级策略 | 经验跨 run 复用演示;Agent 自写技能经验证门注册并复用 |
 
-> **实现状态核对**(2026-08,对照 `agent_os/src/agent_os/` 代码;2026-08-31、2026-09-27、2026-09-28 复核):**M0–M5 已完成;M6 的 Memory baseline 与 register() 写入路径已落地(2026-09-27);M1/M3/M5 遗留占位 stub 已于 2026-09-27 清零;§7.2 高级压缩链(spill/summarize/hierarchical)已于 2026-09-28 落地(见下「已关闭」)**。各里程碑主体均已交付;以下为仍开口项(2026-09-27 逐条核对、压缩链条目 2026-09-28 复核,附代码证据):
+> **实现状态核对**(2026-08,对照 `agent_os/src/agent_os/` 代码;2026-08-31、2026-09-27、2026-09-28、2026-09-29 复核):**M0–M5 已完成;M6 的 Memory baseline 与 register() 写入路径已落地(2026-09-27);M1/M3/M5 遗留占位 stub 已于 2026-09-27 清零;§7.2 高级压缩链(spill/summarize/hierarchical)已于 2026-09-28 落地(见下「已关闭」)**。各里程碑主体均已交付;以下为仍开口项(2026-09-27 逐条核对、压缩链条目 2026-09-28 复核,附代码证据):
 > - M6(余项):沙箱回调通道高级形态(沙箱内 `board`/`blob` 未过桥、并发 syscall 未支持);narrate 高级压缩策略已落地(2026-09-28 WS2,见 §7.2 实现状态);register() 留尾:semver ^/~ 依赖求解、DirectorySkillSource 写路径、文件监听热重载、完整重放 + evaluator 验证门;Memory 留尾:常驻层 pinned 注入(§11.2,recall 注入槽不走 pinned 形态;context 注入槽已落地 2026-09-28,见下「已关闭」);蒸馏 sidecar 已落地(2026-09-28,见下「已关闭」),留尾:用户纠正/非显然工作流触发(v1 无通用信号)、跨进程去重、run 级用量信号;std/learn 三技能已实现(2026-07-25 W4 波,docs/STDLIB.md §4.8)——原列开口所指实为与 sidecar 的联动(技能显式/结构化 JSON/不写库 vs sidecar 自动/散文/直写库 + verify 审查门)。
-> - 跨里程碑开口:pause 真语义(v1 = 带 `"paused: "` 前缀的 stop,`kernel/control.py:41-44`);外部事件唤醒入口(§17 开放问题 4);恢复熔断通用化(outputs 校验(`kernel/runner.py:124`)与 summarize 压缩(`context/summarize.py`)各有连败熔断,未通用化);spawn 的"不说 done"校验 hook(§3.4);`ModelRouter` 动态路由(仅契约,`api/v1/providers.py:141`);logprobs / 多模态 token 精确口径(logprobs 契约预留 `ProviderCaps.supports_logprobs`;多模态 parts 契约已落地(2026-09-28,见下「已关闭」),token 精确口径仍开口);OTLP 导出 / PII 脱敏 hook(`telemetry/` 仅 JSONL);E3/D3 余项(审计面板、[ESCALATED] 溯源标记、Grant 配对字段与 D3 派生链最弱一环已于 2026-09-28 落地,见下「已关闭」;仍开口:D3 跨 run 自动派生(引擎无触发点,via 链由宿主声明)、完整多用户会话映射(D3-lite `[web.tokens]` 已落地,docs/DATA-AUTHZ.md §8)、checkpoint `_settle_unpaired_calls` 规则 2 就地改写不带 escalated 键的崩溃边沿缝隙)。
+> - 跨里程碑开口:外部事件唤醒入口(§17 开放问题 4);恢复熔断通用化(outputs 校验(`kernel/runner.py:124`)与 summarize 压缩(`context/summarize.py`)各有连败熔断,未通用化);spawn 的"不说 done"校验 hook(§3.4);`ModelRouter` 动态路由(仅契约,`api/v1/providers.py:141`);logprobs / 多模态 token 精确口径(logprobs 契约预留 `ProviderCaps.supports_logprobs`;多模态 parts 契约已落地(2026-09-28,见下「已关闭」),token 精确口径仍开口);OTLP 导出 / PII 脱敏 hook(`telemetry/` 仅 JSONL);E3/D3 余项(审计面板、[ESCALATED] 溯源标记、Grant 配对字段与 D3 派生链最弱一环已于 2026-09-28 落地,见下「已关闭」;仍开口:D3 跨 run 自动派生(引擎无触发点,via 链由宿主声明)、完整多用户会话映射(D3-lite `[web.tokens]` 已落地,docs/DATA-AUTHZ.md §8)、checkpoint `_settle_unpaired_calls` 规则 2 就地改写不带 escalated 键的崩溃边沿缝隙)。
 >
 > 已关闭(2026-08-31,P0 四项,1056 passed/1098 collected):① **凭证注入**——`ToolSpec.credentials` + `[credentials]` 配置段(env 间接引用)+ `bind_credentials` 装配钩子,dispatch 按声明键每次现解析(§8.4);② **confirm 两阶段**——内核 tool-confirm 闸门(`kernel/runner.py:_dispatch_call`,§8.2;含偏差说明:批准即 token,不做字面 dry run 二次调用);③ **HumanApproval**(原 M4 项)——下沉为闸门策略载体(`sidecars/builtins.py` `on_signal` 弃权,`[sidecars] human_approval` 配置生效);④ **D2 数据层 authZ**——`[data]` 配置段 + per-subject 域白名单判据 + `data.access.denied/granted` 审计信号(SIGNAL_NAMES 33 个)+ D3-lite `[web.tokens]` 多用户映射(docs/DATA-AUTHZ.md §8)。**行为变化**:无 supervisor 的裸 run 调 `confirm=True`/EXEC 闸门工具(如 `system.file.delete`)现在 fail-closed 拒绝。
 >
@@ -966,6 +968,8 @@ agent_os/                  # 工作区(DESIGN.md / reports/ / ai-agent-book/)
 > 另:§14.3 各 entry point 组中 `agent_os.compressors` 已在 `pyproject.toml` 声明并经 builder 加载(2026-09-28);其余组仍为注释预留,运行期未发现加载接线。
 >
 > 已关闭(2026-09-28,ask_human/set_timer 工具面 + std 形态 + 宿主接线):① **`system.timer.set` 内核原语**——`tools/timer.py` 的 `TimerService`(asyncio 任务表按 run_id 分桶)+ `timer_set_tool`(WRITE 档,立即返回 timer_id,不占 timeout 等待语义):one-shot `delay_seconds` / recurring `interval_seconds`+`count`(缺省无限,run 收尾自动取消),二选一缺/并给 INVALID_ARGS,下限钳 0.5s(防抖);到点经 `ctl.inject_message` 向调用帧注入 `[timer 到点] {note}(timer_id=…,第 N 次[/共 M 次])`(Role.USER/Source.INJECTED),帧终态(或帧消失)静默弃并停止 recurring;run 收尾 `_release_run` 取消本 run 全部在册计时器(不跨 run 误杀,同后台帧回收先例);**进程态不持久化**——不随 checkpoint,resume 不复活计时(重武装留开口);sleep 可注入(测试假钟快进,同 StallDetector `clock` 先例);② **宿主接线**——CLI `_CliUserChannel`(`host/cli/main.py`,与 `_cli_supervisor` 同构 stdin/stderr 协议,随 supervisor 开关注入,replay 不接线,原 :89-92 TODO 消);Web `_InboxUserChannel`(`host/web/run_manager.py:168`):ask 复用收件箱闭环(`Question(kind="user-ask")` 进 pending,既有 pending/answer 端点作答,options=None 即自由文本),notify = no-op(收件箱无免答条目形态;**`user.notify` 信号上移工具层**——notify 落地后经 `bind_signals` 装配的总线补发,带 run/frame 归因,telemetry 落 trace、per-run hub 进 SSE,CLI 同享);③ **std 两技能**——`common.user.ask_human`(`std/user.yaml` + `user_handlers.py`,包装 `system.user.ask`,inputs `{question, context?}`,Constrain 失败阈值/高风险两触发语义落 description)与 `common.task.set_timer`(`std/task.yaml` + `task_handlers.py`,包装 `system.timer.set`),过 std gate;④ **注册位置偏差**——user 两件与 timer 的注册点从 `with_builtins` 移至 `LocalPythonToolRegistry.__init__` 构造器(std 域文件声明其 permissions.tools,§6.1 装配闸门要求空工具表也能装配,挂 with_builtins 会撞既有空表锚点,同 fetch_page 先例;`tools/local_registry.py:148-159`);builder build 末尾 `tools.bind_timer(kernel.ctl)` 恒装配(无 sidecar/debug 时补装 `RunControlImpl`,同 debug_controller 先例);未 bind timer 时 NOT_FOUND 语义不变。**仍开口**:挂起/未启动 run 的外部事件唤醒(§17 开放问题 4 保留)、定时器持久化/resume 重武装、Event Trigger 余两件 `monitor_shell`/`connect_channel`、TUI 接线。全量基线:1670 collected = 1620 passed + 10 skipped + 40 xfailed。
+>
+> 已关闭(2026-09-29,pause 真语义落地,WS1 内核 + WS2 Web;全量基线:1681 collected = 1638 passed + 10 skipped + 40 xfailed):① **形态裁决**——checkpoint 恢复型:宿主 finalize 照常落 checkpoint,恢复走既有 resume(新内核 config 可换——§2.4"加预算再继续"本义);进程内 await 挂起形态未采用(调试会话已有,见④两通道划清);② **内核(WS1)**——`RunPaused(RunAborted)`(`kernel/errors.py`:可恢复挂起,理由原样不再拼 `"paused: "` 前缀);`ctl.pause` 写独立 `_pause_flags`(不再借 stop),两处 safe point(pre:step 循环开头/流式 chunk 循环)**stop 优先**(先查 stop 抛 RunAborted,后查 pause 抛 RunPaused),`_release_run` 清理;run 边界特判(在通用 RunAborted 前):status=PAUSED、发 `run.paused`(payload {"reason"})、不发 run.aborted、re-raise,resume 边界同构(链式挂起);`Pause` verdict 两处仲裁点(pre:step/pre:tool.call)真化为 RunPaused;`RUN_PAUSED = "run.paused"` 信号(目录 36→37);`BudgetGuard(action="stop"|"pause")` + `[sidecars] budget_guard` 增 `action` 键(strict)——§2.4 stop→pause 降级补票;③ **Web(WS2)**——RunRecord 状态归口 `done|failed|aborted|paused`(`host/shared/runrecord.py` STATUS_PAUSED;artifacts execute_run/execute_resume 两路径 RunPaused 先于 RunAborted 特判;CLI 退出码 paused 落 else 3 不变);`POST /api/runs/{id}/pause`(可选 {"reason"},缺省 "web pause";仅 running 生效,非 running 409/未知 404),resume 对 paused 天然兼容;前端 live bar Pause 按钮(可恢复无确认条)、"pausing" 相位、paused → warn Banner(rca-panel pausedBannerHtml 带 Resume ▶)、⌘K 命令条加 pause、status pill paused 槽;④ **两通道划清**——RunControl.pause = checkpoint 恢复型挂起(PAUSED 自此有写入点);supervisor ask 的 await 就地挂起与调试会话挂起是另两条通道,run 保持 RUNNING——SUPERVISOR.md §2.2 与白皮书 08 的"PAUSED 死字母"表述只对 RunControl 路径失效,supervisor await 路径的 PAUSED 迁移**有意未做**;⑤ **测试**——内核 +11(锚点改写 + pause→resume 全流程/链式挂起/Pause verdict/流式 safe point/BudgetGuard action/config 键/契约信号计数),web py +7(`tests/web/test_pause_control.py`)、前端 mjs 4 文件。**仍开口**:外部事件唤醒(§17 开放问题 4)、supervisor await 路径 PAUSED 迁移(有意未做)、CLI pause 子命令(一次性前台,用 BudgetGuard action 或 web)、run 列表 paused 筛选 chips。
 
 每个里程碑交付恰是对应子系统的 baseline;高级形态(版本求解、fallback 链、hierarchical 压缩、目录包技能源、OTLP)都在 baseline 跑通后以"替换注册项"的方式进入,不动契约。
 

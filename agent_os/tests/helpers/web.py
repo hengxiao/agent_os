@@ -23,11 +23,17 @@ def run_and_wait(client: TestClient, skill: str, input: dict) -> str:
     return r.json()["run_id"]
 
 
-def wait_status(client: TestClient, run_id: str, timeout: float = 10.0) -> dict:
+def wait_status(
+    client: TestClient,
+    run_id: str,
+    timeout: float = 10.0,
+    statuses: tuple[str, ...] = ("done", "failed", "aborted"),
+) -> dict:
+    """轮询 run 详情直到 status 落入 ``statuses``(缺省三终态;paused 场景显式传)。"""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         detail = client.get(f"/api/runs/{run_id}").json()
-        if detail["status"] in ("done", "failed", "aborted"):
+        if detail["status"] in statuses:
             return detail
         time.sleep(0.05)
-    raise AssertionError(f"run {run_id} 未在 {timeout}s 内结束")
+    raise AssertionError(f"run {run_id} 未在 {timeout}s 内进入 {statuses}")

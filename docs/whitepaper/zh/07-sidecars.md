@@ -63,14 +63,14 @@ runner 回收 verdicts → _arbitrate_pre:首个非 Allow 生效(runner.py:316-3
 
 | 发射点 | Veto | Modify | Stop/Pause | Inject/ForceCompress |
 |---|---|---|---|---|
-| `pre:step`(runner.py:323-336) | 中止 run(RunAborted) | 不处理 | 中止 run | 经 ctl 落地后续跑 |
-| `pre:tool.call`(runner.py:570-583) | 跳过分发,`kind=vetoed`、`retryable=false` 回写 | patch 并入 args,继续分发 | 中止 run | 不处理 |
-| `pre:frame.pop`(runner.py:371-383) | 纠偏观察"reviewer 打回:{reason}"入帧,回 loop 续跑 | 不处理 | 中止 run | 不处理 |
-| `pre:logic.exec`(编排路径,runner.py:792-800) | `kind=vetoed` 回写,不进沙箱 | 不处理 | 中止 run | 不处理 |
+| `pre:step`(runner.py:399-413) | 中止 run(RunAborted) | 不处理 | Stop 中止 run;Pause 可恢复挂起(RunPaused → Run 边界落 PAUSED,可 resume,2026-09-29) | 经 ctl 落地后续跑 |
+| `pre:tool.call`(runner.py:802-816) | 跳过分发,`kind=vetoed`、`retryable=false` 回写 | patch 并入 args,继续分发 | Stop 中止 run;Pause 同 pre:step 落 PAUSED | 不处理 |
+| `pre:frame.pop`(runner.py:484-490) | 纠偏观察"reviewer 打回:{reason}"入帧,回 loop 续跑 | 不处理 | Stop 中止 run;Pause 不处理 | 不处理 |
+| `pre:logic.exec`(编排路径,runner.py:1130-1147) | `kind=vetoed` 回写,不进沙箱 | 不处理 | Stop 中止 run;Pause 不处理 | 不处理 |
 
 **Veto 理由回写**(§5.2)是行为闭环的核心:理由复用工具失败语义作为错误观察写入帧上下文,模型下一步能看到"为什么不行"并换策略,而非只进 trace 供事后审计。
 
-`RunControl` 是副车操控运行的唯一通道(`api/v1/control.py:19-33`,实现 `kernel/control.py`):`stop` 置 run 中止标志,runner 在下一个 `pre:step` safe point 检查并抛 RunAborted(control.py:35-37;runner.py:400-402);`pause` v1 语义同 stop,理由带 `"paused: "` 前缀(control.py:39-41);`inject_message` 向指定帧追加 USER/INJECTED 消息,帧不存在则丢弃记日志不崩 run(control.py:43-51);`force_compress` 在帧 `working` 置标志,runner 在 maintain 前消费(runner.py:407-408);`get_frame_tree`/`get_usage` 是副车(代码)→内核的 pull,不耗 token。
+`RunControl` 是副车操控运行的唯一通道(`api/v1/control.py:19-33`,实现 `kernel/control.py`):`stop` 置 run 中止标志,runner 在下一个 safe point 检查并抛 RunAborted(control.py:39-41;runner.py:518-520);`pause` 置独立 `_pause_flags`,同一 safe point(**stop 优先**)抛 RunPaused——Run 边界落 PAUSED、发 `run.paused`(不发 run.aborted)、照常落 checkpoint,可 resume(2026-09-29 真语义,control.py:43-50;runner.py:515-523、:308-318);`inject_message` 向指定帧追加 USER/INJECTED 消息,帧不存在则丢弃记日志不崩 run(control.py:52-60);`force_compress` 在帧 `working` 置标志,runner 在 maintain 前消费(runner.py:533-534);`get_frame_tree`/`get_usage` 是副车(代码)→内核的 pull,不耗 token。
 
 ### 4.4 监督语义与内置副车
 
@@ -78,7 +78,7 @@ runner 回收 verdicts → _arbitrate_pre:首个非 Allow 生效(runner.py:316-3
 
 | 副车 | 订阅 | 模式/优先级 | 行为(实现要点) |
 |---|---|---|---|
-| BudgetGuard(builtins.py:31-77) | `post:llm.response` | ASYNC/100 | 按 run_id 累计成本/步数/挂钟,超限 → `ctl.stop`;`_stopped` 集合去重,每 run 只停一次 |
+| BudgetGuard(builtins.py:44-103) | `post:llm.response` | ASYNC/100 | 按 run_id 累计成本/步数/挂钟,超限 → `ctl.stop`;`action="pause"` 时改调 `ctl.pause`(§2.4 stop→pause 降级,落 PAUSED 可 resume,2026-09-29);`_stopped` 集合去重,每 run 只触发一次 |
 | LoopDetector(builtins.py:80-129) | `post:step` | ASYNC/100 | 按帧跟踪签名(sha1 前 12 位,runner.py:147-153),连续重复达 threshold → 注入带操作指令的纠偏消息;再犯 max_strikes 次 → stop;签名变化即重置 |
 | StallDetector(builtins.py:132-171) | `post:step` | ASYNC/100 | 相邻 step 间隔超 `max_idle_seconds` → 先纠偏注入,再犯 → stop;`clock` 可注入(测试用假钟) |
 | ToolGuard(builtins.py:174-199) | `pre:tool.call` | SYNC/10 | 规则表 `(工具名, 参数正则, 理由)`,命中 → Veto;能力上限自声明:正则对 shell 组合爆炸无效,防护主体是沙箱+权限 |
@@ -99,7 +99,7 @@ runner 回收 verdicts → _arbitrate_pre:首个非 Allow 生效(runner.py:316-3
 
 - `tests/sidecars/test_builtin_sidecars.py`(9 例):预算超限强停(`test_budget_guard_stops_run`,匹配 RunAborted 含 "BudgetGuard");循环先纠偏后强停,且纠偏消息确实进入后续 LLM 请求(`test_loop_detector_injection_reaches_context` 断言 mock 录制里出现"停止重试");ToolGuard veto 理由回写(`kind=vetoed`、`retryable is False`、理由原文在工具结果里)且被 veto 的调用**不产生** `post:tool.call`(`test_tool_guard_veto_skips_dispatch`);reviewer 打回后第二次弹栈放行、打回理由进入第二次请求;SYNC 副车抛异常 → fail-closed → RunAborted 含 "fail-closed";HumanApproval 弃权(`test_human_approval_abstains`,WS2);StallDetector 假钟验证。
 - `tests/sidecars/test_code_scanner.py`(2 例):危险代码被 veto 且无 `post:logic.exec`(未执行);干净代码放行(对照组)。
-- `tests/kernel/test_run_control.py`(7 例):pause 理由带 "paused: " 前缀;注入消息包装为 USER/INJECTED 并出现在后续请求;帧不存在时注入/强压被丢弃不崩 run;`get_frame_tree` 嵌套形状;`get_usage` 快照。
+- `tests/kernel/test_run_control.py`(9 例):pause 在下一 safe point 落可恢复挂起(PAUSED + run.paused,可 resume),stop 语义不变;注入消息包装为 USER/INJECTED 并出现在后续请求;帧不存在时注入/强压被丢弃不崩 run;`get_frame_tree` 嵌套形状;`get_usage` 快照。pause 真语义锚点(2026-09-29)另有:`tests/kernel/test_pause_resume.py`(4 例:pause→checkpoint→resume 不重跑已完成步、链式挂起、Pause verdict 在 pre:step/pre:tool.call 两处仲裁点真化)、流式 chunk 循环 safe point(`tests/kernel/test_streaming.py`)、BudgetGuard `action="pause"` 降级与 action 白名单(`tests/sidecars/test_builtin_sidecars.py`)、`[sidecars] budget_guard` action 键装配(`tests/runtime/test_config.py`)、`run.paused` 契约信号计数(`tests/test_contracts.py`)。
 - 相邻覆盖:`tests/logic/test_orchestration.py` 断言编排脚本的 syscall 照发 `pre:tool.call`、ToolGuard veto 理由回到脚本(:211),且编排期间的 RunAborted 不被降级为脚本可吞的错误(:424 回归测试);`tests/test_contracts.py` 断言冻结信号名(含 `pre:frame.pop`)。
 
 **真实配置**:`instance/agent-os.toml:43-45` 与三个 examples 的 TOML 均启用 `budget_guard = { max_cost = 2.0 }`、`loop_detector = { threshold = 3, max_strikes = 2 }`;`runtime/config.py:361-422` 以白名单解析 `[sidecars]` 段(budget_guard / loop_detector / tool_guard_rules / human_approval,未知键报 ConfigError;human_approval 为 WS2 新增,`true | {timeout, on_timeout}`)。
@@ -116,7 +116,7 @@ runner 回收 verdicts → _arbitrate_pre:首个非 Allow 生效(runner.py:316-3
 2. **规则类副车的能力上限是自声明的**:ToolGuard/CodeScanner 的正则对 shell 组合爆炸、混淆代码无效,docstring 明写"防护主体是沙箱(§9.2)+ 权限(§8.2)";语义解析器仅作预留。把它们当成安全边界是误用。
 3. **仲裁覆盖不全**:`pre:skill.invoke`(runner.py:857)、`pre:llm.request`(runner.py:411)与 code 技能帧的 `pre:logic.exec`(runner.py:523)当前**只发射不仲裁**——DESIGN §5.1 的"pre 可否决"在这些点是契约先行,实现未跟(以代码为准)。(`pre:compress` 已于 2026-09-28 落地否决:首个非 Allow verdict 跳过本次压缩,context/manager.py:397-402。)
 4. **ASYNC 强停有延迟且状态不进检查点**:`ctl.stop` 在下一个 safe point 才生效,在跑的一步/一个工具调用会完成;BudgetGuard/LoopDetector 的累计器是进程内存,检查点只序列化 run 与帧(`kernel/checkpoint.py:12-16`)——跨进程恢复后侧车累计清零(内核自身的 max_cost 兜底因 `run.state.usage` 入档而存活)。
-5. **Pause verdict 是"带标签的 abort",不是真暂停**(control.py:39-41;docs/DEBUGGER.md §1 原话):BudgetGuard 的 stop→pause 降级在 v1 实际是"换理由中止",可恢复的暂停属于调试器/supervisor 通道。
+5. **Pause verdict 已真化为可恢复挂起(2026-09-29 关闭原"带标签的 abort")**:两处仲裁点(pre:step/pre:tool.call)抛 RunPaused,Run 边界落 PAUSED、发 run.paused、照常落 checkpoint,可 resume;BudgetGuard `action="pause"`(§2.4 降级)随之可用。边界:与 stop 同受 safe point 粒度限制(在跑的一步/一个工具调用会完成);supervisor await 与调试会话的进程内挂起是另外两条通道,run 保持 RUNNING(docs/SUPERVISOR.md §2.2);CLI 无 pause 子命令。
 6. **`budget.warning` 在冻结目录里但无人发射**(`budget.exceeded` 已于 2026-09-28 由帧/子树预算强制首发——`account()` 末尾 `_check_subtree_budgets` 触发前发射,runner.py:2264-2276,见 §2 分层与第 01 章):80% 预警目前只以 Web 进度条客户端语义存在(docs/WEB-UI.md:186)。
 7. **LoopDetector 的观察面有两个盲区**:签名是精确哈希,语义等价但参数字面不同的调用不可见;编排脚本内部的 syscall 序列不进 `post:step` 载荷,脚本内死循环它看不见(docs/CODE-ORCHESTRATION.md §4 已列待补)。
 8. **SYNC 副车是关键路径成本**:每个 `pre:tool.call` 最坏要排一条 priority 链、每环 2 秒上限;§16 风险表要求压测预算内才可注册 SYNC。supervisor 的"心跳、重启(仅 ASYNC)"(§5.3)未实现,现只有注册与关停。

@@ -3,7 +3,8 @@
       schema 违例禁用 → 合法放行 → Run 提交(overrides 进 body)→ 关 Modal 跳
       #/runs/<id>;POST 失败进底部错误条;Esc 关闭 + 焦点管理。
    2) Live 进度:mountLiveBar 渲染(脉冲/双轨/warn)→ Stop 确认流(确认条 →
-      loading → 失败回退)→ 结束态切换(结果 Banner 替换进度区,live 脉冲熄灭)。
+      loading → 失败回退)→ WS2 Pause 流(直发无确认条 → 暂停中 loading →
+      失败回退)→ 结束态切换(结果 Banner 替换进度区,live 脉冲熄灭)。
    运行:node static/tests/smoke-d3.test.mjs(DOM 用 dom-stub.mjs,无浏览器)。 */
 
 import assert from "node:assert/strict";
@@ -186,6 +187,34 @@ const { mountLiveBar, deriveProgress } = await import("../js/components/progress
   assert.match(c2.innerHTML, /data-tone="aborted"/, "aborted → 紫 Banner");
   assert.match(c2.innerHTML, /web stop/);
   bar2.destroy();
+
+  /* WS2 Pause 流:直发 onPause(无确认条)→ "暂停中…" loading → end 挂起 Banner */
+  const c3 = new StubEl("div");
+  let pauseCalls = 0;
+  const bar3 = mountLiveBar(c3, {
+    onPause: async () => {
+      pauseCalls += 1;
+      return true;
+    },
+  });
+  assert.match(c3.innerHTML, /data-lb="pause"/, "Pause 常驻右侧(WS2)");
+  clickLb(c3, "pause");
+  assert.match(c3.innerHTML, /暂停中…/, "点击后按钮 loading(等 safe point)");
+  assert.doesNotMatch(c3.innerHTML, /中止不可逆/, "Pause 无可逆确认条(可恢复)");
+  await flush();
+  assert.equal(pauseCalls, 1, "onPause 被调用一次");
+  bar3.end("paused", "RunPaused: web pause");
+  assert.match(c3.innerHTML, /data-tone="warn"/, "paused → 黄 Banner");
+  assert.match(c3.innerHTML, /RunPaused: web pause/, "挂起理由透传");
+  bar3.destroy();
+
+  /* onPause 失败(如 run 已结束 409):回到 live 态,Toast 由调用方承担 */
+  const c4 = new StubEl("div");
+  const bar4 = mountLiveBar(c4, { onPause: async () => false });
+  clickLb(c4, "pause");
+  await flush();
+  assert.match(c4.innerHTML, /data-lb="pause"/, "pause 失败退回 live 态");
+  bar4.destroy();
 }
 
 console.log("smoke-d3.test.mjs: all assertions passed");

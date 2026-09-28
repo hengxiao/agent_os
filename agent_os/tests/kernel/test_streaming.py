@@ -10,8 +10,9 @@
   收齐、meta 合并),汇回同一条后段:``post:llm.response`` 仍恰好一次;
 - ttft/total 经 ``ChatResponse.ttft_ms/total_ms`` 由 ``account()`` 帧/run
   两级累加;chat 路径恒 0;
-- 流中取消与 safe point 同点语义:逐 chunk 查 ``_stop_flags``/``_frame_stop_flags``,
-  命中抛 RunAborted/SubtreeCancelled,半截 assistant 消息不 append。
+- 流中取消与 safe point 同点语义:逐 chunk 查 ``_stop_flags``/``_pause_flags``/
+  ``_frame_stop_flags``,命中抛 RunAborted/RunPaused/SubtreeCancelled,
+  半截 assistant 消息不 append。
 """
 
 from __future__ import annotations
@@ -35,10 +36,11 @@ from agent_os.api.v1 import (
     Permission,
     Role,
     RunConfig,
+    RunStatus,
     Signal,
     ToolPolicy,
 )
-from agent_os.kernel.errors import RunAborted, SubtreeCancelled
+from agent_os.kernel.errors import RunAborted, RunPaused, SubtreeCancelled
 from agent_os.providers.mock import MockProvider
 from tests.helpers.kernels import assemble, record_all
 
@@ -223,6 +225,33 @@ def test_stop_mid_stream_aborts_without_partial_message(tmp_path):
     assert root.status is FrameStatus.FAILED
     assert isinstance(root.error, RunAborted)
     assert not [m for m in root.context.messages if m.role is Role.ASSISTANT]
+
+
+def test_pause_mid_stream_suspends_without_partial_message(tmp_path):
+    """流中 ctl.pause:下一 chunk 查表抛 RunPaused;落 PAUSED 可 resume,无半截消息。"""
+
+    async def act(sig, ctl):
+        await ctl.pause(sig.run_id, "流中暂停")
+
+    # 3 段文本:pause 于 chunk 0 落地,chunk 1 进场即抛,chunk 2 永远不被消费
+    script = [("a", 0.01), ("b", 0.01), ("c", 0.01)]
+    probe = _Probe(act)
+    kernel = _kernel(MockProvider(stream_scripts=[script]), tmp_path, sidecars=(probe,))
+    seen = record_all(kernel)
+    with pytest.raises(RunPaused, match="流中暂停"):
+        asyncio.run(kernel.run("test.greet", {"who": "世界"}))
+
+    assert probe.fired == 1
+    chunks = [s for s in seen if s.name == POST_LLM_CHUNK]
+    assert [s.payload["seq"] for s in chunks] == [0], "pause 后的 chunk 不得再发信号"
+    root = _root(kernel)
+    assert root.status is FrameStatus.FAILED
+    assert isinstance(root.error, RunPaused)
+    assert not [m for m in root.context.messages if m.role is Role.ASSISTANT]
+    run = next(iter(kernel._runs.values()))
+    assert run.state.status is RunStatus.PAUSED
+    names = [s.name for s in seen]
+    assert "run.paused" in names and "run.aborted" not in names
 
 
 def test_frame_cancel_mid_stream_raises_subtree_cancelled(tmp_path):

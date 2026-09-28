@@ -444,13 +444,14 @@ cascade cancel and the subtree accounting read view); the multimodal
 contract (`Message.parts`, additive) and the narrate compression strategy
 have landed; Skill Lab
 L1-L5 is complete; all six Web themes pass the contract tests; the test
-baseline is 1681 Python tests (1638 passed, 10 skipped, 40 xfailed,
+baseline is 1739 Python tests (1696 passed, 10 skipped, 40 xfailed,
 0 failures) plus 32 frontend test files, all green.
 Designed but not yet implemented: the D3
 remainder (cross-run automatic delegation — the engine has no trigger point
 and hosts declare the via chain — plus the full multi-user session mapping), the
-M6 remainder (sandbox callback channel and register()'s semver
-solving / directory write path / hot reload / full replay+evaluator gate), the
+M6 remainder (sandbox callback channel and register()'s default
+replay+evaluator gate implementation — constraint admission, the directory
+write path, hot reload, and the smoke mount point landed 2026-09-29), the
 motion playback layer (theme contract test #5), multi-file skill_set
 promotion, and handler source promotion.
 

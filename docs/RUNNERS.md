@@ -55,7 +55,10 @@ builtins = true                     # 内置工具面(22 件规范名:system.fil
 python_exec = "docker"              # docker | subprocess | off
 
 [skills]
-path = "./skills.yaml"              # LocalFileSkillRegistry
+path = "./skills.yaml"              # LocalFileSkillRegistry(也可指目录:多 *.yaml 排序合并;register() 目录写恒落 <dir>/registered.yaml)
+# watch_interval = 5.0               # 热重载 watcher 轮询秒数(2026-09-29;daemon 线程查源文件 mtime,变了 reload,失败吞异常旧表不动;默认 0 = 关)
+# register_smoke = "my_pkg.gates:smoke"  # register() 入库前 smoke 验证门(2026-09-29;"module:func",sync/async 均可;ok 非真/异常 → GateError fail-closed 零写)
+# 注:strict 校验;watch_interval/register_smoke 需配合 path,缺 path → ConfigError
 
 [sidecars]
 budget_guard = { max_cost = 2.0 }

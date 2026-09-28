@@ -1,19 +1,25 @@
 """LocalFileSkillRegistry(docs/DESIGN.md §6.3;M2)。
 
-YAML 加载,命名空间固定 ``local``;不做版本约束求解(单版本,依赖只查存在);
-依赖图拓扑排序保留(循环依赖加载期报错);热重载 = 手动 ``reload()``(mtime 检查)。
+YAML 加载,命名空间固定 ``local``;不做版本约束求解(单版本;依赖查存在 +
+semver 约束准入检查,见 skills/semver.py——SKILL-PACKAGES-V2 §8 裁决:只准入不多解);
+依赖图拓扑排序保留(循环依赖加载期报错);热重载 = 手动 ``reload()``(mtime 检查),
+或 ``start_watching()`` 起轮询看门狗自动 reload(daemon 线程,生命周期随进程)。
 ``path`` 三种形态:单文件(一个文件声明全部技能)/ 目录(加载其下全部
 ``*.yaml``,按文件名排序合并,如 std 域分包)/ 文件路径列表(按给定序合并);
-跨文件 name 去重与依赖校验与单文件同一逻辑。
+跨文件 name 去重与依赖校验与单文件同一逻辑。register() 写路径按形态分流:
+单文件原位合并;目录形态落 ``<dir>/registered.yaml``(人管文件不碰,
+package._atomic_write_registered);列表形态不写(v1 边界)。
 """
 
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import logging
 import re
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -44,6 +50,7 @@ from agent_os.api.v1 import (
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.skills.loader import materialize
 from agent_os.skills.manifest import INLINE_DEPS_MAX, parse_manifest, validate_manifest
+from agent_os.skills.semver import parse_constraint, satisfies
 
 _log = logging.getLogger("agent_os.skills")
 
@@ -120,6 +127,8 @@ def _topo_sort(manifests: list[SkillManifest]) -> list[str]:
     """依赖图拓扑排序(Kahn,自引用边忽略——显式声明的自引用合法,§6.3 skills.yaml)。
 
     循环依赖 → :class:`SkillLoadError`;返回名字序(依赖先于引用者,文件序稳定)。
+    输入面:``_load_all`` 已把 permissions.skills 落为解析后纯名(@ 约束后缀
+    在准入检查时消化,不到这里)。
     """
     deps = {m.name: {d for d in m.permissions.skills if d != m.name} for m in manifests}
     order: list[str] = []
@@ -192,6 +201,13 @@ class LocalFileSkillRegistry:
         #: register() 信号总线(pre:skill.register 可否决 / post:skill.register
         #: 观察;None = 不发射,行为与引入前一致)
         self._bus = bus
+        #: register() 可选验证门 smoke(§6.2 验证门降级形态):bind_register_smoke
+        #: 注入 callable(name, entry) -> {"ok": bool, ...};None = 跳过(同 Lab G4
+        #: 无 runner 时 skip 哲学——嵌入路径不强制)
+        self._register_smoke: Any = None
+        #: 轮询热重载看门狗(start_watching 起的 daemon 线程;None = 未在看)
+        self._watch_thread: threading.Thread | None = None
+        self._watch_stop = threading.Event()
         self._skills: dict[str, Skill] = {}
         self._mtime: float | None = None  # 上次成功加载时的源文件 mtime 最大值(reload 变更检测)
         self._loaded = False
@@ -232,13 +248,25 @@ class LocalFileSkillRegistry:
             raise SkillLoadError(f"技能 name 重复: {dup}")
         by_name = {m.name: m for m in manifests}
         for m in manifests:
-            # 迁移期:permissions.skills 中的旧扁平名解析为点分名
-            resolved_skills = [_resolve_skill_name(d) for d in m.permissions.skills]
-            if resolved_skills != m.permissions.skills:
-                m.permissions.skills = resolved_skills
-            for dep in m.permissions.skills:
-                if dep not in by_name:
-                    raise SkillLoadError(f"技能 {m.name} 引用了不存在的子技能: {dep}")
+            # 依赖条目统一解析(skills/semver.py 约束准入):旧扁平名解析作用于
+            # name 段;permissions.skills 落解析后的纯名字段——拓扑排序/inline
+            # lint/visible_to 与这里的存在性检查共用同一名字面(manifest.py 的
+            # 条目字符串原样带 @,不改解析层)
+            deps: list[str] = []
+            for raw_dep in m.permissions.skills:
+                dep_name, op, constraint = parse_constraint(raw_dep)
+                dep_name = _resolve_skill_name(dep_name)
+                if dep_name not in by_name:
+                    raise SkillLoadError(f"技能 {m.name} 引用了不存在的子技能: {raw_dep}")
+                if op is not None and not satisfies(by_name[dep_name].version, op, constraint):
+                    installed = by_name[dep_name].version or "(未声明版本)"
+                    raise SkillLoadError(
+                        f"技能 {m.name} 的依赖 {raw_dep!r} 被拒绝: 安装版 {installed} "
+                        f"不满足约束 {op}{constraint}"
+                    )
+                deps.append(dep_name)
+            if deps != m.permissions.skills:
+                m.permissions.skills = deps
             for warning in validate_manifest(m):
                 _log.warning("%s", warning)
             # 调用方侧膨胀 lint(docs/SKILL-INLINING.md §3.3):merge 依赖条数上限
@@ -268,6 +296,60 @@ class LocalFileSkillRegistry:
         self._skills = self._load_all()  # 失败抛 SkillLoadError,旧表不被触碰
         self._mtime = mtime
         return True
+
+    def start_watching(self, interval_s: float) -> None:
+        """轮询热重载看门狗(daemon 线程):每 ``interval_s`` 查 ``_sources_mtime()``,变了 → ``reload()``。
+
+        - ``reload()`` 抛 :class:`SkillLoadError` → 吞掉记 log:旧表不动(与手动
+          reload 语义对齐),mtime 仍不同下个周期自然重试;线程内任何其他异常同样
+          吞掉记 log 继续——看门狗不能死在角落;
+        - start 幂等:已在看则忽略(重复调用不换间隔、不重启);
+        - ``interval_s <= 0`` → :class:`ValueError`;
+        - daemon=True 不阻进程退出;内核无 close 钩子,看门狗生命周期随进程
+          (要确定性停看用 :meth:`stop_watching`)。
+        """
+        if interval_s <= 0:
+            raise ValueError(f"watch 间隔须 > 0 秒,得到: {interval_s!r}")
+        if self._watch_thread is not None and self._watch_thread.is_alive():
+            return
+        self._watch_stop.clear()
+        thread = threading.Thread(
+            target=self._watch_loop,
+            args=(float(interval_s),),
+            name="agent-os-skills-watch",
+            daemon=True,
+        )
+        self._watch_thread = thread
+        thread.start()
+
+    def stop_watching(self) -> None:
+        """停止看门狗(幂等);停后源文件改动不再自动生效,手动 ``reload()`` 仍可用。"""
+        self._watch_stop.set()
+        thread = self._watch_thread
+        self._watch_thread = None
+        if thread is not None:
+            thread.join()
+
+    def _watch_loop(self, interval_s: float) -> None:
+        while not self._watch_stop.wait(interval_s):
+            try:
+                if self._sources_mtime() != self._mtime:
+                    self.reload()
+            except SkillLoadError as e:
+                _log.warning("热重载看门狗: reload 失败,保留旧表(下周期重试): %s", e)
+            except Exception:  # noqa: BLE001 — 看门狗不能死在角落:吞掉记 log 继续
+                _log.exception("热重载看门狗: 轮询异常(继续看门)")
+
+    def bind_register_smoke(self, smoke: Any) -> None:
+        """装配钩子(§6.2 验证门降级形态;bind 模式同 tools ``bind_user_channel`` 先例):
+        注入 register() 管线的冒烟验证回调。
+
+        smoke 形态 ``callable(name: str, entry: dict) -> dict``(同步/async 均可,
+        兼容先例 tools/builtins.py user_channel):``ok`` 真 → 放行;非真 → register
+        抛 GateError(detail 透传,不写盘);抛异常 → GateError(fail-closed,异常
+        文本入消息)。缺省(未 bind)= 跳过(嵌入路径不强制)。
+        """
+        self._register_smoke = smoke
 
     def get_by_name(self, name: str) -> Skill:
         """按名字取当前加载版本的 Skill(测试/调试入口;等价 ``get(SkillRef(name=name))``)。"""
@@ -327,16 +409,23 @@ class LocalFileSkillRegistry:
         3. 可选增强闸(构造期注入 tools 时):合成草稿跑
            ``validate_draft(strict_refs=True)`` 取 G1-G3,fail 即拒;未注入跳过
            (同 Lab G4 无 runner 时 skip 哲学——嵌入路径不强制);
-        4. ``pre:skill.register``(bus 注入时):任一 sidecar Veto → 中止不写盘;
-        5. 先证后换:``package._atomic_write``(staging 全流水线证明 + 原子 rename +
-           单次 reload;目录/多文件形态明确报错——单文件限制同包提交);
-        6. provenance 落盘 ``<skills.yaml>.register.jsonl``(全字段 + version +
+        4. 可选验证门 smoke(``bind_register_smoke`` 注入时;§6.2 验证门降级形态):
+           ``smoke(name, entry)``(同步/async 均可)——ok 非真 → GateError(detail
+           透传),抛异常 → GateError(fail-closed,异常文本入消息);拒绝同样落
+           jsonl(action="rejected",gates.smoke 记 fail detail)但生产零变化;
+           未注入 → gates.smoke 记 skip;
+        5. ``pre:skill.register``(bus 注入时):任一 sidecar Veto → 中止不写盘;
+        6. 先证后换:单文件走 ``package._atomic_write``,目录形态走
+           ``package._atomic_write_registered``(落 ``<dir>/registered.yaml``,
+           人管文件不碰;同名技能已在人管文件 → 拒绝;staging 整目录全流水线
+           证明 + 原子 rename + 单次 reload;多文件列表形态明确报错——v1 边界);
+        7. provenance 落盘 ``<skills.yaml>.register.jsonl``(全字段 + version +
            action + 闸门结果,draft_store.record_promotion 先例);
-        7. ``post:skill.register``(成功观察),返回 SkillRef。
+        8. ``post:skill.register``(成功观察),返回 SkillRef。
 
-        明确不做(v1 边界):semver ^/~ 依赖求解、DirectorySkillSource 写路径、
-        文件监听自动热重载、完整重放 + evaluator 验证门(§6.2 验证门降级为可选
-        smoke_runner 注入哲学,不在本方法内)。
+        明确不做(v1 边界):semver ^/~ 依赖求解(只做约束准入检查,skills/semver.py)、
+        多文件列表形态写路径、完整重放 + evaluator 验证门(§6.2 验证门降级为可选
+        ``bind_register_smoke`` 注入,见步骤 4;文件监听热重载见 ``start_watching``)。
         """
         # 延迟 import 防环:local_file → gate → draft_store → compound → local_file
         from agent_os.skills.draft_store import _manifest_to_dict
@@ -346,17 +435,19 @@ class LocalFileSkillRegistry:
             default_version,
             validate_draft,
         )
-        from agent_os.skills.package import _atomic_write
+        from agent_os.skills.package import _atomic_write, _atomic_write_registered
 
         manifest = artifact.manifest
         name = manifest.name or ""
         gate_notes: dict[str, Any] = {}  # 闸门结果(provenance 记录面)
 
-        # —— 形态前置:写路径只支持单文件 skills.yaml(目录/多文件形态属 v1 明确不做项)——
-        if not isinstance(self.path, str) or Path(self.path).is_dir():
+        # —— 形态前置:单文件走 _atomic_write;目录形态走 registered.yaml 写路径
+        #    (_atomic_write_registered,人管文件不碰);多文件列表形态仍拒(v1 边界)——
+        dir_form = isinstance(self.path, str) and Path(self.path).is_dir()
+        if not isinstance(self.path, str):
             raise SkillLoadError(
-                "register() 目前只支持单文件 skills.yaml"
-                "(目录/多文件形态的写路径属 v1 明确不做项,同 package._atomic_write 限制)"
+                "register() 只支持单文件或目录形态 skills 路径"
+                "(多文件列表形态的写路径属 v1 明确不做项)"
             )
 
         # —— 1. 纯函数闸门(必过)——
@@ -424,7 +515,35 @@ class LocalFileSkillRegistry:
         else:
             gate_notes["g1_g3"] = "skip(tools 未注入)"
 
-        # —— 4. pre:skill.register(Veto → 中止不写盘)——
+        # —— 4. 可选验证门 smoke(bind_register_smoke 注入时;拒绝落 jsonl 但不写盘)——
+        if self._register_smoke is not None:
+            try:
+                outcome = self._register_smoke(name, entry)
+                if inspect.isawaitable(outcome):  # 回调可同步可 async(user_channel 先例)
+                    outcome = await outcome
+            except Exception as e:
+                gate_notes["smoke"] = f"fail: smoke 执行异常: {e}"
+                self._record_register_jsonl(
+                    provenance, name=name, version=version,
+                    kind=manifest.kind.value, action="rejected", gates=gate_notes,
+                )
+                raise GateError(
+                    f"register 验证门拒绝({name}): smoke 执行异常(fail-closed): {e}"
+                ) from e
+            outcome = outcome if isinstance(outcome, dict) else {}
+            if not outcome.get("ok", False):
+                detail = outcome.get("detail") or outcome.get("error") or "smoke 未通过"
+                gate_notes["smoke"] = f"fail: {detail}"
+                self._record_register_jsonl(
+                    provenance, name=name, version=version,
+                    kind=manifest.kind.value, action="rejected", gates=gate_notes,
+                )
+                raise GateError(f"register 验证门 smoke 拒绝({name}): {detail}")
+            gate_notes["smoke"] = "pass"
+        else:
+            gate_notes["smoke"] = "skip(未注入)"
+
+        # —— 5. pre:skill.register(Veto → 中止不写盘)——
         if self._bus is not None:
             verdicts = await self._bus.emit(
                 Signal(
@@ -445,29 +564,21 @@ class LocalFileSkillRegistry:
                     f"register 被否决(pre:skill.register): {veto.reason or 'sidecar Veto'}"
                 )
 
-        # —— 5. 先证后换:code handler 落盘(失败止步于此,yaml 未动)+ 原子写 yaml ——
+        # —— 6. 先证后换:code handler 落盘(失败止步于此,yaml 未动)+ 原子写 yaml ——
         if manifest.kind is SkillKind.CODE:
             self._write_generated_handler(code_mod, artifact.code or "")
-        _atomic_write(self, {name: entry})
+        if dir_form:
+            _atomic_write_registered(self, {name: entry})
+        else:
+            _atomic_write(self, {name: entry})
 
-        # —— 6. provenance 落盘(追加;draft_store.record_promotion 先例)——
-        target = Path(self.path)
-        record = {
-            "run_id": provenance.run_id,
-            "task": provenance.task,
-            "note": provenance.note,
-            "detail": provenance.detail,
-            "name": name,
-            "version": version,
-            "kind": manifest.kind.value,
-            "action": action,
-            "gates": gate_notes,
-            "at": time.time(),
-        }
-        with target.with_name(target.name + ".register.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+        # —— 7. provenance 落盘(追加;draft_store.record_promotion 先例)——
+        self._record_register_jsonl(
+            provenance, name=name, version=version,
+            kind=manifest.kind.value, action=action, gates=gate_notes,
+        )
 
-        # —— 7. post:skill.register(成功观察)——
+        # —— 8. post:skill.register(成功观察)——
         if self._bus is not None:
             await self._bus.emit(
                 Signal(
@@ -483,16 +594,50 @@ class LocalFileSkillRegistry:
             )
         return SkillRef(name=name, version=version)
 
-    def _write_generated_handler(self, mod: str, code: str) -> None:
-        """code 技能源码落 ``<skills.yaml 同级>/generated_handlers/<mod>.py`` 并保证可 lazy import。
+    def _record_register_jsonl(
+        self,
+        provenance: Provenance,
+        *,
+        name: str,
+        version: str,
+        kind: str,
+        action: str,
+        gates: dict[str, Any],
+    ) -> None:
+        """register 事件追加 ``<skills.yaml>.register.jsonl``(§6.2 provenance;
 
-        skills.yaml 所在目录插入 sys.path(已在前则不动),``generated_handlers``
+        draft_store.record_promotion 先例):成功(action=appended/replaced)与验证门
+        smoke 拒绝(action=rejected)都落——拒绝记录是"谁试过注册什么、为什么没过"
+        的证据面;其余闸门拒绝维持零写入(都发生在本记录点之前)。
+        """
+        target = Path(self.path)
+        record = {
+            "run_id": provenance.run_id,
+            "task": provenance.task,
+            "note": provenance.note,
+            "detail": provenance.detail,
+            "name": name,
+            "version": version,
+            "kind": kind,
+            "action": action,
+            "gates": gates,
+            "at": time.time(),
+        }
+        with target.with_name(target.name + ".register.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def _write_generated_handler(self, mod: str, code: str) -> None:
+        """code 技能源码落 ``<skills 目录>/generated_handlers/<mod>.py`` 并保证可 lazy import。
+
+        skills 目录(单文件形态 = skills.yaml 同级;目录形态 = 目录自身)插入
+        sys.path(已在前则不动),``generated_handlers``
         落 ``__init__.py`` 成正规包;写后 ``invalidate_caches`` + 弹出本模块与
         父包的 sys.modules 缓存——同名再 register 时下次惰性解析拿到新代码
         (loader 惰性 import 见 skills/loader.py;handler 模块是进程级共享,
         换代码对下次解析生效,在跑帧不回溯)。
         """
-        skills_dir = Path(self.path).resolve().parent
+        base = Path(self.path).resolve()
+        skills_dir = base if base.is_dir() else base.parent
         pkg = skills_dir / "generated_handlers"
         pkg.mkdir(exist_ok=True)
         init = pkg / "__init__.py"

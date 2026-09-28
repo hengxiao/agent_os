@@ -1,6 +1,6 @@
 # Skills:注册表、加载与内联
 
-> 章次:02 · 状态:注册表/加载流水线/内联(merge v1)/`register()` 运行期写入(2026-09-27)**已实现**;版本约束求解为**契约预留(未实现)**;capsule/directed/code 免帧三档为**已设计未实现** · 依据:`agent_os/src/agent_os/skills/{local_file,manifest,loader}.py`、`agent_os/src/agent_os/context/manager.py`、`agent_os/src/agent_os/api/v1/skills.py`、`docs/DESIGN.md` §6、`docs/SKILL-INLINING.md`
+> 章次:02 · 状态:注册表/加载流水线/内联(merge v1)/`register()` 运行期写入(2026-09-27)**已实现**;依赖版本约束准入(2026-09-29)/目录形态写/`start_watching` 热重载/验证门 smoke hook **已实现**;多版本约束求解**裁决不做**;capsule/directed/code 免帧三档为**已设计未实现** · 依据:`agent_os/src/agent_os/skills/{local_file,manifest,loader,semver}.py`、`agent_os/src/agent_os/context/manager.py`、`agent_os/src/agent_os/api/v1/skills.py`、`docs/DESIGN.md` §6、`docs/SKILL-INLINING.md`
 
 ## 1. 概述
 
@@ -42,9 +42,9 @@ discover ─→ parse ─→ validate ─→ resolve deps ─→ materialize ─
 - **源三形态**:单文件 / 目录(其下 `*.yaml` 按文件名排序合并)/ 路径列表(按给定序合并)(`local_file.py:173-180`);跨文件 name 去重与依赖校验与单文件同一逻辑(`local_file.py:202-214`)。
 - **解析**:`yaml.safe_load` → 逐字段构造 manifest,`trust.confirm` 非法值加载期拒绝(`manifest.py:71-84`)。
 - **校验**:硬闸门抛 `SkillLoadError`,lint 返回告警不阻断。除通用 lint 外,`inline: true` 触发专门闸门(见 4.4);装配点(KernelBuilder)另传入推导档执行升权分档闸门:**推导档 ≥L2 禁止 inline**,**L3 禁止 confirm: first**(`manifest.py:113-133`,调用点 `runtime/builder.py:190`;Skill Lab 提交闸门 G3 复用同一判定,`skills/gate.py:222-224`)。
-- **依赖解析**:Kahn 拓扑排序(显式自引用合法,边忽略),循环依赖报错并列出成环节点(`local_file.py:105-124`);依赖只查存在,**不做版本约束求解**(单版本,见 §6)。迁移期旧扁平名经 `LEGACY_SKILL_ALIASES`(约 48 条)解析为点分层次名并记 warning(`local_file.py:42-101`)。
+- **依赖解析**:Kahn 拓扑排序(显式自引用合法,边忽略),循环依赖报错并列出成环节点(`local_file.py:105-124`);依赖查存在 + 版本约束准入(`name@^x.y.z`/`@~x.y.z`/`@x.y.z`,非法条目加载期 SkillLoadError fail-closed;`skills/semver.py`,接入 `local_file.py:238-257`,2026-09-29),**不做多版本约束求解**(单版本/name,裁决,见 §6)。迁移期旧扁平名经 `LEGACY_SKILL_ALIASES`(约 48 条)解析为点分层次名并记 warning(`local_file.py:42-101`)。
 - **物化**:prompt 技能取指令体;code 技能 handler **惰性 import**——load 期不 import,首次调用才解析 dotted path 并校验协程函数(`loader.py:18-47`);prompt 渲染走 `str.format`,裸露 `{}` 直接报错(`loader.py:50-55`)。
-- **热重载**:手动 `reload()`,mtime 未变返回 False;变更则重走全流程,**失败保留旧表抛错,不毁可用状态**;成功则"新帧用新版,在跑帧钉住旧版 Skill 对象"(`local_file.py:231-243`)。
+- **热重载**:手动 `reload()`,mtime 未变返回 False;变更则重走全流程,**失败保留旧表抛错,不毁可用状态**;成功则"新帧用新版,在跑帧钉住旧版 Skill 对象"(`local_file.py:231-243`)。另有 `start_watching(interval_s)`/`stop_watching()` 轮询 watcher(2026-09-29):daemon 线程查 `_sources_mtime`,变了 reload,失败吞异常旧表不动;`[skills] watch_interval` 默认 0 = 关。
 
 ### 4.3 呈现面:伪工具与子帧构建
 
@@ -102,8 +102,8 @@ discover ─→ parse ─→ validate ─→ resolve deps ─→ materialize ─
 
 1. **无校验、无记账、无观测。** merge 技能的 `inputs/outputs` 无运行期硬校验;成本融入父帧的步,无独立 usage 归因;"内联能力没起作用"在运行期没有锚点可查——没有帧、没有信号、没有校验,排查手段只有关消融对照与看 SYSTEM 快照(SKILL-INLINING.md §7)。这是设计明确接受的代价,也是纯度闸门把适用面收窄到"短小说明书"的原因。
 2. **语义不等价。** 执行主体是父模型,被调方的 `model.prefer` 失效;on/off 两档不承诺产出等价,消融仅用于调试与离线质量/成本评测,不作 CI 等价断言(SKILL-INLINING.md §9)。
-3. **版本约束求解未实现。** DESIGN.md §6.1 的 `<namespace>:<name>@<semver>` 与 `^`/`~` 语义是契约;基线实现单版本、依赖只查存在(`local_file.py:3-4`)。同名多版本共存、按约束解析都还没有。
-4. **`register()` 留尾(M6 后段)。** 运行期写入路径已实现(`local_file.py:314-484`,2026-09-27):命名正则 + G5 注入卫生闸门 fail 即拒、code 技能 logic 无条件钳 sandbox、可选 validate_draft G1-G3、`pre:skill.register` 可 Veto、原子写先证后换、provenance 落 `register.jsonl`;消费面 `system.skill.register` 工具(WRITE,confirm=True)经内核 tool-confirm 闸门兑现"注册动作可被 HumanApproval 拦截"(DESIGN.md §6.2)。仍明确不做:semver `^`/`~` 依赖求解、目录形态(DirectorySkillSource)写路径、文件监听自动热重载、完整重放 + evaluator 验证门。
+3. **多版本求解不做(裁决),约束准入已落地。** DESIGN.md §6.1 的 `<namespace>:<name>@<semver>` 与 `^`/`~` 语义已落地为依赖约束准入(2026-09-29,`skills/semver.py`):`permissions.skills` 条目支持 `name@^x.y.z`/`@~x.y.z`/`@x.y.z`,非法条目加载期 SkillLoadError fail-closed。同名多版本共存、range/`||`/`>=` 解析明确不做——注册表单版本/name 是裁决结果(SKILL-PACKAGES-V2 §8.2/§9.2),不是留尾。
+4. **`register()` 留尾(M6 后段)。** 运行期写入路径已实现(`local_file.py:314-484`,2026-09-27):命名正则 + G5 注入卫生闸门 fail 即拒、code 技能 logic 无条件钳 sandbox、可选 validate_draft G1-G3、`pre:skill.register` 可 Veto、原子写先证后换、provenance 落 `register.jsonl`;消费面 `system.skill.register` 工具(WRITE,confirm=True)经内核 tool-confirm 闸门兑现"注册动作可被 HumanApproval 拦截"(DESIGN.md §6.2)。留尾四件中三件已于 2026-09-29 关闭:目录形态写路径(目录 registry 目标恒 `<dir>/registered.yaml`,staging 整目录证明后 .bak + os.replace)、文件监听热重载(`start_watching(interval_s)` daemon 轮询,`[skills] watch_interval` 默认关)、验证门 smoke hook(`bind_register_smoke`,G1-G3 后 pre 信号前,ok 非真/异常 → GateError fail-closed 零写,`[skills] register_smoke`)。仍明确不做:多版本依赖求解(裁决,见上条);仍开口:默认重放 + evaluator 验证门实现(smoke 挂点已就位)。
 5. **指令冲突无仲裁。** 多个 merge 技能(或与调用方自身 prompt)指令矛盾时没有任何检测与仲裁,靠条数 lint + code review(SKILL-INLINING.md §15 开放问题 1)。
 6. **膨胀阈值是经验拍值。** 500 字符 / 3 条均非按 token 估算口径推导,设计稿自承"纯拍脑袋"(SKILL-INLINING.md §15 开放问题 3)。
 7. **纯度闸门的代价:不可组合。** merge 技能不能声明任何 skills 依赖,不存在内联链/传递展开;能力稍复杂(需要一次工具调用)就必须退回压帧形态。
@@ -121,4 +121,4 @@ discover ─→ parse ─→ validate ─→ resolve deps ─→ materialize ─
 
 ---
 
-**资料存疑(以代码为准)**:① 伪工具命名——DESIGN.md §3.3 与 SKILL-INLINING.md 行文写作 `skill__<name>`,代码生成的是 `skill.<name>`(`local_file.py:272`),runner 两种前缀都拦截(`runner.py:550, 844-845`);本章统一按代码写 `skill.<name>`。② DESIGN.md §6.3 称目录包形态为"后续 DirectorySkillSource",代码已支持目录形态(多 `*.yaml` 排序合并,`local_file.py:173-180`)。③ DESIGN.md §6.1 的版本约束求解为设计承诺,代码明确不做(`local_file.py:3`)。
+**资料存疑(以代码为准)**:① 伪工具命名——DESIGN.md §3.3 与 SKILL-INLINING.md 行文写作 `skill__<name>`,代码生成的是 `skill.<name>`(`local_file.py:272`),runner 两种前缀都拦截(`runner.py:550, 844-845`);本章统一按代码写 `skill.<name>`。(原②③两条已于 2026-09-29 消解:DESIGN.md §6.1/§6.3 已同步——目录形态含 register() 写路径已落地,版本约束准入已落地、多版本求解裁决不做。)

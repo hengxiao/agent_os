@@ -53,7 +53,10 @@
 > register() 留尾:semver ^/~ 求解、DirectorySkillSource 写路径、文件监听热重载、
 > 完整重放 + evaluator 验证门。(**2026-09-28 更新**:蒸馏 sidecar 与 context 注入槽(Memory 检索结果的
 > 组装侧,manifest `context_policy.recall` opt-in)均已关闭;压缩链 spill/summarize/hierarchical
-> 与沙箱回调通道 spawn/wait/parallel 亦已于本日关闭,见头部最新复核块。)
+> 与沙箱回调通道 spawn/wait/parallel 亦已于本日关闭,见头部最新复核块。)(**2026-09-29 更新**:
+> register() 留尾四件亦已全部关闭——semver 约束准入(只准入、不做多版本求解,裁决)、目录形态写
+> (目标恒 `<dir>/registered.yaml`)、`start_watching` 热重载 watcher、smoke hook 验证门;仍开口:
+> 默认重放 + evaluator 实现(挂点已就位)与 watch 线程 close 钩子。见头部最新复核块。)
 > ---
 > ⚠️ **复核 2026-09-27(并发三原语三项已关闭)**:测试 **1320 收集 = 1273 passed + 10 条件 skip + 37 xfailed,0 失败**。
 > ① **`parallel_invoke` fork/join(WS3,§3.4 第三原语)**——`Kernel.parallel_invoke`(`kernel/runner.py:1482-1763`,
@@ -370,6 +373,31 @@
 > **仍开口**:外部事件唤醒(§17 开放问题 4)、CLI pause 子命令(一次性前台,用
 > BudgetGuard action 或 web)、run 列表 paused 筛选 chips。
 > 全量基线:1681 收集 = 1638 passed + 10 skipped + 40 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-29(register() 留尾四件)**:
+> ① **semver 依赖约束准入**——`permissions.skills` 条目支持 `name@^x.y.z`/`@~x.y.z`/`@x.y.z`
+> 后缀(`^`=同 major 且 ≥、`~`=同 major.minor 且 ≥、精确=相等;非法条目/非 x.y.z 段 →
+> 加载期 SkillLoadError fail-closed);新模块 `skills/semver.py`,接入 `_load_all` 依赖检查
+> (`skills/local_file.py:238-257`,逐 dep 解析、不满足消息含安装版/约束),拓扑排序等下游
+> 统一用解析后纯名。**裁决:只做约束准入,不做多版本求解**——SKILL-PACKAGES-V2 §8.2/§9.2
+> 维持,注册表仍单版本/name,`||`/`>=` 不做。
+> ② **目录形态 register()**——目录 registry 可注册,目标恒 `<dir>/registered.yaml`
+> (`package.py` `_atomic_write_registered`:候选合并 → staging 整目录全流水线证明 →
+> .bak + os.replace + reload);技能名已在其他人管 yaml → SkillLoadError 指出来源文件,
+> 不碰人管文件;action appended/replaced 同单文件语义;列表形态仍拒;顺带修
+> `_write_generated_handler` 目录落点 bug(原落到目录外)。
+> ③ **热重载 watcher**——`registry.start_watching(interval_s)`/`stop_watching()`:
+> daemon 线程轮询 `_sources_mtime`,变了 reload,reload 失败吞异常旧表不动,start/stop
+> 幂等,生命周期随进程;`[skills] watch_interval: float = 0` 默认关(strict;配了
+> watch/smoke 但无 path → ConfigError)。
+> ④ **验证门 smoke hook**(DESIGN §6.2 注入哲学落地)——`registry.bind_register_smoke(callable)`,
+> register() 第 4 步(G1-G3 后、pre 信号前)执行,sync/async 兼容;ok 非真 → GateError
+> (detail 透传)零写,异常 → GateError fail-closed;`[skills] register_smoke = "module:func"`;
+> jsonl gates 加 `"smoke"` 键(skip/pass/fail: detail;smoke 拒绝落 `action="rejected"`
+> 记录,其余闸门拒绝仍零写入)。
+> **仍开口**:多版本求解/range(裁决不做)、默认重放 + evaluator 实现(挂点已就位)、
+> watch 线程的内核 close 钩子(现生命周期随进程)。
+> 全量基线:1739 收集 = 1696 passed + 10 skipped + 40 xfailed,0 失败。
 
 ## 一、总览
 
@@ -426,6 +454,7 @@
 
 - **复核 2026-08-24**:`register()` 运行期写入仍为 M6 stub(`skills/local_file.py:293`);入库前验证门已由 Skill Lab 承载(草稿 `skills/draft_store.py` → 五关闸门 `skills/gate.py` → 原子发布 `skills/package.py`,CLI/Web 双侧);其余各项抽查仍成立。
 - **复核 2026-09-27**:`register()` 已落地(`skills/local_file.py:314-484`,闸门 + pre:skill.register 否决 + 原子写 + provenance),消费面 `system.skill.register` 工具(confirm=True 过 tool-confirm 闸门);DirectorySkillSource 写路径、版本约束求解、文件监听热重载、完整重放+evaluator 门仍开口。
+- **复核 2026-09-29(register() 留尾四件已关闭)**:① semver 依赖约束准入已落地(`skills/semver.py`;`permissions.skills` 条目 `name@^x.y.z`/`@~x.y.z`/`@x.y.z`,非法条目加载期 SkillLoadError fail-closed;接入 `_load_all` `local_file.py:238-257`;**裁决:不做多版本求解/range,注册表仍单版本/name**);② 目录形态 register() 已落地(目标恒 `<dir>/registered.yaml`,`package._atomic_write_registered` staging 整目录证明 → .bak + os.replace;人管 yaml 撞名 → SkillLoadError 不碰人管文件);③ 文件监听热重载已落地(`start_watching(interval_s)`/`stop_watching()` daemon 轮询 mtime,失败吞异常旧表不动;`[skills] watch_interval` 默认关);④ 验证门 smoke hook 已落地(`bind_register_smoke`,G1-G3 后 pre 信号前,sync/async 兼容,ok 非真/异常 → GateError fail-closed 零写;`[skills] register_smoke`;jsonl gates 增 `"smoke"` 键,smoke 拒绝落 `action="rejected"` 记录);仍开口:默认重放 + evaluator 实现(挂点已就位)、watch 线程的内核 close 钩子、可见集膨胀后的语义检索层。
 
 ### 5. Context(上下文)— 🟡 ~55%
 

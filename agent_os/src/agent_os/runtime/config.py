@@ -17,7 +17,11 @@
                    tools/list 并注册全部工具(mcp.<server>.<tool> 命名空间,走全量
                    dispatch 管线),连接失败 ConfigError 快速失败(防坏 server 静默
                    缺席致白名单形同虚设);段存在才接线,缺段零破坏
-    [skills]     → LocalFileSkillRegistry
+    [skills]     → LocalFileSkillRegistry:path 技能源(单文件/目录/列表);
+                   watch_interval = 秒数(缺省 0 = 不看):>0 时装配轮询热重载
+                   看门狗(daemon 线程,reload 失败保留旧表记 log);
+                   register_smoke = "pkg.mod:func"(register() 验证门冒烟回调,
+                   加载失败 ConfigError,同 [tools.custom] 先例;缺省不跑)
     [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加);
                    human_approval(WS2)= true 或 { timeout, on_timeout }:
                    装配 HumanApproval 策略,EXEC 档工具过内核 tool-confirm 闸门;
@@ -204,6 +208,31 @@ def _run_config(cfg: dict[str, Any]) -> RunConfig:
     if unknown:
         raise ConfigError(f"[run] 含未知字段: {unknown}(支持: {list(_RUN_FIELDS)})")
     return RunConfig(**{k: cfg[k] for k in _RUN_FIELDS if k in cfg})
+
+def _skills_section(cfg: Any) -> dict[str, Any]:
+    """``[skills]`` 段 strict 校验(同 ``_memory_section``/``_retry`` 先例:拼错的键
+
+    会静默落空,必须装配期报出)。支持键:path(技能源)/ watch_interval(轮询
+    热重载看门狗间隔秒数,缺省 0 = 不看;须 >= 0 的数值)/ register_smoke
+    (register() 验证门冒烟回调,"pkg.mod:func" 字符串;加载在 build_kernel
+    装配点做,同 [tools.custom] ``_load_dotted`` 先例)。
+    """
+    if not isinstance(cfg, dict):
+        raise ConfigError(f"[skills] 段应为表,得到: {cfg!r}")
+    unknown = sorted(set(cfg) - {"path", "watch_interval", "register_smoke"})
+    if unknown:
+        raise ConfigError(
+            f"[skills] 含未知字段: {unknown}(支持: ['path', 'register_smoke', 'watch_interval'])"
+        )
+    section = dict(cfg)
+    watch = section.get("watch_interval", 0)
+    if isinstance(watch, bool) or not isinstance(watch, (int, float)) or watch < 0:
+        raise ConfigError(f"[skills] watch_interval 须为 >= 0 的数值(0 = 不看),得到: {watch!r}")
+    section["watch_interval"] = float(watch)
+    smoke = section.get("register_smoke")
+    if smoke is not None and (not isinstance(smoke, str) or ":" not in smoke):
+        raise ConfigError(f"[skills] register_smoke 须为 'pkg.mod:func' 字符串,得到: {smoke!r}")
+    return section
 
 
 def _load_dotted(dotted: str) -> Callable[..., Any]:
@@ -792,9 +821,22 @@ def build_kernel(
     providers = _providers(cfg.get("providers") or {})
     if providers:
         builder.providers(*providers)
-    skills_path = (cfg.get("skills") or {}).get("path")
+    skills_cfg = _skills_section(cfg.get("skills") or {})
+    skills_path = skills_cfg.get("path")
     if skills_path:
-        builder.skills(LocalFileSkillRegistry(skills_path))
+        skills_registry = LocalFileSkillRegistry(skills_path)
+        if skills_cfg.get("register_smoke"):
+            # §6.2 验证门降级形态:dotted path 加载冒烟回调并 bind 进 register() 管线
+            # (加载失败 ConfigError,同 [tools.custom] 先例)
+            skills_registry.bind_register_smoke(_load_dotted(skills_cfg["register_smoke"]))
+        if skills_cfg["watch_interval"] > 0:
+            # 轮询热重载看门狗(daemon 线程,随进程;reload 失败保留旧表记 log)
+            skills_registry.start_watching(skills_cfg["watch_interval"])
+        builder.skills(skills_registry)
+    elif skills_cfg["watch_interval"] > 0 or skills_cfg.get("register_smoke"):
+        raise ConfigError(
+            "[skills] 配置了 watch_interval/register_smoke 但没有 path(无 registry 可接线)"
+        )
     sidecars = [*_sidecars(cfg.get("sidecars") or {}), *extra_sidecars]
     if sidecars:
         builder.sidecars(*sidecars)

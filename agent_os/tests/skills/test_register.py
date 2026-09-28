@@ -9,9 +9,15 @@
 - 悬空工具引用(注入 tools)→ 可选增强闸 G2(strict_refs)拒绝;
 - code 技能:logic.mode 强制钳 sandbox(artifact 声明 trusted 也被覆盖)+
   handler 落盘可 lazy import;
-- 目录形态 registry → 明确报错(单文件限制);
+- 目录形态 registry → 落 ``<dir>/registered.yaml``(空目录可注册;同名再注册
+  replaced;同名在人管文件 → 拒绝且人管文件零变化;staging 证明失败目录零变化;
+  多 yaml 合并读取不破坏);多文件列表形态 → 明确报错(v1 边界);
 - provenance ``<skills.yaml>.register.jsonl`` 追加全字段(run_id/task/note/...);
 - 信号:mock bus —— pre Veto → 中止不写盘;pre/post 成功各发射一次;
+- 验证门 smoke(bind_register_smoke):ok=False / 抛异常 → GateError(detail 透传 /
+  fail-closed),生产零变化,jsonl gates.smoke 记 fail(action="rejected");
+  ok → 注册成功 gates.smoke=pass;未 bind → skip(现状回归);
+  config ``[skills] register_smoke`` 模块路径接线 / 非法值 ConfigError;
 - 工具面:``system.skill.register`` 随 with_builtins 常驻(WRITE·confirm·skills.*);
   bind 缺失调用报 NOT_FOUND(同 memory 工具先例);
 - kernel 级:``system.skill.register`` 过 tool-confirm 闸——无 supervisor fail-closed;
@@ -259,17 +265,118 @@ def test_register_code_skill_without_code_rejected(production):
 
 
 # ---------------------------------------------------------------------------
-# 目录形态 registry
+# 目录形态 registry(registered.yaml 写路径;package._atomic_write_registered)
 # ---------------------------------------------------------------------------
 
 
-def test_register_dir_form_registry_clear_error(tmp_path):
-    """目录形态 registry → 明确报错(单文件限制,属 v1 明确不做项)。"""
+def _dir_registry(tmp_path, files: dict[str, str] | None = None):
+    """目录形态 registry:files 缺省 = 空目录;返回 (registry, skills_dir)。"""
     skills_dir = tmp_path / "skills_dir"
     skills_dir.mkdir()
-    (skills_dir / "a.yaml").write_text(PROD_YAML, encoding="utf-8")
-    registry = LocalFileSkillRegistry(str(skills_dir))
-    with pytest.raises(SkillLoadError, match="单文件"):
+    for fname, content in (files or {}).items():
+        (skills_dir / fname).write_text(content, encoding="utf-8")
+    return LocalFileSkillRegistry(str(skills_dir)), skills_dir
+
+
+def test_register_dir_form_empty_dir_creates_registered_yaml(tmp_path):
+    """空目录注册 → 生成 registered.yaml、新技能可 get/invoke(code handler 落目录内)。"""
+    registry, skills_dir = _dir_registry(tmp_path)
+    artifact = SkillArtifact(
+        manifest=SkillManifest(
+            name="gen.decho",
+            kind=SkillKind.CODE,
+            description=DESC,
+            inputs={"type": "object"},
+            outputs={"type": "object"},
+        ),
+        code=CODE,
+    )
+    ref = _register(registry, artifact)
+
+    registered = skills_dir / "registered.yaml"
+    assert registered.is_file(), "目录形态落点恒为 <dir>/registered.yaml"
+    data = yaml.safe_load(registered.read_text(encoding="utf-8"))
+    assert [e["name"] for e in data["skills"]] == ["gen.decho"]
+    skill = registry.get(ref)
+    assert skill.manifest.handler == "generated_handlers.gen_decho:run"
+    assert (skills_dir / "generated_handlers" / "gen_decho.py").is_file(), "handler 落目录内"
+    # invoke:lazy import 真执行(目录已入 sys.path)
+    result = asyncio.run(skill.handler({"text": "hi"}, None))
+    assert result == {"echo": "hi"}
+
+
+def test_register_dir_form_reregister_same_name_replaced(tmp_path):
+    """二次注册同名 → 同文件更新(不新增文件)、action=replaced、patch bump。"""
+    registry, skills_dir = _dir_registry(tmp_path)
+    _register(registry, _prompt_artifact())
+    ref2 = _register(registry, _prompt_artifact(prompt="你是语气改写助手 v2。"))
+
+    assert ref2.version == "0.1.1"
+    yamls = sorted(f.name for f in skills_dir.glob("*.yaml"))
+    assert yamls == ["registered.yaml"], "同名更新不新增 yaml 文件"
+    data = yaml.safe_load((skills_dir / "registered.yaml").read_text(encoding="utf-8"))
+    entries = [e for e in data["skills"] if e["name"] == "gen.tone"]
+    assert len(entries) == 1 and "v2" in entries[0]["prompt"]
+    assert [r["action"] for r in _read_jsonl(registry)] == ["appended", "replaced"]
+
+
+def test_register_dir_form_name_in_human_file_rejected(tmp_path):
+    """同名技能在人管文件(other.yaml)→ 拒绝并指出来源文件;人管文件 bytes 不变,
+    registered.yaml 不生成。"""
+    human_yaml = """
+skills:
+  - name: gen.tone
+    version: 1.0.0
+    kind: prompt
+    description: 人管技能。Use when x;Do not use when y。
+    inputs: { type: object }
+    outputs: { type: object }
+    permissions: { tools: [], skills: [] }
+    prompt: 人管。
+"""
+    registry, skills_dir = _dir_registry(tmp_path, {"other.yaml": human_yaml})
+    before = (skills_dir / "other.yaml").read_bytes()
+    with pytest.raises(SkillLoadError, match="other.yaml"):
+        _register(registry, _prompt_artifact())
+    assert (skills_dir / "other.yaml").read_bytes() == before, "人管文件不碰"
+    assert not (skills_dir / "registered.yaml").exists(), "拒绝时 registered.yaml 不生成"
+    assert _read_jsonl(registry) == []
+
+
+def test_register_dir_form_staging_failure_zero_change(tmp_path):
+    """staging 整目录证明失败(悬空依赖)→ 目录零变化(无 registered.yaml/无 staging 残留)。"""
+    registry, skills_dir = _dir_registry(tmp_path, {"other.yaml": PROD_YAML})
+    before = {f.name: f.read_bytes() for f in skills_dir.iterdir()}
+    with pytest.raises(SkillLoadError, match="不存在的子技能"):
+        _register(registry, _prompt_artifact(skills=["no.such.dep"]))
+    after = {f.name: f.read_bytes() for f in skills_dir.iterdir()}
+    assert after == before, "先证后换:staging 失败目录零变化"
+    assert not (tmp_path / "skills_dir.staging").exists(), "staging 目录已清理"
+    assert _read_jsonl(registry) == []
+
+
+def test_register_dir_form_multi_yaml_merge_intact(tmp_path):
+    """目录已有多个 yaml:注册后全部技能可见(合并读取不破坏),人管文件不变。"""
+    a_yaml = PROD_YAML
+    b_yaml = PROD_YAML.replace("lab.published", "lab.second")
+    registry, skills_dir = _dir_registry(tmp_path, {"a.yaml": a_yaml, "b.yaml": b_yaml})
+    before_a = (skills_dir / "a.yaml").read_bytes()
+    before_b = (skills_dir / "b.yaml").read_bytes()
+
+    _register(registry, _prompt_artifact())
+
+    assert (skills_dir / "a.yaml").read_bytes() == before_a
+    assert (skills_dir / "b.yaml").read_bytes() == before_b
+    for name in ("lab.published", "lab.second", "gen.tone"):
+        assert registry.get(SkillRef(name=name)).manifest.name == name, "reload 后全部可见"
+
+
+def test_register_list_form_registry_clear_error(tmp_path):
+    """多文件列表形态 → 明确报错(v1 边界;写路径只支持单文件/目录)。"""
+    path = tmp_path / "skills.yaml"
+    path.write_text(PROD_YAML, encoding="utf-8")
+    registry = LocalFileSkillRegistry([str(path)])
+    with pytest.raises(SkillLoadError, match="列表形态"):
         _register(registry, _prompt_artifact())
 
 
@@ -489,3 +596,129 @@ def test_kernel_skill_register_approve_registers(tmp_path):
     assert skill.manifest.description.startswith("内核注册")
     records = _read_jsonl(skills)
     assert records and records[0]["note"] == "kernel 级过闸测试", "provenance 随注册落盘"
+
+
+# ---------------------------------------------------------------------------
+# 验证门 smoke hook(bind_register_smoke;§6.2 验证门降级形态)
+# ---------------------------------------------------------------------------
+
+
+def _smoke_fail(name, entry):
+    return {"ok": False, "detail": "冒烟失败: outputs 不合 schema"}
+
+
+def _smoke_boom(name, entry):
+    raise RuntimeError("smoke 执行器炸了")
+
+
+def test_register_smoke_fail_gate_error_zero_production_jsonl_records_fail(production):
+    """smoke ok=False → GateError(detail 透传);生产文件零变化;jsonl gates.smoke 记 fail。"""
+    production.bind_register_smoke(_smoke_fail)
+    target = Path(production.path)
+    before = target.read_bytes()
+    with pytest.raises(GateError, match="冒烟失败"):
+        _register(production, _prompt_artifact())
+    assert target.read_bytes() == before, "验证门拒绝:生产零变化"
+    with pytest.raises(SkillLoadError, match="未注册的技能"):
+        production.get(SkillRef(name="gen.tone"))
+    records = _read_jsonl(production)
+    assert len(records) == 1, "smoke 拒绝也落 provenance(证据面),action=rejected"
+    assert records[0]["action"] == "rejected"
+    assert records[0]["gates"]["smoke"].startswith("fail")
+    assert "冒烟失败" in records[0]["gates"]["smoke"], "fail detail 透传进 gates.smoke"
+
+
+def test_register_smoke_pass_registers_and_records(production):
+    """smoke ok=True → 注册成功;gates.smoke == "pass";回调拿到 (name, 生产条目)。"""
+    seen = []
+
+    def smoke(name, entry):
+        seen.append((name, entry))
+        return {"ok": True, "detail": "冒烟通过"}
+
+    production.bind_register_smoke(smoke)
+    ref = _register(production, _prompt_artifact())
+
+    assert ref == SkillRef(name="gen.tone", version="0.1.0")
+    assert seen and seen[0][0] == "gen.tone"
+    assert seen[0][1]["name"] == "gen.tone" and "语气改写" in seen[0][1]["prompt"]
+    records = _read_jsonl(production)
+    assert records[0]["action"] == "appended"
+    assert records[0]["gates"]["smoke"] == "pass"
+
+
+def test_register_smoke_exception_fail_closed(production):
+    """smoke 抛异常 → GateError(fail-closed,异常文本入消息);生产零变化,jsonl 记 fail。"""
+    production.bind_register_smoke(_smoke_boom)
+    target = Path(production.path)
+    before = target.read_bytes()
+    with pytest.raises(GateError, match="smoke 执行器炸了"):
+        _register(production, _prompt_artifact())
+    assert target.read_bytes() == before, "fail-closed:生产零变化"
+    records = _read_jsonl(production)
+    assert records[0]["action"] == "rejected"
+    assert "smoke 执行器炸了" in records[0]["gates"]["smoke"]
+
+
+def test_register_smoke_async_compatible(production):
+    """async smoke 回调兼容(user_channel sync/async 先例,tools/builtins.py)。"""
+    async def smoke(name, entry):
+        return {"ok": True}
+
+    production.bind_register_smoke(smoke)
+    ref = _register(production, _prompt_artifact())
+    assert ref.name == "gen.tone"
+    assert _read_jsonl(production)[0]["gates"]["smoke"] == "pass"
+
+
+def test_register_without_smoke_skips_gate(production):
+    """缺省(未 bind)不跑 smoke:gates.smoke 记 skip,注册行为与引入前一致(现状回归)。"""
+    ref = _register(production, _prompt_artifact())
+    assert ref.version == "0.1.0"
+    assert _read_jsonl(production)[0]["gates"]["smoke"].startswith("skip")
+
+
+def test_config_register_smoke_wiring(tmp_path):
+    """[skills] register_smoke = "module:func":装配 bind 进 registry,register 真走验证门。"""
+    import tests.helpers.register_smoke as helper
+    from agent_os.runtime.config import build_kernel
+
+    path = tmp_path / "skills.yaml"
+    path.write_text(PROD_YAML, encoding="utf-8")
+    kernel = build_kernel(
+        {"skills": {"path": str(path), "register_smoke": "tests.helpers.register_smoke:smoke_ok"}}
+    )
+    assert kernel.skills._register_smoke is helper.smoke_ok, "装配期 bind 进 registry"
+    ref = asyncio.run(
+        kernel.skills.register(_prompt_artifact(), Provenance(run_id="r1", task="t1", note=""))
+    )
+    assert ref.name == "gen.tone"
+    assert _read_jsonl(kernel.skills)[0]["gates"]["smoke"] == "pass"
+
+    # fail 回调同样经配置接线:注册被拒、jsonl 记 rejected
+    path2 = tmp_path / "skills2.yaml"
+    path2.write_text(PROD_YAML, encoding="utf-8")
+    kernel2 = build_kernel(
+        {"skills": {"path": str(path2), "register_smoke": "tests.helpers.register_smoke:smoke_fail"}}
+    )
+    with pytest.raises(GateError, match="测试冒烟拒绝"):
+        asyncio.run(
+            kernel2.skills.register(
+                _prompt_artifact(), Provenance(run_id="r1", task="t1", note="")
+            )
+        )
+    assert _read_jsonl(kernel2.skills)[0]["gates"]["smoke"].startswith("fail")
+
+
+def test_config_register_smoke_invalid_rejected(tmp_path):
+    """非法 register_smoke 值(非 dotted path / 加载失败)→ ConfigError(同 [tools.custom] 先例)。"""
+    from agent_os.runtime.config import ConfigError, build_kernel
+
+    path = tmp_path / "skills.yaml"
+    path.write_text(PROD_YAML, encoding="utf-8")
+    with pytest.raises(ConfigError, match="register_smoke"):
+        build_kernel({"skills": {"path": str(path), "register_smoke": "not-a-dotted-path"}})
+    with pytest.raises(ConfigError, match="register_smoke"):
+        build_kernel({"skills": {"path": str(path), "register_smoke": 123}})
+    with pytest.raises(ConfigError, match="无法加载"):
+        build_kernel({"skills": {"path": str(path), "register_smoke": "no.such.module:smoke"}})

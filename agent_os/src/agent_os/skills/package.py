@@ -272,6 +272,82 @@ def _atomic_write(registry: Any, entries: dict[str, dict[str, Any]]) -> None:
         raise
 
 
+def _atomic_write_registered(registry: Any, entries: dict[str, dict[str, Any]]) -> None:
+    """目录形态 register() 写路径:候选合并进 ``<dir>/registered.yaml`` → staging
+    整目录全流水线证明 → 单 .bak → 原子 rename → 单次 reload。
+
+    与 ``_atomic_write`` 同一套"先证后换"不变量(§6.4),差异只在落点:
+    - 目标文件恒为 ``<dir>/registered.yaml``——人管文件一个字节不碰;
+    - 技能名已存在于目录内其他 yaml(非 registered.yaml)→ SkillLoadError,
+      消息指出来源文件。registry 不记录技能来自哪个文件,这里逐文件
+      ``yaml.safe_load`` 扫一遍查 name(朴素法,O(目录 yaml 总字节);
+      register 是低频管理面操作,成本可接受);
+    - staging 是整目录副本(``<dir>.staging``):证明"换入后的整个世界"装得起来,
+      失败删 staging 目录即还原,生产零变化;
+    - reload 失败回滚同 ``_atomic_write`` 先例(有 .bak 恢复 .bak;
+      registered.yaml 本次新建则直接删除)。
+    """
+    path = getattr(registry, "path", None)
+    if not isinstance(path, str) or not Path(path).is_dir():
+        raise SkillLoadError("registered.yaml 写路径只支持目录形态 skills 路径")
+    target_dir = Path(path)
+    target = target_dir / "registered.yaml"
+
+    # 人管文件查重:同名技能已在其他 yaml → 拒绝(不碰人管文件是硬边界)
+    for source in sorted(target_dir.glob("*.yaml")):
+        if source.name == target.name:
+            continue
+        data = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+        for e in data.get("skills") or []:
+            if isinstance(e, dict) and e.get("name") in entries:
+                raise SkillLoadError(
+                    f"register 拒绝: 技能 {e.get('name')} 已存在于 {source.name}"
+                    "(人管文件不碰;请先手工移除或改名)"
+                )
+
+    # 候选 = 现 registered.yaml(缺席 = 空 dict)+ 新条目合并
+    data = (yaml.safe_load(target.read_text(encoding="utf-8")) or {}) if target.is_file() else {}
+    current = list(data.get("skills") or [])
+    by_name = {e.get("name"): i for i, e in enumerate(current) if isinstance(e, dict)}
+    for name, entry in entries.items():
+        if name in by_name:
+            current[by_name[name]] = entry
+        else:
+            current.append(entry)
+    data["skills"] = current
+
+    # 先证:staging 整目录副本 + 候选 registered.yaml 过 loader 全流水线——
+    # 依赖存在性/拓扑要在"换入后的世界"里成立,失败清理 staging 零变化(§6.4)
+    staging_dir = target_dir.with_name(target_dir.name + ".staging")
+    try:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        shutil.copytree(target_dir, staging_dir)
+        (staging_dir / target.name).write_text(
+            yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+        LocalFileSkillRegistry(str(staging_dir))
+    except Exception:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+
+    # 换入:单 .bak(本次新建则无备份面)+ 原子 rename + 单次 reload(失败回滚)
+    had_target = target.is_file()
+    if had_target:
+        shutil.copy2(target, target.with_name(target.name + ".bak"))
+    os.replace(staging_dir / target.name, target)
+    shutil.rmtree(staging_dir, ignore_errors=True)
+    try:
+        registry.reload()
+    except Exception:
+        # 理论上不该发生(staging 已证可装):回滚 + 再 reload,不让生产停在坏态
+        if had_target:
+            shutil.copy2(target.with_name(target.name + ".bak"), target)
+        else:
+            target.unlink(missing_ok=True)
+        registry.reload()
+        raise
+
+
 def _atomic_write_set(
     registry: Any,
     entries: dict[str, dict[str, Any]],

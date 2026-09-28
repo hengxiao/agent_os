@@ -52,7 +52,9 @@ below — the full list lives in each chapter's §6 and endnotes.
   was designed but not implemented at the time (ch. 09/12/14; ch. 00 corrected;
   implemented 2026-09-28 as a structured `escalated` payload key, ch. 09 §6).
 - **No semver solving**: DESIGN.md §6.1 promises semver constraint solving; the
-  loader checks dependency existence only (ch. 02).
+  loader checks dependency existence only (ch. 02; since 2026-09-29 the check
+  is constraint admission — `^`/`~`/exact forms validated fail-closed at load,
+  multi-version solving ruled out by verdict, DESIGN.md updated).
 - **Sidecar arbitration surface is smaller than designed**: `pre:skill.invoke`,
   `pre:llm.request` emit but are not arbitrated; the
   `budget.warning` signal has no emitter (`budget.exceeded` gained its first

@@ -371,11 +371,12 @@ per-subject 白名单、net/db 域判定与 data.access.* 审计信号,D3-lite
 已下沉)已实现;§3.4 并发三原语齐备(`parallel_invoke` fork/join 落地,
 配套子树级联取消与子树记账读视图);多模态契约(`Message.parts`
 additive)与 narrate 压缩策略已落地;Skill Lab L1-L5 全部落地;
-Web 六主题全部通过契约测试;测试基线 Python 1681 例(1638 passed /
+Web 六主题全部通过契约测试;测试基线 Python 1739 例(1696 passed /
 10 skipped / 40 xfailed)+ 前端 32 个测试文件全绿。已设计未实现:
 D3 余项(跨 run 自动派生——引擎无触发点、via 链由宿主声明;完整多用户
 会话映射)、M6 余项(沙箱回调
-通道、register() 的 semver 求解/目录写路径/热重载/完整重放+evaluator 门)、
+通道、register() 的默认重放+evaluator 验证门实现(smoke 挂点已就位;
+约束准入/目录写路径/热重载已于 2026-09-29 落地))、
 动效播放层(主题契约测试第 5 项)、多文件 skill_set 归并、handler 源码进生产。
 
 路线原则:契约先行、基线可换、闸门守出口;每一项新能力先回答

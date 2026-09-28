@@ -129,6 +129,12 @@ async def parallel_naughty(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     return {"never": True}
 
 
+async def parallel_branches(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """按 input["branches"] 原样扇出(升权溯源标记测试用:分支 skill/input 由用例给全)。"""
+    results = await ctx.parallel([dict(b) for b in input["branches"]])
+    return {"results": results}
+
+
 async def code_probe(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """concurrency_safe 闸测试用 code 分支:调白名单工具(probe_tool 未声明并发安全)。"""
     r = await ctx.call_tool("test.probe_tool", {})

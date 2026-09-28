@@ -1,7 +1,8 @@
 # 升权系统:三档信任与干净 context
 
 > 章次:09 · 状态:已实现(E1 升权闸 + 干净 context 不变量;E2 approve-run Grant、
-> 信号三枚、spawn 闸;E3 部分落地) · 依据:docs/ESCALATION.md(v0.3)、
+> 信号三枚、spawn 闸;E3 审计面板 + [ESCALATED] 溯源标记 + Grant 配对字段,
+> 2026-09-28) · 依据:docs/ESCALATION.md(v0.3)、
 > agent_os/src/agent_os/api/v1/escalation.py、agent_os/src/agent_os/kernel/runner.py、
 > agent_os/tests/kernel/test_escalation.py、agent_os/examples/workspace_janitor/
 
@@ -172,7 +173,12 @@ supervisor 的 options 校验打回、带 `previous_error` 重问(`supervisor/ma
 `decision ∈ {approve-once, approve-run, grant-run, deny}`;Grant 命中无确认请求,故
 只有无配对 pre 的 post(`runner.py:941-956`)。Web 收件箱对 `kind == "escalation"`
 渲染升权卡片(档位徽标、参数 JSON、选项按钮,L3 不显示 approve-run),调试时间线按
-信号可读"谁、何时、批了哪次升权"。
+信号可读"谁、何时、批了哪次升权"。升权审计面板已落地(2026-09-28,WS2):
+`GET /api/runs/{run_id}/escalations` 返回 {summary, events, grants}(读模型
+`host/web/escalations.py`;pre↔post 按 (frame_id, skill, tier) 时间序配对闭合,
+question_id 经 supervisor.ask 回补,grant-run 无 pre 单列),run 详情页挂载懒加载的
+`escalations-panel.js` 折叠栏;调试时间线把三条升权信号渲染为专属 kind=`escalation`
+行(✓/✗ 状态双编码,主题契约 token `--sig-escalation`)。
 
 ### 4.8 关键取舍(为什么 A 不选 B)
 
@@ -209,17 +215,27 @@ tests/kernel/test_escalation.py tests/examples/test_workspace_janitor.py`,
 由 run 的 workdir 沙箱圈住。CLI、Web 收件箱升权卡片、`kill -9` 后 resume 重走闸门三种玩法见该目录 README。
 
 **涟漪效应。** 推导档成为其他子系统的输入:Skill Lab 编辑器实时显示推导档及来源,
-提交闸门 G3 落地 L2 `reversal` / L3 `blast_radius` 必填 lint(E3 部分);数据层
+提交闸门 G3 落地 L2 `reversal` / L3 `blast_radius` 必填 lint(E3,审计面板
+2026-09-28 落地见 §4.7);数据层
 authZ 与升权构成"读/写/泄露"三闸;`spawn_frame` 闸补齐了 E1 的绕道口子。
 
 ## 6. 局限性与边界
 
-- **返回路径 provenance 标记未实现**。ESCALATION.md §3 设计了 `[ESCALATED:skill@version]`
-  结果标记(执行摘要 §5.2 图中亦沿用),但源码中不存在该标记——升权子帧的 result
-  目前与普通 tool result 同形,审计区分只能靠信号流。以代码为准:已设计未实现。
-- **升权帧的 principal 注解未实现**。§4 设计升权帧内 `ToolContext.principal` 填
-  `{"escalated": true, ...}`;现状 principal 只透传数据层身份
-  (`tools/local_registry.py:255`),高层工具并不知道自己在被授权上下文里跑。
+- **返回路径 provenance 标记已实现,形态有偏差**。设计原文是 result 文本前缀
+  `[ESCALATED:skill@version]`(ESCALATION.md §3,执行摘要 §5.2 图中亦沿用);落地走
+  结构化 payload 键——TOOL content 是 JSON,文本前缀会破坏 resume 结算的
+  `json.loads`。invoke 折叠 payload 加 `"escalated": "skill@version"`,parallel
+  分支结算条目同键;spawn 的 wait 返回值是裸结果(加键污染 outputs 契约),标记落
+  spawn 的 `post:skill.invoke`(background)payload;升权子帧另落
+  `working["_escalated_from"]` = 父档快照(随 checkpoint 持久,不进上下文组装)。
+  已知缝隙:checkpoint `_settle_unpaired_calls` 规则 2 的就地改写不带 escalated 键
+  (崩溃边沿)。
+- **升权帧的 principal 注解仍未接线,审计目的由旁路达成**。§4 设计升权帧内
+  `ToolContext.principal` 填 `{"escalated": true, ...}`;principal 本体仍只透传
+  数据层身份(`tools/local_registry.py:356`),高层工具不知道自己在被授权上下文
+  里跑;"此帧由升权创建"的溯源改由子帧 `working["_escalated_from"]` 与 payload
+  `escalated` 键承载(2026-09-28)。principal 的结构化扩展已有一处先例:D3 的
+  `attrs["via"]` 派生链(数据层最弱一环判定,见第 10 章)。
 - **授权粒度是"跨层这一刻",不是参数级**。approve-run 放行本 run 内同 skill 的全部
   后续调用,不区分参数:一次批准的"写计划"可以用于写任何 path。参数级授权是明确的
   非目标。
@@ -228,7 +244,8 @@ authZ 与升权构成"读/写/泄露"三闸;`spawn_frame` 闸补齐了 E1 的绕
 - **推导档的正确性依赖工具标定**。未注册工具与伪工具按 none 计(`escalation.py:64-73`);
   工具作者把 `side_effect` 标低,闸门就少拦一道;lint 只按命名模式提醒,不能证明语义。
 - **同档信任是流程约定,内核不验证**。"同档不重新确权"的前提是同档成员过了同一套
-  生产标准(TIER-STANDARDS.md);E3 的严格化 lint 只部分落地(G3),审计面板待做。
+  生产标准(TIER-STANDARDS.md);E3 的严格化 lint(G3)与审计面板均已落地
+  (2026-09-28,§4.7)。
 - **干净 context 同时挡住了有用上下文**。父帧的调查发现进不了子帧,必须经参数传递,
   受 inputs schema 的类型与尺寸约束——高层 skill 的"知情度"上限由 schema 决定。
 - **拒绝不熔断**。deny 后重试同一调用会再次挂起(防"磨到批准"的必要语义),但没有

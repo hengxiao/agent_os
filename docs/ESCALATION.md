@@ -266,6 +266,16 @@ provenance 标记(`[ESCALATED:system.admin.deploy@1.2.0]`,照压缩标记
 `[COMPRESSED]` 的先例):提醒父帧 LLM 这是高层执行结果,同时让审计/重放
 能区分。outputs schema 校验(现 `_check_output`)不变。
 
+> 实现注(2026-09-28,WS1):已落地,**偏差——标记是结构化 payload 键而非文本
+> 前缀**:TOOL content 是 JSON,`[ESCALATED:...]` 前缀会破坏 resume 结算的
+> `json.loads`。落点:invoke 折叠 payload 加 `"escalated": "skill@version"`,
+> parallel 分支结算条目同键;spawn 偏差——wait 返回值是裸结果(加键污染
+> outputs 契约),标记落 spawn 的 `post:skill.invoke`(background)payload。
+> 升权子帧另落 `working["_escalated_from"]` = 父档快照(随 checkpoint 持久,
+> 不进上下文组装,有断言钉死;审计面板据此还原"此帧由升权创建")。
+> 已知缝隙:checkpoint `_settle_unpaired_calls` 规则 2 的就地改写不带
+> escalated 键(崩溃边沿,留开口)。
+
 prompt injection 风险账:低层内容进高层只剩"schema 校验过的参数"一条窄道;
 高层结果回低层被标记为数据,低层 LLM 即便被注入,下一轮再调高层仍会撞
 确认闸门(L3 每次必撞)或撞上用户已拒绝的事实。**注入者无法自己批准自己。**
@@ -304,8 +314,9 @@ class Grant:
   更多"。 EXEC 档工具的人审(`ToolSpec.confirm`/HumanApproval,§8.2 已实现为内核
   tool-confirm 闸门)是独立的一层,不在本设计范围。
 - `ToolContext.principal`(D1 起随帧透传调用方身份,tools.py:150)在升权帧内填
-  `{"escalated": true, "tier": ..., "granted_by": decided_by}`(升权标记未接线,
-  本条为设计意图)——高层工具知道自己在被授权的上下文里跑,审计信号可关联。
+  `{"escalated": true, "tier": ..., "granted_by": decided_by}`(principal 注解仍未
+  接线,本条为设计意图;溯源标记的实际落点见 §3 实现注)——高层工具知道自己在
+  被授权的上下文里跑,审计信号可关联。
 
 ## 5. 信号与审计
 
@@ -324,6 +335,17 @@ class Grant:
 run 详情页信号流直接可读:谁、何时、批了哪次升权、档位与 scope 是什么。
 Web 调试台的时间线(`.dbg-row`)为 escalation 行加 kind=`escalation`,
 主题系统按信号色渲染(这是 UI 侧唯一接入点,组件零分支不变)。
+
+> 实现注(2026-09-28,WS2):审计面板已落地——`GET /api/runs/{run_id}/escalations`
+> 返回 {summary{total,approved,denied,grant_run}, events[](时间序),
+> grants[](全字段)}(读模型 `host/web/escalations.py` 纯函数,404/空态语义照
+> rca 邻端点);配对:pre↔post 按 (frame_id, skill, tier) 时间序闭合,
+> question_id 经 `supervisor.ask`(kind=escalation)回补,grant-run 无 pre 单列,
+> approve-once 无台账靠信号。前端 `escalations-panel.js`(run 详情 Usage 栏后,
+> 懒加载折叠栏);调试时间线三条升权信号渲染专属 kind=`escalation` 行
+> (✓/✗ 状态双编码,trace.js,debug 台零改动生效);主题契约新增
+> `--sig-escalation` token(六主题定制,对比度契约断言)。`_KIND_HINTS`
+> 加 "escalation" 具名项。
 
 ## 6. 对现有代码的改动面
 
@@ -346,7 +368,7 @@ Web 调试台的时间线(`.dbg-row`)为 escalation 行加 kind=`escalation`,
 |---|---|
 | E1 ✅ | 三档推导 + 升权判定 + 挂起确认(复用 inbox)+ approve-once/deny + 干净 context 不变量测试。已实现:`api/v1/escalation.py`、`_invoke_skill` 升权闸、分档 lint 硬闸门(≥L2 禁 inline、L3 禁 confirm:first)、checkpoint/resume 重走闸门;734 测试全绿 |
 | E2 ✅ | L2 的 approve-run Grant + 信号三枚 + Web 升权卡片 + CLI 答案透传 + `spawn_frame` 升权闸(E1 遗留的绕道口子)。已实现:内核 `Run.grants` 随 checkpoint 往返、`_consume_grant` 消费点(双保险仅 L2)、options 按档区分(L2 三枚/L3 两枚)、inbox.js `escalationCardHtml`(copy 六主题同步)、CLI `kind` 透传;746 Python + 21 前端测试全绿 |
-| E3 | 审计面板(按 run 列升权事件)+ lint 严格化(reversal/blast_radius 必填)+ 文档(DESIGN.md §8 引用更新)。**部分落地**:reversal/blast_radius 必填 lint 已于 Skill Lab 提交闸门 G3 落地(docs/SKILL-DEV.md §1.4,L2 期;`skills/gate.py`),审计面板与 DESIGN.md 引用更新待做 |
+| E3 ✅ | 审计面板(按 run 列升权事件)+ lint 严格化(reversal/blast_radius 必填)+ 文档(DESIGN.md §8 引用更新)。已落地(2026-09-28):审计面板 `GET /api/runs/{run_id}/escalations` + `escalations-panel.js` 折叠栏 + trace.js 专属 escalation 行 + `--sig-escalation` token(§5 实现注);[ESCALATED] 溯源标记与 Grant `question_id`/`frame_id` 配对字段同批落地(§3 实现注);reversal/blast_radius 必填 lint 此前已于 Skill Lab 提交闸门 G3 落地(docs/SKILL-DEV.md §1.4,L2 期;`skills/gate.py`);DESIGN.md §8 引用复核无需改(§8.2 tool-confirm 闸门记述已是最新) |
 
 > 完整示例(全真工具、零 mock,三档剧情:approve-run / L3 每次必问 / deny /
 > 崩溃恢复)见 `agent_os/examples/workspace_janitor`。

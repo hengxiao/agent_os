@@ -124,6 +124,22 @@ skills:
     permissions:
       tools: []
       skills: [child_exec, child_write, child_read]
+  - name: root_parallel
+    version: 1.0.0
+    kind: code
+    handler: tests.helpers.code_skills:parallel_branches
+    description: parallel 根调用方。Use when 测试批内升权溯源标记;Do not use when 其他。
+    inputs:
+      type: object
+      properties: { branches: { type: array } }
+      required: [branches]
+    outputs:
+      type: object
+      properties: { results: { type: array } }
+      required: [results]
+    permissions:
+      tools: []
+      skills: [child_exec, child_write, child_read]
   - name: child_exec
     version: 1.0.0
     kind: prompt
@@ -1022,3 +1038,298 @@ def test_cli_supervisor_passthrough_escalation(monkeypatch, capsys):
     asyncio.run(_cli_supervisor(Question(question_id="q-1", question="继续?")))
     row2 = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
     assert "kind" not in row2
+
+
+# ---------------------------------------------------------------------------
+# WS1(E3 余项):升权溯源标记([ESCALATED] = payload 键)+ Grant 批准↔请求配对
+# ---------------------------------------------------------------------------
+
+
+def _capturing_brain(call: dict, captured: list):
+    """根帧发一次 skill 调用,捕获回执 payload 后交付;子帧直接交付。"""
+
+    def brain(req: ChatRequest) -> ChatResponse:
+        system = req.messages[0].content if req.messages else ""
+        if "CHILD_" in system:
+            return ChatResponse(
+                message=Message(role=Role.ASSISTANT, content=json.dumps({"ran": True})),
+                finish_reason="stop",
+                usage=ChatUsage(prompt=1, completion=1),
+            )
+        called = any(
+            tc.name.startswith("skill.")
+            for m in req.messages if m.role is Role.ASSISTANT for tc in m.tool_calls
+        )
+        if not called:
+            return ChatResponse(
+                message=Message(
+                    role=Role.ASSISTANT,
+                    tool_calls=[ToolCall(id="c1", name=call["name"], args=call["args"])],
+                ),
+                finish_reason="tool_calls",
+                usage=ChatUsage(prompt=1, completion=1),
+            )
+        captured.append(
+            json.loads(next(m.content for m in reversed(req.messages) if m.role is Role.TOOL))
+        )
+        return ChatResponse(
+            message=Message(role=Role.ASSISTANT, content=json.dumps({"decision": "ok"})),
+            finish_reason="stop",
+            usage=ChatUsage(prompt=1, completion=1),
+        )
+
+    return brain
+
+
+def _frame_by_skill(kernel, name: str):
+    """栈中按 skill 名找帧(每个用例独立内核,名字唯一)。"""
+    return next(f for f in kernel.stack.tree() if f.skill.name == name)
+
+
+def test_escalated_marker_in_tool_result_payload(tmp_path):
+    """升权放行后,父帧 tool result payload 含 escalated 键,值形如 "skill@version"。
+
+    偏差锚:设计原文是 TOOL content 文本前缀;content 是 JSON,前缀会破坏 resume
+    结算的 json.loads(kernel/checkpoint.py),故标记落 payload 键(additive)。
+    """
+    captured = []
+
+    async def handler(question):
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel = _build_with_brain(
+        tmp_path,
+        handler,
+        _capturing_brain({"name": "skill.child_exec", "args": {"cmd": "ls"}}, captured),
+    )
+    result = asyncio.run(kernel.run("root_caller", {"task": "t"}))
+    assert result["decision"] == "ok"
+    assert len(captured) == 1
+    assert captured[0]["ok"] is True
+    assert captured[0]["escalated"] == "child_exec@1.0.0"
+
+
+def test_same_tier_passthrough_not_marked(tmp_path):
+    """同档直通不标:高档根帧调高档子技能不过闸,payload 无 escalated 键,
+    子帧 working 也无 _escalated_from。"""
+    captured = []
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once"}
+
+    kernel = _build_with_brain(
+        tmp_path,
+        handler,
+        _capturing_brain({"name": "skill.child_exec", "args": {"cmd": "ls"}}, captured),
+    )
+    result = asyncio.run(kernel.run("root_exec", {"task": "t"}))
+    assert result["decision"] == "ok"
+    assert not asked, "同档移动不触发升权确认"
+    assert "escalated" not in captured[0]
+    child = _frame_by_skill(kernel, "child_exec")
+    assert "_escalated_from" not in child.context.working
+
+
+def test_escalated_child_frame_working_marker(tmp_path):
+    """升权派生帧标记:子帧 context.working["_escalated_from"] = 父档快照,
+    随 checkpoint 落盘;working 不进 build 的消息面(不外泄进上下文组装)。"""
+    run_ids = []
+
+    async def rec(sig):
+        run_ids.append(sig.run_id)
+
+    async def handler(question):
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_exec", "args": {"cmd": "ls"}})
+    kernel.signals.subscribe("run.started", rec)
+    mock = kernel.providers.providers["mock"]
+    result = asyncio.run(kernel.run("root_caller", {"task": "t"}))
+    assert result["decision"] == "ok"
+    child = _frame_by_skill(kernel, "child_exec")
+    assert child.tier == "irreversible"
+    assert child.context.working["_escalated_from"] == "none"  # 父帧(root_caller)档快照
+
+    # working 随 checkpoint 序列化:落盘帧档位含派生帧标记
+    ckpt = tmp_path / "ckpt-working.json"
+    kernel.checkpoint(run_ids[0], str(ckpt))
+    doc = json.loads(ckpt.read_text(encoding="utf-8"))
+    child_row = next(
+        f for f in doc["frames"] if f["skill"].split(":")[-1].split("@")[0] == "child_exec"
+    )
+    assert child_row["context"]["working"]["_escalated_from"] == "none"
+
+    # 不外泄核实:子帧 build 出的 LLM 请求消息面不含 working 键
+    child_reqs = [r for r in mock.recorded if "CHILD_PROMPT_MARK" in r.messages[0].content]
+    assert child_reqs
+    wire = json.dumps([m.content for m in child_reqs[0].messages], ensure_ascii=False)
+    assert "_escalated_from" not in wire
+
+
+def test_grant_records_question_and_frame_id(tmp_path):
+    """approve-run Grant 台账含 question_id/frame_id,且与 supervisor.ask 信号的
+    question_id 一致(批准↔请求配对,审计面板用)。"""
+    asked = []
+    ask_signals = []
+    run_ids = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-run", "decided_by": "user:test"}
+
+    async def rec_ask(sig):
+        ask_signals.append(sig)
+
+    async def rec_run(sig):
+        run_ids.append(sig.run_id)
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_write", "args": {"cmd": "w"}})
+    kernel.signals.subscribe("supervisor.ask", rec_ask)
+    kernel.signals.subscribe("run.started", rec_run)
+    result = asyncio.run(kernel.run("root_caller", {"task": "t"}))
+    assert result["decision"] == "ok"
+    grants = kernel._runs[run_ids[0]].grants
+    assert len(grants) == 1
+    grant = grants[0]
+    assert grant.question_id == ask_signals[0].payload["question_id"]
+    assert grant.question_id == asked[0].question_id
+    assert grant.frame_id == asked[0].frame_id
+    root = _frame_by_skill(kernel, "root_caller")
+    assert grant.frame_id == root.frame_id
+
+
+def test_grant_pairing_fields_checkpoint_round_trip(tmp_path):
+    """grants 新字段(question_id/frame_id)随 checkpoint 往返;旧档兼容:
+    手工摘掉新键的 grants 条目 resume 不炸,``Grant(**g)`` 靠默认值空串重建。"""
+    state = {"child_calls": 0, "crash_at": 1}
+    call = {"name": "skill.child_write", "args": {"cmd": "w"}}
+
+    async def handler1(question):
+        return {"answer": "approve-run", "decided_by": "user:test"}
+
+    kernel1 = _build_with_brain(tmp_path, handler1, _twice_brain(call, state))
+    seen = []
+
+    async def rec(sig):
+        seen.append(sig)
+
+    kernel1.signals.subscribe("run.started", rec)
+
+    async def first_run():
+        with pytest.raises(RunAborted):
+            await kernel1.run("root_caller", {"task": "t"})
+
+    asyncio.run(first_run())
+    run_id = seen[0].run_id
+    ckpt = tmp_path / "ckpt-pairing.json"
+    kernel1.checkpoint(run_id, str(ckpt))
+    doc = json.loads(ckpt.read_text(encoding="utf-8"))
+    grant_row = doc["run"]["grants"][0]
+    assert grant_row["question_id"].startswith("esc-")
+    assert grant_row["frame_id"]
+
+    # 新字段往返:resume 后台账值不变(Grant 命中,不再确认)
+    asked2 = []
+
+    async def handler2(question):
+        asked2.append(question)
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel2 = _build_with_brain(tmp_path, handler2, _twice_brain(call, state))
+    result = asyncio.run(kernel2.resume(str(ckpt)))
+    assert result["decision"] == "ok"
+    assert not asked2, "resume 后 Grant 命中,不得重新确认"
+    restored = kernel2._runs[run_id].grants[0]
+    assert restored.question_id == grant_row["question_id"]
+    assert restored.frame_id == grant_row["frame_id"]
+
+    # 旧档兼容:摘掉新键 → resume 不炸,默认空串,Grant 命中语义不变
+    for g in doc["run"]["grants"]:
+        g.pop("question_id")
+        g.pop("frame_id")
+    legacy = tmp_path / "ckpt-legacy.json"
+    legacy.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    asked3 = []
+
+    async def handler3(question):
+        asked3.append(question)
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel3 = _build_with_brain(tmp_path, handler3, _twice_brain(call, state))
+    result3 = asyncio.run(kernel3.resume(str(legacy)))
+    assert result3["decision"] == "ok"
+    assert not asked3
+    restored3 = kernel3._runs[run_id].grants[0]
+    assert restored3.question_id == "" and restored3.frame_id == ""
+
+
+def test_grant_old_dict_reconstruction_defaults():
+    """checkpoint.py ``Grant(**g)`` 重建点对旧档容错:无新键的 dict → 默认空串。"""
+    from agent_os.api.v1 import Grant
+
+    # 旧档 grants 条目形态(checkpoint.json 里无 question_id/frame_id 键)
+    legacy_row = {
+        "skill": "child_write",
+        "tier": "reversible",
+        "scope": "run",
+        "decided_by": "user:test",
+        "decided_at": 1.0,
+    }
+    grant = Grant(**legacy_row)
+    assert grant.question_id == "" and grant.frame_id == ""
+
+
+def test_spawn_escalated_marker_on_background_signal(tmp_path):
+    """spawn 升权帧:wait 返回子帧原始结果值(无 {"ok", "value"} 信封,加键会污染
+    被调方 outputs 契约)——[ESCALATED] 标记落 spawn 结果通道即 POST_SKILL_INVOKE
+    (background)信号 payload 的 escalated 键;子帧 working["_escalated_from"] 落父档。"""
+    invoked = []
+
+    async def rec(sig):
+        invoked.append(sig)
+
+    async def handler(question):
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_exec", "args": {"cmd": "ls"}})
+    kernel.signals.subscribe("post:skill.invoke", rec)
+    result = asyncio.run(kernel.run("root_spawn", {"skill": "child_exec", "args": {"cmd": "ls"}}))
+    assert result["value"] == {"ran": True}, "wait 返回原始结果值,不带 escalated 键"
+    background = [s for s in invoked if s.payload.get("background")]
+    assert len(background) == 1
+    assert background[0].payload["escalated"] == "child_exec@1.0.0"
+    child = _frame_by_skill(kernel, "child_exec")
+    assert child.context.working["_escalated_from"] == "none"  # root_spawn(code, tools=[])= none
+
+
+def test_parallel_escalated_branch_entry_marked(tmp_path):
+    """parallel 分支结算:过升权闸的分支成功条目带 escalated 键(值同 invoke 路径),
+    同档直通分支不标;升权分支子帧 working["_escalated_from"] 落父档。"""
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel = _build(tmp_path, handler, {"name": "skill.child_exec", "args": {"cmd": "ls"}})
+    result = asyncio.run(
+        kernel.run(
+            "root_parallel",
+            {
+                "branches": [
+                    {"skill": "child_exec", "input": {"cmd": "ls"}},
+                    {"skill": "child_read", "input": {"cmd": "r"}},
+                ]
+            },
+        )
+    )
+    entries = result["results"]
+    assert entries[0]["ok"] is True
+    assert entries[0]["escalated"] == "child_exec@1.0.0"
+    assert entries[1]["ok"] is True
+    assert "escalated" not in entries[1]
+    assert len(asked) == 1, "只有升权分支过闸确认"
+    child = _frame_by_skill(kernel, "child_exec")
+    assert child.context.working["_escalated_from"] == "none"

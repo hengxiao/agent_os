@@ -1,7 +1,8 @@
 # Escalation: Three Trust Tiers & Clean Context
 
 > Chapter: 09 · Status: implemented (E1 escalation gate + clean-context invariant; E2 approve-run Grants,
-> three signals, spawn gate; E3 partial) · Sources: docs/ESCALATION.md (v0.3), agent_os/src/agent_os/
+> three signals, spawn gate; E3 audit panel + [ESCALATED] provenance key + Grant pairing fields,
+> 2026-09-28) · Sources: docs/ESCALATION.md (v0.3), agent_os/src/agent_os/
 > api/v1/escalation.py, kernel/runner.py, tests/kernel/test_escalation.py, examples/workspace_janitor/
 
 ## 1. Overview
@@ -175,6 +176,12 @@ confirmation gate again (for L3, every single time). **An injector cannot approv
 `decision ∈ {approve-once, approve-run, grant-run, deny}`; a Grant hit emits no confirmation request, hence
 an unpaired post with no pre (`runner.py:941-956`). The Web inbox renders `kind == "escalation"` pendings
 as escalation cards (tier badge, parameter JSON, option buttons — no approve-run for L3).
+The audit panel has landed (2026-09-28, WS2): `GET /api/runs/{run_id}/escalations` returns
+{summary, events, grants} (read model `host/web/escalations.py`; pre↔post pairs close in time
+order on (frame_id, skill, tier), question_id is back-filled from supervisor.ask, grant-run
+posts stand alone without a pre), the run detail page mounts a lazy `escalations-panel.js`
+fold, and the debug timeline renders the three escalation signals as dedicated
+kind=`escalation` rows (✓/✗ dual-coded, theme token `--sig-escalation`).
 
 ### 4.8 Key trade-offs (why A, not B)
 
@@ -213,16 +220,26 @@ the run's workdir sandbox. CLI, Web inbox cards, and `kill -9` + `agent-os resum
 
 **Ripple effects.** The derived tier became an input to other subsystems: the Skill Lab editor shows it and
 its provenance in real time, commit gate G3 landed the L2 `reversal` / L3 `blast_radius` required-field
-lints (E3, partial), data-layer authZ and escalation form the read/write/exfiltration three-gate model, and
+lints (E3; the audit panel followed on 2026-09-28, §4.7), data-layer authZ and escalation form the read/write/exfiltration three-gate model, and
 the `spawn_frame` gate closed E1's bypass.
 
 ## 6. Limitations and Boundaries
 
-- **The return-path provenance marker is unimplemented.** ESCALATION.md §3 designs an `[ESCALATED:skill@version]`
-  result marker (the executive summary's §5.2 repeats it), but the source has no such marker — an escalated
-  child result looks like any other tool result; audit must rely on the signal stream. Designed, not implemented.
-- **The escalated-frame principal annotation is unimplemented.** §4 designs filling `ToolContext.principal`
-  with `{"escalated": true, ...}` in escalation frames; today it only carries the data-layer identity (`tools/local_registry.py:255`).
+- **The return-path provenance marker is implemented, with a shape deviation.** ESCALATION.md §3 designed an
+  `[ESCALATED:skill@version]` text prefix (the executive summary's §5.2 repeats it); the implementation uses a
+  structured payload key instead — TOOL content is JSON, and a prefix would break `json.loads` during resume
+  settlement. The folded invoke payload carries `"escalated": "skill@version"`, parallel branch settlement
+  entries carry the same key, spawn places it on the `post:skill.invoke` (background) payload because wait
+  returns the bare result (a key there would pollute the outputs contract), and the escalated child frame
+  records `working["_escalated_from"]` = parent-tier snapshot (checkpoint-persisted, kept out of context
+  assembly). Known gap: rule 2 of checkpoint `_settle_unpaired_calls` rewrites in place without the
+  escalated key (crash edge).
+- **The escalated-frame principal annotation remains unwired, its audit purpose met sideways.** §4 designs
+  filling `ToolContext.principal` with `{"escalated": true, ...}`; the principal still carries only the
+  data-layer identity (`tools/local_registry.py:356`), so high-tier tools do not know they run in a granted
+  context — "this frame was created by escalation" is reconstructed from the child's
+  `working["_escalated_from"]` and the `escalated` payload key instead (2026-09-28). The principal does carry
+  one structured extension now: the D3 `attrs["via"]` delegation chain (weakest-link judgment, ch. 10).
 - **Authorization granularity is the crossing moment, not the parameters.** approve-run passes all later calls
   to the same skill this run regardless of arguments — a "write the plan" approval can write to any path.
 - **Confirmation fatigue is the price of a design choice.** L3 asks every time — N deletions, N prompts; the
@@ -231,7 +248,8 @@ the `spawn_frame` gate closed E1's bypass.
 - **Derivation correctness depends on honest tool labeling.** Unregistered and pseudo tools count as none
   (`escalation.py:64-73`); a tool labeled too low removes one gate layer; lint only nudges by naming patterns.
 - **Intra-tier trust is a process convention the kernel does not verify.** It holds only if tier members pass
-  the same production standards (TIER-STANDARDS.md); E3's stricter lints are partial (G3), audit panel open.
+  the same production standards (TIER-STANDARDS.md); E3's stricter lints (G3) and the audit panel have both
+  landed (2026-09-28, §4.7).
 - **Clean context also blocks useful context.** The parent's findings must travel through parameters, bounded
   by the inputs schema's types and size — a high-tier skill's "situational awareness" ceiling is its schema.
 - **Denial does not trip a breaker.** Retrying a denied call suspends again (necessary against nag-until-approved),

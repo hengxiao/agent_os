@@ -31,8 +31,8 @@
 | [06](en/06-determinism.md) | Signals, telemetry & determinism engineering: 36-signal catalog, WAL, checkpoint/resume/replay/diff | implemented |
 | [07](en/07-sidecars.md) | Sidecars: signal-driven supervision, verdict arbitration matrix, dual budget layers | partial (HumanApproval sunk into the kernel tool-confirm gate) |
 | [08](en/08-supervisor.md) | Supervisor: ruling router, suspend-answer-resume loop, three host channels | implemented |
-| [09](en/09-escalation.md) | Escalation: three trust tiers, the gate, grants, clean-context invariant | implemented (E1/E2) |
-| [10](en/10-data-authz.md) | Data-layer authN+Z: Principal, data domains, dual-gate dispatch, default deny | implemented (D1/D2 + D3-lite; D3 remainder open) |
+| [09](en/09-escalation.md) | Escalation: three trust tiers, the gate, grants, clean-context invariant | implemented (E1–E3) |
+| [10](en/10-data-authz.md) | Data-layer authN+Z: Principal, data domains, dual-gate dispatch, default deny | implemented (D1/D2 + D3-lite + D3 delegation chain; remainder open) |
 | [11](en/11-tier-standards.md) | Tiered production standards & the admission gate: decision tree, per-tier standards, five gates, promote defenses | implemented |
 | [12](en/12-debugger.md) | Debugger: GDB semantics, four breakpoint kinds, stepping/pause, intervention & time travel | implemented |
 | [13](en/13-themes.md) | Theme system: three-layer contract, six themes, two mascot instances | implemented (motion layer designed) |
@@ -49,7 +49,8 @@ below — the full list lives in each chapter's §6 and endnotes.
 - **Three inaccuracies in the executive summary (fixed)**: the debugger has four
   breakpoint kinds (`skill.invoke` was missing); `lab validate` exit codes are
   pass/warn=0 and fail=2 (no verdict-level 4); the `[ESCALATED:...]` return tag
-  is designed but not implemented (ch. 09/12/14; ch. 00 corrected).
+  was designed but not implemented at the time (ch. 09/12/14; ch. 00 corrected;
+  implemented 2026-09-28 as a structured `escalated` payload key, ch. 09 §6).
 - **No semver solving**: DESIGN.md §6.1 promises semver constraint solving; the
   loader checks dependency existence only (ch. 02).
 - **Sidecar arbitration surface is smaller than designed**: `pre:skill.invoke`,

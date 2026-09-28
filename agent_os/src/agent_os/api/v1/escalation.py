@@ -142,13 +142,20 @@ def explain_skill_tier(
 
 @dataclass(frozen=True)
 class Grant:
-    """一次升权批准的落点(§4;E2 消费——approve-run 放行,本 run 内有效,随 run 死亡)。"""
+    """一次升权批准的落点(§4;E2 消费——approve-run 放行,本 run 内有效,随 run 死亡)。
+
+    ``question_id``/``frame_id``(WS1 additive):批准↔请求配对(审计面板把台账
+    条目对回 supervisor 确认请求)与发起帧溯源。checkpoint ``dataclasses.asdict``
+    落盘自动带上;resume ``Grant(**g)`` 对旧档(无此键)靠默认值空串兼容。
+    """
 
     skill: str = ""
     tier: str = TIER_NONE  # 批准时被调 skill 的推导档(快照)
     scope: Literal["once", "run"] = "once"  # 对应 approve-once / approve-run
     decided_by: str = ""  # "user:web-inbox" | "user:cli" | ...
     decided_at: float = 0.0
+    question_id: str = ""  # 批准对应的确认请求 id(批准↔请求配对,审计面板用)
+    frame_id: str = ""  # 发起升权(获批准)的父帧
 
 
 @dataclass

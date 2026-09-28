@@ -40,6 +40,7 @@
   --sig-compress: #8b7cf6;
   --sig-budget:   #e5534b;
   --sig-frame:    #5d6b82;
+  --sig-escalation: #e5678b;
 
   /* debug trace(§4.2 中栏):深度彩虹轨 6 色循环(VSCode indent guide 风)+
      当前位置 ▶ 调试器黄 */

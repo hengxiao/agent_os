@@ -22,6 +22,11 @@ D2(docs/DATA-AUTHZ.md §3/§6):``bind_data_policy`` 注入 [data] 策略后,数�
 "未配置域 = confidential" 生效,per-subject 域白名单并入 ``allow()`` 第二判据;
 放行/拒绝经留存的信号总线发 ``data.access.granted``/``data.access.denied``
 审计信号,放行判据回写 ``ToolContext.credentials["_authz"]``。
+D3(docs/DATA-AUTHZ.md 派生链;WS1):``principal.attrs["via"]`` = 上游 principal
+dict 列表(近端在前,元素 ``{subject, issuer, attrs}`` 可递归再含 via;引擎不
+伪造链,宿主声明)——链在场时当前数据访问判定对**链上每一环**(含当前
+principal)都过才放行(最弱一环判定,任一环拒 = 拒,理由注明哪一环);
+链形状坏/深度超限 fail-closed 拒绝;无 via → 现状逐字不动(``_expand_via_chain``)。
 §W4-3:构造器注册 ``fetch_page``(std/web 工具面,实现与注册时机说明见
 tools/std_web.py)。
 MCP(tools/mcp.py):``_mcp_clients`` 是 ``[mcp.servers]`` eager 装配的 stdio
@@ -55,6 +60,7 @@ from agent_os.api.v1 import (
     PUBLIC,
     DataDomain,
     Permission,
+    Principal,
     Signal,
     Tool,
     ToolCall,
@@ -441,6 +447,10 @@ class LocalPythonToolRegistry:
         per-subject 域白名单并入 ``allow()`` 第二判据(§3.2,clearance 够但域不在
         白名单同样拒绝)。拒绝消息只带域名/敏感度/clearance,不回显路径/URL 与
         域内内容(不泄漏);放行/拒绝各发一条审计信号(§6,总线未装配则跳过)。
+        D3(WS1):``principal.attrs["via"]`` 派生链在场时按最弱一环判定——
+        链上每一环(含当前 principal)都过 ``allow`` 才放行,被拒环在消息与
+        ``data.access.denied`` payload(``via_link`` 键,additive)里注明;
+        链形状坏/深度超限 fail-closed 拒绝(payload 加 ``via_error`` 键)。
         """
         if not spec.data_domains:
             return None, None
@@ -498,19 +508,62 @@ class LocalPythonToolRegistry:
         # policy 缺席时其余族声明同样不判(D1 只判 fs.*;skills.*/drafts.* 等平台声明维持现状)
         if not domains:
             return None, None
-        whitelist = policy.whitelist_for(principal.subject) if policy is not None else None
+        # D3 派生链最弱一环(docs/DATA-AUTHZ.md;WS1):attrs["via"] 在场时,
+        # 链上每一环(含当前 principal)都要过 allow 判定;无 via → chain 恰为
+        # [principal],判定与信号 payload 逐字保持 D1/D2 现状
+        chain, via_error = _expand_via_chain(principal)
+        if via_error is not None:
+            # fail-closed:宿主声明的链非法(形状坏/深度超限)等于身份没说清,
+            # 与 clearance 缺省按最低档同旨——拒,理由只带原因不带域内内容
+            await self._emit_data_signal(
+                DATA_ACCESS_DENIED,
+                frame_ctx,
+                {
+                    "subject": principal.subject,
+                    "domain": domains[0].name,
+                    "sensitivity": domains[0].sensitivity,
+                    "tool": call.name,
+                    "via_error": via_error,  # additive:链非法原因(审计面板定位用)
+                },
+            )
+            return (
+                ToolResult(
+                    ok=False,
+                    error=ToolError(
+                        kind=ToolErrorKind.DATA_ACCESS_DENIED,
+                        message=(
+                            f"via 派生链非法({via_error}),fail-closed 拒绝 "
+                            f"{principal.subject} 访问数据域 {domains[0].name}"
+                        ),
+                        retryable=False,
+                        hint="数据层 authZ 拒绝:via 链须为 [{subject, issuer, attrs}] 列表,"
+                        "深度不超过 8 层(本消息不含域内任何内容)",
+                    ),
+                ),
+                None,
+            )
+        via_mode = len(chain) > 1
+        chain_whitelists = (
+            {link.subject: policy.whitelist_for(link.subject) for link in chain}
+            if policy is not None
+            else {}
+        )
         for domain in domains:
-            if not allow(principal, domain, whitelist=whitelist):
-                await self._emit_data_signal(
-                    DATA_ACCESS_DENIED,
-                    frame_ctx,
-                    {
-                        "subject": principal.subject,
-                        "domain": domain.name,
-                        "sensitivity": domain.sensitivity,
-                        "tool": call.name,
-                    },
-                )
+            for link_index, link in enumerate(chain):
+                if allow(link, domain, whitelist=chain_whitelists.get(link.subject)):
+                    continue
+                payload: dict[str, Any] = {
+                    "subject": principal.subject,
+                    "domain": domain.name,
+                    "sensitivity": domain.sensitivity,
+                    "tool": call.name,
+                }
+                suffix = ""
+                if via_mode:
+                    # additive:加注被拒环节(链下标 + 该环 subject;#0 = 当前 principal)
+                    payload["via_link"] = {"index": link_index, "subject": link.subject}
+                    suffix = f"(via 派生链环 #{link_index})"
+                await self._emit_data_signal(DATA_ACCESS_DENIED, frame_ctx, payload)
                 return (
                     ToolResult(
                         ok=False,
@@ -518,7 +571,7 @@ class LocalPythonToolRegistry:
                             kind=ToolErrorKind.DATA_ACCESS_DENIED,
                             message=(
                                 f"数据域 {domain.name}(敏感度 {domain.sensitivity})拒绝 "
-                                f"{principal.subject}(clearance {clearance_of(principal)})访问"
+                                f"{link.subject}(clearance {clearance_of(link)})访问{suffix}"
                             ),
                             retryable=False,
                             hint="数据层 authZ 拒绝:需要更高 clearance 的 principal(本消息不含域内任何内容)",
@@ -756,6 +809,66 @@ class LocalPythonToolRegistry:
 
 
 _BASIC_TYPES: dict[type, str] = {str: "string", int: "integer", float: "number", bool: "boolean"}
+
+
+#: via 派生链递归深度上限(D3 防呆;超限 fail-closed 拒绝,兼作环状链的终止兜底)
+_VIA_MAX_DEPTH = 8
+
+
+def _expand_via_chain(principal: Principal) -> tuple[list[Principal], str | None]:
+    """展开 ``principal.attrs["via"]`` 派生链(D3,docs/DATA-AUTHZ.md;WS1)。
+
+    约定:``attrs["via"]`` = 上游 principal dict 列表(**近端在前**,每元素
+    ``{subject, issuer, attrs}``,attrs 递归可再含 via)——引擎不伪造链,
+    宿主声明。返回 ``([当前 principal, *上游环...], None)``;无 via(键缺席/
+    None/空表)→ ``([principal], None)``,调用方按现状语义只判当前 principal。
+
+    fail-closed:via 值非 list、元素非 dict、缺 subject(或空串)、attrs 非 dict、
+    嵌套深度超 ``_VIA_MAX_DEPTH`` → ``([], 原因)``,调用方拒绝访问(宿主声明的
+    链非法 = 身份没说清,与 clearance 缺省按最低档同旨)。
+
+    类型注:``Principal.attrs`` 声明为 ``Mapping[str, str]``,``via`` 承载结构化
+    列表是约定性 deviation(WS1);checkpoint ``dataclasses.asdict`` 与
+    ``Principal(**raw)`` 重建对纯 dict/list 载荷天然往返,不放大身份。
+    """
+    chain = [principal]
+    if not (principal.attrs or {}).get("via"):
+        return chain, None
+
+    def _walk(node: Principal, depth: int) -> str | None:
+        raw = (node.attrs or {}).get("via")
+        if not raw:
+            return None
+        # 节点确有上游要展开才计深度(恰 8 层且底层无 via 的链合法,第 9 层才拒)
+        if depth > _VIA_MAX_DEPTH:
+            return f"嵌套深度超过 {_VIA_MAX_DEPTH} 层"
+        if not isinstance(raw, (list, tuple)):
+            return f"via 应为列表,得到 {type(raw).__name__}"
+        for element in raw:
+            if not isinstance(element, dict):
+                return f"via 元素应为 dict,得到 {type(element).__name__}"
+            subject = element.get("subject")
+            if not isinstance(subject, str) or not subject:
+                return "via 元素缺 subject(或非空字符串)"
+            attrs = element.get("attrs") or {}
+            if not isinstance(attrs, dict):
+                return f"via 元素 attrs 应为 dict,得到 {type(attrs).__name__}"
+            # 照 api/v1/principal.py 字段还原为 Principal 再递归判定
+            link = Principal(
+                subject=subject,
+                issuer=str(element.get("issuer") or ""),
+                attrs=dict(attrs),
+            )
+            chain.append(link)
+            error = _walk(link, depth + 1)
+            if error is not None:
+                return error
+        return None
+
+    error = _walk(principal, 1)
+    if error is not None:
+        return [], error
+    return chain, None
 
 
 def resolve_work_path(

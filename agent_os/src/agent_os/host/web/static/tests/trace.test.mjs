@@ -398,4 +398,56 @@ const signals = makeSignals();
   assert.equal(broken[0].detail, "");
 }
 
+/* ── 升权三信号(docs/ESCALATION.md §5;WS2):专属 escalation 行 ──────── */
+{
+  const sigs = [
+    { name: "run.started", frame_id: null, ts: 0, payload: { skill: "local:root@1.0.0" } },
+    { name: "pre:frame.push", frame_id: "f1", ts: 1, payload: { skill: "local:root@1.0.0" } },
+    { name: "pre:skill.escalate", frame_id: "f1", ts: 2,
+      payload: { skill: "child_exec", tier: "irreversible", params: { cmd: "ls" },
+        requested: { tools: ["exec_tool"], skills: [] } } },
+    { name: "post:skill.escalate", frame_id: "f1", ts: 3,
+      payload: { skill: "child_exec", tier: "irreversible", decision: "approve-once",
+        decided_by: "host:web-ui", scope: "once" } },
+    { name: "post:skill.escalate", frame_id: "f1", ts: 4,
+      payload: { skill: "child_write", tier: "reversible", decision: "deny",
+        decided_by: "host:web-ui", scope: null } },
+    { name: "skill.escalation.denied", frame_id: "f1", ts: 5,
+      payload: { skill: "child_write", tier: "reversible", decided_by: "host:web-ui" } },
+    { name: "pre:frame.pop", frame_id: "f1", ts: 6, payload: { result: { decision: "ok" } } },
+    { name: "run.finished", frame_id: null, ts: 7, payload: {} },
+  ];
+  const rows = buildTraceRows(sigs, [{ frame_id: "f1", status: "done" }]);
+  const escRows = rows.filter((r) => r.kind === "escalation");
+  assert.equal(escRows.length, 4, "升权信号各占一行(pre/post×2/denied)");
+  assert.ok(!rows.some((r) => r.kind === "obs"), "升权信号不落通用 obs 黄行");
+  const [pre, approve, deny, denied] = escRows;
+  assert.equal(pre.label, "child_exec");
+  assert.equal(pre.status, "obs", "pre(待裁决)无 ✓/✗ 标记");
+  assert.match(pre.detail, /→ irreversible · 请求确认/);
+  assert.match(pre.detail, /\{"cmd":"ls"\}/, "pre 行带参数摘要");
+  assert.equal(approve.status, "done", "批准裁决 ✓");
+  assert.match(approve.detail, /approve-once · once · host:web-ui/);
+  assert.equal(deny.status, "failed", "deny 红 ✗");
+  assert.match(deny.detail, /deny · host:web-ui/, "scope 缺省不渲染");
+  assert.equal(denied.status, "failed", "denied 溯源行红 ✗");
+  assert.equal(denied.label, "child_write");
+  assert.equal(pre.depth, 1, "帧内深度(信号在 push 之后)");
+  /* 渲染:esc kw 前缀 + 专属 data-kind + ✓/✗ 双编码 */
+  const html = renderTrace(deriveTraceView(sigs, null));
+  assert.match(html, /data-kind="escalation"/, "行 data-kind");
+  assert.match(html, /<span class="tr-kw" data-k="escalation">esc<\/span>/, "esc 前缀");
+  assert.match(html, /child_exec<\/span><span class="tr-args">→ irreversible · 请求确认/);
+  assert.match(html, /child_write<\/span><span class="tr-args">→ reversible · deny · host:web-ui<\/span><span class="tr-bad">✗<\/span>/,
+    "deny 行 ✗ 双编码");
+  /* XSS:skill 名/决定人全转义 */
+  const xssHtml = renderTrace(deriveTraceView([
+    { name: "post:skill.escalate", frame_id: "f1", ts: 0,
+      payload: { skill: "<img src=x>", tier: "reversible", decision: "deny",
+        decided_by: "<script>alert(1)</script>", scope: null } },
+  ], null));
+  assert.ok(!xssHtml.includes("<img src=x>") && !xssHtml.includes("<script>"), "升权行全转义");
+  assert.ok(xssHtml.includes("&lt;img src=x&gt;") && xssHtml.includes("&lt;script&gt;"));
+}
+
 console.log("trace.test.mjs: all assertions passed");

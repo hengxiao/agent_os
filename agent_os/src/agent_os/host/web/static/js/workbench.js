@@ -79,6 +79,7 @@ import {
   mountLiveBar,
 } from "./components/progress-bar.js";
 import { planRcaJump, rcaBannerHtml, vetoCardHtml } from "./components/rca-panel.js";
+import { mountEscalationsPanel } from "./components/escalations-panel.js";
 import { mountUsagePanel } from "./components/usage-panel.js";
 
 /* live 轮询回退间隔(§4.3:SSE 不可用时 2s 轮询 detail) */
@@ -112,6 +113,7 @@ const wb = {
   scrollTimer: null, // 窗口化滚动节流 trailing 定时器
   rca: null, // GET /rca 缓存(异常 run 载入时拉取;{ status, first_error })
   usage: null, // Usage 折叠栏挂载句柄(§4.5,mountUsagePanel 返回)
+  escalations: null, // 升权审计折叠栏挂载句柄(docs/ESCALATION.md §5;WS2)
   skills: null, // GET /api/skills 缓存(§4.2 帧块 kind chip;每次载入拉一次)
   kindByName: new Map(), // skill 名 → kind(prompt/code)
   usageByFid: new Map(), // frame_id → /usage 帧行(tokens/cost)
@@ -144,6 +146,7 @@ export function openWorkbench(main, runId, query = null) {
   if (wb.runId !== runId) {
     teardownLive(); // 换 run:旧 live 会话(SSE/定时器)先收尾
     wb.usage?.destroy?.();
+    wb.escalations?.destroy?.();
     if (wb.scrollTimer) clearTimeout(wb.scrollTimer);
     wb.runId = runId;
     wb.status = "loading";
@@ -163,6 +166,7 @@ export function openWorkbench(main, runId, query = null) {
     wb.scrollTimer = null;
     wb.rca = null;
     wb.usage = null;
+    wb.escalations = null;
     wb.skills = null;
     wb.kindByName = new Map();
     wb.usageByFid = new Map();
@@ -182,9 +186,11 @@ export function openWorkbench(main, runId, query = null) {
 export function closeWorkbench() {
   teardownLive();
   wb.usage?.destroy?.();
+  wb.escalations?.destroy?.();
   if (wb.scrollTimer) clearTimeout(wb.scrollTimer);
   wb.scrollTimer = null;
   wb.usage = null;
+  wb.escalations = null;
   wb.rca = null;
   wb.main = null;
   wb.runId = null;
@@ -366,6 +372,7 @@ function renderShell() {
     `<section class="wb-panel wb-inspector" id="wbInspector" aria-label="上下文检视器"></section>` +
     `</div>` +
     `<details class="wb-usage" id="wbUsage"></details>` + // §4.5 Usage 折叠栏(mountUsagePanel 填充)
+    `<details class="wb-usage wb-esc" id="wbEsc"></details>` + // §5 升权审计折叠栏(WS2,mountEscalationsPanel 填充)
     `</div>`;
   wb.els = {
     head: main.querySelector("#wbHead"),
@@ -391,6 +398,11 @@ function renderShell() {
   wb.usage?.destroy?.();
   wb.usage = mountUsagePanel(main.querySelector("#wbUsage"), {
     load: () => getJson(`/api/runs/${encodeURIComponent(wb.runId)}/usage`),
+  });
+  // 升权审计折叠栏(docs/ESCALATION.md §5;WS2):默认收起,展开懒加载 /escalations
+  wb.escalations?.destroy?.();
+  wb.escalations = mountEscalationsPanel(main.querySelector("#wbEsc"), {
+    load: () => getJson(`/api/runs/${encodeURIComponent(wb.runId)}/escalations`),
   });
   renderHeader();
   renderTreePanel();
@@ -1189,6 +1201,7 @@ export function workbenchClick(e, action) {
     if (act === "wb-resume") return doResume(), true; // §4.4 Resume
     if (act === "us-sort") return wb.usage?.sortBy(action.dataset.key), true; // §4.5 列排序
     if (act === "us-retry") return wb.usage?.reload(), true;
+    if (act === "ep-retry") return wb.escalations?.reload(), true; // 升权审计(WS2)
     if (act === "ft-toggle") {
       const fid = action.dataset.frameId;
       if (wb.collapsedFrames.has(fid)) wb.collapsedFrames.delete(fid);

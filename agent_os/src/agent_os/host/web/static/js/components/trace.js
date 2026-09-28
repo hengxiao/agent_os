@@ -27,6 +27,8 @@
      obs    budget.* / compress / sidecar / 未知信号一行(黄)
      inline post:context.inline       → "⇥ inline date_style@1.0.0(+1) · 42 chars"
                                         (merge 内联能力快照,一次性;弱化色,不占语义色)
+     esc    升权三信号(docs/ESCALATION.md §5)→ "esc child_exec → irreversible · approve-run";
+                                        pre=请求确认,post=裁决(批准 ✓ / deny ✗ 红),denied ✗ 红
      run    run.started/finished/aborted(粗体行)
      depth  信号时刻的帧栈深(call 行 = 父 depth,子行 depth+1,ret 行回到父 depth)
      step   pre:step 只更新帧内当前 step(供检视器消息定位),自身不占行;
@@ -345,6 +347,35 @@ export function buildTraceRows(signals, frames = []) {
     }
     if (postCovered.has(i)) return; // 已并入配对行
 
+    /* 升权三信号(docs/ESCALATION.md §5):专属 escalation 行(kind=escalation,
+       主题系统按 --sig-escalation 信号色渲染),不落通用 obs 黄行。
+       pre=请求确认;post=裁决(approve-once/approve-run/grant-run ✓,deny ✗ 红);denied=拒绝溯源(✗ 红) */
+    if (
+      name === "pre:skill.escalate" ||
+      name === "post:skill.escalate" ||
+      name === "skill.escalation.denied"
+    ) {
+      const decision = p.decision ?? null;
+      const status =
+        decision === "deny" || name === "skill.escalation.denied"
+          ? "failed"
+          : decision
+            ? "done"
+            : "obs";
+      const detail =
+        name === "pre:skill.escalate"
+          ? `→ ${p.tier ?? "?"} · 请求确认${p.params != null ? ` ${shortJson(p.params)}` : ""}`
+          : `→ ${p.tier ?? "?"} · ${decision ?? "denied"}` +
+            `${p.scope ? ` · ${p.scope}` : ""}${p.decided_by ? ` · ${p.decided_by}` : ""}`;
+      mkRow({
+        kind: "escalation", depth, status,
+        label: String(p.skill ?? "—"), detail,
+        durMs: null, frameId: fid, sigIndex: i, sigEnd: i, step,
+        payload: stripCommon(p), ts: sig.ts, names: name,
+      });
+      return;
+    }
+
     /* 其余:obs 行(budget.* / compress / sidecar / veto / 未识别信号,黄色) */
     const anomalous = name === "budget.exceeded" || /veto/i.test(name) || p.ok === false;
     mkRow({
@@ -597,6 +628,13 @@ export function bodyHtml(r) {
       return (
         `<span class="tr-kw" data-k="inline">⇥ inline</span>` +
         `<span class="tr-args">${esc(r.label)}${r.detail ? ` · ${esc(r.detail)}` : ""}</span>`
+      );
+    case "escalation": // esc:升权确认/裁决(docs/ESCALATION.md §5;deny 红 ✗,批准 ✓)
+      return (
+        `<span class="tr-kw" data-k="escalation">esc</span>` +
+        `<span class="tr-name">${esc(r.label)}</span>` +
+        (r.detail ? `<span class="tr-args">${esc(r.detail)}</span>` : "") +
+        (OK_MARK[r.status] ?? "")
       );
     default: // obs
       return `<span class="tr-kw" data-k="obs">obs</span><span class="tr-args">${esc(r.label)}${r.detail ? ` ${esc(r.detail)}` : ""}</span>`;

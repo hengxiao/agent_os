@@ -27,7 +27,8 @@
 > ④ **D2 数据层 authZ**——`[data]` 配置段 + `[data.principals]` per-subject 白名单第二判据(`allow(whitelist=)`)+
 > net/db 域判定 + `data.access.denied/granted` 审计信号(SIGNAL_NAMES 33 个)+ 判据回写 `ctx.credentials["_authz"]`
 > + D3-lite `[web.tokens]` 多用户映射(Bearer 命中 → `Principal(issuer="api-token")`);仍未做:派生链最弱一环、
-> EscalationRequest 数据面展示(归 E3)。**行为变化**:无 supervisor 的裸 run 调 `system.file.delete` 等闸门工具
+> EscalationRequest 数据面展示(归 E3)。(**2026-09-28 更新**:派生链最弱一环与升权审计面板
+> 均已关闭,见头部最新复核块。)**行为变化**:无 supervisor 的裸 run 调 `system.file.delete` 等闸门工具
 > 现在 fail-closed 拒绝。另(WS4/WS5):runner 工具循环补 except Exception 兜底(INTERNAL 错误观察,run 存活);
 > 编排路径 `float(timeout)` 解析失败返回 INVALID_ARGS;`[providers.kimi]`/`[providers.anthropic]` 子键生效。
 > ---
@@ -286,6 +287,38 @@
 > 多模态 token 精确口径、narrate 质量依赖摘要模型 vision 能力。上文 std 第 5 波块"剩余"
 > 的"多模态契约"与下文 §5(Context)复核注的 narrate/多模态 token 粗估口径据此关闭,
 > dated 原文保留。全量基线:1626 收集 = 1577 passed + 10 skipped + 39 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-28(E3/D3 余项:升权审计面板 + [ESCALATED] 溯源标记 + D3 派生链最弱一环,WS1 内核/数据面 + WS2 Web)**:
+> ① **[ESCALATED] 溯源标记(偏差:结构化 payload 键)**——设计原文为文本前缀
+> `[ESCALATED:skill@version]`;TOOL content 是 JSON,前缀破坏 resume 结算
+> json.loads,故 invoke 折叠 payload 加 `"escalated": "skill@version"`、
+> parallel 分支结算条目同键;spawn 偏差——wait 返回值是裸结果(加键污染
+> outputs 契约),标记落 spawn 的 `post:skill.invoke`(background)payload;
+> 升权子帧 `working["_escalated_from"]` = 父档快照(随 checkpoint 持久,
+> 不进上下文组装,有断言钉死)。已知缝隙:checkpoint `_settle_unpaired_calls`
+> 规则 2 就地改写不带 escalated 键(崩溃边沿,留开口);
+> ② **Grant additive 配对字段**——`question_id`/`frame_id`
+> (`api/v1/escalation.py`;checkpoint asdict 落盘,旧档默认空串兼容;
+> tool-confirm approve-run 同义登记);
+> ③ **D3 派生链最弱一环**——约定 `principal.attrs["via"]` = 上游 principal
+> dict 列表(近端在前,递归;`tools/local_registry.py` `_check_data_access` /
+> `_expand_via_chain`):链每环过 `allow` 才放行,任一拒=拒(消息含
+> `链环 #N`),`data.access.denied` payload additive `via_link`;fail-closed
+> (非 list/缺 subject/深度 >8 拒,payload 加 `via_error`);引擎不伪造链,
+> 宿主声明;`Principal.attrs` 声明 `Mapping[str,str]`,via 载结构化列表为
+> 约定偏差(已注记);
+> ④ **E3 升权审计面板**——`GET /api/runs/{run_id}/escalations` →
+> {summary{total,approved,denied,grant_run}, events[](时间序,params 截 200、
+> paired、asked_ts), grants[](全字段)};读模型 `host/web/escalations.py`
+> 纯函数,404/空态照 rca 邻端点;配对:pre↔post 按 (frame_id,skill,tier)
+> 时间序闭合,question_id 经 `supervisor.ask`(kind=escalation)回补,
+> grant-run 无 pre 单列,approve-once 无台账靠信号;`_KIND_HINTS` 加
+> "escalation";前端 `escalations-panel.js`(run 详情 Usage 栏后,懒加载折叠栏)
+> + trace.js 三条升权信号专属行(kind="escalation",✓/✗ 状态双编码,debug 台
+> 零改动生效)+ 主题契约 token `--sig-escalation`(六主题定制,对比度契约断言)。
+> 仍开口:D3 跨 run 自动派生(引擎无触发点)、完整多用户会话映射、
+> `_settle_unpaired_calls` 规则 2 escalated 键缝隙。上文 2026-08-31 复核块
+> "仍未做"两条据此关闭,dated 原文保留。全量基线:1643 收集 = 1594 passed + 10 skipped + 39 xfailed,0 失败。
 
 ## 一、总览
 

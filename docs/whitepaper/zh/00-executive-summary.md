@@ -272,8 +272,9 @@ EXEC→irreversible);**skill 推导不声明**(白名单 tools/skills 递归
   │◀── 子帧结果(折叠为 tool result)            │
 ```
 
-> 注:返回路径的 `[ESCALATED:...]` provenance 标记已设计(ESCALATION.md §3)
-> 未实现——升权子帧结果目前与普通 tool result 同形(见第 09 章 §6)。
+> 注:返回路径的 `[ESCALATED:...]` provenance 标记已实现(2026-09-28),
+> 形态为结构化 payload 键 `escalated` 而非文本前缀(TOOL content 是 JSON,
+> 前缀会破坏 resume 结算;见第 09 章 §6)。
 
 关键性质:
 
@@ -362,16 +363,18 @@ skill 的开发闭环:DraftStore 草稿层(与生产物理分离)→ 七组全�
 与可用基线实现(Memory baseline `LocalFileMemoryService` 与技能运行期
 `register()` 写入路径已落地,后者带验证门、`pre:skill.register` 否决与
 `system.skill.register` 确认闸);升权系统
-E1/E2 已实现(含 spawn 闸、Web 升权卡片);数据层 authZ D1/D2 已实现
-(单用户无感,嵌入宿主/多用户可显式生效;D2 域配置段、per-subject
-白名单、net/db 域判定与 data.access.* 审计信号,D3-lite `[web.tokens]`
-多用户映射);凭证注入(WS1)与 confirm 两阶段闸门(WS2,HumanApproval
+E1–E3 已实现(含 spawn 闸、Web 升权卡片、升权审计面板);数据层 authZ
+D1/D2 已实现(单用户无感,嵌入宿主/多用户可显式生效;D2 域配置段、
+per-subject 白名单、net/db 域判定与 data.access.* 审计信号,D3-lite
+`[web.tokens]` 多用户映射,D3 派生链最弱一环 2026-09-28 落地);
+凭证注入(WS1)与 confirm 两阶段闸门(WS2,HumanApproval
 已下沉)已实现;§3.4 并发三原语齐备(`parallel_invoke` fork/join 落地,
 配套子树级联取消与子树记账读视图);多模态契约(`Message.parts`
 additive)与 narrate 压缩策略已落地;Skill Lab L1-L5 全部落地;
-Web 六主题全部通过契约测试;测试基线 Python 1626 例(1577 passed /
-10 skipped / 39 xfailed)+ 前端 32 个测试文件全绿。已设计未实现:E3 余项(审计面板)、
-D3 余项(派生链最弱一环、EscalationRequest 数据面)、M6 余项(沙箱回调
+Web 六主题全部通过契约测试;测试基线 Python 1643 例(1594 passed /
+10 skipped / 39 xfailed)+ 前端 32 个测试文件全绿。已设计未实现:
+D3 余项(跨 run 自动派生——引擎无触发点、via 链由宿主声明;完整多用户
+会话映射)、M6 余项(沙箱回调
 通道、register() 的 semver 求解/目录写路径/热重载/完整重放+evaluator 门)、
 动效播放层(主题契约测试第 5 项)、多文件 skill_set 归并、handler 源码进生产。
 

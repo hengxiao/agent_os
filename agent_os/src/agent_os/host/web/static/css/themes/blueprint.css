@@ -47,6 +47,7 @@
   --sig-compress: #d4b8ff;
   --sig-budget:   #ffada0;
   --sig-frame:    #7e97c0;
+  --sig-escalation: #f0abfc;
 
   /* 语义:工具权限等级 */
   --perm-read:  #7e97c0;

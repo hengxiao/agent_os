@@ -152,6 +152,13 @@ def _error_payload(kind: ToolErrorKind, message: str, hint: str | None = None) -
     return {"kind": kind.value, "message": message, "retryable": False, "hint": hint or ""}
 
 
+def _escalated_marker(name: str, target_manifest: SkillManifest) -> str:
+    """升权溯源标记值(WS1,docs/ESCALATION.md §5):``"{name}@{version}"``;
+    manifest version 缺省/空串时只写 name。"""
+    version = target_manifest.version or ""
+    return f"{name}@{version}" if version else name
+
+
 def _cancelled_payload(message: str, hint: str | None = None) -> dict[str, Any]:
     """分支取消的结构化错误载荷(parallel_invoke,§3.4)。
 
@@ -1143,6 +1150,17 @@ class Kernel:
     async def _invoke_skill(
         self, call: ToolCall, frame: SkillFrame, manifest: SkillManifest
     ) -> dict[str, Any]:
+        """分发子技能调用:白名单 → 深度兜底 → 升权闸 → 压栈跑子帧 → 结果折叠回父帧。
+
+        升权溯源(WS1,docs/ESCALATION.md §5):本次调用过了升权闸(目标档高于
+        调用方档且被放行)时,成功 payload 加 ``"escalated": "{name}@{version}"``
+        键(version 缺省/空只写 name)——设计原文是 TOOL content 文本前缀,偏差为
+        payload 键:content 是 JSON,前缀会破坏 resume 结算的 ``json.loads``
+        (kernel/checkpoint.py ``_payload_ok``/``_settle_unpaired_calls``);
+        同档移动/降权直通不标。升权派生的子帧另在 ``context.working`` 落
+        ``"_escalated_from": 父帧档``(working 随 checkpoint 序列化,且只被
+        ContextManager 以具名键读取,不进 build 的消息面,不外泄进上下文组装)。
+        """
         if call.name.startswith("skill."):
             name = call.name[len("skill."):]
         elif call.name.startswith("skill__"):
@@ -1166,6 +1184,7 @@ class Kernel:
             )
         target = self.skills.get(SkillRef(name=name))
         target_tier = derive_skill_tier(target.manifest, self.tools, self.skills)
+        escalated = ""  # 升权溯源标记:过闸且被放行后置 "{name}@{version}"(见 docstring)
         if tier_exceeds(target_tier, frame.tier):
             # 升权闸门(docs/ESCALATION.md §3):白名单检查后、make_frame 之前。
             # 原则 1 先校验后确认:参数不合被调方 inputs schema → INVALID_ARGS
@@ -1184,6 +1203,7 @@ class Kernel:
             denied = await self._confirm_escalation(call, frame, name, target.manifest, target_tier)
             if denied is not None:
                 return denied
+            escalated = _escalated_marker(name, target.manifest)
         try:
             child = self.skills.make_frame(
                 SkillCall(name=name, args=dict(call.args), call_id=call.id), frame
@@ -1199,6 +1219,9 @@ class Kernel:
         child.call_id = call.id
         # 子帧继承被调 skill 推导档(§2.2:它在高层环境里跑,再调同档是同层移动)
         child.tier = target_tier
+        if escalated:
+            # 升权派生帧标记(父档快照;审计面板据此还原"此帧由升权创建")
+            child.context.working["_escalated_from"] = frame.tier
         try:
             value = await self.run_frame(child)
         except (MaxDepthExceeded, RunAborted):
@@ -1228,7 +1251,11 @@ class Kernel:
                 ),
             }
         await self.signals.emit(self._sig(POST_SKILL_INVOKE, frame, {"skill": name, "ok": True}))
-        return {"ok": True, "value": value, "error": None}
+        payload: dict[str, Any] = {"ok": True, "value": value, "error": None}
+        if escalated:
+            # [ESCALATED] 溯源标记 = payload 键(非文本前缀,见 docstring 偏差说明)
+            payload["escalated"] = escalated
+        return payload
 
     # ------------------------------------------------------------------
     # docs/ESCALATION.md §3:升权确认——内核判定升权后强制挂起等裁决(原则 2,
@@ -1327,7 +1354,8 @@ class Kernel:
             scope = "run" if answer == "approve-run" else "once"
             if scope == "run":
                 # 登记 run 档 Grant(§4):批准时的推导档快照;approve-once 不登记,
-                # 下次同调用必须重新过人眼
+                # 下次同调用必须重新过人眼。question_id/frame_id 落台账(批准↔请求
+                # 配对与发起帧溯源,审计面板用;checkpoint 落盘自动带上)
                 self._register_run_grant(
                     frame,
                     Grant(
@@ -1336,6 +1364,8 @@ class Kernel:
                         scope="run",
                         decided_by=decided_by,
                         decided_at=time.time(),
+                        question_id=request.question_id,
+                        frame_id=frame.frame_id,
                     ),
                 )
             await self.signals.emit(
@@ -1536,7 +1566,8 @@ class Kernel:
         if answer in ("approve-once", "approve-run"):
             if answer == "approve-run":
                 # 登记 run 档 Grant(复用升权台账:Grant.skill 字段承载工具名);
-                # approve-once 不登记,下次同调用必须重新过人眼
+                # approve-once 不登记,下次同调用必须重新过人眼;question_id/frame_id
+                # 与升权台账同义(批准↔请求配对与发起帧溯源,审计面板用)
                 self._register_run_grant(
                     frame,
                     Grant(
@@ -1545,6 +1576,8 @@ class Kernel:
                         scope="run",
                         decided_by=decided_by,
                         decided_at=time.time(),
+                        question_id=question_id,
+                        frame_id=frame.frame_id,
                     ),
                 )
             return None
@@ -1603,8 +1636,9 @@ class Kernel:
                 f"子技能 {skill} 不在技能 {parent_manifest.name} 的 skills 白名单"
             )
 
-    async def _spawn_gate(self, parent: SkillFrame, skill: str, input: dict[str, Any]) -> str:
-        """spawn 管线前置段:PRE 信号 → 深度兜底 → 升权闸,返回被调 skill 推导档。
+    async def _spawn_gate(self, parent: SkillFrame, skill: str, input: dict[str, Any]) -> tuple[str, str]:
+        """spawn 管线前置段:PRE 信号 → 深度兜底 → 升权闸,返回
+        ``(被调 skill 推导档, 升权溯源标记)``(未过闸时标记为空串)。
 
         深度超限抛 MaxDepthExceeded(硬失败);升权确认 await 发生在本调用点,
         拒绝/参数不合抛 SkillLoadError(与 spawn_frame 同形)。parallel_invoke
@@ -1620,6 +1654,7 @@ class Kernel:
             )
         target = self.skills.get(SkillRef(name=skill))
         target_tier = derive_skill_tier(target.manifest, self.tools, self.skills)
+        escalated = ""  # 升权溯源标记(与 _invoke_skill 同旨):过闸且被放行后置位
         if tier_exceeds(target_tier, parent.tier):
             # 升权闸(docs/ESCALATION.md §3;E2 补 E1 遗留的绕道口子):语义与
             # _invoke_skill 一致——先校验后确认(失败不发确认),确认等待发生在
@@ -1642,12 +1677,24 @@ class Kernel:
             if denied is not None:
                 # spawn 无 tool result 观察通道(不走 LLM 分发),与白名单拒绝同形上抛
                 raise SkillLoadError((denied.get("error") or {}).get("message") or f"升权调用 {skill} 被拒绝")
-        return target_tier
+            escalated = _escalated_marker(skill, target.manifest)
+        return target_tier, escalated
 
     async def _spawn_register(
-        self, parent: SkillFrame, child: SkillFrame, skill: str, task: asyncio.Task[Any]
+        self,
+        parent: SkillFrame,
+        child: SkillFrame,
+        skill: str,
+        task: asyncio.Task[Any],
+        escalated: str = "",
     ) -> None:
-        """spawn 管线登记段(§3.4):入 ``_spawned`` run 分桶 + POST 信号(parallel_invoke 复用)。"""
+        """spawn 管线登记段(§3.4):入 ``_spawned`` run 分桶 + POST 信号(parallel_invoke 复用)。
+
+        ``escalated``(WS1 升权溯源标记):非空时并入 POST_SKILL_INVOKE payload
+        ——spawn 的 wait 返回子帧原始结果值(无 ``{"ok", "value"}`` 信封,加键会
+        污染被调方 outputs 契约),spawn 折叠路径的 [ESCALATED] 标记落点因此是
+        本信号(payload 键,与 _invoke_skill 的 tool result 标注同值同义)。
+        """
         # 按 run 分桶登记(含父帧 id):_release_run 只回收本 run,cancel_subtree
         # 经 parent_frame_id 补帧树压栈前的竞态窗口
         self._spawned.setdefault(child.run_id, {})[child.frame_id] = (parent.frame_id, task)
@@ -1655,11 +1702,10 @@ class Kernel:
         # 避免无人 wait 时事件循环 "exception was never retrieved" 噪音——
         # wait_frame 的 await 仍会原样上抛,语义不变
         task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
-        await self.signals.emit(
-            self._sig(
-                POST_SKILL_INVOKE, parent, {"skill": skill, "ok": True, "background": True}
-            )
-        )
+        payload: dict[str, Any] = {"skill": skill, "ok": True, "background": True}
+        if escalated:
+            payload["escalated"] = escalated
+        await self.signals.emit(self._sig(POST_SKILL_INVOKE, parent, payload))
 
     async def spawn_frame(self, parent: SkillFrame, skill: str, input: dict[str, Any]) -> str:
         """spawn 后台帧(§3.4):白名单/深度/升权检查与 invoke 一致,返回子帧 frame_id。
@@ -1668,14 +1714,19 @@ class Kernel:
         PRE/POST_SKILL_INVOKE 信号与 invoke 一致,payload 加 ``"background": True``。
         升权(docs/ESCALATION.md §3):构成升权时在本调用点挂起等裁决(父帧不停),
         拒绝/参数不合以 SkillLoadError 上抛(与白名单拒绝同形,交 code 技能处理)。
+        升权放行时:子帧 ``context.working["_escalated_from"]`` 落父档快照,
+        POST_SKILL_INVOKE payload 带 ``escalated`` 标记(均与 _invoke_skill 同旨)。
         """
         self._spawn_whitelist_check(parent, skill)
-        target_tier = await self._spawn_gate(parent, skill, input)
+        target_tier, escalated = await self._spawn_gate(parent, skill, input)
         child = self.skills.make_frame(SkillCall(name=skill, args=dict(input)), parent)
         # 子帧继承被调 skill 推导档(与 _invoke_skill 同旨),后代调用的升权判定才有基准
         child.tier = target_tier
+        if escalated:
+            # 升权派生帧标记(与 _invoke_skill 同旨;working 随 checkpoint 序列化)
+            child.context.working["_escalated_from"] = parent.tier
         task = asyncio.create_task(self.run_frame(child))
-        await self._spawn_register(parent, child, skill, task)
+        await self._spawn_register(parent, child, skill, task, escalated=escalated)
         return child.frame_id
 
     async def wait_frame(self, frame_id: str) -> Any:
@@ -1748,7 +1799,11 @@ class Kernel:
           (帧隔离);cacheable 缓存层不做;
         - **checkpoint/resume**:与 spawn 同形——批不做检查点配对,在跑批断电
           不恢复;code 父帧 resume 时整体重跑、批整体重发,调用方须保证幂等
-          (同 spawn 的"resume 重走闸门重发"先例,§10.2)。
+          (同 spawn 的"resume 重走闸门重发"先例,§10.2);
+        - **升权溯源(WS1)**:分支预检过了升权闸且被放行 → 该分支成功条目带
+          ``"escalated": "{skill}@{version}"`` payload 键,子帧
+          ``working["_escalated_from"]`` 落父档快照(与 _invoke_skill/spawn_frame
+          同值同义);同档直通分支不标。
         """
         # ---- 批形态预检(非法即 SkillLoadError,与 spawn_frame 的白名单拒绝同形)----
         if mode not in ("all_settled", "first_success"):
@@ -1817,12 +1872,13 @@ class Kernel:
         n = len(specs)
         results: list[dict[str, Any] | None] = [None] * n
         branch_frames: dict[int, SkillFrame] = {}
+        branch_escalated: dict[int, str] = {}  # 分支下标 → 升权溯源标记(结算时并入分支条目)
         for index, spec in enumerate(specs):
             skill = spec["skill"]
             # 白名单外 → 抛 SkillLoadError(与 spawn_frame 一致,交 code 技能处理)
             self._spawn_whitelist_check(parent, skill)
             try:
-                target_tier = await self._spawn_gate(parent, skill, spec["input"])
+                target_tier, escalated = await self._spawn_gate(parent, skill, spec["input"])
                 child = self.skills.make_frame(
                     SkillCall(name=skill, args=dict(spec["input"])), parent
                 )
@@ -1838,6 +1894,10 @@ class Kernel:
                 continue
             # 子帧继承被调 skill 推导档(与 spawn_frame 同旨)
             child.tier = target_tier
+            if escalated:
+                # 升权派生帧标记(与 spawn_frame 同旨;随 working 入 checkpoint)
+                child.context.working["_escalated_from"] = parent.tier
+                branch_escalated[index] = escalated
             branch_frames[index] = child
 
         # ---- concurrency_safe 闸(§3.4):code 分支含未声明并发安全的工具 → 串行降级 ----
@@ -1876,7 +1936,10 @@ class Kernel:
                     results,
                 )
             )
-            await self._spawn_register(parent, child, specs[index]["skill"], task)
+            await self._spawn_register(
+                parent, child, specs[index]["skill"], task,
+                escalated=branch_escalated.get(index, ""),
+            )
             tasks[index] = task
 
         # ---- 父侧唯一 join 点:按完成序结算,结果按分支序落位 ----
@@ -1939,12 +2002,17 @@ class Kernel:
                                 child, "first_success 胜方已锁定,结果丢弃"
                             )
                         else:
-                            results[index] = {
+                            entry: dict[str, Any] = {
                                 "ok": True,
                                 "value": value,
                                 "error": None,
                                 "frame_id": child.frame_id,
                             }
+                            # [ESCALATED] 溯源标记(payload 键,与 _invoke_skill/spawn 同值同义):
+                            # 分支过了升权闸才落键;同档直通分支不标
+                            if index in branch_escalated:
+                                entry["escalated"] = branch_escalated[index]
+                            results[index] = entry
                     events[index].set()
                     if mode == "first_success" and won is None and results[index]["ok"]:
                         won = index

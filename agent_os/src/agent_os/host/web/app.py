@@ -52,6 +52,7 @@ from agent_os.host.shared.artifacts import (
     read_trace,
 )
 from agent_os.host.shared.replay import replace_providers
+from agent_os.host.web.escalations import escalation_panel
 from agent_os.host.web.rca import locate_first_error, usage_panel
 from agent_os.host.web.run_manager import (
     HUB_CLOSED,
@@ -103,6 +104,8 @@ _KIND_HINTS = {
     "frame": ("frame",),
     "sidecar": ("budget", "veto", "sidecar"),
     "run": ("run.",),
+    # 升权审计(docs/ESCALATION.md §5;WS2):三条升权信号具名命中
+    "escalation": ("skill.escalate", "skill.escalation"),
 }
 
 
@@ -710,6 +713,15 @@ def create_app(
             return usage_panel(run_dir)
         except (OSError, json.JSONDecodeError) as e:
             raise HTTPException(status_code=404, detail="run 产物落盘中,请重试") from e
+
+    @app.get("/api/runs/{run_id}/escalations")
+    def get_escalations(run_id: str) -> dict[str, Any]:
+        """升权审计面板(docs/ESCALATION.md §5;WS2):升权事件时间线(pre/post/denied
+        配对)+ Grant 台账 + 裁决汇总;无升权的 run 返回空面板(200)。"""
+        run_dir = _run_dir(root, run_id)
+        if not run_dir.is_dir() and manager.state_of(run_id) is None:
+            raise HTTPException(status_code=404, detail=f"找不到 run: {run_id}")
+        return escalation_panel(run_dir)
 
     @app.post("/api/runs/{run_id}/stop")
     async def stop_run(run_id: str) -> dict[str, Any]:

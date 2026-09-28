@@ -739,3 +739,160 @@ def test_authz_record_written_into_credentials(tmp_path):
     )
     assert result2.ok
     assert "_authz" not in seen[1]
+
+
+# ---------------------------------------------------------------------------
+# D3:via 派生链最弱一环(docs/DATA-AUTHZ.md;WS1)
+#
+# 约定:``principal.attrs["via"]`` = 上游 principal dict 列表(近端在前,每元素
+# {subject, issuer, attrs} 递归可再含 via);引擎不伪造链,宿主声明。链在场 →
+# 链上每一环(含当前 principal)都过 allow 才放行;任一环拒 = 拒(理由注明哪一环);
+# 形状坏/深度超限 fail-closed;无 via → 现状逐字不动。
+# ---------------------------------------------------------------------------
+
+
+def _via_principal(upstream: list, clearance: str = CONFIDENTIAL) -> Principal:
+    """当前 principal + via 派生链(attrs 声明类型是 Mapping[str, str],
+    via 承载结构化列表属 WS1 约定性 deviation)。"""
+    return Principal(
+        subject="user:t",
+        issuer="test",
+        attrs={"clearance": clearance, "via": upstream},
+    )
+
+
+def _secret_fs_tools(tmp_path: Path, sensitivity: str = CONFIDENTIAL) -> LocalPythonToolRegistry:
+    """内置工具表 + tmp_path 注册为指定敏感度的 fs.secret 域(D1 语义,无 policy)。"""
+    tools = LocalPythonToolRegistry.with_builtins()
+    tools.register_fs_domain(DataDomain(name="fs.secret", sensitivity=sensitivity), tmp_path)
+    return tools
+
+
+def _read_secret(tools: LocalPythonToolRegistry, principal: Principal, tmp_path: Path):
+    ctx = _dispatch_ctx(_frame(principal), workdir=tmp_path)
+    return asyncio.run(
+        tools.dispatch(ToolCall(id="c1", name="system.file.read", args={"path": "s.txt"}), ctx)
+    )
+
+
+def test_via_chain_weakest_link_denied(tmp_path):
+    """当前 principal 放行但上游环拒 → 拒(最弱一环);理由与审计信号注明被拒环节。"""
+    (tmp_path / "s.txt").write_text("TOP-SECRET", encoding="utf-8")
+    bus = _FakeBus()
+    tools = _secret_fs_tools(tmp_path)
+    tools.bind_signals(bus)
+    principal = _via_principal(
+        [{"subject": "agent:upstream", "issuer": "test", "attrs": {"clearance": PUBLIC}}]
+    )
+    result = _read_secret(tools, principal, tmp_path)
+    assert result.ok is False
+    assert result.error.kind is ToolErrorKind.DATA_ACCESS_DENIED
+    # 理由串注明哪一环:被拒的是链环 #1(上游 agent:upstream),不是当前 principal
+    assert "agent:upstream" in result.error.message
+    assert "链环 #1" in result.error.message
+    assert "TOP-SECRET" not in result.error.message  # 不泄域内内容
+    denied = [s for s in bus.emitted if s.name == DATA_ACCESS_DENIED]
+    assert len(denied) == 1
+    payload = denied[0].payload
+    assert payload["subject"] == "user:t"  # 既有键不动(当前 principal 为审计锚)
+    assert payload["via_link"] == {"index": 1, "subject": "agent:upstream"}  # additive
+    assert "TOP-SECRET" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_via_chain_all_links_pass_granted(tmp_path):
+    """全环放行 → 放(含递归嵌套环节:上游环的 attrs 再含 via)。"""
+    (tmp_path / "s.txt").write_text("hello", encoding="utf-8")
+    tools = _secret_fs_tools(tmp_path, sensitivity=INTERNAL)
+    principal = _via_principal(
+        [
+            {
+                "subject": "agent:up1",
+                "issuer": "test",
+                "attrs": {
+                    "clearance": CONFIDENTIAL,
+                    # 递归:up1 自己的上游环(internal ≥ 域敏感度 internal,过)
+                    "via": [
+                        {"subject": "agent:up2", "issuer": "test", "attrs": {"clearance": INTERNAL}}
+                    ],
+                },
+            }
+        ]
+    )
+    result = _read_secret(tools, principal, tmp_path)
+    assert result.ok
+    assert "hello" in result.value
+
+
+def test_no_via_status_quo_anchor(tmp_path):
+    """无 via → 现状锚:只判当前 principal;拒绝消息不带链注,denied payload
+    恰为既有四键(无 via_link/via_error,additive 键只在链在场时出现)。"""
+    (tmp_path / "s.txt").write_text("TOP-SECRET", encoding="utf-8")
+    bus = _FakeBus()
+    tools = _secret_fs_tools(tmp_path)
+    tools.bind_signals(bus)
+    result = _read_secret(tools, _p(INTERNAL), tmp_path)  # _p:无 via 键
+    assert result.ok is False
+    assert result.error.kind is ToolErrorKind.DATA_ACCESS_DENIED
+    assert "via" not in result.error.message
+    denied = [s for s in bus.emitted if s.name == DATA_ACCESS_DENIED]
+    assert len(denied) == 1
+    assert denied[0].payload == {
+        "subject": "user:t",
+        "domain": "fs.secret",
+        "sensitivity": CONFIDENTIAL,
+        "tool": "system.file.read",
+    }
+    # 显式空链(via=[])同样不启用链判定(现状语义)
+    empty_chain = Principal(
+        subject="user:t", issuer="test", attrs={"clearance": CONFIDENTIAL, "via": []}
+    )
+    assert _read_secret(tools, empty_chain, tmp_path).ok
+
+
+def _nested_via(levels: int) -> list:
+    """构造 levels 层嵌套的 via 列表(每层恰一环,clearance 全 confidential)。"""
+    element = None
+    for i in range(levels):
+        node = {
+            "subject": f"agent:l{levels - i}",
+            "issuer": "test",
+            "attrs": {"clearance": CONFIDENTIAL},
+        }
+        if element is not None:
+            node["attrs"]["via"] = [element]
+        element = node
+    return [element] if element is not None else []
+
+
+def test_via_chain_depth_limit_fail_closed(tmp_path):
+    """via 深度上限(8 层):9 层嵌套超限 → fail-closed 拒( clearance 全够也拒);
+    恰 8 层 → 放行(边界对照)。"""
+    (tmp_path / "s.txt").write_text("hello", encoding="utf-8")
+    tools = _secret_fs_tools(tmp_path, sensitivity=INTERNAL)
+
+    over = _read_secret(tools, _via_principal(_nested_via(9)), tmp_path)
+    assert over.ok is False
+    assert over.error.kind is ToolErrorKind.DATA_ACCESS_DENIED
+    assert "via 派生链非法" in over.error.message and "深度" in over.error.message
+
+    at_cap = _read_secret(tools, _via_principal(_nested_via(8)), tmp_path)
+    assert at_cap.ok, "恰 8 层(上限内)应放行"
+
+
+def test_via_malformed_shape_fail_closed(tmp_path):
+    """via 元素形状坏 → fail-closed 拒(不忽略):非 list / 元素非 dict /
+    缺 subject / attrs 非 dict,四种坏形全部拒绝且注明原因。"""
+    (tmp_path / "s.txt").write_text("TOP-SECRET", encoding="utf-8")
+    tools = _secret_fs_tools(tmp_path)
+    bad_vias = [
+        "oops",  # via 非 list
+        ["oops"],  # 元素非 dict
+        [{"issuer": "test"}],  # 缺 subject
+        [{"subject": "agent:x", "attrs": "oops"}],  # attrs 非 dict
+    ]
+    for bad in bad_vias:
+        result = _read_secret(tools, _via_principal(bad), tmp_path)
+        assert result.ok is False, f"坏形应 fail-closed 拒绝: {bad!r}"
+        assert result.error.kind is ToolErrorKind.DATA_ACCESS_DENIED
+        assert "via 派生链非法" in result.error.message
+        assert "TOP-SECRET" not in result.error.message  # 不泄域内内容

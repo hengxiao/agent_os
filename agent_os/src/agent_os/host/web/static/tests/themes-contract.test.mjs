@@ -80,7 +80,7 @@ const TEXT_PAIRS = [
   ...["--ok", "--warn", "--danger", "--aborted", "--live"].flatMap((s) =>
     ["--bg-0", "--bg-1", "--bg-2"].map((bg) => [s, bg])),
   ...["--sig-llm", "--sig-tool", "--sig-sidecar", "--sig-compress", "--sig-budget",
-    "--perm-write", "--perm-net", "--perm-exec"].map((s) => [s, "--bg-1"]),
+    "--sig-escalation", "--perm-write", "--perm-net", "--perm-exec"].map((s) => [s, "--bg-1"]),
 ];
 /* 弱化层级(占位/最低权限/弹栈帧;WCAG 对非关键文本无强制,保底 3:1) */
 const DIM_PAIRS = [

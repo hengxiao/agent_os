@@ -3,8 +3,9 @@
 > 章次:10 · 状态:D1 已实现(Principal 模型、CLI/Web 单用户来源、fs 域、dispatch
 > 强制点、身份不变量与 checkpoint 往返);D2 已实现(2026-08-31:`[data]` 配置段、
 > per-subject 域白名单第二判据、net/db 域判定、`data.access.*` 审计信号、判据回写
-> `credentials["_authz"]`);D3-lite 已落地(`[web.tokens]` 多用户映射);D3 余项
-> 已设计未实现(派生链最弱一环、EscalationRequest 数据面展示) ·
+> `credentials["_authz"]`);D3-lite 已落地(`[web.tokens]` 多用户映射);D3 派生链
+> 最弱一环已实现(2026-09-28,via 链逐环判定);升权决策数据面经审计面板暴露;
+> 仍开口:跨 run 自动派生、完整多用户会话映射、确认卡片数据域展示 ·
 > 依据:`docs/DATA-AUTHZ.md`、`agent_os/src/agent_os/api/v1/principal.py`、
 > `agent_os/src/agent_os/tools/local_registry.py`、
 > `agent_os/tests/tools/test_data_authz.py`
@@ -91,7 +92,8 @@ clearance 都给 confidential——单用户 = 机器的主人,拦截只对显�
   普通用户启动的 run 即便升权进入 L3 skill,能读的数据仍是这个用户能读的;
 - agent 作为调用方时可降级为 `agent:<run_id>` 并带上游链
   (`attrs["via"]`),按链上最弱一环判定——防"托高权的 agent 帮忙读"
-  (§2.3,**D3 已设计未实现**)。
+  (§2.3;**D3 已实现**,2026-09-28:`_check_data_access` 逐环过 `allow`、
+  任一拒=拒、fail-closed(形状坏/深度 >8 拒),链由宿主声明注入)。
 
 ### 4.3 authZ:数据域与默认拒绝
 
@@ -232,10 +234,12 @@ promote 记录 `promoted_by`(`skills/gate.py:539`);升权确认卡片的数据�
 5. **同 run 内无隔离**。低层 skill 读到的机密可经输出流向同 run 高层
    skill(§4 明示残余风险);v1 靠"同一 principal 即同一人"的假设接受
    这一点,防注入扩散依赖的是帧隔离与升权闸,不是数据闸。
-6. **派生链与确认卡片数据面未实现**(D3 余项):agent 代调场景没有最弱
-   一环降级,委托方身份原样传递;EscalationRequest 数据面展示(本调用将
-   访问的域与敏感度)归 E3。多用户映射 D3-lite 已落地(`[web.tokens]`,
-   2026-08-31);未配置时所有 Web run 仍共享部署者身份。
+6. **确认卡片数据面与完整会话映射未实现**(D3 余项):派生链最弱一环已落地
+   (2026-09-28——`attrs["via"]` 链每环过 `allow`、fail-closed、深度上限 8,
+   链由宿主声明注入,跨 run 自动派生无引擎触发点);确认卡片附"本调用将
+   访问的域与敏感度"(§5.3)仍未做,升权决策数据面改由审计面板暴露
+   (`GET /api/runs/{run_id}/escalations`,2026-09-28)。多用户映射 D3-lite
+   已落地(`[web.tokens]`,2026-08-31);未配置时所有 Web run 仍共享部署者身份。
 7. **拒绝面泄漏域的存在性**(域名与敏感度进错误消息)。这是有意的可用性
    取舍(模型需要判据来恢复),但等于向低 clearance 调用方暴露了域的
    命名与分级。

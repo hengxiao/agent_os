@@ -28,8 +28,8 @@
 | [06](zh/06-determinism.md) | 信号、Telemetry 与确定性工程:36 信号目录、WAL、checkpoint/resume/replay/diff | 已实现 |
 | [07](zh/07-sidecars.md) | Sidecars:信号驱动监督、verdict 仲裁矩阵、双预算结构 | 部分实现(HumanApproval 已下沉为内核 tool-confirm 闸门) |
 | [08](zh/08-supervisor.md) | Supervisor:裁决路由、挂起-作答-恢复闭环、三宿主通道 | 已实现 |
-| [09](zh/09-escalation.md) | 升权系统:三档信任、升权闸、Grant、干净 context 不变量 | 已实现(E1/E2) |
-| [10](zh/10-data-authz.md) | 数据层 authN+Z:Principal、数据域、dispatch 双闸串联、默认拒绝 | 已实现(D1/D2 + D3-lite;D3 余项未做) |
+| [09](zh/09-escalation.md) | 升权系统:三档信任、升权闸、Grant、干净 context 不变量 | 已实现(E1–E3) |
+| [10](zh/10-data-authz.md) | 数据层 authN+Z:Principal、数据域、dispatch 双闸串联、默认拒绝 | 已实现(D1/D2 + D3-lite + D3 派生链;余项开口) |
 | [11](zh/11-tier-standards.md) | 分档生产标准与提交闸门:判定树、逐档标准、五关、promote 三重防 | 已实现 |
 | [12](zh/12-debugger.md) | 调试器:GDB 语义、断点四类、单步/pause、干预与时间旅行 | 已实现 |
 | [13](zh/13-themes.md) | 主题系统:三层契约、六主题、mascot 抽象两实例 | 已实现(动效层设计) |
@@ -44,7 +44,8 @@
   (runner 两种前缀都受理);各章统一按代码写(第 01/02 章注)。
 - **执行摘要三处失真(已修正)**:调试器断点实为四类(漏 `skill.invoke`);
   `lab validate` 退出码实为 pass/warn=0、fail=2(无 4);`[ESCALATED:...]`
-  返回标记已设计未实现(第 09/12/14 章勘,00 章已改)。
+  返回标记当时已设计未实现(第 09/12/14 章勘,00 章已改;2026-09-28 已实现为
+  结构化 payload 键 `escalated`,见第 09 章 §6)。
 - **版本约束求解未实现**:DESIGN.md §6.1 承诺 semver 求解,代码只查依赖存在
   (第 02 章注)。
 - **副车仲裁面小于设计**:`pre:skill.invoke`/`pre:llm.request` 只发射不仲裁;

@@ -62,6 +62,16 @@ v1 不做 SSO/OIDC 集成;宿主配置里静态映射即可,协议面(principal 
   `agent:<run_id>` 并带上游 principal 链(attrs["via"]),授权判定按
   **链上最弱一环**——防"托高权的 agent 帮忙读"。
 
+> 实现注(2026-09-28,D3/WS1):via 链判定已落地于 `_check_data_access`
+> (`tools/local_registry.py`,链展开见 `_expand_via_chain`)——约定
+> `attrs["via"]` = 上游 principal dict 列表(近端在前,递归);链上每一环
+> (含当前 principal)都过 `allow()` 才放行,任一环拒 = 拒(拒绝消息含
+> `链环 #N`,`data.access.denied` payload additive `via_link` 键);
+> fail-closed:via 非 list / 元素缺 subject / 递归深度 > 8 一律拒(payload
+> 加 `via_error`)。**引擎不伪造链**:via 由宿主声明注入,跨 run 自动派生
+> 无引擎触发点(仍开口)。约定偏差(已注记):`Principal.attrs` 声明类型是
+> `Mapping[str, str]`,via 载结构化列表是约定层扩展。
+
 ## 3. authZ:授权模型
 
 ### 3.1 资源模型:数据域(data domain)
@@ -188,7 +198,7 @@ run 详情页可按 principal 过滤:谁、读了哪些域、被拒几次。
 > 4. `allow()` 的第二判据(per-subject 域白名单)与 `ToolContext.credentials`
 >    判据回写依赖配置段,属 D2;`action` 参数为协议面占位,D1 不参与判定。
 | D2 ✅ | 域配置段 + db/net 工具声明 + 审计信号 + 拒绝面不泄内容检查。已实现(2026-08-31):`[data]` 配置段(domains 表数组:name/sensitivity 缺省 confidential/`path_prefix`|`url_prefix` 恰一;`[data.principals."<subject>"] domains = [...]` glob 白名单——解析在 runtime/config.py `_data_policy`,产物契约层 `DataPolicy`,api/v1/principal.py:60);registry `bind_data_policy`/`register_net_domain` 装配钩子;`_check_data_access` 泛化(fs.* 逐字不动;net.* 按 `call.args["url"]` 前缀匹配,未命中 → `net.unconfigured` confidential;db.* 等其余族 glob 对 `policy.domains` 匹配;**policy 在场才恢复"未配置域=confidential",缺省缺席保持 D1 语义**);`allow()` 增 `whitelist=None` 关键字(None 与 D1 逐字一致);审计信号 `data.access.denied`/`data.access.granted`(已入 SIGNAL_NAMES,33 个);判据回写 `ctx.credentials["_authz"]`;`http_fetch`/`http_request`/`fetch_page` 声明 `data_domains=["net.*"]`;拒绝面只带域名/敏感度/clearance,不回显路径/URL 与域内内容 |
-| D3 | 派生链最弱一环 + EscalationRequest 数据面展示 + 多用户 Web 会话映射。**D3-lite 已落地**(2026-08-31):`[web.tokens] "<token>" = "user:<login>"` 映射;Bearer 中间件命中 → `Principal(issuer="api-token", clearance=confidential)` 挂 `request.state` → `start_run(principal=)` → `execute_run`;未命中/无配置 → 单用户行为逐字不变(host/web/app.py,host/web/run_manager.py)。**仍未做**:派生链最弱一环、EscalationRequest 数据面展示(归 E3) |
+| D3 | 派生链最弱一环 + EscalationRequest 数据面展示 + 多用户 Web 会话映射。**D3-lite 已落地**(2026-08-31):`[web.tokens] "<token>" = "user:<login>"` 映射;Bearer 中间件命中 → `Principal(issuer="api-token", clearance=confidential)` 挂 `request.state` → `start_run(principal=)` → `execute_run`;未命中/无配置 → 单用户行为逐字不变(host/web/app.py,host/web/run_manager.py)。**派生链最弱一环已落地**(2026-09-28,WS1):via 链逐环判定、fail-closed、深度上限 8、引擎不伪造链(实现注见 §2.3)。**升权决策数据面已暴露**(2026-09-28,WS2):`GET /api/runs/{run_id}/escalations` 审计面板(docs/ESCALATION.md §5 实现注;§5.3 确认卡片附数据域的增强形态未做)。**仍未做**:跨 run 自动派生(引擎无触发点,via 链靠宿主声明)、完整多用户会话映射 |
 
 ## 9. 不做
 

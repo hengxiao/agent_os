@@ -37,6 +37,8 @@ export const CONTRACT_TOKENS = [
   "--focus-ring",
   // 信号
   "--sig-llm", "--sig-tool", "--sig-sidecar", "--sig-compress", "--sig-budget", "--sig-frame",
+  // 升权(docs/ESCALATION.md §5;WS2):escalation 轨迹行/审计徽标信号色
+  "--sig-escalation",
   // 权限
   "--perm-read", "--perm-write", "--perm-net", "--perm-exec",
   // 排版

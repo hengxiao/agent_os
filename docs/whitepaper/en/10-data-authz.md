@@ -1,6 +1,6 @@
 # Data-Layer authN+Z: Principal & Data Domains
 
-> Chapter 10 · Status: D1 implemented (Principal model, CLI/Web single-user sources, fs domains, dispatch enforcement point, identity invariant with checkpoint round-trip); D2 implemented (2026-08-31: `[data]` config section, per-subject domain whitelist as second criterion, net/db domain judgment, `data.access.*` audit signals, judgment written back to `credentials["_authz"]`); D3-lite landed (`[web.tokens]` multi-user mapping); D3 remainder designed but not implemented (delegation-chain weakest link, EscalationRequest data face) ·
+> Chapter 10 · Status: D1 implemented (Principal model, CLI/Web single-user sources, fs domains, dispatch enforcement point, identity invariant with checkpoint round-trip); D2 implemented (2026-08-31: `[data]` config section, per-subject domain whitelist as second criterion, net/db domain judgment, `data.access.*` audit signals, judgment written back to `credentials["_authz"]`); D3-lite landed (`[web.tokens]` multi-user mapping); the D3 delegation-chain weakest link is implemented (2026-09-28, per-link via-chain judgment) and the escalation decision data face is exposed via the audit panel; still open: cross-run automatic delegation, the full multi-user session mapping, and the confirmation card's domain display ·
 > Sources: `docs/DATA-AUTHZ.md`, `agent_os/src/agent_os/api/v1/principal.py`, `agent_os/src/agent_os/tools/local_registry.py`, `agent_os/tests/tools/test_data_authz.py`
 
 ## 1. Overview
@@ -24,7 +24,7 @@ Without data-layer authN+Z (`docs/DATA-AUTHZ.md` §1):
 - **Read access is all-or-nothing**: any skill with `system.file.read` in its whitelist can read everything inside the sandbox whose path it can spell. One-line example: a support-desk skill's permission to read the tickets directory is simultaneously permission to read the finance directory on the same machine — the whitelist grants by tool name, never by data.
 - **No isolation criterion for multi-tenancy**: a web service running runs for several people reads one filesystem under one process identity; nothing at runtime can tell "on whose behalf this run reads".
 - **Audit cannot attribute**: with principal always None, no signal carries an identity, so "who read what" is unanswerable from the trace.
-- **Confused deputy (designed, D3)**: one run delegating a read to another, more privileged run — unless identity degrades along the call chain, this is "asking a high-clearance agent to read for you".
+- **Confused deputy (designed, D3; weakest-link judgment implemented 2026-09-28)**: one run delegating a read to another, more privileged run — unless identity degrades along the call chain, this is "asking a high-clearance agent to read for you".
 
 ## 4. Design and Mechanism (How)
 
@@ -45,7 +45,7 @@ D1 implements two sources (`principal.py:83-105`): CLI takes the local user (`us
 
 - A run's principal is its starter's principal, injected into the root frame via `Kernel.run(principal=)` (`kernel/runner.py:206-228`) and serialized with checkpoints (`kernel/checkpoint.py:156` writes, `:226-234` rebuilds);
 - Child frames, escalated frames, and code-sandbox frames **inherit the parent frame's principal verbatim** (`skills/local_file.py:146-148`). **Escalation changes side-effect clearance, not identity**: a run started by an ordinary user, even after escalating into an L3 skill, can still read only what that user may read;
-- An agent acting as caller may be degraded to `agent:<run_id>` carrying the upstream chain (`attrs["via"]`), judged by the **weakest link** of the chain — defeating "borrow a high-clearance agent to read for you" (§2.3; **designed, not implemented — D3**).
+- An agent acting as caller may be degraded to `agent:<run_id>` carrying the upstream chain (`attrs["via"]`), judged by the **weakest link** of the chain — defeating "borrow a high-clearance agent to read for you" (§2.3; **implemented in D3**, 2026-09-28: `_check_data_access` runs `allow` per link, any denial denies, fail-closed on malformed shape or depth >8; the chain is host-declared).
 
 ### 4.3 authZ: data domains and default denial
 
@@ -131,7 +131,7 @@ Host wiring is live: both CLI entry points inject `cli_principal()` (`host/cli/m
 3. **Coverage is limited to parseable arguments**. `_check_data_access` parses `args["path"]` for fs.* and `args["url"]` for net.* (D2; db-class families glob-match against `policy.domains`): `system.shell.exec` declares no data_domains and its command string is unparseable, so a low-clearance principal with it whitelisted can `cat` past the data gate (the mitigation: shell is EXEC/L3 and must pass the escalation gate).
 4. **The `action` parameter is still a protocol placeholder**. Verdicts do not distinguish read/list/metadata (D1 and D2 alike); the second criterion (per-subject whitelist) and the verdict write-back into `ToolContext.credentials` (`_authz`) are in force since D2.
 5. **No isolation inside a run**. A secret read by a low-tier skill can flow through its output to higher-tier skills of the same run (§4, documented residual risk); v1 accepts this under the "same principal = same person" assumption, and containment against injection spread relies on frame isolation and the escalation gate, not the data gate.
-6. **Delegation chains and the confirmation card's data face are unimplemented (D3 remainder)**: agent-mediated calls get no weakest-link degradation — the caller's identity passes through unchanged; the EscalationRequest data face (domains and sensitivities a call will touch) belongs to E3. The multi-user mapping has landed as D3-lite (`[web.tokens]`, 2026-08-31); without it, all Web runs still share the deployer's identity.
+6. **The confirmation card's data face and the full session mapping are unimplemented (D3 remainder)**: the delegation-chain weakest link has landed (2026-09-28 — every link of the `attrs["via"]` chain must pass `allow`, fail-closed, depth cap 8, the chain is host-declared and the engine has no cross-run trigger point); attaching "the domains and sensitivities this call will touch" to the confirmation card (§5.3) is still open, while the escalation decision data face is exposed via the audit panel (`GET /api/runs/{run_id}/escalations`, 2026-09-28). The multi-user mapping has landed as D3-lite (`[web.tokens]`, 2026-08-31); without it, all Web runs still share the deployer's identity.
 7. **The denial surface leaks domain existence** (domain name and sensitivity ride in the error message). This is a deliberate usability trade-off (the model needs the criterion to recover), but it does expose domain naming and grading to a low-clearance caller.
 8. **Explicit non-goals** (§9): taint tracking, per-file/row-level ACLs, SSO/OIDC, storage-layer encryption. These are out of scope, not omissions.
 

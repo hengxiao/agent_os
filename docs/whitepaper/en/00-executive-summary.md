@@ -319,9 +319,9 @@ parent (lower tier)   kernel                        caller (human)
   │◀── child result (folded into a tool result)         │
 ```
 
-> Note: the `[ESCALATED:...]` provenance tag on the return path is designed
-> (ESCALATION.md §3) but not yet implemented — the escalated child's result
-> currently looks like any other tool result (see chapter 09, §6).
+> Note: the `[ESCALATED:...]` provenance tag on the return path is implemented
+> (2026-09-28) as a structured `escalated` payload key rather than a text prefix
+> (TOOL content is JSON; a prefix would break resume settlement — see chapter 09, §6).
 
 Key properties:
 
@@ -431,11 +431,12 @@ subsystems have landed with baseline
 implementations — the Memory baseline (`LocalFileMemoryService`) and the
 skill runtime `register()` write path are in, the latter with validation
 gates, a vetoable `pre:skill.register` signal, and the `system.skill.register`
-confirm gate; escalation E1/E2 is implemented (including the spawn gate
-and the Web escalation card); data authZ D1/D2 is implemented (transparent for
+confirm gate; escalation E1–E3 is implemented (including the spawn gate,
+the Web escalation card, and the audit panel); data authZ D1/D2 is implemented (transparent for
 single-user, enforceable for embedded/multi-user principals; D2 brings the
 domain config section, per-subject whitelists, net/db judgment and the
-data.access.* audit signals, D3-lite the `[web.tokens]` multi-user mapping);
+data.access.* audit signals, D3-lite the `[web.tokens]` multi-user mapping,
+and the D3 weakest-link delegation chain landed 2026-09-28);
 credential injection (WS1) and the two-phase confirm gate (WS2, HumanApproval
 sunk into the kernel) are implemented; the three §3.4 concurrency primitives
 are complete (`parallel_invoke` fork/join landed, together with subtree
@@ -443,10 +444,11 @@ cascade cancel and the subtree accounting read view); the multimodal
 contract (`Message.parts`, additive) and the narrate compression strategy
 have landed; Skill Lab
 L1-L5 is complete; all six Web themes pass the contract tests; the test
-baseline is 1626 Python tests (1577 passed, 10 skipped, 39 xfailed,
+baseline is 1643 Python tests (1594 passed, 10 skipped, 39 xfailed,
 0 failures) plus 32 frontend test files, all green.
-Designed but not yet implemented: remaining E3 items (audit panel), the D3
-remainder (delegation-chain weakest link, EscalationRequest data face), the
+Designed but not yet implemented: the D3
+remainder (cross-run automatic delegation — the engine has no trigger point
+and hosts declare the via chain — plus the full multi-user session mapping), the
 M6 remainder (sandbox callback channel and register()'s semver
 solving / directory write path / hot reload / full replay+evaluator gate), the
 motion playback layer (theme contract test #5), multi-file skill_set

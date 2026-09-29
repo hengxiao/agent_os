@@ -577,3 +577,97 @@ def test_minimal_manager_builds_same_shape_without_status(tmp_path):
     before = list(frame.context.messages)
     asyncio.run(mgr.maintain(frame))  # no-op
     assert frame.context.messages == before
+
+
+# ---------------------------------------------------------------------------
+# ModelRouter 接线(§4.2 扩展点;DefaultModelRouter 经 builder 装配,此处直注)
+# ---------------------------------------------------------------------------
+
+VISION_YAML = """
+skills:
+  - name: chatty
+    version: 1.0.0
+    kind: prompt
+    inputs: { type: object, properties: {} }
+    permissions: { tools: [], skills: [] }
+    model: { prefer: ["plain/x", "vis/y"] }
+    prompt: 看图
+"""
+
+
+def _vision_registry(tmp_path) -> LocalFileSkillRegistry:
+    (tmp_path / "skills.yaml").write_text(textwrap.dedent(VISION_YAML), encoding="utf-8")
+    return LocalFileSkillRegistry(str(tmp_path / "skills.yaml"))
+
+
+def _router_for(*providers, config_model: str = ""):
+    from agent_os.providers.manager import ProviderManager
+    from agent_os.providers.router import DefaultModelRouter
+
+    return DefaultModelRouter(ProviderManager(list(providers)), config_model=config_model)
+
+
+def _routed_manager(reg, router, *, config_model: str = ""):
+    return ContextManager(
+        skills=reg,
+        tools=LocalPythonToolRegistry(),
+        config=RunConfig(compression="off", max_cost=2.0, model=config_model),
+        router=router,
+        default_max_tokens=4000,
+        target_ratio=0.5,
+    )
+
+
+def test_build_router_static_single_candidate_regression(tmp_path):
+    """回归钉死:静态单候选(manifest prefer[0] 可用)→ req.model 与内联解析逐字一致。"""
+    from agent_os.providers.mock import MockProvider
+
+    reg = _registry(tmp_path)  # prefer ["mock/x"]
+    router = _router_for(MockProvider(), config_model="mock/fallback")
+    mgr = _routed_manager(reg, router, config_model="mock/fallback")
+    frame = _frame([Message(role=Role.USER, content="{}")])
+
+    req = asyncio.run(mgr.build(frame))
+
+    assert req.model == "mock/x"  # manifest prefer 优先于 RunConfig.model(现状不变)
+    assert req.messages[0].content == "闲聊"
+
+
+def test_build_router_caps_prefers_vision_candidate(tmp_path):
+    """两候选 caps 择优:parts 消息触发 vision 门 → 跳过无 vision 的首候选,选第二候选。"""
+    from agent_os.providers.mock import MockProvider
+
+    reg = _vision_registry(tmp_path)
+    router = _router_for(
+        MockProvider(name="plain"), MockProvider(name="vis", supports_vision=True)
+    )
+    mgr = _routed_manager(reg, router)
+    image_msg = Message(role=Role.USER, content="看图", parts=[ContentPart()])
+
+    req = asyncio.run(mgr.build(_frame([image_msg])))
+    assert req.model == "vis/y"
+
+    # 无 parts 的同帧形状:不触发 vision 门,回落链首(prefer[0],同内联解析)
+    req = asyncio.run(mgr.build(_frame([Message(role=Role.USER, content="{}")])))
+    assert req.model == "plain/x"
+
+
+def test_minimal_manager_routes_via_router(tmp_path):
+    """MinimalContextManager 同一接线:router 在场走择优,缺省 None 走内联(上方回归)。"""
+    from agent_os.context.manager import MinimalContextManager
+    from agent_os.providers.mock import MockProvider
+
+    reg = _vision_registry(tmp_path)
+    router = _router_for(
+        MockProvider(name="plain"), MockProvider(name="vis", supports_vision=True)
+    )
+    mgr = MinimalContextManager(
+        skills=reg, tools=LocalPythonToolRegistry(), config=RunConfig(), router=router
+    )
+    image_msg = Message(role=Role.USER, content="看图", parts=[ContentPart()])
+
+    req = asyncio.run(mgr.build(_frame([image_msg])))
+    assert req.model == "vis/y"
+
+    req = asyncio.run(mgr.build(_frame([Message(role=Role.USER, content="{}")])))
+    assert req.model == "plain/x"

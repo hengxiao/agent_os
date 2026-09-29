@@ -129,6 +129,14 @@ class KernelLogicContext:
             else self._kernel.config.temperature
         )
         req = ChatRequest(model=model, messages=list(messages), temperature=temperature)
+        router = getattr(self._kernel, "router", None)  # KernelBuilder 装配;None = 内联解析(防御)
+        if router is not None:
+            # §4.2 模型路由扩展点:静态 prefer 链 + caps 探测,fail-open
+            # (与 ContextManager.build 同口径,择优结果覆盖回 req)
+            prefer = list(policy.prefer) if policy and policy.prefer else None
+            model, params = await router.route(req, prefer)
+            req.model = model
+            req.temperature = params.get("temperature", req.temperature)
         resp = await self._kernel.providers.chat(req)
         resp.message.tool_calls = [
             ToolCall(id=str(tc.get("id", "")), name=str(tc.get("name", "")),

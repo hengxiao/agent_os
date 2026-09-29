@@ -237,3 +237,74 @@ def test_reload_picks_up_new_version(tmp_path):
     assert reg.get_by_name("test.greeter").manifest.version == "1.1.0"
     assert reg.get_by_name("test.greeter").prompt is not None
     assert "你好 v2" in reg.get_by_name("test.greeter").prompt
+
+
+# ---------------------------------------------------------------------------
+# ctx.chat 模型路由接线(§4.2/§9.3 impl 扩展;KernelLogicContext.chat 走 kernel.router)
+# ---------------------------------------------------------------------------
+
+CHAT_PROBE_SKILL = """
+  - name: test.chat_probe
+    version: 1.0.0
+    kind: code
+    handler: tests.helpers.code_skills:chat_probe
+    inputs:
+      type: object
+      properties: { with_image: { type: boolean } }
+    outputs:
+      type: object
+      properties: { content: { type: string } }
+      required: [content]
+    permissions: { tools: [], skills: [] }
+    model: { prefer: ["plain/x", "vis/y"] }
+"""
+
+
+def _chat_probe_kernel(tmp_path):
+    """双 provider 装配:plain(无 vision)/ vis(supports_vision),脚本化应答。"""
+    from agent_os.api.v1 import ChatResponse, Message, Role
+    from agent_os.logic.inprocess import InProcessLogicKernel
+    from agent_os.providers.mock import MockProvider
+    from agent_os.runtime.builder import KernelBuilder
+    from agent_os.skills.local_file import LocalFileSkillRegistry
+    from agent_os.tools.local_registry import LocalPythonToolRegistry
+
+    def script(req):
+        return ChatResponse(
+            message=Message(role=Role.ASSISTANT, content="pong"), finish_reason="stop"
+        )
+
+    plain = MockProvider(script, name="plain")
+    vis = MockProvider(script, name="vis", supports_vision=True)
+    config = RunConfig(model="plain/x", compression="off")
+    kernel = (
+        KernelBuilder(config)
+        .providers(plain, vis)
+        .tools(LocalPythonToolRegistry())
+        .skills(LocalFileSkillRegistry(_write_yaml(tmp_path, CHAT_PROBE_SKILL)))
+        .logic_kernels(InProcessLogicKernel())
+        .build()
+    )
+    return kernel, plain, vis
+
+
+def test_ctx_chat_routes_vision_message_to_vision_candidate(tmp_path):
+    """带 parts 的消息触发 vision 门:跳过 plain,路由到 vis(择优生效)。"""
+    kernel, plain, vis = _chat_probe_kernel(tmp_path)
+
+    result = asyncio.run(kernel.run("test.chat_probe", {"with_image": True}))
+
+    assert result == {"content": "pong"}
+    assert plain.recorded == []  # 无 vision 能力,未被选
+    assert len(vis.recorded) == 1 and vis.recorded[0].model == "vis/y"
+
+
+def test_ctx_chat_without_parts_keeps_first_candidate(tmp_path):
+    """无 parts:不触发 vision 门,选链首 prefer[0](与内联解析同候选序)。"""
+    kernel, plain, vis = _chat_probe_kernel(tmp_path)
+
+    result = asyncio.run(kernel.run("test.chat_probe", {"with_image": False}))
+
+    assert result == {"content": "pong"}
+    assert len(plain.recorded) == 1 and plain.recorded[0].model == "plain/x"
+    assert vis.recorded == []

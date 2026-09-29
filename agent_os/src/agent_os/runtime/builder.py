@@ -43,6 +43,7 @@ from agent_os.kernel.logic_router import LogicKernelRouter
 from agent_os.kernel.signals import InProcessSignalBus
 from agent_os.kernel.stack import FrameStack
 from agent_os.providers.manager import ProviderManager
+from agent_os.providers.router import DefaultModelRouter
 from agent_os.sidecars.builtins import DistillSidecar, HumanApproval
 from agent_os.sidecars.supervisor import SidecarSupervisor
 from agent_os.skills.manifest import validate_escalation_gates
@@ -128,9 +129,18 @@ class KernelBuilder:
         self._retry: dict[str, Any] = {}
         self._context_section: ContextSection | None = None
         self._memory_section: MemorySection | None = None
+        self._router: Any = None
 
     def providers(self, *providers: Any) -> KernelBuilder:
         self._providers.extend(providers)
+        return self
+
+    def router(self, router: Any) -> KernelBuilder:
+        """自定义 ModelRouter(§4.2 扩展点;``[providers] router = "pkg.mod:Class"``)。
+
+        缺省装配 :class:`DefaultModelRouter`(静态 prefer 链 + caps 探测,fail-open)。
+        """
+        self._router = router
         return self
 
     def tools(self, registry: Any) -> KernelBuilder:
@@ -260,6 +270,9 @@ class KernelBuilder:
         (M3:§7.2 注册表装配 spill/truncate/narrate/summarize 四段 + ProviderManager 注入
         + entry point ``agent_os.compressors`` 插件按 name 覆盖 + 状态注入
         + pre/post:compress 信号,§7);
+        ModelRouter(§4.2 扩展点):``.router()`` 注入的自定义实现优先,缺省装配
+        DefaultModelRouter(静态 prefer 链 + caps 探测,fail-open),注入默认
+        ContextManager.build 与 kernel.router(KernelLogicContext.chat 路由);
         logic_kernels 按 TrustLevel 索引装配为 LogicKernelRouter(§9.2);
         sidecars(M4)装配 RunControlImpl + SidecarSupervisor 并注册到总线(§5);
         telemetry(M5a)作为总线特权订阅者接入(§5.1:全量订阅,不算 sidecar);
@@ -286,6 +299,10 @@ class KernelBuilder:
         """
         bus = InProcessSignalBus()
         providers = ProviderManager(list(self._providers), **self._retry)
+        # §4.2 ModelRouter 扩展点:自定义优先,缺省 DefaultModelRouter(静态 prefer 链 +
+        # caps 探测,fail-open;config_model 取 RunConfig.model 快照作候选链兜底)。
+        # 注入 ContextManager.build 与 KernelLogicContext.chat(kernel.router)两处原内联解析点
+        router = self._router or DefaultModelRouter(providers, config_model=self.config.model or "")
         tools = self._tools if self._tools is not None else LocalPythonToolRegistry()
         skills = self._skills
         if skills is not None:
@@ -371,6 +388,9 @@ class KernelBuilder:
                 tools=tools,
                 config=self.config,
                 signals=bus,
+                # §4.2:model 解析走 ModelRouter(缺省 DefaultModelRouter,fail-open
+                # 与原内联解析同候选序);嵌入方自装 manager 时 router 由嵌入方自负
+                router=router,
                 # S2(docs/SUPERVISOR.md §2.1):ask_supervisor 伪工具 schema 只在装了
                 # supervisor 通道时呈现给 LLM;嵌入方自带 context manager 时自行决定
                 supervisor=sup_manager is not None,
@@ -414,6 +434,7 @@ class KernelBuilder:
             supervisor=sup_manager,
             stack=FrameStack(max_depth=self.config.max_depth),
             human_approval=human_approval,
+            router=router,
         )
         if self._sidecars:
             # §5.2/§5.3:RunControl 是 sidecar 操控运行的唯一通道;supervisor 统一托管

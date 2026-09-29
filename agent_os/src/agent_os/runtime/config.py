@@ -6,7 +6,10 @@
                    max_wall_time/compression/seed/temperature,§2.4;
                    workdir/read_paths §W0-1 工作目录分区;
                    checkpoint_interval Debugger P5 周期 checkpoint,0=关)
-    [providers.*]→ kimi/anthropic/openai(兼容端点)/mock(dotted path 应答函数)
+    [providers.*]→ kimi/anthropic/openai(兼容端点)/mock(dotted path 应答函数);
+                   [providers] router = "pkg.mod:Class"(§4.2 ModelRouter 扩展点,
+                   无参实例化,加载/实例化失败 ConfigError;缺省 DefaultModelRouter:
+                   静态 prefer 链 + caps 探测,fail-open)
     [tools]      → builtins 内置工具;python_exec = docker|subprocess|off;
                    python_orchestrate = true|false(编排伪工具,缺省 false)
     [tools.custom] → module = "pkg.mod:func":宿主自定义工具注册钩子,
@@ -255,7 +258,7 @@ def _load_dotted(dotted: str) -> Callable[..., Any]:
 
 def _providers(cfg: dict[str, Any]) -> list[Any]:
     providers: list[Any] = []
-    unknown = sorted(set(cfg) - {"kimi", "anthropic", "openai", "mock"})
+    unknown = sorted(set(cfg) - {"kimi", "anthropic", "openai", "mock", "router"})
     if unknown:
         raise ConfigError(f"[providers] 含未知 provider: {unknown}")
     if "kimi" in cfg:
@@ -289,6 +292,26 @@ def _providers(cfg: dict[str, Any]) -> list[Any]:
         brain = _load_dotted((cfg["mock"] or {}).get("brain", ""))
         providers.append(MockProvider(brain))
     return providers
+
+
+def _providers_router(cfg: dict[str, Any]) -> Any | None:
+    """``[providers] router = "pkg.mod:Class"`` → 自定义 ModelRouter 实例(§4.2 扩展点)。
+
+    dotted path 加载后**无参实例化**(同 ``[tools.custom]`` 的 ``_load_dotted`` 先例,
+    但目标是类不是注册钩子);缺键 → None(装配层落 DefaultModelRouter);
+    非字符串/加载失败/实例化失败 → ConfigError——router 拼错会静默落默认实现,
+    宁可装配期炸掉(strict,同 ``_prices``/``_credentials`` 先例)。
+    """
+    dotted = cfg.get("router")
+    if dotted is None:
+        return None
+    if not isinstance(dotted, str) or not dotted:
+        raise ConfigError(f"[providers] router 须为 'pkg.mod:Class' 字符串,得到: {dotted!r}")
+    cls = _load_dotted(dotted)
+    try:
+        return cls()
+    except Exception as e:  # 实例化失败归配置装配错误(退出码 4)
+        raise ConfigError(f"[providers] router {dotted!r} 无参实例化失败: {e}") from e
 
 
 def _sandbox_kernel(mode: str) -> Any | None:
@@ -902,9 +925,14 @@ def build_kernel(
                 raise ConfigError(f"[mcp] server 装配失败(eager 连接): {e}") from e
 
     builder = KernelBuilder(run_cfg).tools(registry).logic_kernels(*logic)
-    providers = _providers(cfg.get("providers") or {})
+    providers_cfg = cfg.get("providers") or {}
+    providers = _providers(providers_cfg)
     if providers:
         builder.providers(*providers)
+    router = _providers_router(providers_cfg)
+    if router is not None:
+        # §4.2 ModelRouter 扩展点:[providers] router 自定义实现;缺省由 builder 落 DefaultModelRouter
+        builder.router(router)
     skills_cfg = _skills_section(cfg.get("skills") or {})
     skills_path = skills_cfg.get("path")
     if skills_path:

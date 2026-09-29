@@ -29,6 +29,19 @@ async def pure_add(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     return {"sum": input["a"] + input["b"]}
 
 
+async def chat_probe(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """ctx.chat(§9.3 impl 扩展)驱动:发一条消息,回报模型应答文本。
+
+    ``with_image`` 时消息带多模态 parts(WS1)——ModelRouter 的 vision caps
+    探测据此跳过无 vision 能力的候选(providers/router.py 接线断言用)。
+    """
+    from agent_os.api.v1 import ContentPart, Message, Role
+
+    parts = [ContentPart()] if input.get("with_image") else None
+    resp = await ctx.chat([Message(role=Role.USER, content="hi", parts=parts)])
+    return {"content": resp.message.content}
+
+
 async def set_timer_probe(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """经 ctx.call_tool 调 system.timer.set(WS1 timer 工具面/run 收尾接线测试用)。"""
     r = await ctx.call_tool("system.timer.set", dict(input.get("args") or {}))

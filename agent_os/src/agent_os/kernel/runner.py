@@ -217,6 +217,7 @@ class Kernel:
         supervisor: Any = None,  # SupervisorManager(docs/SUPERVISOR.md §2.3;S1 handler 通道)
         stack: FrameStack | None = None,
         human_approval: Any = None,  # HumanApproval 策略载体(WS2 下沉,docs/SUPERVISOR.md §10;None=关)
+        router: Any = None,  # ModelRouter(§4.2 扩展点;ctx.chat 路由,None=内联解析)
     ) -> None:
         self.config = config or RunConfig()
         self.providers = providers
@@ -235,6 +236,9 @@ class Kernel:
         #: (``_confirm_tool_call``);其 timeout/on_timeout 已在装配期映射为
         #: supervisor 通道的缺省策略(见 KernelBuilder.build)
         self.human_approval = human_approval
+        #: ModelRouter(§4.2 扩展点,DefaultModelRouter 为 v1 默认实现):KernelBuilder
+        #: 装配期注入;KernelLogicContext.chat 经它路由(None = 内联解析,防御)
+        self.router = router
         self._runs: dict[str, Run] = {}
         #: run 中止标志表(dict[run_id, reason];RunControl.stop 置位,
         #: runner 在 pre:step safe point 检查并抛 RunAborted,§3.1/§5.2)

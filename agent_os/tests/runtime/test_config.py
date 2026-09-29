@@ -1054,3 +1054,63 @@ def test_mcp_http_unknown_keys_still_rejected():
     """新键就位后未知键仍拒(如 headers 拼成 header)。"""
     with pytest.raises(ConfigError, match="未知字段"):
         _mcp_servers(_mcp_srv(url="https://mcp.example.com/mcp", header={"A": "1"}))
+
+
+# ---------------------------------------------------------------------------
+# [providers] router(§4.2 ModelRouter 扩展点;dotted path 无参实例化)
+# ---------------------------------------------------------------------------
+
+
+def test_default_router_assembled():
+    """缺省:装配 DefaultModelRouter,注入默认 ContextManager 与 kernel.router。"""
+    from agent_os.providers.router import DefaultModelRouter
+
+    kernel = build_kernel(_base_cfg())
+    assert isinstance(kernel.router, DefaultModelRouter)
+    assert kernel.context._router is kernel.router
+
+
+def test_custom_router_instantiated_and_used():
+    """[providers] router:无参实例化替换默认实现;三处解析点之一(build)改走它。"""
+    from tests.helpers import routers
+
+    routers.CALLS.clear()
+    cfg = _base_cfg(
+        providers={
+            "mock": {"brain": "tests.helpers.brains:fib_brain"},
+            "router": "tests.helpers.routers:FixedRouter",
+        }
+    )
+    kernel = build_kernel(cfg)
+    assert isinstance(kernel.router, routers.FixedRouter)
+    assert kernel.context._router is kernel.router
+
+    result = asyncio.run(kernel.run("demo.fib", {"n": 3}))
+
+    assert result == {"seq": [0, 1, 1]}  # fib brain 与模型串无关,run 照常
+    assert routers.CALLS  # route 被调用
+    assert routers.CALLS[0][1] == ["mock/fib"]  # manifest model.prefer 透传
+    recorded = kernel.providers.providers["mock"].recorded
+    assert recorded and all(r.model == "mock/routed" for r in recorded)  # 改写生效
+
+
+@pytest.mark.parametrize(
+    ("value", "match"),
+    [
+        (42, "router 须为"),  # 非字符串
+        ("no-colon", "dotted path 应为"),  # 非 dotted path
+        ("tests.helpers.routers:Missing", "无法加载 dotted path"),  # 属性不存在
+        ("tests.helpers.no_such_module:FixedRouter", "无法加载 dotted path"),  # 模块不存在
+        ("tests.helpers.routers:ExplodingRouter", "无参实例化失败"),  # 实例化即炸
+    ],
+)
+def test_custom_router_bad_value_rejected(value, match):
+    """非法 router 值 strict 拒绝(ConfigError;同 _prices/_credentials 先例)。"""
+    cfg = _base_cfg(
+        providers={
+            "mock": {"brain": "tests.helpers.brains:fib_brain"},
+            "router": value,
+        }
+    )
+    with pytest.raises(ConfigError, match=match):
+        build_kernel(cfg)

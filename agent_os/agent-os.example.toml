@@ -28,6 +28,11 @@ compression = "hierarchical"          # off = 消融档(裸模型基线)
 # [providers.mock]
 # brain = "my_tests.brains:fib_brain"
 
+# 自定义模型路由(§4.2 ModelRouter 扩展点;dotted path 无参实例化,加载/实例化失败 ConfigError。
+# 缺省 DefaultModelRouter:静态 prefer 链 + caps 探测 tools/vision,fail-open 落链首)
+# [providers]
+# router = "my_pkg.routers:MyRouter"
+
 [tools]
 builtins = true                       # 内置工具面(22 件规范名:system.file.*/shell/net/blob/time/task/skill/memory/user 等,旧扁平名留别名)
 python_exec = "docker"                # docker(推荐,需本机 docker)| subprocess | off (对应 system.python.exec)

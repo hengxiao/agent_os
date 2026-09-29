@@ -5,9 +5,11 @@ from .kimi import KimiProvider
 from .manager import ProviderManager
 from .mock import MockProvider
 from .openai_compatible import OpenAICompatibleProvider
+from .router import DefaultModelRouter
 
 __all__ = [
     "ClaudeProvider",
+    "DefaultModelRouter",
     "KimiProvider",
     "MockProvider",
     "OpenAICompatibleProvider",

@@ -153,7 +153,7 @@ manager.py:179)、`supervisor.timeout`。channel 标签由 handler 的
 
 ## 5. 效果与验证(效果)
 
-**测试证据**(全绿,属 Python 1795 例基线的一部分):
+**测试证据**(全绿,属 Python 1818 例基线的一部分):
 
 - `tests/kernel/test_supervisor.py`:**12 例**,覆盖 §9 锚点清单的内核侧——handler
   闭环、就地挂起(挂起期间父帧 await 点不动)、pending ask 阻止 run 提前判完成、

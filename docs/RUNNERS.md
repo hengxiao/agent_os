@@ -50,6 +50,11 @@ compression = "hierarchical"        # off|truncate|spill|summarize|hierarchical;
 # base_url = "http://localhost:8000/v1"   # vLLM/Ollama 等兼容端点
 # api_key_env = "OPENAI_API_KEY"
 
+# [providers]
+# router = "my_pkg.routers:MyRouter"  # 自定义模型路由(§4.2 ModelRouter 扩展点;dotted 无参实例化,
+                                      # 加载/实例化失败 ConfigError;缺省 DefaultModelRouter:prefer 链
+                                      # 按序探测 caps(tools/vision),fail-open 落链首)
+
 [tools]
 builtins = true                     # 内置工具面(22 件规范名:system.file.*/shell/net/blob/time/task/skill/memory/user 等,旧扁平名留别名)
 python_exec = "docker"              # docker | subprocess | off

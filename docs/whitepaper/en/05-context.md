@@ -45,14 +45,14 @@ The Context subsystem is the sole owner of the frame context (`FrameContext`). B
 │         + python_orchestrate (declared AND RunConfig.on)     │
 │         + ask_supervisor     (declared AND channel installed)│
 │         + skill.<name> pseudo-tools (minus inline-hidden)    │
-│ model   manifest.model.prefer[0] → RunConfig.model           │
+│ model   ModelRouter (caps-probed [*prefer, RunConfig.model]) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 Key decision logic (`context/manager.py:99-152`):
 
 - Both pseudo-tools are **absent from the tool registry** (the kernel intercepts them at dispatch); build adds them to the visible surface per "declaration + ablation/assembly switch" (:112-126). The trade-off for `ask_supervisor` is written into the comment: without a supervisor channel installed, the model would only get `not_found` for calling it, so it is better not to show it at all (:118-119).
-- Model resolution order: manifest `prefer[0]` wins, falling back to `RunConfig.model`; same for temperature (:133-141). Skill authors can pin a model; the host keeps the fallback.
+- Model resolution goes through the `ModelRouter` (router block :252-258; inline fallback :232-240): the default `DefaultModelRouter` (landed 2026-09-29, `providers/router.py`) deduplicates the candidate chain `[*prefer, RunConfig.model]` in order, resolves each candidate's prefix, and probes capabilities (a non-empty `req.tools` requires `supports_tools`, any `message.parts` requires `supports_vision`); the first candidate passing all checks wins. When none pass, it fails open onto the chain head — the same semantics as the old `prefer[0]`. Skill authors can pin `prefer`; the host's `RunConfig.model` stays the fallback; temperature resolution is unchanged (manifest wins, else config). With `router=None` (bare assembly), the inline `prefer[0]` resolution is used.
 - The status message is only **appended at the request tail** and never written back to `frame.context.messages` (:143-146) — dynamic data goes at the end, the static prefix stays untouched. That is how invariant 5 is implemented.
 
 ### 4.3 Inline-Capability Section: Snapshot Frozen on First build

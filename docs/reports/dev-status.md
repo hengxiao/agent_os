@@ -487,6 +487,30 @@
 > 下文 §3(Tool Registry)开口表述同步复核(2026-09-29 行)。
 > 全量基线:1795 收集 = 1752 passed + 10 skipped + 40 xfailed,0 失败。
 
+> ✅ **复核 2026-09-29(ModelRouter v1 落地)**:
+> DESIGN §4.2"prefer 按序探测能力匹配"兑现(此前只取 `prefer[0]`
+> 无探测);下文 §2 Providers 开口"ModelRouter 动态路由实现"据此
+> 关闭,dated 原文保留(见该节 2026-09-29 行)。
+> ① **`DefaultModelRouter`**(`providers/router.py`,契约
+> `api/v1/providers.py:141-149` 首个实现)——候选链
+> `[*prefer, config.model]` 去重保序,逐候选 resolve 前缀(未注册
+> 跳过)+ caps 探测(`req.tools` 非空要 `supports_tools`、任一
+> `message.parts` 非空要 `supports_vision`),首个全过 →
+> `(model, {"temperature": req.temperature})`;**全不过 fail-open**
+> (warn + 落链首,语义同旧 `prefer[0]` 直取,模型串原样上送,
+> 调用期报错归位不变)。
+> ② **三处接线**(统一模式:router=None 回退旧内联,直接构造者
+> 向后兼容)——`ContextManager.build` / `MinimalContextManager.build`
+> / `ctx.chat`(`kernel/logic_context.py`,经 `Kernel.router`);
+> 装配:builder 在 providers 建成后装 router → `ContextManager.default`
+> 与 Kernel,嵌入方自装 manager 自负。
+> ③ **配置**——`[providers] router = "pkg.mod:Class"`(dotted 无参
+> 实例化,strict,加载/实例化失败 ConfigError;缺省
+> DefaultModelRouter),`agent-os.example.toml` 已注。
+> **仍开口**:健康度/错误率反馈路由(无数据源)、fallback 动态化、
+> prefer 通配符匹配、params 超 temperature 键。
+> 全量基线:1818 收集 = 1775 passed + 10 skipped + 40 xfailed,0 失败。
+
 ## 一、总览
 
 - **里程碑**:M0–M5 完成(其中 M5 拆为 a/b/c 三个子提交);**M6(演化)未开始**。
@@ -524,6 +548,7 @@
 
 - **复核 2026-08-24**:Anthropic 原生适配器已实现(`providers/claude.py`,另有 `providers/kimi.py`);真实 `stream()` 仍为 stub(`openai_compatible.py:104` 标 M1、`claude.py:99` 标 M5);ModelRouter 仍只有契约(`api/v1/providers.py:142`);其余各项抽查仍成立。
 - **复核 2026-09-27(流式批)**:真实 `stream()` 已实填(`openai_compatible.py:104` SSE、`claude.py:100` Anthropic 事件序列,KimiProvider 继承;Manager 提交点语义 `manager.py:195-258`),runner 消费与 ttft 记账同步落地(见头部复核块);ModelRouter 仍只有契约(`api/v1/providers.py:141`),logprobs/多模态精确口径仍开口。
+- **复核 2026-09-29(ModelRouter v1)**:`DefaultModelRouter` 已落地(`providers/router.py`,契约 `api/v1/providers.py:141-149` 首个实现)——候选链 `[*prefer, config.model]` 去重保序,逐候选 resolve 前缀 + caps 探测(tools/vision),首个全过胜出,全不过 fail-open 落链首(语义同旧 `prefer[0]` 直取);三处接线(`ContextManager.build` / `MinimalContextManager.build` / `ctx.chat`,router=None 回退内联)+ `[providers] router = "pkg.mod:Class"` 配置键(strict,缺省 DefaultModelRouter);router 侧仍开口:健康度/错误率反馈路由(无数据源)、fallback 动态化、prefer 通配符匹配、params 超 temperature 键;logprobs/多模态精确口径仍开口。
 
 ### 3. Tool Registry — ✅ ~80%
 

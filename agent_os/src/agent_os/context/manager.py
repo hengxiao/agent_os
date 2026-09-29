@@ -141,6 +141,7 @@ class ContextManager:
         recall_k: int = 3,
         recall_entry_chars: int = 800,
         recall_total_chars: int = 2000,
+        router: Any = None,
     ) -> None:
         self._skills = skills
         self._tools = tools
@@ -171,6 +172,10 @@ class ContextManager:
         self._recall_k = recall_k
         self._recall_entry_chars = recall_entry_chars
         self._recall_total_chars = recall_total_chars
+        #: ModelRouter(§4.2 扩展点,DefaultModelRouter 为 v1 默认实现):装配期由
+        #: KernelBuilder 注入;``None`` = 退回下方内联解析(prefer[0] → RunConfig),
+        #: 向后兼容未经 builder 的直接构造者
+        self._router = router
 
     @classmethod
     def default(
@@ -238,12 +243,20 @@ class ContextManager:
             # §7.3 状态注入:只进请求尾部(ephemeral),不写回 frame.context.messages;
             # 数据只来自内核记账,绝不来自工具内容(模型无条件信任状态栏)
             messages.append(self._status_message(frame))
-        return ChatRequest(
+        req = ChatRequest(
             model=model,
             messages=messages,
             tools=tools,
             temperature=temperature,
         )
+        if self._router is not None:
+            # §4.2 模型路由扩展点(builder 装配 DefaultModelRouter):静态 prefer 链 +
+            # caps 探测,fail-open——与上方内联解析同候选序,择优结果覆盖回 req
+            prefer = list(manifest.model.prefer) if manifest.model is not None else None
+            model, params = await self._router.route(req, prefer)
+            req.model = model
+            req.temperature = params.get("temperature", req.temperature)
+        return req
 
     async def _inline_caps(self, frame: SkillFrame, manifest: Any) -> dict[str, Any] | None:
         """内联能力段快照(docs/SKILL-INLINING.md §4)。
@@ -580,13 +593,17 @@ class MinimalContextManager:
     只做组装:SYSTEM(技能指令体经 ``str.format(**frame.input)`` 渲染)+ 帧上下文
     + 帧白名单内工具 schema + 白名单内子技能伪工具 schema(``skill.<name>``);
     model/temperature 取技能 ``model.prefer[0]``/``model.temperature``,缺省回落
-    RunConfig。**不做**状态注入与压缩(M3),``maintain`` 为 no-op。
+    RunConfig(装配了 ModelRouter 时改由 router 按静态 prefer 链 + caps 探测择优,
+    fail-open 见 providers/router.py)。**不做**状态注入与压缩(M3),
+    ``maintain`` 为 no-op。
     """
 
-    def __init__(self, *, skills, tools, config) -> None:
+    def __init__(self, *, skills, tools, config, router=None) -> None:
         self._skills = skills
         self._tools = tools
         self._config = config
+        #: ModelRouter(§4.2 扩展点):None = 退回内联解析(向后兼容直接构造者)
+        self._router = router
 
     async def build(self, frame: SkillFrame) -> ChatRequest:
         skill = self._skills.get(frame.skill)
@@ -610,12 +627,20 @@ class MinimalContextManager:
             if manifest.model is not None and manifest.model.temperature is not None
             else self._config.temperature
         )
-        return ChatRequest(
+        req = ChatRequest(
             model=model,
             messages=[system, *frame.context.messages],
             tools=tools,
             temperature=temperature,
         )
+        if self._router is not None:
+            # §4.2 模型路由扩展点(同 ContextManager.build 接线):静态 prefer 链 +
+            # caps 探测,fail-open;择优结果覆盖回 req
+            prefer = list(manifest.model.prefer) if manifest.model is not None else None
+            model, params = await self._router.route(req, prefer)
+            req.model = model
+            req.temperature = params.get("temperature", req.temperature)
+        return req
 
     async def maintain(self, frame: SkillFrame) -> None:
         """no-op:压缩与状态注入属 M3。"""

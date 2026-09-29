@@ -43,14 +43,14 @@ Context 子系统是帧上下文(`FrameContext`)的全权管理者:每次 LLM �
 │         + python_orchestrate(manifest 声明 且 RunConfig.on)   │
 │         + ask_supervisor    (manifest 声明 且内核装了通道)    │
 │         + skill.<name> 伪工具(过滤被 inline 隐藏的)         │
-│ model   manifest.model.prefer[0] → RunConfig.model            │
+│ model   ModelRouter 择优([*prefer, RunConfig.model] 链)      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 关键判定逻辑(`context/manager.py:99-152`):
 
 - 两个伪工具**不在工具注册表**(内核分发时拦截),由 build 按"声明 + 消融/装配开关"补进可见工具面(:112-126)。`ask_supervisor` 的取舍写在注释里:内核没装 supervisor 通道时,模型调了也只能吃 `not_found`,不如不呈现(:118-119)。
-- model 解析顺序:manifest `prefer[0]` 优先,空则回落 `RunConfig.model`;temperature 同理(:133-141)。技能作者可以钉模型,宿主可以兜底。
+- model 解析走 `ModelRouter`(router 块 :252-258;内联兜底 :232-240):缺省 `DefaultModelRouter`(2026-09-29 落地,`providers/router.py`)把候选链 `[*prefer, RunConfig.model]` 去重保序,逐候选 resolve 前缀 + caps 探测(`req.tools` 非空要 `supports_tools`、任一 `message.parts` 非空要 `supports_vision`),首个全过胜出;全不过 fail-open 落链首——语义同旧 `prefer[0]` 直取。技能作者可以钉 prefer,宿主 `RunConfig.model` 兜底;temperature 解析不变(manifest 优先,否则 config)。`router=None`(裸装配)时回退内联 `prefer[0]` 解析。
 - 状态消息只在请求尾部**追加**,绝不写回 `frame.context.messages`(:143-146)——动态信息走末尾,静态前缀不动,这就是不变量 5 的实现姿势。
 
 ### 4.3 内联能力段:首次 build 冻结快照

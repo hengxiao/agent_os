@@ -299,6 +299,7 @@ GET    /api/runs/{id}/frames/{fid}   → 帧完整上下文(messages 逐条、us
 POST   /api/runs/{id}/stop           → RunControl.stop
 POST   /api/runs/{id}/pause          → RunControl.pause(可恢复挂起;可选 {"reason"},缺省 "web pause";仅 running 生效,否则 409)
 POST   /api/runs/{id}/resume         → 从 checkpoint 恢复(aborted/paused 均可)
+POST   /api/events                   → 外部事件唤醒入口(2026-09-29)。请求 {type(必填非空), payload=dict|str, target?:{run_id}, skill?, input?, wait?};三通道:target 且 running → 注入根帧(ctl.inject_message,USER/INJECTED)→ {action:"injected"};target 且 paused → checkpoint 根帧注入事件后 resume → {action:"resumed"};无 target → skill 必填起新 run(input 缺省 {"event":{...}},wait/principal 透传)→ {action:"started"}。错误语义:缺 type/skill 400;未知 run 404;注入失败/paused checkpoint 坏或缺根帧/run 终态 409。路由成功后 per-run hub 投 event.received received/routed 两条(SSE 可见;刻意不进 api/v1、不写 trace.jsonl)
 GET    /api/runs/{id}/stream         → SSE:先回放缓冲,后实时信号
 GET    /api/skills                   → 已加载技能清单(manifest 摘要)
 POST   /api/skills/reload            → 热重载 skills.yaml
@@ -345,4 +346,4 @@ POST   /api/skills/reload            → 热重载 skills.yaml
 
 ## 7. 非目标
 
-多用户与权限、持久化队列/分布式 worker、生产级部署形态、前端框架化(npm/构建链)、run 的定时调度与事件唤醒(§17 开放问题 4)、CLI 的交互式 TUI。
+多用户与权限、持久化队列/分布式 worker(含持久事件队列)、生产级部署形态、前端框架化(npm/构建链)、run 的定时调度与事件批处理(外部事件唤醒入口已有宿主形态:POST /api/events 三通道,2026-09-29,见 §4.3)、CLI 的交互式 TUI。

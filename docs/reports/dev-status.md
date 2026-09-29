@@ -398,6 +398,29 @@
 > **仍开口**:多版本求解/range(裁决不做)、默认重放 + evaluator 实现(挂点已就位)、
 > watch 线程的内核 close 钩子(现生命周期随进程)。
 > 全量基线:1739 收集 = 1696 passed + 10 skipped + 40 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-29(外部事件唤醒入口宿主层落地)**:DESIGN §17 开放问题 4
+> 主体据此关闭(宿主层已答)。
+> ① **POST /api/events 三通道**(`host/web/app.py:819`)——body
+> `{type(必填非空), payload=dict|str, target?:{run_id}, skill?, input?, wait?}`;
+> target 且 running → `inject_event`(跨线程桥 `ctl.inject_message` 根帧,
+> USER/INJECTED)→ action="injected"(失败 409);target 且 paused →
+> `resume_run(inject=[文本])`:checkpoint 根帧(depth 最小)context.messages
+> 追加 `{role:"user", source:"injected", content, meta:{"event":{...}}}`(逐字
+> 对齐 `_message_to_dict` 落盘形)后 execute_resume → action="resumed"(文件坏/
+> 无根帧 409);终态 409,未知 run 404;无 target:skill 必填(缺 400)→
+> start_run(input 缺省 `{"event":{...}}`,wait/principal 透传)→
+> action="started"。事件文本 `[event:{type}] {json 紧凑}` 截 2000 字符。
+> ② **event.received 宿主信号**(`run_manager.py` EVENT_RECEIVED)——路由成功后
+> 经 per-run hub 投 received/routed 两条,SSE 实时与回放可见;刻意不进 api/v1、
+> 不写 trace.jsonl(故 GET signals 端点对终态 run 不可见,取舍已注)。
+> ③ **内核零改动、契约零改动**,鉴权复用 Bearer 中间件,principal 透传——ch00
+> "内核保持回合制、唤醒源留给宿主"的宿主层兑现。
+> **仍开口**:事件批处理/queued 策略/status bar 标记(ch04:56/:60)、initiate_X
+> 命名约定(纯文档,已落 SKILL-DEV.md §6)、`monitor_shell`/`connect_channel`、
+> 持久事件队列/调度、event.received 是否升格内核契约信号(现宿主层)。上文各
+> 复核块「仍开口」中的"外部事件唤醒/挂起与未启动 run 唤醒"条目据此关闭,
+> dated 原文保留。全量基线:1747 收集 = 1704 passed + 10 skipped + 40 xfailed,0 失败。
 
 ## 一、总览
 
@@ -426,6 +449,7 @@
 - **复核 2026-09-27**:`parallel_invoke` fork/join 已落地(`kernel/runner.py:1482-1763`,first-success、幂等结算、并发上限、批内故障隔离全实现;`LogicContext.parallel()` 委托),同批落地子树级联取消(`cancel_subtree`,:1837-1893;`RunControl.cancel_frame`)与子树记账读视图(`subtree_usage`,:1951-1988;`RunControl.get_subtree_usage`);spawn 的"未确认完成不得宣称 done"校验 hook 仍开口。
 - **复核 2026-09-27(流式批)**:runner 消费 `stream()` 已落地(`_llm_call`/`_stream_call`,`kernel/runner.py:548-632`,`post:llm.chunk` 仅 ASYNC 观察,ttft/total 入账;边界见头部复核块),异步工具挂起仍开口;两个遗留死 stub 已清理(`kernel/dispatch.py` 整文件删除、`kernel/run.py` 的 `check_control_flags` 移除)。
 - **复核 2026-09-28(压缩链)**:summarize 压缩已有独立连败熔断(默认 3 次,熔断退化纯截断,`context/summarize.py`);恢复熔断通用化仍开口。
+- **复核 2026-09-29(事件入口)**:外部事件唤醒入口已以宿主层形态落地(`POST /api/events` 三通道:running 注入/paused 恢复/无 target 起新 run;内核零改动,见头部复核块)——本条就此关闭;其余开口(事件批处理、`monitor_shell`/`connect_channel`、持久事件队列/调度、`event.received` 是否升格内核契约信号)归宿主层与文档范畴,非内核未开发项。
 
 ### 2. Providers — ✅ ~75%
 
@@ -538,6 +562,8 @@
 (**复核 2026-09-28**:蒸馏 sidecar 已关闭(见头部复核块);OTLP、"不说 done" hook、恢复熔断通用化仍开口。)
 
 **P3(开放问题)**:事件唤醒入口;语义检索可见层;FrameContext 继承/克隆;帧树粒度信用分配。
+
+(**复核 2026-09-29**:事件唤醒入口已由宿主层 POST /api/events 三通道兑现(见头部复核块),移出开放问题清单;其余三项仍开口。)
 
 ## 五、建议的下一步
 

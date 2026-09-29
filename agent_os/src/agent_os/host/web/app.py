@@ -17,6 +17,11 @@ P3 增量(Agent OS Debugger):``/api/debug/sessions`` 一族——调试会话
 与 SSE(state/bp_hit/paused/resumed/run_end);每 run 至多一个活跃会话。
 P5 增量(时间旅行):开会话增 ``{replay_run_id, until_step?}`` replay 形态
 (与 ``{skill, input}`` 互斥,响应带 ``mode: "replay"``)。
+
+E4 增量(§17 开放问题 4 外部事件唤醒的宿主层形态):``POST /api/events``
+按目标 run 状态三通道路由——running 注入根帧、paused 追加 checkpoint 后
+resume、无 target 起新 run;事件到达与路由结果经 per-run hub 投
+``event.received``(宿主层信号,不进 api/v1)。
 """
 
 from __future__ import annotations
@@ -187,6 +192,29 @@ class ReloadBody(BaseModel):
     skill_set: str | None = None
 
 
+class EventTarget(BaseModel):
+    """``POST /api/events`` 的 ``target``:定向目标 run(缺省 = 无 target,起新 run)。"""
+
+    run_id: str | None = None
+
+
+class EventBody(BaseModel):
+    """``POST /api/events`` 请求体(§17 开放问题 4 宿主层形态;E4)。
+
+    ``type`` 必填非空(缺省空串,端点统一归 400——不用 pydantic 必填是刻意:
+    校验语义与"无 target 缺 skill"一致,都走 400 而非 422);``payload`` dict
+    或字符串;``target.run_id`` 在场走定向三通道路由,缺省走 ``skill`` 起新
+    run(``input`` 缺省 ``{"event": {"type", "payload"}}``,``wait`` 透传)。
+    """
+
+    type: str = ""
+    payload: dict[str, Any] | str = {}
+    target: EventTarget | None = None
+    skill: str | None = None
+    input: dict[str, Any] | None = None
+    wait: bool = False
+
+
 class SupervisorAnswerBody(BaseModel):
     """``POST /api/supervisor/{question_id}/answer`` 请求体(docs/SUPERVISOR.md §2.4;S2)。"""
 
@@ -338,6 +366,30 @@ class DebugInjectBody(BaseModel):
 
 def _run_dir(artifacts_root: Path, run_id: str) -> Path:
     return artifacts_root / "runs" / run_id
+
+
+#: 事件文本的最大长度(注入根帧/落 checkpoint 前截断,防巨型 payload 灌爆帧上下文)
+_EVENT_TEXT_MAX = 2000
+
+
+def _event_text(event_type: str, payload: dict[str, Any] | str) -> str:
+    """事件 → 注入/落盘的 USER 文本:``[event:<type>] <payload JSON>``(截 2000 字符)。"""
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"[event:{event_type}] {raw}"[:_EVENT_TEXT_MAX]
+
+
+def _run_status(artifacts_root: Path, manager: RunManager, run_id: str) -> str | None:
+    """run 当前状态(E4 路由判据):内存态优先,冷数据从 result.json 重建;未知 run → None。"""
+    state = manager.state_of(run_id)
+    if state is not None:
+        return state.get("status")
+    run_dir = _run_dir(artifacts_root, run_id)
+    if (run_dir / "result.json").is_file():
+        try:
+            return read_result(run_dir).get("status")
+        except (OSError, json.JSONDecodeError):
+            return None  # 产物落盘半写窗口:按未知处理(404,调用方可重试)
+    return None
 
 
 def _detail(artifacts_root: Path, manager: RunManager, run_id: str) -> dict[str, Any] | None:
@@ -763,6 +815,77 @@ def create_app(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"checkpoint 畸形: {e}") from e
         return _jsonable(record)
+
+    @app.post("/api/events")
+    async def post_event(body: EventBody, request: Request) -> dict[str, Any]:
+        """外部事件唤醒入口(§17 开放问题 4 宿主层形态;E4):按目标 run 状态三通道路由。
+
+        - ``target.run_id`` 在场:running → 注入根帧(``inject_event``,投递失败
+          409);paused → checkpoint 根帧追加事件消息后 resume(错误语义沿用
+          resume 端点:404/400/409);终态(done/failed/aborted)→ 409;未知 → 404;
+        - 无 target:``skill`` 必填(缺 → 400)起新 run,``input`` 缺省
+          ``{"event": {"type", "payload"}}``,``wait`` 透传 ``start_run``
+          (校验错沿用 ``POST /api/runs`` 的 ``200 + {"status": "failed"}`` 归口);
+        - 事件到达与路由结果经 per-run hub 投 ``event.received``(宿主层信号,
+          不进 api/v1),SSE/回看可见;principal 透传照 ``POST /api/runs``。
+        """
+        if not body.type:
+            raise HTTPException(status_code=400, detail="事件 type 必填非空")
+        text = _event_text(body.type, body.payload)
+        event_doc = {"type": body.type, "payload": _jsonable(body.payload)}
+        target_run = (body.target.run_id or None) if body.target else None
+        if target_run is not None:
+            status = _run_status(root, manager, target_run)
+            if status is None:
+                raise HTTPException(status_code=404, detail=f"找不到 run: {target_run}")
+            if status == "running":
+                if not await manager.inject_event(target_run, text):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"run {target_run} 无法接收事件(帧不在或刚结束,可重试)",
+                    )
+                manager.emit_event(target_run, {"phase": "received", "event": event_doc})
+                manager.emit_event(
+                    target_run, {"phase": "routed", "action": "injected", "event": event_doc}
+                )
+                return {"ok": True, "action": "injected", "run_id": target_run}
+            if status == "paused":
+                try:
+                    await manager.resume_run(target_run, inject=[text])
+                except FileNotFoundError as e:
+                    raise HTTPException(status_code=404, detail=str(e)) from e
+                except ResumeConflictError as e:
+                    raise HTTPException(status_code=409, detail=str(e)) from e
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=f"checkpoint 畸形: {e}") from e
+                # resume 内换过新 hub 且已关闭:emit 仍入其缓冲,SSE 回放可见
+                manager.emit_event(target_run, {"phase": "received", "event": event_doc})
+                manager.emit_event(
+                    target_run, {"phase": "routed", "action": "resumed", "event": event_doc}
+                )
+                return {"ok": True, "action": "resumed", "run_id": target_run}
+            raise HTTPException(
+                status_code=409,
+                detail=f"run {target_run} 已终态({status}),无法接收事件",
+            )
+        if not body.skill:
+            raise HTTPException(
+                status_code=400, detail="无 target 的事件必须带 skill(起新 run)"
+            )
+        run_input = body.input if body.input is not None else {"event": event_doc}
+        try:
+            run_id = await manager.start_run(
+                body.skill,
+                run_input,
+                wait=body.wait,
+                # D3-lite:Bearer 映射的逐请求身份(未映射 → None,start_run 回落单用户)
+                principal=getattr(request.state, "principal", None),
+            )
+        except RunValidationError as e:
+            return {"status": "failed", "error": str(e)}
+        manager.emit_event(run_id, {"phase": "received", "event": event_doc})
+        manager.emit_event(run_id, {"phase": "routed", "action": "started", "event": event_doc})
+        return {"ok": True, "action": "started", "run_id": run_id}
 
     @app.get("/api/supervisor/pending")
     def list_supervisor_pending() -> list[dict[str, Any]]:

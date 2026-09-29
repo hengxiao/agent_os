@@ -250,7 +250,9 @@ manifest 侧只需 `permissions.tools` 声明 `ask_supervisor`。
    one-shot/recurring),到点 = 经 `ctl.inject_message` 向目标帧注入
    `[timer 到点] {note}` 消息(USER/INJECTED;InjectMessage 通道此前已闭环),
    而非挂起-恢复;计时器为进程态、不随 checkpoint 持久化(resume 重武装留开口);
-   挂起/未启动 run 的外部事件唤醒仍是 DESIGN.md §17 开放问题 4。
+   挂起/未启动 run 的外部事件唤醒原留 DESIGN.md §17 开放问题 4;其主体已于
+   2026-09-29 由宿主层 POST /api/events 三通道兑现(running 注入/paused 恢复/
+   无 target 起新 run,内核零改动,见 DESIGN.md §16 已关闭清单)。
 3. `options` 之外的自由文本与结构化答案(schema 化 answer)要不要分级?
 4. urgency=high 在收件箱里要不要打断性呈现(而不仅是排序)?
 5. handler 是 per-run 注入还是 per-frame 可覆盖(粗粒度 v1 只到 run)?

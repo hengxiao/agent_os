@@ -293,3 +293,23 @@ L4 依赖 L1-L3(助手改的是同一草稿、查的是同一闸门、试的是�
 - 不做 skill 市场/分发(Provenance 信任链是 M6 的事);
 - 不做助手自动 promote(永远人点提交);
 - 不做可视化拖拽编排(文本契约是唯一事实源,编辑器是契约的视图)。
+
+---
+
+## 6. 异步工具 initiate_X 命名约定(2026-09-29)
+
+长耗时、结果异步到达的工具(外呼、等回调、跨系统长任务)采用 `initiate_X`
+命名(ch04:59):`initiate_` 前缀把"发起"与"完成"解耦——调用**立即返回
+task id 与初始状态**,不占工具调用回合空等结果;**完成走事件通知**,经事件
+入口回灌 run。名称与 description 本身要传达异步语义,靠模型的语言理解力自然
+推断,不依赖额外协议。
+
+现行两条通道:
+
+- `system.timer.set`(std 包装 `common.task.set_timer`):延时/周期触发的内置
+  形态,到点经 `ctl.inject_message` 注入调用帧(USER/INJECTED);
+- `POST /api/events`(宿主事件入口,2026-09-29,RUNNERS.md §4.3):外部事件源
+  → running 注入 / paused 恢复 / 无 target 起新 run 三通道。
+
+仍开口:事件批处理与 queued 策略/status bar 标记(ch04:56/:60)、
+`monitor_shell`/`connect_channel`、持久事件队列与调度。

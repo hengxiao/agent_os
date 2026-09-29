@@ -88,6 +88,18 @@ M1 增量(§8.3 User Communication;tests/web/test_user_channel.py 锚点):
   pending/answer 管路);notify 回调 no-op——可观测面在工具层补发的
   ``user.notify`` 信号(带 run/frame 归因,经 per-run hub 进 SSE、经
   telemetry 落 trace.jsonl;收件箱无免答条目形态)。
+
+E4 增量(§17 开放问题 4 外部事件唤醒的宿主层形态;tests/web/test_events_api.py 锚点):
+
+- ``inject_event``:在跑 run 的事件注入——``run_coroutine_threadsafe`` 桥到
+  run worker 循环内查 ``ctl.get_frame_tree`` 取根帧(depth 最小)并
+  ``ctl.inject_message`` 追加 USER/INJECTED 消息;worker 循环句柄逐 run 在
+  首个内核信号时捕获(``_run_loops``,与调试命令桥同构);
+- ``resume_run(..., inject=...)``:paused 唤醒——resume 前向 checkpoint.json
+  根帧的 ``context.messages`` 追加事件消息(dict 形状逐字对齐内核
+  ``_message_to_dict`` 落盘形态),写回后走原 execute_resume 路径;
+- ``emit_event`` + ``EVENT_RECEIVED``:事件到达与路由结果经 per-run hub 投
+  ``event.received`` 行(宿主层信号,刻意不进 api/v1),SSE/回看可见。
 """
 
 from __future__ import annotations
@@ -113,8 +125,10 @@ from agent_os.api.v1 import (
     Mode,
     Principal,
     Question,
+    Role,
     RunControl,
     Signal,
+    Source,
     web_single_user_principal,
 )
 from agent_os.host.shared.artifacts import execute_resume, execute_run
@@ -215,6 +229,32 @@ class ResumeConflictError(RuntimeError):
 
 class DebugConflictError(RuntimeError):
     """已有活跃调试会话(P3:每 run 至多一个活跃会话);路由层归 409。"""
+
+
+#: 宿主层事件信号名(§17 开放问题 4:``POST /api/events`` 的到达/路由可观测面)。
+#: 刻意**不进 api/v1**——事件入口是宿主层形态,内核信号枚举零改动;行形状与
+#: :func:`signal_row` 输出一致,SSE/回看消费面无感。
+EVENT_RECEIVED = "event.received"
+
+
+def _event_type_of(text: str) -> str:
+    """从事件文本的 ``[event:<type>]`` 前缀解析事件类型;无前缀(调用方自定义文本)归 ``"unknown"``。"""
+    if text.startswith("[event:") and "]" in text:
+        return text[len("[event:"):text.index("]")]
+    return "unknown"
+
+
+def _root_frame_id(tree: list[dict[str, Any]]) -> str | None:
+    """帧树(``ctl.get_frame_tree`` 的嵌套 dict)中 depth 最小节点的 frame_id;空树 → None。"""
+    best: tuple[int, Any] | None = None
+    stack = list(tree)
+    while stack:
+        node = stack.pop()
+        depth = node.get("depth", 0)
+        if best is None or depth < best[0]:
+            best = (depth, node.get("frame_id"))
+        stack.extend(node.get("children") or [])
+    return best[1] if best else None
 
 
 def _jsonable(value: Any) -> Any:
@@ -400,6 +440,10 @@ class RunManager:
         #: run_coroutine_threadsafe 投递(asyncio.Event 无跨线程亲和性)
         self._debug = DebugController()
         self._debug_loops: dict[str, asyncio.AbstractEventLoop] = {}
+        #: E4 事件注入桥:run_id → run worker 事件循环(逐 run 首个内核信号时捕获,
+        #: run 收尾摘除);``inject_event`` 经 run_coroutine_threadsafe 投递过去
+        #: (与调试命令桥 ``_debug_loops`` 同构,但不依赖调试会话)
+        self._run_loops: dict[str, asyncio.AbstractEventLoop] = {}
 
     def skillsets(self) -> dict[str, Path]:
         """全部 set(name → 目录,按名字序;``GET /api/skillsets`` 数据源,D6)。"""
@@ -647,7 +691,13 @@ class RunManager:
                 async def _cap(sig: Signal) -> None:
                     _register(sig.run_id)
 
+                async def _cap_run_loop(sig: Signal) -> None:
+                    # E4 事件注入桥:worker 事件循环句柄(REST 侧跨线程投递用);
+                    # 订 "*" 而非 RUN_STARTED——resume 路径不补发 run.started
+                    self._run_loops[sig.run_id] = asyncio.get_running_loop()
+
                 kernel.signals.subscribe("*", _fan)
+                kernel.signals.subscribe("*", _cap_run_loop)
                 if debug_session is not None:
                     # P3:调试控制器在 hub 之后订阅(暂停前信号已落 hub/trace),
                     # 在 _cap 之前订阅(start_run 返回时会话已绑定 run)
@@ -673,6 +723,7 @@ class RunManager:
                 state["status"] = STATUS_FAILED
                 state["error"] = f"{type(e).__name__}: {e}"
             finally:
+                self._run_loops.pop(holder.get("run_id") or "", None)  # E4:循环随 run 收尾摘除
                 started.set()  # run 未开始的失败也要唤醒 start_run
                 done.set()
                 hub.close()
@@ -735,13 +786,19 @@ class RunManager:
         await ctl.pause(run_id, reason)
         return True
 
-    async def resume_run(self, run_id: str) -> dict[str, Any]:
+    async def resume_run(self, run_id: str, inject: list[str] | None = None) -> dict[str, Any]:
         """``POST resume``(§4.3):从该 run 产物目录的 checkpoint.json 恢复 run。
 
         用同一 config 新建内核,经 ``execute_resume`` 恢复;产物(result/checkpoint)
         与内存态写回原 run。阻塞到恢复结束,返回 RunRecord dict。checkpoint 缺失
         抛 ``FileNotFoundError``(路由层归 404),畸形抛 ``ValueError``(归 400),
         在途 run 抛 :class:`ResumeConflictError`(归 409)。
+
+        ``inject``(E4,§17 开放问题 4 的 paused 唤醒通道):在场时先向
+        checkpoint.json **根帧**(depth 最小)的 ``context.messages`` 追加事件
+        消息再写回,随后走原 execute_resume 路径——恢复出的根帧带着事件进
+        loop。文件坏/无根帧抛 :class:`ResumeConflictError`(归 409:事件投递
+        失败按目标状态冲突处理,调用方可重试)。
         """
         run_dir = self._artifacts_root / "runs" / run_id
         checkpoint_path = run_dir / "checkpoint.json"
@@ -750,6 +807,8 @@ class RunManager:
         state = self.state_of(run_id)
         if state is not None and state.get("status") == "running":
             raise ResumeConflictError(f"run {run_id} 仍在进行,不能 resume")
+        if inject:
+            self._inject_into_checkpoint(checkpoint_path, inject)
         hub = SignalHub()  # 原 hub 已随首次 run 关闭;resume 期间换新,SSE 可继续观察
         with self._lock:
             self._hubs[run_id] = hub
@@ -769,7 +828,12 @@ class RunManager:
                 async def _fan(sig: Signal) -> None:
                     hub.publish(signal_row(sig))
 
+                async def _cap_run_loop(sig: Signal) -> None:
+                    # E4 事件注入桥:worker 循环句柄(resume 不补发 run.started,订 "*")
+                    self._run_loops[sig.run_id] = asyncio.get_running_loop()
+
                 kernel.signals.subscribe("*", _fan)
+                kernel.signals.subscribe("*", _cap_run_loop)
                 record = execute_resume(
                     kernel, checkpoint_path, artifacts_root=self._artifacts_root, host="web"
                 )
@@ -779,10 +843,105 @@ class RunManager:
                 state["status"] = STATUS_FAILED
                 raise
             finally:
+                self._run_loops.pop(run_id, None)  # E4:循环随 run 收尾摘除
                 hub.close()
 
         await asyncio.to_thread(_work)
         return state["record"]
+
+    @staticmethod
+    def _inject_into_checkpoint(checkpoint_path: Path, inject: list[str]) -> None:
+        """向 checkpoint.json 根帧(depth 最小)的 ``context.messages`` 追加事件消息并写回(E4)。
+
+        消息 dict 逐字对齐内核 ``_message_to_dict`` 的落盘形状(role/source 落
+        枚举值、空 parts 不落键);``meta.event.type`` 从事件文本的
+        ``[event:<type>]`` 前缀解析(见 :func:`_event_type_of`)。文件不可读
+        (JSON 坏)/无帧/根帧缺 ``context.messages`` → :class:`ResumeConflictError`
+        (409:事件投递失败,与在途冲突同族,调用方可重试)。
+        """
+        try:
+            doc = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise ResumeConflictError(f"checkpoint 不可读,事件无法投递: {e}") from e
+        frames = doc.get("frames") or []
+        root = min(frames, key=lambda f: f.get("depth", 0), default=None)
+        messages = ((root or {}).get("context") or {}).get("messages")
+        if not isinstance(messages, list):
+            raise ResumeConflictError("checkpoint 无根帧消息列,事件无法投递")
+        for text in inject:
+            messages.append(
+                {
+                    "role": Role.USER.value,
+                    "content": text,
+                    "tool_calls": [],
+                    "tool_call_id": None,
+                    "name": None,
+                    "reasoning": None,
+                    "source": Source.INJECTED.value,
+                    "meta": {"event": {"type": _event_type_of(text)}},
+                }
+            )
+        checkpoint_path.write_text(
+            json.dumps(doc, ensure_ascii=False, indent=2, default=repr), encoding="utf-8"
+        )
+
+    async def inject_event(self, run_id: str, text: str) -> bool:
+        """``POST /api/events`` 的在跑注入通道(E4):向根帧追加 USER/INJECTED 消息。
+
+        根帧 = ``ctl.get_frame_tree`` 中 depth 最小者;查帧树与追加消息经
+        ``run_coroutine_threadsafe`` 桥到 run worker 的事件循环内完成(与调试
+        inject 同桥,``_run_loops`` 在首个内核信号时捕获)——不与 runner 的
+        消息组装竞态。run 不在跑 / 无 ctl / worker 循环句柄不在 / 帧树为空
+        → ``False``(路由层归 409)。
+        """
+        state = self.state_of(run_id)
+        if state is None or state.get("status") != "running":
+            return False
+        ctl = getattr(state.get("kernel"), "ctl", None)
+        if ctl is None:
+            return False
+        loop = self._run_loops.get(run_id)
+        if loop is None or not loop.is_running():
+            return False
+
+        async def _inject() -> bool:
+            frame_id = _root_frame_id(await ctl.get_frame_tree(run_id))
+            if frame_id is None:
+                return False
+            await ctl.inject_message(
+                frame_id,
+                Message(role=Role.USER, content=text, source=Source.INJECTED),
+            )
+            return True
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_inject(), loop)
+        except RuntimeError:
+            # 竞态:is_running 检查与投递之间 loop 已关闭(run 刚结束)——按无法注入归类
+            return False
+        return bool(await asyncio.wrap_future(fut))
+
+    def emit_event(self, run_id: str, payload: dict[str, Any]) -> None:
+        """向 run 的 hub 投一条宿主层 ``event.received`` 行(E4 路由可观测面)。
+
+        仅经 per-run hub 扇出(SSE 实时/回放可见;hub 已关闭仍入缓冲,容忍
+        resume/wait 路径的迟到投递);刻意**不进 api/v1** 信号枚举、不写
+        trace.jsonl——事件路由是宿主层形态,内核零改动。hub 不存在(未知
+        run)静默丢弃。
+        """
+        hub = self.hub_of(run_id)
+        if hub is None:
+            return
+        hub.publish(
+            {
+                "type": "signal",
+                "name": EVENT_RECEIVED,
+                "run_id": run_id,
+                "frame_id": None,
+                "ts": time.time(),
+                "payload": _jsonable(payload),
+            }
+        )
 
     @staticmethod
     def _cold_state(run_dir: Path) -> dict[str, Any]:

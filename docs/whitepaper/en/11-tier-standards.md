@@ -106,7 +106,7 @@ draft ──validate──▶ report persisted to drafts/<name>/gate/<ts>.json (
 - Hash anti-mismatch: editing one character of the prompt changes `manifest_hash`.
 - promote orchestration: first promote appends `0.1.0`, second replaces with `0.1.1`; `.bak` exists; production is readable after reload; `promotions.jsonl` records promoted_by and gate_report_id; the rejection chain (stale report / fail report / unacknowledged warn) raises three `GateError` shapes; an explicit version overrides the bump.
 
-**API level**: `tests/web/test_lab_api.py` — `test_validate_endpoint_report_shape`, `test_validate_fail_blocks_and_promote_rejections`, `test_promote_end_to_end_and_stale_report` — exercises the full HTTP path (report shape, fail blocking, stale-report 409). As of v1.0, the repository baseline is 1739 Python tests + 32 frontend test files, all green (SKILL-DEV L5 implementation notes).
+**API level**: `tests/web/test_lab_api.py` — `test_validate_endpoint_report_shape`, `test_validate_fail_blocks_and_promote_rejections`, `test_promote_end_to_end_and_stale_report` — exercises the full HTTP path (report shape, fail blocking, stale-report 409). As of v1.0, the repository baseline is 1747 Python tests + 32 frontend test files, all green (SKILL-DEV L5 implementation notes).
 
 **Real example**: `agent_os/examples/workspace_janitor` — four skills across three tiers (L1 scan / L2 idempotent write + approve-run / L3 named deletion + dry_run) with real tools and zero mocks; `tests/examples/test_workspace_janitor.py` asserts the dry_run list matches the actual `destroyed` list and that L3 asks every time — a living specimen of the standard §5 test requirements.
 

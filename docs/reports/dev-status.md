@@ -268,7 +268,9 @@
 > READ 逐 server 可升、confirm 逐 server、子进程不继承宿主 env(`{env="VAR"}` 间接引用
 > 现读 os.environ)、撞名拒覆盖、非法字符名跳过记 warning。测试基线 = 罐头假服务器
 > `tests/helpers/mcp_server.py`。**仍开口**:Streamable HTTP 传输、resources/prompts
-> 原语、懒连接、版本锁定、未与真实 MCP server 互测;`agent_os.tools` EP 组仍预留。
+> 原语、懒连接、版本锁定、未与真实 MCP server 互测(其中 Streamable HTTP 传输与
+> stdio 真实 server 互测已于 2026-09-29 关闭,见头部复核块;新增开口:GET standalone
+> SSE/resumability、batching、HTTP 真实 server 互测、OAuth);`agent_os.tools` EP 组仍预留。
 > 下文 §3(Tool Registry)"未开发"中的"MCP 适配器"据此关闭,dated 原文保留。
 > 全量基线:1595 收集 = 1546 passed + 10 skipped + 39 xfailed,0 失败(两轮复跑确认;
 > 时长受并行会话负载影响波动大,不作为口径)。
@@ -453,6 +455,37 @@
 > **仍开口**:跨 run 计时器、计时器管理工具(cancel/list 留 std 组合子)、裸
 > service(无 ctl)时 fired/done 回写无处可达(真实路径 ctl 恒在)。
 > 全量基线:1772 收集 = 1729 passed + 10 skipped + 40 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-29(MCP Streamable HTTP 传输 + 协议版本策略 + 真实 server 互测)**:
+> 上文 2026-09-28(MCP stdio 适配器落地)块「仍开口」中的"Streamable HTTP 传输"与
+> "未与真实 MCP server 互测"据此关闭,dated 原文保留。
+> ① **HTTP 传输**——`tools/mcp_http.py` `McpHttpClient`(官方 spec 2025-03-26 版族
+> Streamable HTTP,docstring 注明出处;与 McpStdioClient 同接口,McpTool /
+> connect_and_register(+_sync) 整段复用):POST 单端点,Accept 双 content-type,响应
+> 按 content-type 分流 application/json 单包 / text/event-stream SSE 帧(行级解析照
+> host/tui/kernel/sse.py 先例);initialize 捕获 `Mcp-Session-Id` 后续请求(含 DELETE)
+> 必带,404 → 重连重新 initialize 重试一次;`MCP-Protocol-Version` 头按协商值带;
+> httpx `trust_env=False`(不读代理/netrc,同 stdio 不继承宿主 env 精神);超时/取消
+> 不拆会话(HTTP 每请求独立 POST 无共享流),close = best-effort DELETE + 幂等。
+> ② **协议版本策略**——stdio 默认 2024-11-05 不变,HTTP 默认 2025-03-26,
+> `protocol_version` 双传输可覆盖,协商返回值记录。
+> ③ **配置四键**——`[mcp.servers.*]` 加 `url`/`headers`(值含 {env="VAR"} 间接)/
+> `transport`(auto|stdio|http,auto 按键判)/`protocol_version`;command/url 恰居其一,
+> headers 配在 stdio server 上拒,strict 全矩阵(tests/runtime/test_config.py 增 MCP
+> HTTP 校验矩阵)。
+> ④ **失败归一**——连接错/断流/5xx/404/协议垃圾 → 重连重试一次;其余 4xx 与
+> JSON-RPC error → 直接 McpError 不重连(服务端拒绝,重连无意义)。
+> ⑤ **测试面**——HTTP 锚点 = FastAPI 罐头对端 `tests/helpers/mcp_http_server.py`
+> (JSON/SSE 双模式、session 强制、DELETE 记账)+ tests/tools/test_mcp_http.py;
+> **真实互测跑通**:tests/tools/test_mcp_interop.py 以 npx
+> `@modelcontextprotocol/server-filesystem` over stdio 真实握手/tools/list/tools/call
+> (read_file 内容逐字回读、目录外拒绝、真实 server structuredContent 归一化兼容),
+> skip 护栏 = npx 缺席或 AGENT_OS_MCP_INTEROP=0。
+> **仍开口**:GET standalone SSE/Last-Event-ID resumability、batching、
+> resources/prompts 原语、HTTP 真实 server 互测(官方 server 多无 HTTP CLI 形态)、
+> OAuth、懒连接、版本锁定。
+> 下文 §3(Tool Registry)开口表述同步复核(2026-09-29 行)。
+> 全量基线:1795 收集 = 1752 passed + 10 skipped + 40 xfailed,0 失败。
 
 ## 一、总览
 
@@ -501,6 +534,7 @@
 - **复核 2026-08-24**:`blob_get` 已实现并注册(`tools/builtins.py:422`、`tools/local_registry.py:393/462-463`,别名 `system.blob.get`);`FileBlobStore` 仍是 M3 stub(`tools/blob.py:40/43`,内存版 InMemoryBlobStore 在用);`ask_user`/`notify_user` 仍为 M1 stub;credentials 注入在分发层仍固定填 `{}`(`tools/local_registry.py`);`confirm=True` 仍只声明不强制;归一化 enrichment 仍未做(`local_registry.py` 无 head+tail preview 痕迹)。
 - **复核 2026-09-27(清理批)**:`FileBlobStore` 已落地(`tools/blob.py`,内容寻址落盘 + 白名单防逃逸,`[blob] dir` 配置段接线);`ask_user`/`notify_user` 已实填(`system.user.ask`/`system.user.notify`,WRITE 档,`bind_user_channel` 装配,未 bind → NOT_FOUND;CLI 接线留 TODO);归一化 enrichment 与 ToolSpec 预留字段语义化仍开口。
 - **复核 2026-09-28**:MCP 适配器(stdio,工具侧)已落地——`tools/mcp.py` + `[mcp.servers.<name>]` 配置段,eager 装配、失败 ConfigError,工具以 `mcp.<server>.<tool>` 走全量 dispatch 管线,§8.3 供应链清单逐条落地(详见头部复核块);仍开口:Streamable HTTP、resources/prompts、真实 server 互测;归一化 enrichment 与 ToolSpec 预留字段语义化仍开口。
+- **复核 2026-09-29**:MCP Streamable HTTP 传输已接入(`tools/mcp_http.py`,spec 2025-03-26 版族;配置段加 `url`/`headers`/`transport`/`protocol_version` 四键,command/url 恰居其一),stdio 官方 server 真实互测已跑通(npx `@modelcontextprotocol/server-filesystem`,`tests/tools/test_mcp_interop.py`;详见头部复核块);仍开口:resources/prompts、HTTP 真实 server 互测(官方 server 多无 HTTP CLI 形态)、GET standalone SSE/resumability、batching、OAuth、懒连接、版本锁定;归一化 enrichment 与 ToolSpec 预留字段语义化仍开口。
 
 ### 4. Skill Registry — ✅ ~70%
 

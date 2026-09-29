@@ -12,8 +12,12 @@
     [tools.custom] → module = "pkg.mod:func":宿主自定义工具注册钩子,
                    importlib 加载后调用 ``func(registry)``(加载/注册失败抛 ConfigError);
                    声明即授权,RunConfig 权限上限同步提到 EXEC(同 system.python.exec)
-    [mcp.servers.*] → MCP server(stdio)工具面(tools/mcp.py;DESIGN §8.3 供应链清单):
-                   command 必填;eager 装配——装配期拉起子进程 initialize 握手 +
+    [mcp.servers.*] → MCP server 工具面(tools/mcp.py stdio + tools/mcp_http.py
+                   Streamable HTTP;DESIGN §8.3 供应链清单):command(stdio)与
+                   url(http)恰居其一,transport = auto(缺省按键判)|stdio|http;
+                   headers(http 请求头)与 env 同规则(字面量或 {env = "VAR"} 间接);
+                   protocol_version 缺省随传输(stdio 2024-11-05 / http 2025-03-26)。
+                   eager 装配——装配期拉起连接 initialize 握手 +
                    tools/list 并注册全部工具(mcp.<server>.<tool> 命名空间,走全量
                    dispatch 管线),连接失败 ConfigError 快速失败(防坏 server 静默
                    缺席致白名单形同虚设);段存在才接线,缺段零破坏
@@ -346,7 +350,21 @@ def _credentials(cfg: dict[str, Any]) -> CredentialScope:
 
 
 #: ``[mcp.servers.<name>]`` 支持的字段(tools/mcp.py McpServerSpec 逐字对齐)
-_MCP_SERVER_FIELDS = ("command", "connect_timeout", "confirm", "env", "permission", "timeout")
+_MCP_SERVER_FIELDS = (
+    "command",
+    "connect_timeout",
+    "confirm",
+    "env",
+    "headers",
+    "permission",
+    "protocol_version",
+    "timeout",
+    "transport",
+    "url",
+)
+
+#: transport 合法值(auto = 按键自动判:url → http,command → stdio)
+_MCP_TRANSPORTS = ("auto", "stdio", "http")
 
 #: permission 字符串 → Permission(缺省 read,最小授权;升档须显式配置)
 _MCP_PERMISSIONS = {
@@ -364,10 +382,14 @@ def _mcp_servers(cfg: dict[str, Any]) -> list[McpServerSpec]:
     """``[mcp.servers.<name>]`` 段 → :class:`McpServerSpec` 列表(DESIGN §8.3 供应链清单)。
 
     严格校验(同 ``_credentials``/``_prices`` 先例——server 名/权限拼错会静默
-    缺席或错档,宁可装配期炸掉):command 必填非空 list[str];env 值为 str 字面量
-    或 ``{env = "VAR"}`` 间接引用(连接时现读 os.environ,不落盘明文);
-    permission ∈ read|write|net|exec(缺省 read);timeout/connect_timeout 正数;
-    confirm 布尔;server 名只许 ``[A-Za-z0-9_-]``。
+    缺席或错档,宁可装配期炸掉):command(stdio)与 url(Streamable HTTP)
+    **恰居其一**(都缺/都给 → ConfigError);command 非空 list[str];url 必须
+    http(s)://;transport ∈ auto|stdio|http,显式给与键不符(transport="http"
+    但无 url 等)→ ConfigError;env/headers 值为 str 字面量或 ``{env = "VAR"}``
+    间接引用(连接时现读 os.environ,不落盘明文);headers 仅 http 传输有意义,
+    stdio server 配了直接拒(防静默忽略);permission ∈ read|write|net|exec
+    (缺省 read);timeout/connect_timeout 正数;confirm 布尔;protocol_version
+    非空 str(缺省随传输);server 名只许 ``[A-Za-z0-9_-]``。
     """
     unknown = sorted(set(cfg) - {"servers"})
     if unknown:
@@ -390,14 +412,45 @@ def _mcp_servers(cfg: dict[str, Any]) -> list[McpServerSpec]:
                 f'[mcp.servers."{name}"] 含未知字段: {unknown}'
                 f"(支持: {sorted(_MCP_SERVER_FIELDS)})"
             )
-        command = raw.get("command")
-        if (
-            not isinstance(command, list)
-            or not command
-            or not all(isinstance(c, str) and c for c in command)
-        ):
+        transport = raw.get("transport", "auto")
+        if not isinstance(transport, str) or transport not in _MCP_TRANSPORTS:
             raise ConfigError(
-                f'[mcp.servers."{name}"] command 必填,须为非空字符串数组,得到: {command!r}'
+                f'[mcp.servers."{name}"] transport 须为 auto|stdio|http,得到: {transport!r}'
+            )
+        command = raw.get("command")
+        url = raw.get("url")
+        has_command = command is not None
+        has_url = url is not None
+        if has_command and has_url:
+            raise ConfigError(
+                f'[mcp.servers."{name}"] command 与 url 恰居其一,但都给了'
+                f"(stdio 传输给 command,Streamable HTTP 传输给 url)"
+            )
+        if not has_command and not has_url:
+            raise ConfigError(
+                f'[mcp.servers."{name}"] command/url 恰居其一,但都缺'
+                f'(stdio 传输给 command = [...],Streamable HTTP 传输给 url = "https://...")'
+            )
+        if has_command:
+            if (
+                not isinstance(command, list)
+                or not command
+                or not all(isinstance(c, str) and c for c in command)
+            ):
+                raise ConfigError(
+                    f'[mcp.servers."{name}"] command 必填,须为非空字符串数组,得到: {command!r}'
+                )
+        elif not isinstance(url, str) or not url.startswith(("http://", "https://")):
+            raise ConfigError(
+                f'[mcp.servers."{name}"] url 须为 http(s):// URL,得到: {url!r}'
+            )
+        if transport == "stdio" and not has_command:
+            raise ConfigError(
+                f'[mcp.servers."{name}"] transport = "stdio" 与键不符:须给 command(实际给了 url)'
+            )
+        if transport == "http" and not has_url:
+            raise ConfigError(
+                f'[mcp.servers."{name}"] transport = "http" 与键不符:须给 url(实际给了 command)'
             )
         env = raw.get("env") or {}
         if not isinstance(env, dict):
@@ -414,6 +467,33 @@ def _mcp_servers(cfg: dict[str, Any]) -> list[McpServerSpec]:
                     f'[mcp.servers."{name}"] env.{key} 须为字符串字面量或 '
                     f'{{ env = "VAR" }} 间接引用,得到: {value!r}'
                 )
+        headers = raw.get("headers") or {}
+        if not isinstance(headers, dict):
+            raise ConfigError(f'[mcp.servers."{name}"] headers 应为表,得到: {headers!r}')
+        if headers and not has_url:
+            raise ConfigError(
+                f'[mcp.servers."{name}"] headers 仅 Streamable HTTP(url)传输有意义,'
+                f"stdio server 配了会被静默忽略,直接拒"
+            )
+        for key, value in headers.items():
+            ok = isinstance(value, str) or (
+                isinstance(value, dict)
+                and set(value) == {"env"}
+                and isinstance(value["env"], str)
+                and value["env"]
+            )
+            if not ok:
+                raise ConfigError(
+                    f'[mcp.servers."{name}"] headers.{key} 须为字符串字面量或 '
+                    f'{{ env = "VAR" }} 间接引用,得到: {value!r}'
+                )
+        protocol_version = raw.get("protocol_version", "")
+        if not isinstance(protocol_version, str) or ("protocol_version" in raw and not protocol_version):
+            raise ConfigError(
+                f'[mcp.servers."{name}"] protocol_version 须为非空字符串'
+                f'(如 "2025-03-26";缺省随传输:stdio 2024-11-05 / http 2025-03-26),'
+                f"得到: {raw.get('protocol_version')!r}"
+            )
         permission_raw = raw.get("permission", "read")
         if not isinstance(permission_raw, str) or permission_raw.lower() not in _MCP_PERMISSIONS:
             raise ConfigError(
@@ -438,12 +518,16 @@ def _mcp_servers(cfg: dict[str, Any]) -> list[McpServerSpec]:
         specs.append(
             McpServerSpec(
                 name=str(name),
-                command=list(command),
+                command=list(command) if has_command else [],
                 env=dict(env),
                 permission=_MCP_PERMISSIONS[permission_raw.lower()],
                 timeout=float(timeout),
                 confirm=confirm,
                 connect_timeout=float(connect_timeout),
+                url=str(url) if has_url else "",
+                headers=dict(headers),
+                transport=transport,
+                protocol_version=protocol_version,
             )
         )
     return specs
@@ -807,8 +891,8 @@ def build_kernel(
     mcp_cfg = cfg.get("mcp")
     if mcp_cfg is not None:
         # [mcp] 段存在才接线(同 [credentials]/[memory] 先例;缺段零破坏)。
-        # eager(定案):装配期拉起 server 子进程 + initialize 握手 + tools/list,
-        # 工具以 mcp.<server>.<tool> 注册进 registry(走全量 dispatch 管线);
+        # eager(定案):装配期建立连接(stdio 子进程 / HTTP 会话)+ initialize 握手
+        # + tools/list,工具以 mcp.<server>.<tool> 注册进 registry(走全量 dispatch 管线);
         # 连接失败 ConfigError 快速失败——坏 server 静默缺席会让技能白名单形同虚设
         mcp_specs = _mcp_servers(mcp_cfg)
         if mcp_specs:

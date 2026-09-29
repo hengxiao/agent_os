@@ -36,6 +36,7 @@ from agent_os.context import (
 from agent_os.memory.local_file import LocalFileMemoryService
 from agent_os.runtime.config import (
     ConfigError,
+    _mcp_servers,
     build_kernel,
     load_config,
     load_skillsets,
@@ -946,3 +947,110 @@ def test_compressor_entry_points_loaded_and_override(monkeypatch):
     # 走注册表的压缩行为随之改变:spill 模式链的 truncate 段已是插件实例
     chain = kernel.context._select_compressor("spill")
     assert chain.stages[-1] is compressors["truncate"]
+
+
+# ---------------------------------------------------------------------------
+# [mcp.servers] http 传输字段矩阵(纯解析:_mcp_servers 直调,不触发 eager 连接;
+# 端到端装配见 tests/tools/test_mcp_http.py::test_config_wiring_http)
+# ---------------------------------------------------------------------------
+
+
+def _mcp_srv(**server_kw) -> dict:
+    """``[mcp]`` 段 dict(单个 server "web")。"""
+    return {"servers": {"web": server_kw}}
+
+
+def test_mcp_http_valid_matrix():
+    """url/headers/transport/protocol_version 合法矩阵落到 spec 字段。"""
+    # url 单独给:transport 缺省 auto,command 空
+    (spec,) = _mcp_servers(_mcp_srv(url="https://mcp.example.com/mcp"))
+    assert spec.url == "https://mcp.example.com/mcp"
+    assert spec.command == []
+    assert spec.transport == "auto"
+    assert spec.headers == {}
+    assert spec.protocol_version == ""
+    # url + transport="http" 显式一致;headers 两种形态;protocol_version 覆盖
+    (spec,) = _mcp_servers(
+        _mcp_srv(
+            url="http://127.0.0.1:8000/mcp",
+            transport="http",
+            headers={"Authorization": {"env": "MCP_TOKEN"}, "X-Tenant": "acme"},
+            protocol_version="2024-11-05",
+        )
+    )
+    assert spec.transport == "http"
+    assert spec.headers == {"Authorization": {"env": "MCP_TOKEN"}, "X-Tenant": "acme"}
+    assert spec.protocol_version == "2024-11-05"
+    # command + transport="stdio" 显式一致(回归:既有 stdio 路径不受新键影响)
+    (spec,) = _mcp_servers(_mcp_srv(command=["npx", "-y", "some-server"], transport="stdio"))
+    assert spec.command == ["npx", "-y", "some-server"]
+    assert spec.url == ""
+    assert spec.transport == "stdio"
+
+
+def test_mcp_command_and_url_together_rejected():
+    """command 与 url 并给 → ConfigError(恰居其一,无法判传输)。"""
+    with pytest.raises(ConfigError, match="恰居其一"):
+        _mcp_servers(_mcp_srv(command=["x"], url="https://mcp.example.com/mcp"))
+
+
+def test_mcp_neither_command_nor_url_rejected():
+    """command/url 都缺 → ConfigError(报文须含 command,兼容既有锚点)。"""
+    with pytest.raises(ConfigError, match="command"):
+        _mcp_servers(_mcp_srv())
+    with pytest.raises(ConfigError, match="command"):
+        _mcp_servers(_mcp_srv(permission="write"))  # 给了别的键也救不回
+
+
+def test_mcp_transport_mismatch_rejected():
+    """transport 显式与键不符 → ConfigError;非法 transport 值 → ConfigError。"""
+    with pytest.raises(ConfigError, match="transport"):
+        _mcp_servers(_mcp_srv(transport="http", command=["x"]))  # http 但无 url
+    with pytest.raises(ConfigError, match="transport"):
+        _mcp_servers(_mcp_srv(transport="stdio", url="https://mcp.example.com/mcp"))  # stdio 但无 command
+    with pytest.raises(ConfigError, match="transport"):
+        _mcp_servers(_mcp_srv(transport="websocket", command=["x"]))  # 非法值
+    with pytest.raises(ConfigError, match="transport"):
+        _mcp_servers(_mcp_srv(transport=1, command=["x"]))  # 非字符串
+
+
+def test_mcp_url_scheme_rejected():
+    """url 非 http(s):// / 非字符串 / 空串 → ConfigError。"""
+    with pytest.raises(ConfigError, match="http"):
+        _mcp_servers(_mcp_srv(url="ftp://mcp.example.com/mcp"))
+    with pytest.raises(ConfigError, match="url"):
+        _mcp_servers(_mcp_srv(url=123))
+    with pytest.raises(ConfigError, match="url"):
+        _mcp_servers(_mcp_srv(url=""))
+
+
+def test_mcp_headers_shape_rejected():
+    """headers 非表 / 值坏形态(非 str 非 {env=VAR};env 空串;多键)→ ConfigError。"""
+    with pytest.raises(ConfigError, match="headers"):
+        _mcp_servers(_mcp_srv(url="https://mcp.example.com/mcp", headers="X-Auth: t"))
+    with pytest.raises(ConfigError, match="headers"):
+        _mcp_servers(_mcp_srv(url="https://mcp.example.com/mcp", headers={"A": 123}))
+    with pytest.raises(ConfigError, match="headers"):
+        _mcp_servers(_mcp_srv(url="https://mcp.example.com/mcp", headers={"A": {"env": ""}}))
+    with pytest.raises(ConfigError, match="headers"):
+        _mcp_servers(_mcp_srv(url="https://mcp.example.com/mcp", headers={"A": {"bogus": "X"}}))
+
+
+def test_mcp_headers_on_stdio_rejected():
+    """headers 仅 http 传输有意义:stdio server 配了会被静默忽略,装配期直接拒。"""
+    with pytest.raises(ConfigError, match="headers"):
+        _mcp_servers(_mcp_srv(command=["x"], headers={"A": "1"}))
+
+
+def test_mcp_protocol_version_shape_rejected():
+    """protocol_version 空串 / 非字符串 → ConfigError。"""
+    with pytest.raises(ConfigError, match="protocol_version"):
+        _mcp_servers(_mcp_srv(url="https://mcp.example.com/mcp", protocol_version=""))
+    with pytest.raises(ConfigError, match="protocol_version"):
+        _mcp_servers(_mcp_srv(url="https://mcp.example.com/mcp", protocol_version=20250326))
+
+
+def test_mcp_http_unknown_keys_still_rejected():
+    """新键就位后未知键仍拒(如 headers 拼成 header)。"""
+    with pytest.raises(ConfigError, match="未知字段"):
+        _mcp_servers(_mcp_srv(url="https://mcp.example.com/mcp", header={"A": "1"}))

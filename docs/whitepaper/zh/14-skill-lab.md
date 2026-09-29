@@ -113,7 +113,7 @@ P4 的解法有三层:工具面没有 promote/delete(注入者借助手发布在
 
 ## 5. 效果与验证(效果)
 
-落地后,一条完整的开发闭环是:新建(空/三档模板/从生产复制)→ 手动编辑 + 助手对话式修改 → 测试面板试跑(trace 可见、outputs 显式校验)→ 检查(五关卡片,红/黄/绿/灰)→ 人点提交(确认行内可改版本号)→ 生产热重载后可 run;再迭代走"生产 skill → 在 Lab 中编辑"复制回草稿。测试证据(lab 直接相关 8 个 Python 测试文件 67 例,全绿;全仓库基线 Python 1772 例 + 前端 32 个测试文件,本文修订时以 pytest --collect-only / static/tests/*.test.mjs 计数):
+落地后,一条完整的开发闭环是:新建(空/三档模板/从生产复制)→ 手动编辑 + 助手对话式修改 → 测试面板试跑(trace 可见、outputs 显式校验)→ 检查(五关卡片,红/黄/绿/灰)→ 人点提交(确认行内可改版本号)→ 生产热重载后可 run;再迭代走"生产 skill → 在 Lab 中编辑"复制回草稿。测试证据(lab 直接相关 8 个 Python 测试文件 67 例,全绿;全仓库基线 Python 1795 例 + 前端 32 个测试文件,本文修订时以 pytest --collect-only / static/tests/*.test.mjs 计数):
 
 - tests/skills/test_draft_store.py(9 例):命名/路径穿越拒绝(`test_name_validation_path_traversal`)、容错读不 500、`.bak` 备份、overlay 草稿优先与不合规透明回落、三档模板创建即过 G1/G2。
 - tests/skills/test_gate.py(17 例):五关逐关断言;`manifest_hash` 随内容变化;G5 注入诱导 fail 而正面表述放行(`test_g5_positive_phrasing_passes`);G2 悬空引用与跨草稿环、花括号预检;promote 成功路径与三类拒绝(过期报告/fail 报告/warn 未确认,`test_promote_rejects_stale_report_and_fail_and_unacked_warn`);版本 bump 与手改覆盖。

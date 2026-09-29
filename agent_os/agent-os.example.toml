@@ -81,6 +81,25 @@ stream_idle_timeout = 30.0            # 流式停滞 watchdog 秒数:N 秒无新
 #                                       # (连接/重连时现读环境变量,不落盘明文,同 [credentials] 先例);
 #                                       # 注意:子进程**不继承**宿主环境变量(供应链最小授权),
 #                                       # PATH/HOME 等需要时须在此显式传
+#
+# —— Streamable HTTP 传输(MCP spec 2025-03-26 版族;url 与 command 恰居其一,都给/都缺装配期报错)——
+# 单端点 POST,会话经 Mcp-Session-Id 响应头建立、后续请求必带;断线/5xx/404(会话被 server
+# 终止)自动重新 initialize 重试一次;kernel 收尾时 best-effort DELETE 终止会话。
+# [mcp.servers.remote]
+# url = "https://mcp.example.com/mcp"
+# transport = "auto"                    # auto(缺省,按键判:url → http,command → stdio)|stdio|http;
+#                                       # 显式给与键不符(如 transport="http" 但无 url)装配期报错
+# headers = { Authorization = { env = "REMOTE_MCP_TOKEN" }, X-Tenant = "acme" }
+#                                       # HTTP 请求头:值规则同 env(字面量或 { env = "VAR" } 间接引用,
+#                                       # 连接/重连时现读,不落盘明文);仅 http 传输有意义,
+#                                       # stdio server 配了会被装配期拒绝(防静默忽略)
+# protocol_version = "2025-03-26"       # initialize 请求的协议版本(缺省随传输:
+#                                       # stdio 2024-11-05 / http 2025-03-26);server 协商
+#                                       # 返回值优先,后续请求按协商值带 MCP-Protocol-Version 头
+# permission = "read"                   # 以下 server 级字段两种传输通用
+# timeout = 30.0
+# connect_timeout = 10.0
+# confirm = false
 
 # —— 数据层 authZ(D2,docs/DATA-AUTHZ.md §3;段缺席 = D1"未配置不拦截"语义逐字不动)——
 # 注意:段存在即接线,空段 = 绑定空 policy(principals 白名单 fail closed 全拒),启用前务必配齐

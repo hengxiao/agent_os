@@ -2,7 +2,8 @@
 
 零新依赖:自实现极简 JSON-RPC 2.0 客户端(newline-delimited JSON over stdio),
 只覆盖 ``initialize`` / ``notifications/initialized`` / ``tools/list`` / ``tools/call``
-四个方法;Streamable HTTP 传输与 resources/prompts 原语不做(协议面留开口:
+四个方法;Streamable HTTP 传输见 :mod:`agent_os.tools.mcp_http`(同 client 接口,
+``McpTool``/装配层整段复用),resources/prompts 原语不做(协议面留开口:
 读写循环对方法名无假设,扩展只是加方法常量与结果归一化分支)。
 
 连接模型(eager,定案):装配期(``connect_and_register`` / ``build_kernel`` 的
@@ -53,7 +54,7 @@ import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_os import __version__
 from agent_os.api.v1 import (
@@ -65,6 +66,10 @@ from agent_os.api.v1 import (
     ToolSpec,
 )
 from agent_os.injection import looks_suspicious
+
+if TYPE_CHECKING:
+    # 仅注解用(运行期延迟导入见 _client_for;mcp_http 反向 import 本模块,模块级互引会循环)
+    from agent_os.tools.mcp_http import McpHttpClient
 
 _log = logging.getLogger("agent_os.tools.mcp")
 
@@ -96,18 +101,27 @@ class _McpTransportError(McpError):
 class McpServerSpec:
     """单个 MCP server 的装配规格(``[mcp.servers.<name>]`` 段解析产物)。
 
-    ``env`` 值两种形态:str 字面量直传;``{"env": "VAR"}`` 间接引用——连接时
-    现读 ``os.environ``(不落盘明文;重连重新解析,token 轮换即生效),变量缺席
-    抛 :class:`McpError`(eager 快速失败,防静默缺席)。
+    传输二选一:stdio(``command`` 非空)或 Streamable HTTP(``url`` 非空);
+    ``transport`` = auto(缺省,按键自动判:url → http,否则 stdio)/stdio/http
+    (显式给与键不符装配层拒,见 runtime/config.py ``_mcp_servers``)。
+    ``env``(stdio 子进程环境)/``headers``(http 请求头)值两种形态:str 字面量
+    直传;``{"env": "VAR"}`` 间接引用——连接时现读 ``os.environ``(不落盘明文;
+    重连重新解析,token 轮换即生效),变量缺席抛 :class:`McpError`(eager 快速
+    失败,防静默缺席)。``protocol_version`` 缺省随传输(stdio 2024-11-05 /
+    http 2025-03-26),显式给覆盖 initialize 请求值。
     """
 
     name: str
-    command: list[str]
+    command: list[str] = field(default_factory=list)
     env: dict[str, Any] = field(default_factory=dict)
     permission: Permission = Permission.READ
     timeout: float = 30.0
     confirm: bool = False
     connect_timeout: float = 10.0
+    url: str = ""
+    headers: dict[str, Any] = field(default_factory=dict)
+    transport: str = "auto"
+    protocol_version: str = ""
 
 
 class _LineReader:
@@ -146,7 +160,8 @@ class _LineReader:
 class McpStdioClient:
     """单个 MCP server 的 stdio 连接(进程生命周期 = kernel 寿命)。"""
 
-    #: 握手钉死的协议版本(现行稳定版;不跟 server 协商漂移,响应用同版本回显)
+    #: 握手钉死的协议版本(现行稳定版;不跟 server 协商漂移,响应用同版本回显;
+    #: ``spec.protocol_version`` 显式给时覆盖)
     PROTOCOL_VERSION = "2024-11-05"
 
     def __init__(self, spec: McpServerSpec) -> None:
@@ -227,7 +242,7 @@ class McpStdioClient:
                 reader,
                 "initialize",
                 {
-                    "protocolVersion": self.PROTOCOL_VERSION,
+                    "protocolVersion": self._spec.protocol_version or self.PROTOCOL_VERSION,
                     "capabilities": {},
                     "clientInfo": {"name": "agent-os", "version": __version__},
                 },
@@ -421,13 +436,13 @@ class McpTool:
     server spec;``untrusted_source=True`` 强制;``concurrency_safe=False``。
     """
 
-    def __init__(self, client: McpStdioClient, tool_name: str, spec: ToolSpec) -> None:
+    def __init__(self, client: McpStdioClient | McpHttpClient, tool_name: str, spec: ToolSpec) -> None:
         self._client = client
         self._tool_name = tool_name  # server 侧的原始工具名(调用时透传)
         self.spec = spec
 
     @classmethod
-    def from_tool_def(cls, client: McpStdioClient, tool_def: Any) -> McpTool | None:
+    def from_tool_def(cls, client: McpStdioClient | McpHttpClient, tool_def: Any) -> McpTool | None:
         """tools/list 条目 → McpTool;形态非法/名字含非法字符 → 记 warning 跳过(返回 None)。"""
         server = client._spec
         if not isinstance(tool_def, dict):
@@ -492,7 +507,7 @@ def _content_text(content: Any) -> str:
     return "\n".join(parts)
 
 
-def _register_tools(registry: Any, client: McpStdioClient) -> None:
+def _register_tools(registry: Any, client: McpStdioClient | McpHttpClient) -> None:
     """把 server 的工具面注册进 registry(命名空间 ``mcp.<server>.<tool>``;撞名拒覆盖)。"""
     for tool_def in client.tools:
         tool = McpTool.from_tool_def(client, tool_def)
@@ -503,18 +518,39 @@ def _register_tools(registry: Any, client: McpStdioClient) -> None:
         registry.register(tool)
 
 
-async def connect_and_register(registry: Any, specs: list[McpServerSpec]) -> list[McpStdioClient]:
+def _client_for(spec: McpServerSpec) -> McpStdioClient | McpHttpClient:
+    """按传输分流建 client:auto 按键判(``url`` 非空 → http,否则 stdio)。
+
+    显式 ``transport`` 与键不符(stdio 无 command / http 无 url)由装配层
+    (runtime/config.py ``_mcp_servers``)拒;直造 spec 绕过时,http 侧由
+    ``McpHttpClient.__init__`` 的 url 校验兜住,stdio 侧空 command 在 Popen
+    启动失败时归 :class:`McpError`。
+    """
+    transport = spec.transport
+    if transport == "auto":
+        transport = "http" if spec.url else "stdio"
+    if transport == "http":
+        # 运行期延迟导入:mcp_http 反向 import 本模块的 McpError/spec,模块级互引会循环
+        from agent_os.tools.mcp_http import McpHttpClient
+
+        return McpHttpClient(spec)
+    return McpStdioClient(spec)
+
+
+async def connect_and_register(
+    registry: Any, specs: list[McpServerSpec]
+) -> list[McpStdioClient | McpHttpClient]:
     """装配入口(async):逐 server 连接 + 注册全部工具,返回 client 列表(kernel 寿命)。
 
-    任一 server 失败 → 已起进程全部清理,抛 :class:`McpError`(装配层包装为
+    任一 server 失败 → 已起连接全部清理,抛 :class:`McpError`(装配层包装为
     ConfigError 快速失败)。clients 同时挂 ``registry._mcp_clients``(生命周期
-    锚点:Kernel/registry 无 close 钩子,进程清理由 client.close()/atexit 兜底)。
+    锚点:Kernel/registry 无 close 钩子,连接清理由 client.close()/atexit 兜底)。
     """
-    clients: list[McpStdioClient] = []
+    clients: list[McpStdioClient | McpHttpClient] = []
     try:
         for spec in specs:
-            client = McpStdioClient(spec)
-            clients.append(client)  # 先入列:连接/注册失败也要清理这个已起进程
+            client = _client_for(spec)
+            clients.append(client)  # 先入列:连接/注册失败也要清理这个已起连接
             await client.connect()
             _register_tools(registry, client)
     except BaseException:
@@ -525,19 +561,24 @@ async def connect_and_register(registry: Any, specs: list[McpServerSpec]) -> lis
     return clients
 
 
-def connect_and_register_sync(registry: Any, specs: list[McpServerSpec]) -> list[McpStdioClient]:
+def connect_and_register_sync(
+    registry: Any, specs: list[McpServerSpec]
+) -> list[McpStdioClient | McpHttpClient]:
     """同步版装配入口(``build_kernel`` 是同步函数;为什么不 asyncio.run 见 connect_sync)。"""
-    clients: list[McpStdioClient] = []
+    clients: list[McpStdioClient | McpHttpClient] = []
     try:
         for spec in specs:
-            client = McpStdioClient(spec)
+            client = _client_for(spec)
             clients.append(client)  # 先入列(同上:失败路径也要清理)
             client.connect_sync()
             _register_tools(registry, client)
     except BaseException:
         for client in clients:
             with contextlib.suppress(Exception):
-                client._kill_blocking()
+                if isinstance(client, McpStdioClient):
+                    client._kill_blocking()
+                else:
+                    client._close_blocking()
         raise
     registry._mcp_clients.extend(clients)
     return clients

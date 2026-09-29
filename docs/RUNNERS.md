@@ -87,12 +87,20 @@ backoff_base = 0.5
 [credentials]                          # WS1:凭证作用域;值只存 env 变量名,不落盘明文
 # github = { env = "GITHUB_TOKEN" }    # 工具 ToolSpec.credentials 声明键 → dispatch 每次现解析注入(env 缺席键不出现)
 
-# [mcp.servers.<name>]                 # MCP server(stdio)工具面(tools/mcp.py,DESIGN §8.3);段存在才接线,缺段零破坏
+# [mcp.servers.<name>]                 # MCP server 工具面(tools/mcp.py stdio + tools/mcp_http.py Streamable HTTP,DESIGN §8.3);
+                                       # 段存在才接线,缺段零破坏;command(stdio)/url(http)恰居其一,同给/同缺均 ConfigError
 #   command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/srv"]
-                                       # 必填,非空字符串数组;eager 装配:装配期拉起子进程 initialize 握手 + tools/list,
+                                       # stdio 必填,非空字符串数组;eager 装配:装配期拉起子进程 initialize 握手 + tools/list,
                                        # 工具注册为 mcp.<server>.<tool>(走全量 dispatch 管线),连接失败 ConfigError 快速失败
+#   url = "https://mcp.example.com/mcp"
+                                       # http 必填,http(s):// 单端点 POST(Streamable HTTP,spec 2025-03-26 版族;
+                                       # initialize 捕获 Mcp-Session-Id,404 自动重连重 initialize 一次)
+#   transport = "auto"                 # 缺省 auto(按键判:url → http,command → stdio);显式 stdio|http 与键不符 → ConfigError
+#   protocol_version = "2025-03-26"    # 可选,非空字符串;缺省随传输(stdio 2024-11-05 / http 2025-03-26)
 #   env = { API_KEY = { env = "MCP_API_KEY" } }
-                                       # 可选;子进程不继承宿主 env,值 = 字符串字面量或 { env = "VAR" } 间接引用(连接时现读 os.environ)
+                                       # 可选(stdio);子进程不继承宿主 env,值 = 字符串字面量或 { env = "VAR" } 间接引用(连接时现读 os.environ)
+#   headers = { Authorization = { env = "MCP_TOKEN" } }
+                                       # 可选(仅 http 有意义,配在 stdio server 上 → ConfigError);值 = 字面量或 { env = "VAR" } 间接引用(同 env 先例)
 #   permission = "read"                # 缺省 read(最小授权),可升 write|net|exec;confirm = true 则该 server 工具过 tool-confirm 闸门
 #   timeout = 30.0                     # 单次 tools/call 超时秒数;connect_timeout = 10.0 为连接/握手截止
                                        # (server 名只许 [A-Za-z0-9_-],进工具命名空间;全部键 strict 校验,未知键 ConfigError)

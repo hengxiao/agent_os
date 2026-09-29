@@ -36,6 +36,7 @@ from agent_os.context import (
 from agent_os.memory.local_file import LocalFileMemoryService
 from agent_os.runtime.config import (
     ConfigError,
+    _events_section,
     _mcp_servers,
     build_kernel,
     load_config,
@@ -887,6 +888,50 @@ def test_context_section_type_errors_rejected():
         build_kernel(_base_cfg(context={"summarize_breaker": 0}))
     with pytest.raises(ConfigError, match=r"\[context\] summarize_temperature 须为非负数字"):
         build_kernel(_base_cfg(context={"summarize_temperature": "hot"}))
+
+
+# ---------------------------------------------------------------------------
+# [events] 段(E4 事件批处理):三键解析;缺段 = 全默认;严格未知字段/类型校验
+# ---------------------------------------------------------------------------
+
+
+def test_events_section_absent_uses_defaults():
+    """缺 [events] 段 = 全默认:解析三键缺省值,Kernel 排干上限落 50。"""
+    section = _events_section({})
+    assert section.batch is True
+    assert section.batch_max == 50
+    assert section.event_text_max == 2000
+    kernel = build_kernel(_base_cfg())
+    assert kernel._events_batch_max == 50
+
+
+def test_events_section_explicit_values():
+    """显式三键全部解析;batch_max 经 builder 透传给 Kernel 排干上限。"""
+    section = _events_section({"batch": False, "batch_max": 7, "event_text_max": 500})
+    assert section.batch is False
+    assert section.batch_max == 7
+    assert section.event_text_max == 500
+    kernel = build_kernel(_base_cfg(events={"batch": False, "batch_max": 7}))
+    assert kernel._events_batch_max == 7
+
+
+def test_events_section_unknown_field_rejected():
+    """严格先例(同 [context]/[memory]):键拼错会静默落默认,批处理被关掉不痛不痒地失效。"""
+    with pytest.raises(ConfigError, match=r"\[events\] 含未知字段"):
+        build_kernel(_base_cfg(events={"batch_mAx": 7}))
+
+
+def test_events_section_type_errors_rejected():
+    with pytest.raises(ConfigError, match=r"\[events\] batch 须为布尔"):
+        build_kernel(_base_cfg(events={"batch": "off"}))
+    with pytest.raises(ConfigError, match=r"\[events\] batch_max 须为"):
+        build_kernel(_base_cfg(events={"batch_max": 0}))
+    with pytest.raises(ConfigError, match=r"\[events\] batch_max 须为"):
+        build_kernel(_base_cfg(events={"batch_max": True}))
+    with pytest.raises(ConfigError, match=r"\[events\] event_text_max 须为"):
+        build_kernel(_base_cfg(events={"event_text_max": -1}))
+    with pytest.raises(ConfigError, match=r"\[events\] event_text_max 须为"):
+        build_kernel(_base_cfg(events={"event_text_max": "2000"}))
 
 
 # ---------------------------------------------------------------------------

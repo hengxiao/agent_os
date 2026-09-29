@@ -4,13 +4,16 @@
 
 - body ``{type, payload?, target?, skill?, input?, wait?}``:``type`` 必填非空
   (缺/空 → 400);``payload`` dict 或字符串;
-- 三通道路由(按目标 run 状态):running → 注入根帧(``action="injected"``);
+- 三通道路由(按目标 run 状态):running → ``[events].batch`` 开(缺省)时入
+  根帧事件队列(``action="queued"``,runner 下一步 build 前排干为批头消息
+  ``[event 批处理 N 条]``;关时立即注入根帧,``action="injected"``);
   paused → checkpoint.json 根帧(depth 最小)追加事件消息后 resume
   (``action="resumed"``);无 target → ``skill`` 起新 run(``action="started"``,
   ``input`` 缺省 ``{"event": {"type", "payload"}}``,``wait`` 透传);
 - 终态(done/failed/aborted)run → 409,未知 run → 404,无 target 缺 skill → 400;
-- 事件文本 ``[event:<type>] <payload JSON>``(compact 分隔符,截 2000 字符);
-  checkpoint 追加的消息 dict 逐字对齐内核 ``_message_to_dict`` 落盘形状;
+- 事件文本 ``[event:<type>] <payload JSON>``(compact 分隔符,截 2000 字符,
+  ``[events].event_text_max`` 覆盖);checkpoint 追加的消息 dict 逐字对齐内核
+  ``_message_to_dict`` 落盘形状;
 - 事件到达与路由结果经 per-run hub 投 ``event.received``(宿主层信号,不进
   api/v1),SSE 回放可见;鉴权语义与全站中间件一致(静态门禁 401、
   ``[web.tokens]`` 映射 token → principal 透传)。
@@ -112,15 +115,45 @@ def _sse_body(client: TestClient, run_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 通道 1:running → 注入根帧
+# 通道 1:running → 事件队列(batch 开)/ 立即注入(batch 关)
 # ---------------------------------------------------------------------------
 
 
-def test_event_injected_into_running_run(tmp_path, monkeypatch):
-    """在跑 run:POST events(target.run_id)→ action=injected;后续 LLM 请求的
-    根帧 messages 含事件文本(USER/INJECTED)。"""
+def test_event_queued_into_running_run(tmp_path, monkeypatch):
+    """在跑 run(batch 开,缺省):POST events(target.run_id)→ action=queued;
+    后续 LLM 请求的根帧 messages 含批头("[event 批处理 1 条]" + 事件文本)。"""
     made = _spy_mock(monkeypatch)
     client = _client(tmp_path, brain="tests.helpers.brains:slow_fib_brain")
+    r = client.post("/api/runs", json={"skill": "demo.fib", "input": {"n": 6}})
+    assert r.status_code == 200
+    run_id = r.json()["run_id"]
+    _wait_recorded(made)
+
+    r = client.post(
+        "/api/events",
+        json={"type": "user.ping", "payload": {"msg": "在吗"}, "target": {"run_id": run_id}},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "action": "queued", "run_id": run_id}
+
+    detail = wait_status(client, run_id)
+    assert detail["status"] == "done"
+    texts = _event_messages(made[-1])
+    assert any(
+        t.startswith("[event 批处理 1 条]") and "[event:user.ping]" in t and '"msg":"在吗"' in t
+        for t in texts
+    ), f"入队后请求未见批头: {texts}"
+
+
+def test_event_injected_immediately_when_batch_off(tmp_path, monkeypatch):
+    """[events] batch = false:维持 E4 原行为——action=injected,事件文本立即以
+    独立 USER/INJECTED 消息进根帧(无批头)。"""
+    made = _spy_mock(monkeypatch)
+    client = _client(
+        tmp_path,
+        brain="tests.helpers.brains:slow_fib_brain",
+        extra="[events]\nbatch = false\n",
+    )
     r = client.post("/api/runs", json={"skill": "demo.fib", "input": {"n": 6}})
     assert r.status_code == 200
     run_id = r.json()["run_id"]
@@ -139,6 +172,36 @@ def test_event_injected_into_running_run(tmp_path, monkeypatch):
     assert any(
         t.startswith("[event:user.ping]") and '"msg":"在吗"' in t for t in texts
     ), f"注入后请求未见事件文本: {texts}"
+    assert not any(t.startswith("[event 批处理") for t in texts), "batch 关不得有批头"
+
+
+def test_event_text_max_from_events_section(tmp_path, monkeypatch):
+    """[events] event_text_max:事件文本按配置截断(覆盖缺省 2000;batch 关便于
+    直接观测独立事件消息)。"""
+    made = _spy_mock(monkeypatch)
+    client = _client(
+        tmp_path,
+        brain="tests.helpers.brains:slow_fib_brain",
+        extra="[events]\nbatch = false\nevent_text_max = 30\n",
+    )
+    r = client.post("/api/runs", json={"skill": "demo.fib", "input": {"n": 6}})
+    assert r.status_code == 200
+    run_id = r.json()["run_id"]
+    _wait_recorded(made)
+
+    r = client.post(
+        "/api/events",
+        json={"type": "user.ping", "payload": {"msg": "长" * 50}, "target": {"run_id": run_id}},
+    )
+    assert r.status_code == 200
+    assert r.json()["action"] == "injected"
+
+    detail = wait_status(client, run_id)
+    assert detail["status"] == "done"
+    texts = _event_messages(made[-1])
+    assert any(
+        len(t) == 30 and t.startswith("[event:user.ping]") for t in texts
+    ), f"事件文本未按 event_text_max=30 截断: {texts}"
 
 
 # ---------------------------------------------------------------------------

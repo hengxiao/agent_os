@@ -79,6 +79,20 @@ class MemorySection:
     recall_total_chars: int = 2000  # 经验参考段总量截尾字符数
 
 
+@dataclass
+class EventsSection:
+    """``[events]`` 段的装配形态:事件批处理(E4 增量,``POST /api/events`` 在跑通道)三键。
+
+    ``batch``/``event_text_max`` 由 web 宿主读取(inject_event 分流 / 事件文本
+    截断);``batch_max`` 透传给 Kernel 作排干上限(runner._drain_event_queue)。
+    字段缺省值与 TOML 段缺席时的全默认一致。
+    """
+
+    batch: bool = True  # 在跑事件先入根帧队列(下一步批头并入);False = 立即注入(E4 原行为)
+    batch_max: int = 50  # 单批条数上限;超出丢最旧(批头 meta.dropped 计数)
+    event_text_max: int = 2000  # 事件文本截断字符数(web 侧,注入/入队前截断)
+
+
 def _compressor_plugins() -> dict[str, Any]:
     """entry point ``agent_os.compressors`` 插件加载(docs/DESIGN.md §7.5/§14.3)。
 
@@ -129,6 +143,7 @@ class KernelBuilder:
         self._retry: dict[str, Any] = {}
         self._context_section: ContextSection | None = None
         self._memory_section: MemorySection | None = None
+        self._events_section: EventsSection | None = None
         self._router: Any = None
 
     def providers(self, *providers: Any) -> KernelBuilder:
@@ -185,6 +200,15 @@ class KernelBuilder:
         嵌入方自装 ContextManager(``.context()``)时本段不生效——recall 调参由嵌入方自负。
         """
         self._memory_section = section
+        return self
+
+    def events_section(self, section: EventsSection) -> KernelBuilder:
+        """``[events]`` 段(事件批处理):``batch_max`` 透传给 Kernel 排干上限。
+
+        ``batch``/``event_text_max`` 是 web 宿主侧键(inject_event 分流/文本截断),
+        内核只消费 ``batch_max``;缺省(None)= 全默认(同 context_section 先例)。
+        """
+        self._events_section = section
         return self
 
     def user_channel(self, channel: Any) -> KernelBuilder:
@@ -435,6 +459,8 @@ class KernelBuilder:
             stack=FrameStack(max_depth=self.config.max_depth),
             human_approval=human_approval,
             router=router,
+            # [events] 段:内核只消费 batch_max(排干上限);缺省全默认
+            events_batch_max=(self._events_section or EventsSection()).batch_max,
         )
         if self._sidecars:
             # §5.2/§5.3:RunControl 是 sidecar 操控运行的唯一通道;supervisor 统一托管

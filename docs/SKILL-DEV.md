@@ -311,5 +311,7 @@ task id 与初始状态**,不占工具调用回合空等结果;**完成走事件
 - `POST /api/events`(宿主事件入口,2026-09-29,RUNNERS.md §4.3):外部事件源
   → running 注入 / paused 恢复 / 无 target 起新 run 三通道。
 
-仍开口:事件批处理与 queued 策略/status bar 标记(ch04:56/:60)、
-`monitor_shell`/`connect_channel`、持久事件队列与调度。
+事件批处理已落地(2026-09-29,RUNNERS.md §2.1/§4.3):在跑事件按 `[events]`
+段分流——缺省入根帧队列,下一步 build 前排干为一条批头消息(`[event 批处理
+N 条]`,其计数承担 status bar 标记的注意力职能);关掉批处理则维持立即注入。
+仍开口:`monitor_shell`/`connect_channel`、持久事件队列与调度。

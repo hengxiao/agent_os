@@ -19,7 +19,8 @@ P5 增量(时间旅行):开会话增 ``{replay_run_id, until_step?}`` replay 形
 (与 ``{skill, input}`` 互斥,响应带 ``mode: "replay"``)。
 
 E4 增量(§17 开放问题 4 外部事件唤醒的宿主层形态):``POST /api/events``
-按目标 run 状态三通道路由——running 注入根帧、paused 追加 checkpoint 后
+按目标 run 状态三通道路由——running 入根帧事件队列(``[events].batch`` 开,
+缺省;下一步批头并入)或立即注入根帧(关)、paused 追加 checkpoint 后
 resume、无 target 起新 run;事件到达与路由结果经 per-run hub 投
 ``event.received``(宿主层信号,不进 api/v1)。
 """
@@ -368,14 +369,15 @@ def _run_dir(artifacts_root: Path, run_id: str) -> Path:
     return artifacts_root / "runs" / run_id
 
 
-#: 事件文本的最大长度(注入根帧/落 checkpoint 前截断,防巨型 payload 灌爆帧上下文)
+#: 事件文本的缺省最大长度(注入根帧/落 checkpoint 前截断,防巨型 payload 灌爆帧上下文;
+#: 配置 [events].event_text_max 覆盖——路由经 manager.events_section() 现读)
 _EVENT_TEXT_MAX = 2000
 
 
-def _event_text(event_type: str, payload: dict[str, Any] | str) -> str:
-    """事件 → 注入/落盘的 USER 文本:``[event:<type>] <payload JSON>``(截 2000 字符)。"""
+def _event_text(event_type: str, payload: dict[str, Any] | str, max_chars: int = _EVENT_TEXT_MAX) -> str:
+    """事件 → 注入/落盘的 USER 文本:``[event:<type>] <payload JSON>``(截 max_chars 字符)。"""
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    return f"[event:{event_type}] {raw}"[:_EVENT_TEXT_MAX]
+    return f"[event:{event_type}] {raw}"[:max_chars]
 
 
 def _run_status(artifacts_root: Path, manager: RunManager, run_id: str) -> str | None:
@@ -820,9 +822,11 @@ def create_app(
     async def post_event(body: EventBody, request: Request) -> dict[str, Any]:
         """外部事件唤醒入口(§17 开放问题 4 宿主层形态;E4):按目标 run 状态三通道路由。
 
-        - ``target.run_id`` 在场:running → 注入根帧(``inject_event``,投递失败
-          409);paused → checkpoint 根帧追加事件消息后 resume(错误语义沿用
-          resume 端点:404/400/409);终态(done/failed/aborted)→ 409;未知 → 404;
+        - ``target.run_id`` 在场:running → ``inject_event``(``[events].batch``
+          开时入根帧事件队列、``action="queued"``,关时立即注入根帧、
+          ``action="injected"``;投递失败 409);paused → checkpoint 根帧追加
+          事件消息后 resume(错误语义沿用 resume 端点:404/400/409);
+          终态(done/failed/aborted)→ 409;未知 → 404;
         - 无 target:``skill`` 必填(缺 → 400)起新 run,``input`` 缺省
           ``{"event": {"type", "payload"}}``,``wait`` 透传 ``start_run``
           (校验错沿用 ``POST /api/runs`` 的 ``200 + {"status": "failed"}`` 归口);
@@ -831,7 +835,7 @@ def create_app(
         """
         if not body.type:
             raise HTTPException(status_code=400, detail="事件 type 必填非空")
-        text = _event_text(body.type, body.payload)
+        text = _event_text(body.type, body.payload, manager.events_section().event_text_max)
         event_doc = {"type": body.type, "payload": _jsonable(body.payload)}
         target_run = (body.target.run_id or None) if body.target else None
         if target_run is not None:
@@ -839,16 +843,17 @@ def create_app(
             if status is None:
                 raise HTTPException(status_code=404, detail=f"找不到 run: {target_run}")
             if status == "running":
-                if not await manager.inject_event(target_run, text):
+                action = await manager.inject_event(target_run, text, body.type)
+                if action is None:
                     raise HTTPException(
                         status_code=409,
                         detail=f"run {target_run} 无法接收事件(帧不在或刚结束,可重试)",
                     )
                 manager.emit_event(target_run, {"phase": "received", "event": event_doc})
                 manager.emit_event(
-                    target_run, {"phase": "routed", "action": "injected", "event": event_doc}
+                    target_run, {"phase": "routed", "action": action, "event": event_doc}
                 )
-                return {"ok": True, "action": "injected", "run_id": target_run}
+                return {"ok": True, "action": action, "run_id": target_run}
             if status == "paused":
                 try:
                     await manager.resume_run(target_run, inject=[text])

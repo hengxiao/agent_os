@@ -92,9 +92,11 @@ M1 增量(§8.3 User Communication;tests/web/test_user_channel.py 锚点):
 E4 增量(§17 开放问题 4 外部事件唤醒的宿主层形态;tests/web/test_events_api.py 锚点):
 
 - ``inject_event``:在跑 run 的事件注入——``run_coroutine_threadsafe`` 桥到
-  run worker 循环内查 ``ctl.get_frame_tree`` 取根帧(depth 最小)并
-  ``ctl.inject_message`` 追加 USER/INJECTED 消息;worker 循环句柄逐 run 在
-  首个内核信号时捕获(``_run_loops``,与调试命令桥同构);
+  run worker 循环内查 ``ctl.get_frame_tree`` 取根帧(depth 最小);``[events].batch``
+  开(缺省)时条目入根帧工作内存队列 ``_event_queue``(runner 在下一步 build 前
+  排干为批头消息,保 §7.4 配对原子性),关时 ``ctl.inject_message`` 立即追加
+  USER/INJECTED 消息(E4 原行为);worker 循环句柄逐 run 在首个内核信号时捕获
+  (``_run_loops``,与调试命令桥同构);
 - ``resume_run(..., inject=...)``:paused 唤醒——resume 前向 checkpoint.json
   根帧的 ``context.messages`` 追加事件消息(dict 形状逐字对齐内核
   ``_message_to_dict`` 落盘形态),写回后走原 execute_resume 路径;
@@ -134,10 +136,13 @@ from agent_os.api.v1 import (
 from agent_os.host.shared.artifacts import execute_resume, execute_run
 from agent_os.host.shared.replay import build_mock_script, replace_providers
 from agent_os.host.shared.runrecord import STATUS_FAILED
+from agent_os.kernel.control import EVENT_QUEUE_KEY
 from agent_os.kernel.debug import RESUME_COMMANDS as DEBUG_RESUME_COMMANDS
 from agent_os.kernel.debug import DebugController
 from agent_os.kernel.errors import AgentOSError
+from agent_os.runtime.builder import EventsSection
 from agent_os.runtime.config import (
+    _events_section,
     build_kernel,
     load_config,
     load_skillsets,
@@ -595,6 +600,18 @@ class RunManager:
         except Exception:  # noqa: BLE001 — 同上:失败按无映射,不阻断装配
             return False
 
+    def events_section(self) -> EventsSection:
+        """``[events]`` 段(E4 事件批处理三键):inject_event 分流与事件文本截断的配置源。
+
+        配置每次现读(同 ``token_principal`` 先例,改动即生效);读取/解析失败退化
+        全默认(``batch=True``),不阻断事件路由——段畸形时 run 装配早已
+        ConfigError 快速失败,这里只覆盖"run 启动后配置被改坏"的窗口。
+        """
+        try:
+            return _events_section(load_config(self._config_path).get("events") or {})
+        except Exception:  # noqa: BLE001 — 同 token_principal 先例:失败退化默认,不阻断请求
+            return EventsSection()
+
     def assemble_lab_kernel(self, overlay: Any) -> Any:
         """装配"生产 + 草稿层"内核(docs/SKILL-DEV.md §1.1;L3):Lab test-run/G4 专用。
 
@@ -885,41 +902,60 @@ class RunManager:
             json.dumps(doc, ensure_ascii=False, indent=2, default=repr), encoding="utf-8"
         )
 
-    async def inject_event(self, run_id: str, text: str) -> bool:
-        """``POST /api/events`` 的在跑注入通道(E4):向根帧追加 USER/INJECTED 消息。
+    async def inject_event(self, run_id: str, text: str, event_type: str = "unknown") -> str | None:
+        """``POST /api/events`` 的在跑注入通道(E4):按 ``[events].batch`` 分两路。
 
-        根帧 = ``ctl.get_frame_tree`` 中 depth 最小者;查帧树与追加消息经
+        - 批处理开(缺省):事件条目 ``{type, text, at}`` 入根帧工作内存队列
+          ``_event_queue``,runner 在下一步 build 前排干为一条批头消息
+          (``[event 批处理 N 条]``;只在 build 前并入,保 §7.4 配对原子性),
+          返回 ``"queued"``;队列随 checkpoint 落盘(working 序列化),
+          resume 零钩子自然排干;
+        - 批处理关:维持 E4 原行为,立即向根帧追加 USER/INJECTED 消息,
+          返回 ``"injected"``。
+
+        根帧 = ``ctl.get_frame_tree`` 中 depth 最小者;查帧树与入队/追加经
         ``run_coroutine_threadsafe`` 桥到 run worker 的事件循环内完成(与调试
         inject 同桥,``_run_loops`` 在首个内核信号时捕获)——不与 runner 的
         消息组装竞态。run 不在跑 / 无 ctl / worker 循环句柄不在 / 帧树为空
-        → ``False``(路由层归 409)。
+        → ``None``(路由层归 409)。
         """
         state = self.state_of(run_id)
         if state is None or state.get("status") != "running":
-            return False
+            return None
         ctl = getattr(state.get("kernel"), "ctl", None)
         if ctl is None:
-            return False
+            return None
         loop = self._run_loops.get(run_id)
         if loop is None or not loop.is_running():
-            return False
+            return None
+        batch = self.events_section().batch
 
-        async def _inject() -> bool:
+        async def _inject() -> str | None:
             frame_id = _root_frame_id(await ctl.get_frame_tree(run_id))
             if frame_id is None:
-                return False
+                return None
+            if batch:
+                # 入队只写根帧 working(纯内存操作,桥内与 runner 同循环,无竞态);
+                # 批头上限/丢弃在 runner 排干点统一处理([events] batch_max)
+                frame = ctl._kernel.stack.get(frame_id)
+                if frame is None:
+                    return None
+                frame.context.working.setdefault(EVENT_QUEUE_KEY, []).append(
+                    {"type": event_type, "text": text, "at": time.time()}
+                )
+                return "queued"
             await ctl.inject_message(
                 frame_id,
                 Message(role=Role.USER, content=text, source=Source.INJECTED),
             )
-            return True
+            return "injected"
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_inject(), loop)
         except RuntimeError:
             # 竞态:is_running 检查与投递之间 loop 已关闭(run 刚结束)——按无法注入归类
-            return False
-        return bool(await asyncio.wrap_future(fut))
+            return None
+        return await asyncio.wrap_future(fut)
 
     def emit_event(self, run_id: str, payload: dict[str, Any]) -> None:
         """向 run 的 hub 投一条宿主层 ``event.received`` 行(E4 路由可观测面)。

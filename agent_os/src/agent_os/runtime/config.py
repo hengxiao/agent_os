@@ -64,6 +64,10 @@
                    (D1"未配置不拦截"语义逐字不动)
     [web.tokens] → D3-lite 多用户映射:{ "<token>" = "user:<login>" }(host/web
                    Bearer 门命中映射 → 逐用户 Principal;解析见 web_token_map)
+    [events]     → E4 事件批处理(``POST /api/events`` 在跑通道):batch(在跑事件先入
+                   根帧队列、下一步批头并入,缺省 true;false = 立即注入)/batch_max
+                   (单批条数上限,默认 50,超出丢最旧)/event_text_max(事件文本
+                   截断,默认 2000);缺段 = 全默认
 
 两个错误归类的锚点:配置文件缺失/畸形/provider 装配失败抛 :class:`ConfigError`
 (宿主归退出码 4);技能清单/权限闸门问题由 KernelBuilder 抛 SkillLoadError(归 2)。
@@ -99,7 +103,12 @@ from agent_os.providers.claude import ClaudeProvider
 from agent_os.providers.kimi import KimiProvider
 from agent_os.providers.mock import MockProvider
 from agent_os.providers.openai_compatible import OpenAICompatibleProvider
-from agent_os.runtime.builder import ContextSection, KernelBuilder, MemorySection
+from agent_os.runtime.builder import (
+    ContextSection,
+    EventsSection,
+    KernelBuilder,
+    MemorySection,
+)
 from agent_os.sidecars.builtins import (
     BudgetGuard,
     DistillSidecar,
@@ -149,6 +158,9 @@ _CONTEXT_FIELDS = (
 
 #: ``[memory]`` 支持的字段(§11;dir = 存储接线,recall_* = 经验参考段调参,缺键 = 全默认)
 _MEMORY_FIELDS = ("dir", "recall_k", "recall_entry_chars", "recall_total_chars")
+
+#: ``[events]`` 支持的字段(E4 事件批处理;缺段 = 全默认,见 EventsSection)
+_EVENTS_FIELDS = ("batch", "batch_max", "event_text_max")
 
 
 class CredentialScope:
@@ -611,6 +623,32 @@ def _memory_section(cfg: dict[str, Any]) -> MemorySection:
     )
 
 
+def _events_section(cfg: dict[str, Any]) -> EventsSection:
+    """``[events]`` 段 → :class:`EventsSection`(E4 事件批处理三键;缺段 = 全默认)。
+
+    严格未知字段 + 类型校验(同 ``_context_section``/``_memory_section`` 先例):
+    开关/上限拼错会静默落默认值——批处理被关掉或截断口径错位不痛不痒地失效,
+    宁可装配期炸掉。
+    """
+    unknown = sorted(set(cfg) - set(_EVENTS_FIELDS))
+    if unknown:
+        raise ConfigError(f"[events] 含未知字段: {unknown}(支持: {list(_EVENTS_FIELDS)})")
+    batch = cfg.get("batch", True)
+    if not isinstance(batch, bool):
+        raise ConfigError(f"[events] batch 须为布尔,得到: {batch!r}")
+    batch_max = cfg.get("batch_max", 50)
+    if not isinstance(batch_max, int) or isinstance(batch_max, bool) or batch_max < 1:
+        raise ConfigError(f"[events] batch_max 须为 >= 1 的整数,得到: {batch_max!r}")
+    event_text_max = cfg.get("event_text_max", 2000)
+    if (
+        not isinstance(event_text_max, int)
+        or isinstance(event_text_max, bool)
+        or event_text_max < 1
+    ):
+        raise ConfigError(f"[events] event_text_max 须为 >= 1 的整数,得到: {event_text_max!r}")
+    return EventsSection(batch=batch, batch_max=batch_max, event_text_max=event_text_max)
+
+
 def _data_policy(cfg: dict[str, Any]) -> DataPolicy:
     """``[data]`` 段 → :class:`DataPolicy`(D2;docs/DATA-AUTHZ.md §3.1/§3.2)。
 
@@ -1004,6 +1042,8 @@ def build_kernel(
         builder.blob(FileBlobStore(blob_dir))
     # WS2:[context] 段(§7.2 压缩链调参)——缺段也过一遍校验函数,落全默认 ContextSection
     builder.context_section(_context_section(cfg.get("context") or {}))
+    # [events] 段(E4 事件批处理)——缺段也过一遍校验函数,落全默认 EventsSection(同 [context] 先例)
+    builder.events_section(_events_section(cfg.get("events") or {}))
     prices = _prices(cfg.get("prices") or {})
     builder.prices(prices)
     if not prices:

@@ -139,6 +139,13 @@ backoff_base = 0.5
 # spill_threshold_chars = 4000         # TOOL 消息超此字符数移入 blob store(冻结 [SPILLED] 替换串)
 # summarize_breaker = 3                # 摘要连败熔断次数;熔断开/无 providers 退化纯截断([COMPRESSED:truncate])
 # summarize_temperature = 0.2          # 摘要采样温度
+
+# [events]                             # 事件批处理(2026-09-29,POST /api/events 在跑通道,§4.3);缺段 = 全默认
+# batch = true                         # 在跑 run 的事件先入根帧队列(working["_event_queue"]),下一步 build 前
+                                       # 排干为一条批头消息([event 批处理 N 条];只在 build 前并入,保 §7.4 配对
+                                       # 原子性;队列随 checkpoint 落盘,resume 自然排干);false = 立即注入根帧
+# batch_max = 50                       # 单批条数上限;超出丢最旧,批头 meta.dropped 计数
+# event_text_max = 2000                # 事件文本截断字符数([event:<type>] <payload JSON> 超此截断)
 ```
 
 加载器落点:`runtime/config.py`(已实现:CLI/Web 两个宿主共用,均支持 `--config`)。
@@ -312,7 +319,7 @@ GET    /api/runs/{id}/frames/{fid}   → 帧完整上下文(messages 逐条、us
 POST   /api/runs/{id}/stop           → RunControl.stop
 POST   /api/runs/{id}/pause          → RunControl.pause(可恢复挂起;可选 {"reason"},缺省 "web pause";仅 running 生效,否则 409)
 POST   /api/runs/{id}/resume         → 从 checkpoint 恢复(aborted/paused 均可)
-POST   /api/events                   → 外部事件唤醒入口(2026-09-29)。请求 {type(必填非空), payload=dict|str, target?:{run_id}, skill?, input?, wait?};三通道:target 且 running → 注入根帧(ctl.inject_message,USER/INJECTED)→ {action:"injected"};target 且 paused → checkpoint 根帧注入事件后 resume → {action:"resumed"};无 target → skill 必填起新 run(input 缺省 {"event":{...}},wait/principal 透传)→ {action:"started"}。错误语义:缺 type/skill 400;未知 run 404;注入失败/paused checkpoint 坏或缺根帧/run 终态 409。路由成功后 per-run hub 投 event.received received/routed 两条(SSE 可见;刻意不进 api/v1、不写 trace.jsonl)
+POST   /api/events                   → 外部事件唤醒入口(2026-09-29;在跑通道批处理同日落地)。请求 {type(必填非空), payload=dict|str, target?:{run_id}, skill?, input?, wait?};三通道:target 且 running → 按 [events].batch 分流(§2.1):开(缺省)→ 事件条目 {type, text, at} 入根帧队列 working["_event_queue"],下一步 build 前排干为一条批头消息([event 批处理 N 条],USER/INJECTED;超 batch_max 丢最旧计 dropped;队列随 checkpoint,resume 零钩子自然排干)→ {action:"queued"};关 → 立即注入根帧(ctl.inject_message,USER/INJECTED)→ {action:"injected"};target 且 paused → checkpoint 根帧注入事件后 resume → {action:"resumed"};无 target → skill 必填起新 run(input 缺省 {"event":{...}},wait/principal 透传)→ {action:"started"}。错误语义:缺 type/skill 400;未知 run 404;注入失败/paused checkpoint 坏或缺根帧/run 终态 409。路由成功后 per-run hub 投 event.received received/routed 两条(SSE 可见;刻意不进 api/v1、不写 trace.jsonl)
 GET    /api/runs/{id}/stream         → SSE:先回放缓冲,后实时信号
 GET    /api/skills                   → 已加载技能清单(manifest 摘要)
 POST   /api/skills/reload            → 热重载 skills.yaml
@@ -359,4 +366,4 @@ POST   /api/skills/reload            → 热重载 skills.yaml
 
 ## 7. 非目标
 
-多用户与权限、持久化队列/分布式 worker(含持久事件队列)、生产级部署形态、前端框架化(npm/构建链)、run 的定时调度与事件批处理(外部事件唤醒入口已有宿主形态:POST /api/events 三通道,2026-09-29,见 §4.3)、CLI 的交互式 TUI。
+多用户与权限、持久化队列/分布式 worker(含持久事件队列)、生产级部署形态、前端框架化(npm/构建链)、run 的定时调度(外部事件唤醒入口与在跑通道批处理已落地:POST /api/events 三通道 + [events] 段,2026-09-29,见 §4.3/§2.1)、CLI 的交互式 TUI。

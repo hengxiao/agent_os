@@ -6,7 +6,9 @@ WS3 parallel_invoke fork/join,docs/DESIGN.md §3.4 第三原语)。
 
 agent loop 顺序:safe point(run 中止/挂起标志:stop→RunAborted、pause→RunPaused,
 同置时 stop 优先)→ pre:step 检查点(verdict 仲裁,§5.2)
-→ 强制压缩检查 → context.maintain/build → providers.chat(RunConfig.stream 开且
+→ 强制压缩检查 → 事件批处理排干(根帧 ``_event_queue`` 并入批头消息,E4;
+只在 build 前这个原子点并入,保 §7.4 配对不变量 2)→ context.maintain/build →
+providers.chat(RunConfig.stream 开且
 provider caps 支持流式时改走 stream chunk 循环:逐 chunk 发 post:llm.chunk、
 safe point 同款取消查表、ttft/total 计时入账;否则回落 chat 原路径)→
 终止判断(outputs 校验 + verifier)→ 分发(pre:tool.call 可 Veto/Modify/Stop;
@@ -108,7 +110,7 @@ from agent_os.kernel.checkpoint import (
     dump_checkpoint,
     resume_from_checkpoint,
 )
-from agent_os.kernel.control import FORCE_COMPRESS_KEY
+from agent_os.kernel.control import EVENT_QUEUE_KEY, FORCE_COMPRESS_KEY
 from agent_os.kernel.errors import (
     BudgetExceeded,
     MaxDepthExceeded,
@@ -218,6 +220,7 @@ class Kernel:
         stack: FrameStack | None = None,
         human_approval: Any = None,  # HumanApproval 策略载体(WS2 下沉,docs/SUPERVISOR.md §10;None=关)
         router: Any = None,  # ModelRouter(§4.2 扩展点;ctx.chat 路由,None=内联解析)
+        events_batch_max: int = 50,  # 事件批处理单批条数上限([events] batch_max;超出丢最旧)
     ) -> None:
         self.config = config or RunConfig()
         self.providers = providers
@@ -239,6 +242,9 @@ class Kernel:
         #: ModelRouter(§4.2 扩展点,DefaultModelRouter 为 v1 默认实现):KernelBuilder
         #: 装配期注入;KernelLogicContext.chat 经它路由(None = 内联解析,防御)
         self.router = router
+        #: 事件批处理单批条数上限(E4 增量;``_drain_event_queue`` 排干时超出
+        #: 丢最旧,批头 meta.dropped 计数;KernelBuilder 从 [events] batch_max 填)
+        self._events_batch_max = events_batch_max
         self._runs: dict[str, Run] = {}
         #: run 中止标志表(dict[run_id, reason];RunControl.stop 置位,
         #: runner 在 pre:step safe point 检查并抛 RunAborted,§3.1/§5.2)
@@ -461,6 +467,44 @@ class Kernel:
             )
         await self._check_subtree_budgets(frame)
 
+    def _drain_event_queue(self, frame: SkillFrame) -> None:
+        """事件批处理排干(E4 增量):帧工作内存里的待处理事件队列并入一条批头消息。
+
+        队列由宿主在 run 在跑时写入根帧 ``working["_event_queue"]``
+        (host/web inject_event,``[events].batch`` 开;条目 ``{type, text, at}``,
+        JSON 安全——随 checkpoint 的 working 序列化落盘,resume 后第一次
+        build 前在本点自然排干,零钩子)。
+
+        排干点选 **build 前**(与 FORCE_COMPRESS 消费/maintain 同区)的理由:
+        批头消息只许在这个原子点并入——步内 append 会插在 assistant
+        tool_calls 与对应 TOOL 结果之间,破坏 §7.4 配对不变量 2。这是对
+        "任一 tool.result 返回时即注入"(书上的事件语义)的有意偏差:事件
+        至多少被看见一步,换来配对原子性与"恢复即排干"的单一实现路径。
+
+        超过 ``_events_batch_max`` 丢最旧,批头 ``meta.dropped`` 记丢弃数;
+        空队列/无队列零操作。
+        """
+        queue = frame.context.working.pop(EVENT_QUEUE_KEY, None)
+        if not queue:
+            return
+        batch = list(queue)
+        dropped = 0
+        if len(batch) > self._events_batch_max:
+            dropped = len(batch) - self._events_batch_max
+            batch = batch[-self._events_batch_max :]
+        meta: dict[str, Any] = {"kind": "event-batch", "count": len(batch)}
+        if dropped:
+            meta["dropped"] = dropped
+        frame.context.messages.append(
+            Message(
+                role=Role.USER,
+                source=Source.INJECTED,
+                content=f"[event 批处理 {len(batch)} 条]\n"
+                + "\n".join(f"{i}. {item.get('text', '')}" for i, item in enumerate(batch, 1)),
+                meta=meta,
+            )
+        )
+
     @staticmethod
     def _usage_payload(usage: ChatUsage | None) -> dict[str, Any]:
         """post:llm.response 的 usage 载荷(BudgetGuard 的记账数据源,§5.4)。"""
@@ -536,6 +580,8 @@ class Kernel:
             await self._apply_pre_step(frame, verdicts)
             if frame.context.working.pop(FORCE_COMPRESS_KEY, False):
                 await self._force_compress(frame)
+            # 事件批处理排干:build 前的唯一并入点(理由见 _drain_event_queue docstring)
+            self._drain_event_queue(frame)
             await self.context.maintain(frame)
             await self._drain_compress_usage(frame)
             req = await self.context.build(frame)

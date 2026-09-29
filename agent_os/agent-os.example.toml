@@ -120,6 +120,15 @@ stream_idle_timeout = 30.0            # 流式停滞 watchdog 秒数:N 秒无新
 # [web.tokens]
 # "tok-alice-xxx" = "user:alice"
 
+# —— 事件批处理(E4 增量:POST /api/events 在跑通道;段缺席 = 全默认,下列值即默认值)——
+# [events]
+# batch = true                          # 在跑 run 的事件先入根帧队列(working["_event_queue"]),
+                                        # 下一步请求组装前排干为一条批头消息([event 批处理 N 条];
+                                        # 只在 build 前并入,保 §7.4 配对原子性;队列随 checkpoint
+                                        # 落盘,resume 自然排干);false = 立即注入根帧(E4 原行为)
+# batch_max = 50                        # 单批条数上限;超出丢最旧,批头 meta.dropped 计数
+# event_text_max = 2000                 # 事件文本截断字符数([event:<type>] <payload JSON> 超此截断)
+
 # —— Memory 子系统(M6,docs/DESIGN.md §11;段存在才接线,缺段完全不 bind)——
 # [memory]
 # dir = "./memory"                      # LocalFileMemoryService 根目录(每条目一 Markdown + frontmatter);

@@ -427,9 +427,9 @@
 > 不写 trace.jsonl(故 GET signals 端点对终态 run 不可见,取舍已注)。
 > ③ **内核零改动、契约零改动**,鉴权复用 Bearer 中间件,principal 透传——ch00
 > "内核保持回合制、唤醒源留给宿主"的宿主层兑现。
-> **仍开口**:事件批处理/queued 策略/status bar 标记(ch04:56/:60)、initiate_X
-> 命名约定(纯文档,已落 SKILL-DEV.md §6)、`monitor_shell`/`connect_channel`、
-> 持久事件队列/调度、event.received 是否升格内核契约信号(现宿主层)。上文各
+> **仍开口**:initiate_X 命名约定(纯文档,已落 SKILL-DEV.md §6)、
+> `monitor_shell`/`connect_channel`、持久事件队列/调度、event.received 是否
+> 升格内核契约信号(现宿主层)。上文各
 > 复核块「仍开口」中的"外部事件唤醒/挂起与未启动 run 唤醒"条目据此关闭,
 > dated 原文保留。全量基线:1747 收集 = 1704 passed + 10 skipped + 40 xfailed,0 失败。
 > ---
@@ -509,7 +509,36 @@
 > DefaultModelRouter),`agent-os.example.toml` 已注。
 > **仍开口**:健康度/错误率反馈路由(无数据源)、fallback 动态化、
 > prefer 通配符匹配、params 超 temperature 键。
-> 全量基线:1818 收集 = 1775 passed + 10 skipped + 40 xfailed,0 失败。
+> 全量基线:1825 收集 = 1775 passed + 10 skipped + 40 xfailed,0 失败。
+
+> ✅ **复核 2026-09-29(事件批处理/queued 策略落地)**:上文 2026-09-29
+> (外部事件唤醒入口宿主层落地)块「仍开口」中的"事件批处理/queued 策略/
+> status bar 标记"据此关闭,该 dated 块与 DESIGN §17 开放问题 4 的子句已
+> 同步移除(不带数字,全量基线留待主 agent 填入)。
+> ① **队列**——根帧 `frame.context.working["_event_queue"]`(常量
+> `EVENT_QUEUE_KEY`,`kernel/control.py`),条目 `{type, text, at}` JSON 纯
+> 类型,随 checkpoint 的 working 序列化落盘;根帧单点,子帧纯净性不动
+> (ch04:142 张力只落根帧;timer/InjectMessage verdict 通道不动)。
+> ② **排干**——`Kernel._drain_event_queue`(`kernel/runner.py`),`_frame_loop`
+> 内 pre:step safe point/`_apply_pre_step` 之后、FORCE_COMPRESS 消费同区、
+> maintain/build 前——build 前唯一并入点,空队列零操作;偏差:不做"任一
+> tool.result 返回时"的步内多点排干(步内并入会插在 assistant tool_calls 与
+> TOOL 结果之间,破 §7.4 配对不变量 2),事件至多少被看见一步,换配对原子性
+> + resume 零钩子(恢复后第一个 build 前自然排干,resume 侧无专用钩子)。
+> ③ **批头消息**——USER/INJECTED `[event 批处理 N 条]` + 编号列表,meta
+> {"kind":"event-batch","count":N(,"dropped":d)};超 `batch_max` 丢最旧;批头
+> 计数承担 ch04:60 status bar 标记的注意力职能(评估结论:status bar 排干后
+> 恒 0,不单列 events 行)。
+> ④ **配置**——`[events]` 段 strict 三键(缺段全默认):`batch = true`/
+> `batch_max = 50`/`event_text_max = 2000`(接管 app.py 硬编码);Kernel kwarg
+> `events_batch_max`;builder `EventsSection`。
+> ⑤ **web 分流**——`inject_event`:batch 开 → 跨线程桥内根帧 working
+> append → action="queued";关 → 原 inject_message 立即注入 → "injected"。
+> 测试:内核(含 resume 排干)/web/config 三面锚点新增,test_events_api 一例
+> 重写(injected→queued)。
+> **仍开口**:步内多点排干(裁决不做)、按帧寻址注入、事件过滤/限流、跨 run
+> 队列、status bar events 行(评估后并入批头,不单列)。
+> 全量基线:1836 收集 = 1786 passed + 10 skipped + 40 xfailed,0 失败。
 
 ## 一、总览
 
@@ -538,7 +567,8 @@
 - **复核 2026-09-27**:`parallel_invoke` fork/join 已落地(`kernel/runner.py:1482-1763`,first-success、幂等结算、并发上限、批内故障隔离全实现;`LogicContext.parallel()` 委托),同批落地子树级联取消(`cancel_subtree`,:1837-1893;`RunControl.cancel_frame`)与子树记账读视图(`subtree_usage`,:1951-1988;`RunControl.get_subtree_usage`);spawn 的"未确认完成不得宣称 done"校验 hook 仍开口。
 - **复核 2026-09-27(流式批)**:runner 消费 `stream()` 已落地(`_llm_call`/`_stream_call`,`kernel/runner.py:548-632`,`post:llm.chunk` 仅 ASYNC 观察,ttft/total 入账;边界见头部复核块),异步工具挂起仍开口;两个遗留死 stub 已清理(`kernel/dispatch.py` 整文件删除、`kernel/run.py` 的 `check_control_flags` 移除)。
 - **复核 2026-09-28(压缩链)**:summarize 压缩已有独立连败熔断(默认 3 次,熔断退化纯截断,`context/summarize.py`);恢复熔断通用化仍开口。
-- **复核 2026-09-29(事件入口)**:外部事件唤醒入口已以宿主层形态落地(`POST /api/events` 三通道:running 注入/paused 恢复/无 target 起新 run;内核零改动,见头部复核块)——本条就此关闭;其余开口(事件批处理、`monitor_shell`/`connect_channel`、持久事件队列/调度、`event.received` 是否升格内核契约信号)归宿主层与文档范畴,非内核未开发项。
+- **复核 2026-09-29(事件入口)**:外部事件唤醒入口已以宿主层形态落地(`POST /api/events` 三通道:running 注入/paused 恢复/无 target 起新 run;内核零改动,见头部复核块)——本条就此关闭;其余开口(`monitor_shell`/`connect_channel`、持久事件队列/调度、`event.received` 是否升格内核契约信号)归宿主层与文档范畴,非内核未开发项。
+- **复核 2026-09-29(事件批处理)**:事件批处理/queued 策略已落地(内核 `Kernel._drain_event_queue` 在 build 前排干根帧 `working["_event_queue"]` 为批头消息 + `[events]` 段三键 + `inject_event` queued/injected 分流,见头部复核块)——"事件批处理"一项就此关闭,上行 dated 行括号已同步移除;其余开口仍归宿主层与文档范畴。
 
 ### 2. Providers — ✅ ~75%
 

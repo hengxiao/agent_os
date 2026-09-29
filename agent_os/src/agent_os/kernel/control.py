@@ -25,6 +25,10 @@ _log = logging.getLogger("agent_os.kernel")
 #: force_compress 在帧工作内存上的标志键(runner 在 maintain 前检查并清除)
 FORCE_COMPRESS_KEY = "_force_compress"
 
+#: 事件批处理队列在(根)帧工作内存上的键(E4 增量;host/web inject_event
+#: 在 ``[events].batch`` 开时入队,runner 在下一步 build 前排干为批头消息)
+EVENT_QUEUE_KEY = "_event_queue"
+
 
 class RunControlImpl:
     """``agent_os.api.v1.RunControl`` 协议的内核侧实现(M4)。

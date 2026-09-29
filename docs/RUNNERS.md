@@ -62,8 +62,15 @@ python_exec = "docker"              # docker | subprocess | off
 [skills]
 path = "./skills.yaml"              # LocalFileSkillRegistry(也可指目录:多 *.yaml 排序合并;register() 目录写恒落 <dir>/registered.yaml)
 # watch_interval = 5.0               # 热重载 watcher 轮询秒数(2026-09-29;daemon 线程查源文件 mtime,变了 reload,失败吞异常旧表不动;默认 0 = 关)
-# register_smoke = "my_pkg.gates:smoke"  # register() 入库前 smoke 验证门(2026-09-29;"module:func",sync/async 均可;ok 非真/异常 → GateError fail-closed 零写)
-# 注:strict 校验;watch_interval/register_smoke 需配合 path,缺 path → ConfigError
+# register_smoke = "default"            # register() 入库前验证门(2026-09-29):"default" 哨兵 = 默认重放 evaluator
+                                        # (skills/register_smoke.py:草稿 drafts/<name>/tests/*.json 重放 + expected 确定性深比较
+                                        # + expect LLM 裁判,全过才放行;code 技能 fail-closed,冒烟内核剥离 watcher/MCP/sidecars);
+                                        # 或 "my_pkg.gates:smoke" 自定义 hook("module:func",sync/async 均可;
+                                        # ok 非真/异常 → GateError fail-closed 零写)
+# register_judge_model = "kimi/cheap"    # 默认验证门 expect 判定的裁判模型(缺省跟 [run] model;需 [providers] 有可用 provider,
+                                        # 否则带 expect 的用例 fail-closed)
+# 注:strict 校验;watch_interval/register_smoke/register_judge_model 需配合 path,缺 path → ConfigError;
+# 默认验证门草稿根 = [lab].drafts_root(缺省 skills path 同级 drafts/;详见 SKILL-DEV.md §7)
 
 [sidecars]
 budget_guard = { max_cost = 2.0 }

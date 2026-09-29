@@ -100,7 +100,7 @@ run_frame(frame)                       # runner.py:389
 
 ## 5. 效果与验证(效果)
 
-测试证据(本章直接覆盖面):`tests/kernel/` 16 个文件 137 例 + `tests/telemetry/test_trace_checkpoint.py` 3 例,共 140 例,实测全部通过;全仓 `pytest --collect-only` 收集 1845 例(1795 passed / 10 skipped / 40 xfailed,本次核对时点)。关键锚点:
+测试证据(本章直接覆盖面):`tests/kernel/` 16 个文件 137 例 + `tests/telemetry/test_trace_checkpoint.py` 3 例,共 140 例,实测全部通过;全仓 `pytest --collect-only` 收集 1863 例(1813 passed / 10 skipped / 40 xfailed,本次核对时点)。关键锚点:
 
 - **执行模型纵向切片**(`tests/kernel/test_fib_slice.py`,5 例):递归技能 `demo.fib`(`agent_os/skills/skills.yaml`,fib(n) 先 invoke 自己算 fib(n-1)、再调沙箱工具求和)端到端返回正确数列;帧树形状断言——fib(5) 恰好压 4 帧、深度 1-4、LLM 调用恰好 10 次、沙箱执行恰好 3 次;**帧隔离断言**——父帧第二次请求的消息序列为 `[SYSTEM, USER, ASSISTANT, TOOL]`,子帧整段轨迹折叠为一条 `{"ok": true, "value": {"seq": [0,1,1,2]}}` 工具结果,且同一帧相邻请求的 SYSTEM 前缀逐字节一致;`max_depth=2` 时 fib(4) 抛 `MaxDepthExceeded`;`bad_brain` 连败触发 `OutputValidationError`。
 - **断电恢复**(`tests/telemetry/test_trace_checkpoint.py`,3 例):fib(5) 在第 6 次 LLM 调用处注入断电异常,新内核从检查点恢复后**只补 5 次调用**(`len(mock2.recorded) == 5`)即返回完整数列——"恢复不是重跑"以调用计数钉死;检查点 JSON 含版本头、run.usage、running/done 混合帧状态与完整帧上下文。

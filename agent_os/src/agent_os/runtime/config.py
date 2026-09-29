@@ -27,8 +27,14 @@
     [skills]     → LocalFileSkillRegistry:path 技能源(单文件/目录/列表);
                    watch_interval = 秒数(缺省 0 = 不看):>0 时装配轮询热重载
                    看门狗(daemon 线程,reload 失败保留旧表记 log);
-                   register_smoke = "pkg.mod:func"(register() 验证门冒烟回调,
-                   加载失败 ConfigError,同 [tools.custom] 先例;缺省不跑)
+                   register_smoke = "default"(默认重放验证门:草稿
+                   drafts/<name>/tests/*.json 用例 + expected 深比较 / expect
+                   LLM 裁判,见 skills/register_smoke.py;草稿根取
+                   [lab].drafts_root,缺省 skills 路径同级 drafts/)或
+                   "pkg.mod:func" 自定义回调(加载失败 ConfigError,同
+                   [tools.custom] 先例;缺省不跑);
+                   register_judge_model = 默认验证门 expect 判定的裁判模型
+                   (缺省跟 run.model)
     [sidecars]   → BudgetGuard / LoopDetector / tool_guard_rules → ToolGuard(缺省不加);
                    human_approval(WS2)= true 或 { timeout, on_timeout }:
                    装配 HumanApproval 策略,EXEC 档工具过内核 tool-confirm 闸门;
@@ -101,6 +107,7 @@ from agent_os.logic import (
 from agent_os.memory.local_file import LocalFileMemoryService
 from agent_os.providers.claude import ClaudeProvider
 from agent_os.providers.kimi import KimiProvider
+from agent_os.providers.manager import ProviderManager
 from agent_os.providers.mock import MockProvider
 from agent_os.providers.openai_compatible import OpenAICompatibleProvider
 from agent_os.runtime.builder import (
@@ -116,6 +123,7 @@ from agent_os.sidecars.builtins import (
     LoopDetector,
     ToolGuard,
 )
+from agent_os.skills.draft_store import DraftStore
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.telemetry.jsonl_exporter import JsonlTelemetrySink
 from agent_os.tools.blob import FileBlobStore
@@ -233,15 +241,19 @@ def _skills_section(cfg: Any) -> dict[str, Any]:
 
     会静默落空,必须装配期报出)。支持键:path(技能源)/ watch_interval(轮询
     热重载看门狗间隔秒数,缺省 0 = 不看;须 >= 0 的数值)/ register_smoke
-    (register() 验证门冒烟回调,"pkg.mod:func" 字符串;加载在 build_kernel
-    装配点做,同 [tools.custom] ``_load_dotted`` 先例)。
+    (register() 验证门冒烟回调:``"default"`` 哨兵 = 装配 skills/register_smoke.py
+    的默认重放实现;否则须为 "pkg.mod:func" 字符串,加载在 build_kernel 装配点做,
+    同 [tools.custom] ``_load_dotted`` 先例)/ register_judge_model(默认实现
+    expect 判定的裁判模型,None 或字符串,缺省跟 run.model)。
     """
     if not isinstance(cfg, dict):
         raise ConfigError(f"[skills] 段应为表,得到: {cfg!r}")
-    unknown = sorted(set(cfg) - {"path", "watch_interval", "register_smoke"})
+    known = {"path", "watch_interval", "register_smoke", "register_judge_model"}
+    unknown = sorted(set(cfg) - known)
     if unknown:
         raise ConfigError(
-            f"[skills] 含未知字段: {unknown}(支持: ['path', 'register_smoke', 'watch_interval'])"
+            f"[skills] 含未知字段: {unknown}"
+            f"(支持: ['path', 'register_judge_model', 'register_smoke', 'watch_interval'])"
         )
     section = dict(cfg)
     watch = section.get("watch_interval", 0)
@@ -249,8 +261,15 @@ def _skills_section(cfg: Any) -> dict[str, Any]:
         raise ConfigError(f"[skills] watch_interval 须为 >= 0 的数值(0 = 不看),得到: {watch!r}")
     section["watch_interval"] = float(watch)
     smoke = section.get("register_smoke")
-    if smoke is not None and (not isinstance(smoke, str) or ":" not in smoke):
-        raise ConfigError(f"[skills] register_smoke 须为 'pkg.mod:func' 字符串,得到: {smoke!r}")
+    if smoke is not None and (
+        not isinstance(smoke, str) or (smoke != "default" and ":" not in smoke)
+    ):
+        raise ConfigError(
+            f"[skills] register_smoke 须为 'default' 或 'pkg.mod:func' 字符串,得到: {smoke!r}"
+        )
+    judge_model = section.get("register_judge_model")
+    if judge_model is not None and not isinstance(judge_model, str):
+        raise ConfigError(f"[skills] register_judge_model 须为字符串,得到: {judge_model!r}")
     return section
 
 
@@ -860,6 +879,36 @@ def _sidecars(cfg: dict[str, Any]) -> list[Any]:
     return sidecars
 
 
+def _smoke_kernel_factory(cfg: dict[str, Any]) -> Callable[[], Any]:
+    """默认验证门(register_smoke="default")的按例内核工厂。
+
+    剥离 watcher/MCP/sidecars 防按例累积泄漏与蒸馏副作用:每个重放用例都重建
+    一次内核,看门狗 daemon 线程与 MCP stdio 子进程不剥会按例泄漏;DistillSidecar
+    会在 run 终态蒸馏写 memory(真实副作用,冒烟 run 绝不能触发)。
+    ``register_smoke`` 键一并移除:冒烟内核自身没有 register 需求,重绑无意义。
+    代价(文档注明):候选技能引用 mcp.* 工具时冒烟 run 必然 fail-closed。
+
+    cfg2 只构建一次(装配期配置不变),工厂本身按例调用 build_kernel;
+    user_channel/supervisor handler 等宿主通道不注入(零参调用)。
+    """
+    cfg2 = dict(cfg)
+    skills2 = dict(cfg.get("skills") or {})
+    skills2.pop("register_smoke", None)
+    skills2["watch_interval"] = 0
+    cfg2["skills"] = skills2
+    cfg2.pop("mcp", None)
+    cfg2.pop("sidecars", None)
+    return lambda: build_kernel(cfg2)
+
+
+def _register_drafts_root(cfg: dict[str, Any], skills_path: Any) -> str:
+    """默认验证门的草稿根:[lab].drafts_root 优先(与 Web Lab 同一配置键);
+    缺省 = skills 路径同级的 ``drafts/``(文件与目录形态都取**同级**——目录形态下
+    drafts 放进技能目录会被 loader 当技能包加载)。
+    """
+    return (cfg.get("lab") or {}).get("drafts_root") or str(Path(skills_path).parent / "drafts")
+
+
 def build_kernel(
     config: str | Path | dict[str, Any],
     *,
@@ -975,17 +1024,37 @@ def build_kernel(
     skills_path = skills_cfg.get("path")
     if skills_path:
         skills_registry = LocalFileSkillRegistry(skills_path)
-        if skills_cfg.get("register_smoke"):
+        smoke_spec = skills_cfg.get("register_smoke")
+        if smoke_spec == "default":
+            # §6.2 验证门默认实现:草稿重放 + expected/expect 双判定
+            # (skills/register_smoke.py;延迟 import 防环——该模块依赖 skills.* 全链)
+            from agent_os.skills.register_smoke import DefaultRegisterSmoke
+
+            skills_registry.bind_register_smoke(
+                DefaultRegisterSmoke(
+                    production=skills_registry,
+                    store=DraftStore(_register_drafts_root(cfg, skills_path)),
+                    make_kernel=_smoke_kernel_factory(cfg),
+                    judge_providers=ProviderManager(providers) if providers else None,
+                    judge_model=skills_cfg.get("register_judge_model") or run_cfg.model,
+                )
+            )
+        elif smoke_spec:
             # §6.2 验证门降级形态:dotted path 加载冒烟回调并 bind 进 register() 管线
             # (加载失败 ConfigError,同 [tools.custom] 先例)
-            skills_registry.bind_register_smoke(_load_dotted(skills_cfg["register_smoke"]))
+            skills_registry.bind_register_smoke(_load_dotted(smoke_spec))
         if skills_cfg["watch_interval"] > 0:
             # 轮询热重载看门狗(daemon 线程,随进程;reload 失败保留旧表记 log)
             skills_registry.start_watching(skills_cfg["watch_interval"])
         builder.skills(skills_registry)
-    elif skills_cfg["watch_interval"] > 0 or skills_cfg.get("register_smoke"):
+    elif (
+        skills_cfg["watch_interval"] > 0
+        or skills_cfg.get("register_smoke")
+        or skills_cfg.get("register_judge_model")
+    ):
         raise ConfigError(
-            "[skills] 配置了 watch_interval/register_smoke 但没有 path(无 registry 可接线)"
+            "[skills] 配置了 watch_interval/register_smoke/register_judge_model 但没有 path"
+            "(无 registry 可接线;register_judge_model 离开默认验证门同样无意义)"
         )
     sidecars = [*_sidecars(cfg.get("sidecars") or {}), *extra_sidecars]
     if sidecars:

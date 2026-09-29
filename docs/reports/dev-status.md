@@ -56,8 +56,9 @@
 > 组装侧,manifest `context_policy.recall` opt-in)均已关闭;压缩链 spill/summarize/hierarchical
 > 与沙箱回调通道 spawn/wait/parallel 亦已于本日关闭,见头部最新复核块。)(**2026-09-29 更新**:
 > register() 留尾四件亦已全部关闭——semver 约束准入(只准入、不做多版本求解,裁决)、目录形态写
-> (目标恒 `<dir>/registered.yaml`)、`start_watching` 热重载 watcher、smoke hook 验证门;仍开口:
-> 默认重放 + evaluator 实现(挂点已就位)与 watch 线程 close 钩子。见头部最新复核块。)
+> (目标恒 `<dir>/registered.yaml`)、`start_watching` 热重载 watcher、smoke hook 验证门;
+> 默认重放 + evaluator 验证门默认实现亦已于同日落地(`[skills] register_smoke = "default"`),
+> 仍开口:watch 线程 close 钩子。见头部最新复核块。)
 > ---
 > ⚠️ **复核 2026-09-27(并发三原语三项已关闭)**:测试 **1320 收集 = 1273 passed + 10 条件 skip + 37 xfailed,0 失败**。
 > ① **`parallel_invoke` fork/join(WS3,§3.4 第三原语)**——`Kernel.parallel_invoke`(`kernel/runner.py:1482-1763`,
@@ -406,8 +407,9 @@
 > (detail 透传)零写,异常 → GateError fail-closed;`[skills] register_smoke = "module:func"`;
 > jsonl gates 加 `"smoke"` 键(skip/pass/fail: detail;smoke 拒绝落 `action="rejected"`
 > 记录,其余闸门拒绝仍零写入)。
-> **仍开口**:多版本求解/range(裁决不做)、默认重放 + evaluator 实现(挂点已就位)、
-> watch 线程的内核 close 钩子(现生命周期随进程)。
+> **仍开口**:多版本求解/range(裁决不做)、watch 线程的内核 close 钩子(现生命周期随进程)。
+> (**2026-09-29 更新**:默认重放 + evaluator 验证门默认实现已落地——
+> `[skills] register_smoke = "default"`,`skills/register_smoke.py`,见头部最新复核块。)
 > 全量基线:1739 收集 = 1696 passed + 10 skipped + 40 xfailed,0 失败。
 > ---
 > ✅ **复核 2026-09-29(外部事件唤醒入口宿主层落地)**:DESIGN §17 开放问题 4
@@ -568,6 +570,43 @@
 > narrate)块「仍开口」中的"多模态 token 精确口径"据此关闭,dated 原文保留
 > (logprobs 保留开口)。全量基线:1845 收集 = 1795 passed + 10 skipped + 40 xfailed,0 失败。
 
+> ✅ **复核 2026-09-29(register() 验证门默认实现——默认重放 evaluator 落地)**:上文
+> 2026-09-29(register() 留尾四件)块「仍开口」中的"默认重放 + evaluator 实现"
+> 据此关闭(该块已就地改写并附更新注;§4 dated 行原文保留、下行标注关闭);兑现 ch08-self-evolution.md:90/119-121 的「入库前验证门」。
+> ① **默认重放验证门**——新模块 `skills/register_smoke.py` `DefaultRegisterSmoke`
+> (`bind_register_smoke` 契约 `smoke(name, entry) -> {"ok","detail"}` 的默认实现):
+> 重放用例取自草稿 `drafts/<name>/tests/*.json`(DraftStore;按文件名排序,超
+> `max_cases=8` 截断并注明);候选技能从**被注册 entry** 物化(非草稿文件),
+> `CompoundSkillRegistry` 候选层叠生产层(子技能引用生产兜底,只读);逐例装配
+> 全新冒烟内核、overlay 换接三处引用点(同 `swap_skills_overlay`);可选
+> `mock_script`(dict 形态 ChatResponse 列表)经 MockProvider 确定性重放,不给则
+> 走装配 provider 真跑;判定链(首个失败即定案):run 异常 → outputs schema 校验
+> (内核输出闸双保险)→ `expected` 结构归一化深比较(int/float 统一、dict 键序
+> 无关、bool≠1,同 `common.memory.verify` 语义)→ `expect` LLM 裁判(temperature=0,
+> 严格 JSON `{"pass","reason"}` 无围栏,非 JSON/缺键/调用异常一律 fail-closed,
+> DistillSidecar verify 先例);全过才放行,失败 detail 截 ≤400 字符。
+> ② **用例形态扩两键**——`expected`(任意 JSON 值,确定性判定)/`expect`(自然语言
+> 期望,LLM 裁判);两者皆缺 = 纯冒烟(跑通 + outputs schema 即过);两键仅 register
+> 默认验证门消费,Lab G4 与 test-run 不读它们(gate.py 只判 smoke_runner 返回的
+> ok/error),G4 行为不变。
+> ③ **配置**——`[skills] register_smoke = "default"` 哨兵(豁免 `pkg.mod:func`
+> 形态要求;dotted path 仍为自定义 hook 逃生门)+ 新键 `[skills] register_judge_model`
+> (expect 裁判模型,缺省跟 `[run] model`;无 providers 时带 expect 的用例
+> fail-closed 并给配置指引);草稿根约定:`[lab].drafts_root` 优先,缺省 skills
+> 路径同级 `drafts/`(文件与目录形态皆同级——目录形态下 drafts/ 放进技能目录
+> 会被 loader 当技能包);冒烟内核由 `_smoke_kernel_factory` 按例重建(剥离
+> register_smoke 重绑/watch_interval=0/`[mcp]`/`[sidecars]`,防按例泄漏 watcher
+> daemon 线程与 MCP 子进程、防蒸馏副作用)。
+> **v1 边界(全部 fail-closed)**:code 技能不冒烟(handler 落盘在验证门之后,
+> entry 内无源码;逃生门 = 自定义 dotted hook);无草稿/无用例 = 拒(写路径闸门,
+> 没有证据即不放行,不与 Lab G4"无用例 warn"的编辑器哲学对齐);候选引用 mcp.* 
+> 工具/宿主通道(user_channel/supervisor)→ 用例 fail-closed(冒烟内核剥离所致);
+> hook 契约不变(仍 `(name, entry)`,无 provenance)。
+> **留尾**:code 技能冒烟、recorded-run 重放(provenance.run_id,需 host replay
+> 下沉)、judge 健康度反馈/阈值调优。DESIGN §6.2 与下文 §4(Skill Registry)
+> 已同步。测试:tests/skills/test_register_smoke_default.py 18 例全绿。
+> 全量基线:1863 收集 = 1813 passed + 10 skipped + 40 xfailed,0 失败(+18 例)。
+
 ## 一、总览
 
 - **里程碑**:M0–M5 完成(其中 M5 拆为 a/b/c 三个子提交);**M6(演化)未开始**。
@@ -629,6 +668,7 @@
 - **复核 2026-08-24**:`register()` 运行期写入仍为 M6 stub(`skills/local_file.py:293`);入库前验证门已由 Skill Lab 承载(草稿 `skills/draft_store.py` → 五关闸门 `skills/gate.py` → 原子发布 `skills/package.py`,CLI/Web 双侧);其余各项抽查仍成立。
 - **复核 2026-09-27**:`register()` 已落地(`skills/local_file.py:314-484`,闸门 + pre:skill.register 否决 + 原子写 + provenance),消费面 `system.skill.register` 工具(confirm=True 过 tool-confirm 闸门);DirectorySkillSource 写路径、版本约束求解、文件监听热重载、完整重放+evaluator 门仍开口。
 - **复核 2026-09-29(register() 留尾四件已关闭)**:① semver 依赖约束准入已落地(`skills/semver.py`;`permissions.skills` 条目 `name@^x.y.z`/`@~x.y.z`/`@x.y.z`,非法条目加载期 SkillLoadError fail-closed;接入 `_load_all` `local_file.py:238-257`;**裁决:不做多版本求解/range,注册表仍单版本/name**);② 目录形态 register() 已落地(目标恒 `<dir>/registered.yaml`,`package._atomic_write_registered` staging 整目录证明 → .bak + os.replace;人管 yaml 撞名 → SkillLoadError 不碰人管文件);③ 文件监听热重载已落地(`start_watching(interval_s)`/`stop_watching()` daemon 轮询 mtime,失败吞异常旧表不动;`[skills] watch_interval` 默认关);④ 验证门 smoke hook 已落地(`bind_register_smoke`,G1-G3 后 pre 信号前,sync/async 兼容,ok 非真/异常 → GateError fail-closed 零写;`[skills] register_smoke`;jsonl gates 增 `"smoke"` 键,smoke 拒绝落 `action="rejected"` 记录);仍开口:默认重放 + evaluator 实现(挂点已就位)、watch 线程的内核 close 钩子、可见集膨胀后的语义检索层。
+- **复核 2026-09-29(默认重放验证门落地)**:`bind_register_smoke` 的默认实现已落地(`skills/register_smoke.py` `DefaultRegisterSmoke`,`[skills] register_smoke = "default"` 哨兵启用;drafts/<name>/tests/*.json 重放 + `expected` 确定性归一化深比较 + `expect` LLM 裁判,全过才放行,fail-closed 零写;冒烟内核剥离 watcher/MCP/sidecars,code 技能 fail-closed;详见头部复核块)——上行 dated 行的"默认重放 + evaluator 实现"据此关闭,dated 原文保留;仍开口:code 技能冒烟、recorded-run 重放(provenance.run_id)、judge 健康度反馈、watch 线程的内核 close 钩子、可见集膨胀后的语义检索层。
 
 ### 5. Context(上下文)— 🟡 ~55%
 

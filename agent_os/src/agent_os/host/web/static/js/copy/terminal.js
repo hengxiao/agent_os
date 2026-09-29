@@ -26,6 +26,8 @@ export const COPY = {
   "debug.end.title": "run finished",
   "escalation.params": "argv (validated)",
   "escalation.requested": "requested caps",
+  "confirm.domains": "data domains",
+  "confirm.sensitive": "SENSITIVE",
   // Skill Lab(docs/SKILL-DEV.md;L1):编辑器分组/顶部条/状态栏/空态
   "lab.group.identity": "id",
   "lab.group.contract": "schema",

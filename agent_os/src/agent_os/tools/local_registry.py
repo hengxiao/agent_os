@@ -32,6 +32,8 @@ tools/std_web.py)。
 MCP(tools/mcp.py):``_mcp_clients`` 是 ``[mcp.servers]`` eager 装配的 stdio
 client 列表(``connect_and_register`` 装配钩子注入;kernel 寿命——Kernel/registry
 均无 close 钩子,进程清理由各 client 自带 close()/atexit 兜底)。
+D4:``sensitive_domains`` 是确认卡片(升权/tool-confirm)的"敏感"判定公开口,
+与数据闸共用 ``_resolve_declared_domains`` 解析(判定不另写第二份)。
 """
 
 from __future__ import annotations
@@ -423,6 +425,28 @@ class LocalPythonToolRegistry:
         self._net_domains.append((url_prefix, domain))
         self._net_domains.sort(key=lambda item: len(item[0]), reverse=True)
 
+    def sensitive_domains(self, declared: Iterable[str]) -> list[str]:
+        """声明数据域中按 [data] policy 判 confidential 的子集(保序;确认卡片
+        "敏感"标注数据源,升权/tool-confirm 请求共用)。
+
+        与 ``_check_data_access`` 共用同一份解析(``_resolve_declared_domains``,
+        不另写判定):模式命中的已注册域含 confidential,或声明整体落空按 §3.3
+        合成 confidential 占位 → 该模式敏感。policy 未 bind(D1 语义,数据层
+        未启用)→ 恒 []。
+        """
+        policy = self._data_policy
+        if policy is None:
+            return []
+        patterns = [str(d) for d in declared]
+        if not patterns:
+            return []
+        conf = [
+            domain
+            for domain in _resolve_declared_domains(policy, patterns)
+            if domain.sensitivity == CONFIDENTIAL
+        ]
+        return [p for p in patterns if any(fnmatch.fnmatchcase(d.name, p) for d in conf)]
+
     def _resolve_fs_domain(self, path: Path, workdir: Path) -> DataDomain | None:
         """路径 → 数据域:宿主注册域(已按最长前缀排序)优先;其后内置默认域
         ``fs.workdir``(public,D1 内置);都不沾 → None(未配置,D1 不拦截)。"""
@@ -517,17 +541,7 @@ class LocalPythonToolRegistry:
         # policy 缺席时 net 声明不判(D1 逐字:net 判定属 D2,net 工具行为与引入前一致)
         declared_rest = [d for d in spec.data_domains if d not in ("fs.*", "net.*")]
         if declared_rest and policy is not None:
-            matched = [
-                domain
-                for pattern in declared_rest
-                for domain in policy.domains.values()
-                if fnmatch.fnmatchcase(domain.name, pattern)
-            ]
-            # 声明的域未在 [data] 注册 = 解析失败 → 按 confidential(§3.3)
-            domains.extend(
-                matched
-                or [DataDomain(name=pattern, sensitivity=CONFIDENTIAL) for pattern in declared_rest]
-            )
+            domains.extend(_resolve_declared_domains(policy, declared_rest))
         # policy 缺席时其余族声明同样不判(D1 只判 fs.*;skills.*/drafts.* 等平台声明维持现状)
         if not domains:
             return None, None
@@ -836,6 +850,23 @@ class LocalPythonToolRegistry:
 
 
 _BASIC_TYPES: dict[type, str] = {str: "string", int: "integer", float: "number", bool: "boolean"}
+
+
+def _resolve_declared_domains(policy: Any, patterns: Iterable[str]) -> list[DataDomain]:
+    """声明的数据域模式 → [data] 已注册域(fnmatch 逐模式展开;数据闸与确认卡片
+    "敏感"判定共用的同一份解析,勿另写)。
+
+    一个已注册域可被多个模式命中;**全部模式都落空**时按 §3.3"解析失败 =
+    confidential"为每个模式合成 confidential 占位域(忘了配 = 最严)。
+    """
+    patterns = list(patterns)
+    matched = [
+        domain
+        for pattern in patterns
+        for domain in policy.domains.values()
+        if fnmatch.fnmatchcase(domain.name, pattern)
+    ]
+    return matched or [DataDomain(name=p, sensitivity=CONFIDENTIAL) for p in patterns]
 
 
 #: via 派生链递归深度上限(D3 防呆;超限 fail-closed 拒绝,兼作环状链的终止兜底)

@@ -61,7 +61,7 @@ skills:
       properties: { decision: { type: string } }
       required: [decision]
     permissions:
-      tools: [confirm_tool, danger_tool, exec_tool, plain_tool]
+      tools: [confirm_tool, danger_tool, exec_tool, plain_tool, data_confirm_tool]
       skills: []
     model: { prefer: ["mock/x"] }
     limits: { max_steps: 6 }
@@ -129,6 +129,17 @@ def _tools() -> tuple[LocalPythonToolRegistry, list[str]]:
         """普通写入工具(confirm 未声明)。Use when 回归锚:不挂起;Do not use when 其他。"""
         executed.append(f"plain:{path}")
         return f"plain:{path}"
+
+    @tools.tool(
+        name="data_confirm_tool",
+        permission=Permission.WRITE,
+        confirm=True,
+        data_domains=["db.analytics", "fs.*"],
+    )
+    def data_confirm_tool(path: str) -> str:
+        """带数据域声明的 confirm 工具。Use when 测试确认卡片数据域面;Do not use when 其他。"""
+        executed.append(f"dataconfirm:{path}")
+        return f"dataconfirm:{path}"
 
     return tools, executed
 
@@ -529,3 +540,70 @@ def test_human_approval_policy_ignores_plain_write_tool(tmp_path):
     assert result["decision"] == "ok"
     assert executed == ["plain:a.txt"]
     assert not asked
+
+
+# ---------------------------------------------------------------------------
+# D4:tool-confirm 请求数据域面(context.domains = spec.data_domains 原样直通;
+# context.sensitive = 其中 [data] policy 判 confidential 的子集)
+# ---------------------------------------------------------------------------
+
+
+def test_confirm_context_carries_data_domains(tmp_path):
+    """confirm 工具声明 data_domains → 确认请求 context 原样携带;
+    未 bind [data] policy → sensitive 恒空。无声明的工具(confirm_tool)→ 空表。"""
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel, executed = _build(
+        tmp_path, handler, {"name": "data_confirm_tool", "args": {"path": "a.txt"}}
+    )
+    result = asyncio.run(kernel.run("root_user", {"task": "t"}))
+
+    assert result["decision"] == "ok"
+    assert executed == ["dataconfirm:a.txt"]
+    q = asked[0]
+    assert q.kind == "tool-confirm"
+    assert q.context["domains"] == ["db.analytics", "fs.*"]
+    assert q.context["sensitive"] == [], "policy 未配置 → 敏感子集为空(D1 语义)"
+
+    # 对照:无 data_domains 声明的 confirm 工具 → 空表(卡片不渲染该区)
+    asked.clear()
+    kernel2, _ = _build(
+        tmp_path, handler, {"name": "confirm_tool", "args": {"path": "b.txt"}}
+    )
+    asyncio.run(kernel2.run("root_user", {"task": "t"}))
+    assert asked[0].context["domains"] == []
+    assert asked[0].context["sensitive"] == []
+
+
+def test_confirm_context_sensitive_subset_with_data_policy(tmp_path):
+    """[data] policy 在场:sensitive = domains 中判 confidential 的子集
+    (命中 confidential 已注册域的模式入选;只命中 public 域的不入选)。"""
+    from agent_os.api.v1 import CONFIDENTIAL, PUBLIC, DataDomain, DataPolicy
+
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel, _ = _build(
+        tmp_path, handler, {"name": "data_confirm_tool", "args": {"path": "a.txt"}}
+    )
+    kernel.tools.bind_data_policy(
+        DataPolicy(
+            domains={
+                "db.analytics": DataDomain(name="db.analytics", sensitivity=CONFIDENTIAL),
+                "fs.shared": DataDomain(name="fs.shared", sensitivity=PUBLIC),
+            }
+        )
+    )
+    result = asyncio.run(kernel.run("root_user", {"task": "t"}))
+
+    assert result["decision"] == "ok"
+    q = asked[0]
+    assert q.context["domains"] == ["db.analytics", "fs.*"]
+    assert q.context["sensitive"] == ["db.analytics"]

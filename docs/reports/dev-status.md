@@ -28,7 +28,8 @@
 > net/db 域判定 + `data.access.denied/granted` 审计信号(SIGNAL_NAMES 33 个)+ 判据回写 `ctx.credentials["_authz"]`
 > + D3-lite `[web.tokens]` 多用户映射(Bearer 命中 → `Principal(issuer="api-token")`);仍未做:派生链最弱一环、
 > EscalationRequest 数据面展示(归 E3)。(**2026-09-28 更新**:派生链最弱一环与升权审计面板
-> 均已关闭,见头部最新复核块。)**行为变化**:无 supervisor 的裸 run 调 `system.file.delete` 等闸门工具
+> 均已关闭,见头部最新复核块;**2026-09-29 更新**:留尾 EscalationRequest 数据面展示
+> (确认卡片 `domains`/`sensitive`)亦已关闭,见下文 2026-09-28 E3/D3 复核块尾注。)**行为变化**:无 supervisor 的裸 run 调 `system.file.delete` 等闸门工具
 > 现在 fail-closed 拒绝。另(WS4/WS5):runner 工具循环补 except Exception 兜底(INTERNAL 错误观察,run 存活);
 > 编排路径 `float(timeout)` 解析失败返回 INVALID_ARGS;`[providers.kimi]`/`[providers.anthropic]` 子键生效。
 > ---
@@ -325,6 +326,14 @@
 > 仍开口:D3 跨 run 自动派生(引擎无触发点)、完整多用户会话映射、
 > `_settle_unpaired_calls` 规则 2 escalated 键缝隙。上文 2026-08-31 复核块
 > "仍未做"两条据此关闭,dated 原文保留。全量基线:1643 收集 = 1594 passed + 10 skipped + 39 xfailed,0 失败。
+> (**2026-09-29 更新**:留尾"确认卡片数据域展示"已关闭——`EscalationRequest`
+> additive `domains`/`sensitive`(白名单工具 `data_domains` 浅层并集,保序去重、
+> 不递归子技能;sensitive = 其中 policy 判 confidential 子集,无 [data] policy → 空),
+> tool-confirm 通道同带;判定复用公开口 `sensitive_domains`,与数据闸共用
+> `_resolve_declared_domains`;inbox.js `domainsChipsHtml` 渲染(敏感域
+> chip-sensitive --danger 双编码,六主题 copy confirm.domains/confirm.sensitive),
+> `to_pending` 不带 domains(resume 重走闸门现算);py +8、mjs 1 块,全量基线
+> 全量基线:1755 收集 = 1712 passed + 10 skipped + 40 xfailed,0 失败。新开口:递归子技能域并集、审批选项按域动态化。)
 > ---
 > ✅ **复核 2026-09-28(ask_human/set_timer 工具面 + std 形态 + 宿主接线)**:
 > ① **`system.timer.set` 内核原语**——`tools/timer.py`(`TimerService` asyncio

@@ -172,8 +172,13 @@ supervisor 的 options 校验打回、带 `previous_error` 重问(`supervisor/ma
 
 `decision ∈ {approve-once, approve-run, grant-run, deny}`;Grant 命中无确认请求,故
 只有无配对 pre 的 post(`runner.py:941-956`)。Web 收件箱对 `kind == "escalation"`
-渲染升权卡片(档位徽标、参数 JSON、选项按钮,L3 不显示 approve-run),调试时间线按
-信号可读"谁、何时、批了哪次升权"。升权审计面板已落地(2026-09-28,WS2):
+渲染升权卡片(档位徽标、参数 JSON、数据域 chips、选项按钮,L3 不显示 approve-run),
+调试时间线按信号可读"谁、何时、批了哪次升权"。确认卡片数据域面已落地
+(2026-09-29):`EscalationRequest` additive `domains`/`sensitive` 随 context 直通——
+domains 是被调技能白名单工具 `data_domains` 的浅层并集(保序去重,不递归子技能,
+与推导档同口径),sensitive 是其中 [data] policy 判 confidential 的子集,敏感域
+chip-sensitive --danger 双编码"敏感"(六主题 copy confirm.domains/confirm.sensitive),
+tool-confirm 通用卡同享该渲染。升权审计面板已落地(2026-09-28,WS2):
 `GET /api/runs/{run_id}/escalations` 返回 {summary, events, grants}(读模型
 `host/web/escalations.py`;pre↔post 按 (frame_id, skill, tier) 时间序配对闭合,
 question_id 经 supervisor.ask 回补,grant-run 无 pre 单列),run 详情页挂载懒加载的

@@ -5,7 +5,9 @@
 > per-subject 域白名单第二判据、net/db 域判定、`data.access.*` 审计信号、判据回写
 > `credentials["_authz"]`);D3-lite 已落地(`[web.tokens]` 多用户映射);D3 派生链
 > 最弱一环已实现(2026-09-28,via 链逐环判定);升权决策数据面经审计面板暴露;
-> 仍开口:跨 run 自动派生、完整多用户会话映射、确认卡片数据域展示 ·
+> 确认卡片数据域展示已落地(2026-09-29,`domains`/`sensitive` 浅层并集);
+> 仍开口:跨 run 自动派生、完整多用户会话映射、卡片域的递归子技能并集与
+> 审批选项按域动态化 ·
 > 依据:`docs/DATA-AUTHZ.md`、`agent_os/src/agent_os/api/v1/principal.py`、
 > `agent_os/src/agent_os/tools/local_registry.py`、
 > `agent_os/tests/tools/test_data_authz.py`
@@ -157,7 +159,11 @@ wait_for 超时执行 → 结果归一化
 "碰不碰得到"先于"允不允许",各自独立失败——测试断言 WRITE 工具既不
 在白名单又越数据域时报 `DATA_ACCESS_DENIED` 而非 `PERMISSION_DENIED`
 (`test_data_authz.py:132-147`)。错误类别是契约层新增的
-`ToolErrorKind.DATA_ACCESS_DENIED`(`api/v1/tools.py:57`)。
+`ToolErrorKind.DATA_ACCESS_DENIED`(`api/v1/tools.py:57`)。同一份声明域解析
+还服务确认卡片(2026-09-29):公开口 `LocalPythonToolRegistry.sensitive_domains(declared)`
+与 `_check_data_access` 共用 `_resolve_declared_domains`(fnmatch 展开 +
+整体落空合成 confidential 占位),升权/tool-confirm 两通道的确认 context
+借此带上 `domains`/`sensitive` 数据域面(判定不另写第二份)。
 
 **D1 兼容策略(设计/代码偏离,以代码为准)。** 设计稿 §3.3 原文要求
 "域解析失败 → 按 confidential 处理";D1 实现刻意不生效(§8 实现注 1):
@@ -210,8 +216,11 @@ hint 恢复(换路径或请求更高 clearance 的身份)。
 **涟漪效应**:principal 字段已成为其他子系统的判据锚点——Memory 检索层
 权限过滤以 principal 为参数(`api/v1/memory.py:60`,预留);Skill Lab
 promote 记录 `promoted_by`(`skills/gate.py:539`);升权确认卡片的数据面
-展示(本调用将访问的域与敏感度)已列为 D3 的 EscalationRequest 扩展输入
-(§5.3,已设计未实现)。
+展示(本调用将访问的域与敏感度)已落地(2026-09-29):`EscalationRequest`
+additive `domains`/`sensitive`——白名单工具 `data_domains` 的浅层并集
+(保序去重,不递归子技能)与其中 policy 判 confidential 的子集,判定复用
+数据闸同一份解析;收件箱升权卡片与 tool-confirm 卡均以 chips 呈现(敏感域
+--danger 双编码),仍开口的是递归子技能并集与审批选项按域动态化。
 
 ## 6. 局限性与边界(局限性)
 
@@ -234,10 +243,12 @@ promote 记录 `promoted_by`(`skills/gate.py:539`);升权确认卡片的数据�
 5. **同 run 内无隔离**。低层 skill 读到的机密可经输出流向同 run 高层
    skill(§4 明示残余风险);v1 靠"同一 principal 即同一人"的假设接受
    这一点,防注入扩散依赖的是帧隔离与升权闸,不是数据闸。
-6. **确认卡片数据面与完整会话映射未实现**(D3 余项):派生链最弱一环已落地
-   (2026-09-28——`attrs["via"]` 链每环过 `allow`、fail-closed、深度上限 8,
-   链由宿主声明注入,跨 run 自动派生无引擎触发点);确认卡片附"本调用将
-   访问的域与敏感度"(§5.3)仍未做,升权决策数据面改由审计面板暴露
+6. **完整会话映射未实现;确认卡片数据面已落地、留两项增强开口**(D3 余项):
+   派生链最弱一环已落地(2026-09-28——`attrs["via"]` 链每环过 `allow`、
+   fail-closed、深度上限 8,链由宿主声明注入,跨 run 自动派生无引擎触发点);
+   确认卡片附"本调用将访问的域与敏感度"(§5.3)已落地(2026-09-29,additive
+   `domains`/`sensitive` 浅层并集 + chips 渲染,见 §5 涟漪效应),仍开口的是
+   递归子技能域并集与审批选项按域动态化;升权决策数据面另由审计面板暴露
    (`GET /api/runs/{run_id}/escalations`,2026-09-28)。多用户映射 D3-lite
    已落地(`[web.tokens]`,2026-08-31);未配置时所有 Web run 仍共享部署者身份。
 7. **拒绝面泄漏域的存在性**(域名与敏感度进错误消息)。这是有意的可用性

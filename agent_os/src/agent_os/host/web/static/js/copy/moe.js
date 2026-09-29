@@ -19,6 +19,8 @@ export const COPY = {
   "debug.end.title": "🌸 跑完啦~",
   "escalation.params": "要喂给高档技能的参数",
   "escalation.requested": "想借用的权限",
+  "confirm.domains": "会碰到的数据",
+  "confirm.sensitive": "敏感的哦",
   // Skill Lab(docs/SKILL-DEV.md;L1):编辑器分组/顶部条/状态栏/空态
   "lab.group.identity": "名片",
   "lab.group.contract": "约定",

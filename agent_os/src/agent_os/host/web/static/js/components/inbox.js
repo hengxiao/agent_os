@@ -14,9 +14,12 @@
      sortedPending(rows)          防御排序:high 在前,其余先问先排(同后端语义)
      badgeModel(rows)             TopBar 徽标视图模型 { count, hasHigh }
      questionCardHtml(q, err)     问题卡片 HTML(err = 本地提交被拒错误条文本);
-                                  kind == "escalation" 转升权卡片
+                                  kind == "escalation" 转升权卡片,
+                                  kind == "tool-confirm" 追加数据域 chips 区
      escalationCardHtml(q, err)   升权卡片(docs/ESCALATION.md §3;E2):档位徽标 + skill 名
-                                  + reason_hint + params JSON + 权限集 + 选项按钮 */
+                                  + reason_hint + params JSON + 权限集 + 数据域 + 选项按钮
+     domainsChipsHtml(ctx)        数据域 chips(D4):confidential 域 --danger + "敏感"
+                                  双编码;无 domains → 空串不渲染 */
 
 import { getJson, postJson } from "../api.js";
 import { store } from "../store.js";
@@ -44,7 +47,8 @@ export function badgeModel(rows) {
 /* 问题卡片 HTML:urgency 色条(data-urgency 驱动)+ question + run/帧链接 +
    context 可展开 + 错误条(previous_error / 本地提交被拒)+ 作答区(options 按钮组
    或文本输入)。err 为本地提交被拒错误条文本(优先于 previous_error 呈现)。
-   kind === "escalation" 转升权卡片(escalationCardHtml),普通问答行为不变。 */
+   kind === "escalation" 转升权卡片(escalationCardHtml),普通问答行为不变;
+   kind === "tool-confirm" 追加数据域 chips 区(domainsChipsHtml)。 */
 export function questionCardHtml(q, err = null) {
   if (q?.kind === "escalation") return escalationCardHtml(q, err);
   const qid = String(q?.question_id ?? "");
@@ -79,6 +83,7 @@ export function questionCardHtml(q, err = null) {
       : "") +
     timeHtml +
     `</div>` +
+    (q?.kind === "tool-confirm" ? domainsChipsHtml(q?.context) : "") +
     (ctx
       ? `<details class="sup-ctx"><summary>context</summary>` +
         `<pre class="mono">${esc(JSON.stringify(ctx, null, 2))}</pre></details>`
@@ -104,9 +109,35 @@ export function questionCardHtml(q, err = null) {
    (导出供 Skill Lab 推导档徽标复用,docs/SKILL-DEV.md §2.1) */
 export const TIER_PERM = { none: "READ", reversible: "WRITE", irreversible: "EXEC" };
 
+/* 数据域 chips(D4;升权/tool-confirm 确认卡片共用):context.domains 原样成 chips
+   (域名是技术文本,直渲转义);命中 [data] policy confidential 的域走 --danger
+   双编码(chips 变色 + "敏感"注记,不依赖色觉单通道)。无 domains(工具未声明
+   /旧后端)→ 空串,不渲染该区。 */
+export function domainsChipsHtml(ctx) {
+  const domains = Array.isArray(ctx?.domains) ? ctx.domains : [];
+  if (!domains.length) return "";
+  const sensitive = new Set(
+    (Array.isArray(ctx?.sensitive) ? ctx.sensitive : []).map((d) => String(d)));
+  return (
+    `<div class="sup-req sup-domains">` +
+    `<span class="sup-req-label">${esc(copy("confirm.domains"))}</span>` +
+    domains
+      .map((d) => {
+        const name = String(d);
+        return sensitive.has(name)
+          ? `<span class="chip mono chip-sensitive" title="sensitivity: confidential">` +
+            `${esc(name)}<span class="chip-flag">${esc(copy("confirm.sensitive"))}</span></span>`
+          : `<span class="chip mono">${esc(name)}</span>`;
+      })
+      .join("") +
+    `</div>`
+  );
+}
+
 /* 升权卡片(docs/ESCALATION.md §3;E2):档位徽标(perm-badge 风格)+ skill 名 + question +
-   reason_hint + params JSON(可折叠)+ requested 权限集 chips + 选项按钮。
-   选项枚数由后端 options 决定(L2 三枚/L3 两枚),UI 不自判;作答走同一 data-answer 通道。 */
+   reason_hint + params JSON(可折叠)+ requested 权限集 chips + 数据域 chips(D4)
+   + 选项按钮。选项枚数由后端 options 决定(L2 三枚/L3 两枚),UI 不自判;
+   作答走同一 data-answer 通道。 */
 export function escalationCardHtml(q, err = null) {
   const qid = String(q?.question_id ?? "");
   const urgency = q?.urgency === "high" ? "high" : "normal";
@@ -162,6 +193,7 @@ export function escalationCardHtml(q, err = null) {
         reqSkills.map((s) => `<span class="chip mono">skill:${esc(s)}</span>`).join("") +
         `</div>`
       : "") +
+    domainsChipsHtml(ctx) +
     (errText ? `<div class="sup-error" role="alert">${esc(errText)}</div>` : "") +
     (options
       ? `<div class="sup-actions">` +

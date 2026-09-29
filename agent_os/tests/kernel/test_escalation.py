@@ -247,7 +247,7 @@ def _brain(root_call: dict) -> callable:
     return brain
 
 
-def _build(tmp_path, handler, root_call, *, yaml_text: str = SKILLS_YAML):
+def _build(tmp_path, handler, root_call, *, yaml_text: str = SKILLS_YAML, tools=None):
     config = RunConfig(
         model="mock/x",
         tool_policy=ToolPolicy(max_permission=Permission.EXEC),
@@ -256,7 +256,7 @@ def _build(tmp_path, handler, root_call, *, yaml_text: str = SKILLS_YAML):
     builder = (
         KernelBuilder(config)
         .providers(MockProvider(_brain(root_call)))
-        .tools(_tools())
+        .tools(tools if tools is not None else _tools())
         .skills(LocalFileSkillRegistry(_yaml(tmp_path, yaml_text)))
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
     )
@@ -1020,6 +1020,8 @@ def test_cli_supervisor_passthrough_escalation(monkeypatch, capsys):
             "params": {"cmd": "w"},
             "requested": {"tools": ["write_tool"], "skills": []},
             "reason_hint": "none → reversible",
+            "domains": ["fs.*"],
+            "sensitive": ["fs.*"],
         },
         options=["approve-once", "approve-run", "deny"],
         kind="escalation",
@@ -1032,6 +1034,9 @@ def test_cli_supervisor_passthrough_escalation(monkeypatch, capsys):
     assert row["options"] == ["approve-once", "approve-run", "deny"]
     assert row["context"]["tier"] == "reversible"
     assert row["context"]["params"] == {"cmd": "w"}
+    # 数据域面(D4)随 context 原样直通(CLI 宿主不解读,coding agent 可渲染)
+    assert row["context"]["domains"] == ["fs.*"]
+    assert row["context"]["sensitive"] == ["fs.*"]
 
     # 普通问答行形状不变(不带 kind)
     monkeypatch.setattr(sys, "stdin", io.StringIO("ok\n"))
@@ -1333,3 +1338,214 @@ def test_parallel_escalated_branch_entry_marked(tmp_path):
     assert len(asked) == 1, "只有升权分支过闸确认"
     child = _frame_by_skill(kernel, "child_exec")
     assert child.context.working["_escalated_from"] == "none"
+
+
+# ---------------------------------------------------------------------------
+# D4:确认请求数据域面(domains = 白名单工具 data_domains 浅层并集;
+# sensitive = 其中 [data] policy 判 confidential 的子集)
+# ---------------------------------------------------------------------------
+
+DOMAINS_YAML = """
+skills:
+  - name: root_low
+    version: 1.0.0
+    kind: prompt
+    description: 根调用方。Use when 测试确认请求数据域面;Do not use when 其他。
+    inputs:
+      type: object
+      properties: { task: { type: string } }
+    outputs:
+      type: object
+      properties: { decision: { type: string } }
+      required: [decision]
+    permissions:
+      tools: []
+      skills: [child_data, child_nodom]
+    model: { prefer: ["mock/x"] }
+    limits: { max_steps: 6 }
+    prompt: |
+      你是根调用方,按需调用子技能并汇报结果。
+  - name: child_data
+    version: 1.0.0
+    kind: prompt
+    description: 数据子技能。Use when 需要触碰数据域;Do not use when 只读。
+    inputs:
+      type: object
+      properties: { cmd: { type: string } }
+      required: [cmd]
+    outputs:
+      type: object
+      properties: { ran: { type: boolean } }
+      required: [ran]
+    permissions:
+      tools: [data_read, data_write]
+      skills: []
+    model: { prefer: ["mock/x"] }
+    limits: { max_steps: 3 }
+    prompt: |
+      CHILD_DATA_MARK 你是数据员,读写并汇报。
+  - name: child_nodom
+    version: 1.0.0
+    kind: prompt
+    description: 无数据域子技能。Use when 测试空数据域并集;Do not use when 其他。
+    inputs:
+      type: object
+      properties: { cmd: { type: string } }
+      required: [cmd]
+    outputs:
+      type: object
+      properties: { ran: { type: boolean } }
+      required: [ran]
+    permissions:
+      tools: [plain_exec]
+      skills: []
+    model: { prefer: ["mock/x"] }
+    limits: { max_steps: 3 }
+    prompt: |
+      CHILD_NODOM_MARK 你是执行员,执行并汇报。
+"""
+
+
+def _domain_tools() -> LocalPythonToolRegistry:
+    """带 data_domains 声明的测试工具表(D4 锚点用)。"""
+    tools = LocalPythonToolRegistry()
+
+    @tools.tool(
+        name="data_read",
+        permission=Permission.WRITE,
+        data_domains=["db.analytics", "fs.*"],
+    )
+    def data_read() -> str:
+        """数据读工具。Use when 测试 domains 并集;Do not use when 其他。"""
+        return "r"
+
+    @tools.tool(
+        name="data_write",
+        permission=Permission.WRITE,
+        data_domains=["fs.*", "net.intranet"],
+    )
+    def data_write() -> str:
+        """数据写工具。Use when 测试 domains 保序去重;Do not use when 其他。"""
+        return "w"
+
+    @tools.tool(name="plain_exec", permission=Permission.EXEC)
+    def plain_exec() -> str:
+        """无数据域声明的执行工具。Use when 测试空 domains;Do not use when 其他。"""
+        return "x"
+
+    return tools
+
+
+def test_escalation_domains_union_of_whitelist_tools(tmp_path):
+    """确认请求 domains = 目标 skill 白名单工具 data_domains 浅层并集(保序去重);
+    未 bind [data] policy → sensitive 恒空。"""
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel = _build(
+        tmp_path,
+        handler,
+        {"name": "skill.child_data", "args": {"cmd": "c"}},
+        yaml_text=DOMAINS_YAML,
+        tools=_domain_tools(),
+    )
+    result = asyncio.run(kernel.run("root_low", {"task": "t"}))
+
+    assert result["decision"] == "ok"
+    assert len(asked) == 1
+    q = asked[0]
+    assert q.context["domains"] == ["db.analytics", "fs.*", "net.intranet"]
+    assert q.context["sensitive"] == [], "policy 未配置 → 敏感子集为空(D1 语义)"
+
+
+def test_escalation_domains_empty_without_declaration(tmp_path):
+    """白名单工具均未声明 data_domains → domains/sensitive 皆空(卡片不渲染该区)。"""
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel = _build(
+        tmp_path,
+        handler,
+        {"name": "skill.child_nodom", "args": {"cmd": "c"}},
+        yaml_text=DOMAINS_YAML,
+        tools=_domain_tools(),
+    )
+    result = asyncio.run(kernel.run("root_low", {"task": "t"}))
+
+    assert result["decision"] == "ok"
+    assert len(asked) == 1
+    assert asked[0].context["domains"] == []
+    assert asked[0].context["sensitive"] == []
+
+
+def test_escalation_sensitive_subset_with_data_policy(tmp_path):
+    """[data] policy 在场:sensitive = domains 中判 confidential 的子集——
+    命中 confidential 已注册域的模式入选;只命中 public 域的模式不入选。"""
+    from agent_os.api.v1 import CONFIDENTIAL, PUBLIC, DataDomain, DataPolicy
+
+    tools = _domain_tools()
+    tools.bind_data_policy(
+        DataPolicy(
+            domains={
+                "db.analytics": DataDomain(name="db.analytics", sensitivity=CONFIDENTIAL),
+                "fs.shared": DataDomain(name="fs.shared", sensitivity=PUBLIC),
+            }
+        )
+    )
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel = _build(
+        tmp_path,
+        handler,
+        {"name": "skill.child_data", "args": {"cmd": "c"}},
+        yaml_text=DOMAINS_YAML,
+        tools=tools,
+    )
+    result = asyncio.run(kernel.run("root_low", {"task": "t"}))
+
+    assert result["decision"] == "ok"
+    q = asked[0]
+    assert q.context["domains"] == ["db.analytics", "fs.*", "net.intranet"]
+    # db.analytics 命中 confidential 已注册域 → 敏感;fs.* 只命中 public 的
+    # fs.shared → 不敏感;net.intranet 未注册,与数据闸同一份聚合解析口径
+    # (另有模式命中已注册域时,未命中模式不单独合成 confidential)→ 不敏感
+    assert q.context["sensitive"] == ["db.analytics"]
+
+
+def test_escalation_sensitive_all_unregistered_patterns(tmp_path):
+    """声明模式整体落空(无任何已注册域被命中)→ 按 §3.3"解析失败 =
+    confidential"全部入选 sensitive(与数据闸同一份 _resolve_declared_domains)。"""
+    from agent_os.api.v1 import PUBLIC, DataDomain, DataPolicy
+
+    tools = _domain_tools()
+    tools.bind_data_policy(
+        DataPolicy(domains={"other.zone": DataDomain(name="other.zone", sensitivity=PUBLIC)})
+    )
+    asked = []
+
+    async def handler(question):
+        asked.append(question)
+        return {"answer": "approve-once", "decided_by": "user:test"}
+
+    kernel = _build(
+        tmp_path,
+        handler,
+        {"name": "skill.child_data", "args": {"cmd": "c"}},
+        yaml_text=DOMAINS_YAML,
+        tools=tools,
+    )
+    result = asyncio.run(kernel.run("root_low", {"task": "t"}))
+
+    assert result["decision"] == "ok"
+    q = asked[0]
+    assert q.context["sensitive"] == ["db.analytics", "fs.*", "net.intranet"]

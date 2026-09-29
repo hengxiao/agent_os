@@ -20,6 +20,8 @@ export const COPY = {
   "debug.end.title": "墨尽",
   "escalation.params": "入参",
   "escalation.requested": "所请之权",
+  "confirm.domains": "所涉之数",
+  "confirm.sensitive": "密",
   // Skill Lab(docs/SKILL-DEV.md;L1):编辑器分组/顶部条/状态栏/空态
   "lab.group.identity": "名",
   "lab.group.contract": "约",

@@ -1350,6 +1350,17 @@ class Kernel:
             if target_tier == TIER_REVERSIBLE
             else ["approve-once", "deny"]
         )
+        # 数据域面(确认卡片,D4):目标白名单工具的 data_domains 浅层并集(保序去重,
+        # 与 derive_tools_tier 同口径——不沿 skills 递归);敏感子集走 registry 的
+        # [data] policy 判定(未 bind → 空)
+        domains: list[str] = []
+        for tool_name in target_manifest.permissions.tools:
+            tool_spec = self._tool_spec(tool_name)
+            if tool_spec is None:
+                continue  # 未注册/伪工具无声明可并入(未注册由分发层自行报错)
+            for d in tool_spec.data_domains:
+                if d not in domains:
+                    domains.append(d)
         request = EscalationRequest(
             question_id=f"esc-{uuid.uuid4().hex[:12]}",
             run_id=frame.run_id,
@@ -1362,6 +1373,8 @@ class Kernel:
                 "skills": list(target_manifest.permissions.skills),
             },
             reason_hint=f"{frame.tier} → {target_tier}",
+            domains=domains,
+            sensitive=self._sensitive_domains(domains),
             options=options,
         )
         # pending 升权入 working(checkpoint 随帧序列化;resume 凭此重走闸门,§3 原则 3)
@@ -1521,6 +1534,19 @@ class Kernel:
         except KeyError:
             return None
 
+    def _sensitive_domains(self, domains: list[str]) -> list[str]:
+        """声明数据域中被 [data] policy 判 confidential 的子集(确认卡片"敏感"标注)。
+
+        registry 不持判定口(自定义 registry 嵌入方)或无声明域 → [];policy 未
+        bind 时 registry 侧同样返 [](D1 语义,数据层未启用)。
+        """
+        if not domains:
+            return []
+        judge = getattr(self.tools, "sensitive_domains", None)
+        if judge is None:
+            return []
+        return list(judge(domains))
+
     async def _confirm_tool_call(
         self, call: ToolCall, frame: SkillFrame, spec: ToolSpec
     ) -> dict[str, Any] | None:
@@ -1561,6 +1587,8 @@ class Kernel:
             else ["approve-once", "deny"]
         )
         question_id = f"tc-{uuid.uuid4().hex[:12]}"
+        # 数据域面(确认卡片,D4):spec 声明原样直通;敏感子集与升权同一判定口径
+        domains = list(spec.data_domains)
         # pending 落盘(checkpoint 随帧序列化;resume 凭 call_id 重走本闸门,§10.2)
         frame.context.working["_pending_tool_confirm"] = {
             "kind": "tool-confirm",
@@ -1587,6 +1615,8 @@ class Kernel:
                     "tool": call.name,
                     "args": dict(call.args),
                     "side_effect": tier,
+                    "domains": domains,
+                    "sensitive": self._sensitive_domains(domains),
                 },
                 "options": list(options),
                 "urgency": "high" if tier == TIER_IRREVERSIBLE else "normal",

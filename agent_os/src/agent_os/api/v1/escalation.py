@@ -164,6 +164,13 @@ class EscalationRequest:
 
     展示的 ``params`` 就是已通过 inputs schema 校验、将原样注入子帧的那份
     JSON——用户审的就是要执行的,不存在"审一套跑一套"(原则 1)。
+
+    ``domains``/``sensitive``(additive,确认卡片数据域面):目标 skill
+    ``permissions.tools`` 白名单内各工具 ``ToolSpec.data_domains`` 的**浅层并集**
+    (保序去重;不沿 skills 递归——与 ``derive_tools_tier`` 同口径,批准人看的
+    是直接能力面);``sensitive`` 是 ``domains`` 中被宿主 [data] policy 判
+    confidential 的子集(判定复用数据闸同一份解析;policy 未配置 → 空,与
+    "未配置 = 不启用数据层"同旨)。
     """
 
     kind: str = "escalation"
@@ -175,6 +182,8 @@ class EscalationRequest:
     params: dict[str, Any] = field(default_factory=dict)
     requested: dict[str, list[str]] = field(default_factory=dict)  # {"tools": [...], "skills": [...]}
     reason_hint: str = ""  # 机器生成:调用帧档 → 目标档,不是 LLM 写的
+    domains: list[str] = field(default_factory=list)  # 白名单工具 data_domains 浅层并集
+    sensitive: list[str] = field(default_factory=list)  # domains 中 policy 判 confidential 的子集
     options: list[str] = field(default_factory=lambda: ["approve-once", "deny"])
     asked_at: float = field(default_factory=time.time)
 
@@ -197,6 +206,8 @@ class EscalationRequest:
                 "params": self.params,
                 "requested": self.requested,
                 "reason_hint": self.reason_hint,
+                "domains": list(self.domains),
+                "sensitive": list(self.sensitive),
             },
             "options": list(self.options),
             "urgency": "high" if self.tier == TIER_IRREVERSIBLE else "normal",

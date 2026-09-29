@@ -175,8 +175,13 @@ confirmation gate again (for L3, every single time). **An injector cannot approv
 
 `decision ∈ {approve-once, approve-run, grant-run, deny}`; a Grant hit emits no confirmation request, hence
 an unpaired post with no pre (`runner.py:941-956`). The Web inbox renders `kind == "escalation"` pendings
-as escalation cards (tier badge, parameter JSON, option buttons — no approve-run for L3).
-The audit panel has landed (2026-09-28, WS2): `GET /api/runs/{run_id}/escalations` returns
+as escalation cards (tier badge, parameter JSON, data-domain chips, option buttons — no approve-run for L3).
+The card's data-domain face landed on 2026-09-29: `EscalationRequest` carries additive `domains`/`sensitive`
+through the pending's context — domains is the order-preserving shallow union of the called skill's whitelisted
+tools' `data_domains` (no recursion into nested skills, same derivation scope as the tier), sensitive the subset
+judged confidential by the host `[data]` policy; sensitive domains render as chip-sensitive --danger chips
+dual-coded with a "sensitive" flag (six-theme copy `confirm.domains`/`confirm.sensitive`), and the tool-confirm
+card shares the same chips. The audit panel has landed (2026-09-28, WS2): `GET /api/runs/{run_id}/escalations` returns
 {summary, events, grants} (read model `host/web/escalations.py`; pre↔post pairs close in time
 order on (frame_id, skill, tier), question_id is back-filled from supervisor.ask, grant-run
 posts stand alone without a pre), the run detail page mounts a lazy `escalations-panel.js`

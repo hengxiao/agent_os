@@ -125,6 +125,14 @@ local_registry.py:309 起):
 `resolve_work_path`(fs 沙箱)保留,它管"能不能出 workdir",数据域管
 "这个 principal 能不能读这片",两层正交。
 
+> 实现注(2026-09-29,确认卡片数据域面):声明域解析提为共用件
+> `_resolve_declared_domains`(fnmatch 展开 + 整体落空合成 confidential
+> 占位,同本条口径),新公开口 `LocalPythonToolRegistry.sensitive_domains(declared)`
+> 返回其中 policy 判 confidential 的子集,与 `_check_data_access` 共用同一份
+> 解析(判定不另写第二份);升权确认与 tool-confirm 两通道的确认 context 借此
+> 带 `domains`/`sensitive`(api/v1/escalation.py `to_supervisor_args` 直通;
+> tool-confirm 直接取 `spec.data_domains`),落地清单见 §8 D3 行。
+
 ## 4. 机密数据进入 context 之后
 
 v1 **不做 taint tracking**(标记机密内容并跟踪其在 context 里的流动)——
@@ -147,7 +155,8 @@ v1 **不做 taint tracking**(标记机密内容并跟踪其在 context 里的流
    交集(允不允许)→ 执行。升权闸在 `_invoke_skill`(进不进得来),数据闸
    在 dispatch(碰不碰得到),各自独立失败;
 3. **确认卡片的输入**:EscalationRequest 的展示面可附"本调用将访问的数据域
-   与敏感度",人审时同时看到副作用面与数据面(E2 的 UI 工作消费这个字段)。
+   与敏感度",人审时同时看到副作用面与数据面(E2 的 UI 工作消费这个字段;
+   已落地 2026-09-29,`domains`/`sensitive` additive 字段,口径与渲染见 §8 D3 行)。
 
 ## 6. 信号与审计
 
@@ -198,7 +207,7 @@ run 详情页可按 principal 过滤:谁、读了哪些域、被拒几次。
 > 4. `allow()` 的第二判据(per-subject 域白名单)与 `ToolContext.credentials`
 >    判据回写依赖配置段,属 D2;`action` 参数为协议面占位,D1 不参与判定。
 | D2 ✅ | 域配置段 + db/net 工具声明 + 审计信号 + 拒绝面不泄内容检查。已实现(2026-08-31):`[data]` 配置段(domains 表数组:name/sensitivity 缺省 confidential/`path_prefix`|`url_prefix` 恰一;`[data.principals."<subject>"] domains = [...]` glob 白名单——解析在 runtime/config.py `_data_policy`,产物契约层 `DataPolicy`,api/v1/principal.py:60);registry `bind_data_policy`/`register_net_domain` 装配钩子;`_check_data_access` 泛化(fs.* 逐字不动;net.* 按 `call.args["url"]` 前缀匹配,未命中 → `net.unconfigured` confidential;db.* 等其余族 glob 对 `policy.domains` 匹配;**policy 在场才恢复"未配置域=confidential",缺省缺席保持 D1 语义**);`allow()` 增 `whitelist=None` 关键字(None 与 D1 逐字一致);审计信号 `data.access.denied`/`data.access.granted`(已入 SIGNAL_NAMES,33 个);判据回写 `ctx.credentials["_authz"]`;`http_fetch`/`http_request`/`fetch_page` 声明 `data_domains=["net.*"]`;拒绝面只带域名/敏感度/clearance,不回显路径/URL 与域内内容 |
-| D3 | 派生链最弱一环 + EscalationRequest 数据面展示 + 多用户 Web 会话映射。**D3-lite 已落地**(2026-08-31):`[web.tokens] "<token>" = "user:<login>"` 映射;Bearer 中间件命中 → `Principal(issuer="api-token", clearance=confidential)` 挂 `request.state` → `start_run(principal=)` → `execute_run`;未命中/无配置 → 单用户行为逐字不变(host/web/app.py,host/web/run_manager.py)。**派生链最弱一环已落地**(2026-09-28,WS1):via 链逐环判定、fail-closed、深度上限 8、引擎不伪造链(实现注见 §2.3)。**升权决策数据面已暴露**(2026-09-28,WS2):`GET /api/runs/{run_id}/escalations` 审计面板(docs/ESCALATION.md §5 实现注;§5.3 确认卡片附数据域的增强形态未做)。**仍未做**:跨 run 自动派生(引擎无触发点,via 链靠宿主声明)、完整多用户会话映射 |
+| D3 | 派生链最弱一环 + EscalationRequest 数据面展示 + 多用户 Web 会话映射。**D3-lite 已落地**(2026-08-31):`[web.tokens] "<token>" = "user:<login>"` 映射;Bearer 中间件命中 → `Principal(issuer="api-token", clearance=confidential)` 挂 `request.state` → `start_run(principal=)` → `execute_run`;未命中/无配置 → 单用户行为逐字不变(host/web/app.py,host/web/run_manager.py)。**派生链最弱一环已落地**(2026-09-28,WS1):via 链逐环判定、fail-closed、深度上限 8、引擎不伪造链(实现注见 §2.3)。**升权决策数据面已暴露**(2026-09-28,WS2):`GET /api/runs/{run_id}/escalations` 审计面板(docs/ESCALATION.md §5 实现注)。**确认卡片数据域展示已落地**(2026-09-29):`EscalationRequest` additive `domains`/`sensitive`(api/v1/escalation.py;`to_supervisor_args` context 直通)——domains = 被调技能白名单工具 `data_domains` 的浅层并集(保序去重,不递归子技能,与 `derive_tools_tier` 同口径),sensitive = 其中 policy 判 confidential 的子集(无 [data] policy → 空);tool-confirm 通道 context 同样带 domains/sensitive(直接取 `spec.data_domains`);判定复用公开口 `sensitive_domains`,与数据闸共用 `_resolve_declared_domains`(实现注见 §3.3);渲染 inbox.js `domainsChipsHtml`(升权卡片 + tool-confirm 通用卡,敏感域 chip-sensitive --danger 双编码"敏感",空不渲染),六主题 copy 表加 confirm.domains/confirm.sensitive,CLI context 直通;`to_pending` 不带 domains(resume 重走闸门现算,无陈旧快照)。**仍未做**:跨 run 自动派生(引擎无触发点,via 链靠宿主声明)、完整多用户会话映射、卡片数据域的递归子技能并集与审批选项按域动态化 |
 
 ## 9. 不做
 

@@ -27,6 +27,9 @@ export const COPY = {
   // 升权卡片(docs/ESCALATION.md §3;E2):params 折叠区与 requested 权限集的标签
   "escalation.params": "调用参数",
   "escalation.requested": "请求权限",
+  // 确认卡片(升权/tool-confirm)数据域区:chips 区标签与 confidential 域的敏感注记
+  "confirm.domains": "数据域",
+  "confirm.sensitive": "敏感",
   // Skill Lab(docs/SKILL-DEV.md;L1):编辑器分组/顶部条/状态栏/空态
   "lab.group.identity": "身份",
   "lab.group.contract": "契约",

@@ -896,3 +896,42 @@ def test_via_malformed_shape_fail_closed(tmp_path):
         assert result.error.kind is ToolErrorKind.DATA_ACCESS_DENIED
         assert "via 派生链非法" in result.error.message
         assert "TOP-SECRET" not in result.error.message  # 不泄域内内容
+
+
+# ---------------------------------------------------------------------------
+# D4:sensitive_domains(确认卡片"敏感"判定公开口,升权/tool-confirm 共用;
+# 与 _check_data_access 共用 _resolve_declared_domains 同一份解析)
+# ---------------------------------------------------------------------------
+
+
+def test_sensitive_domains_no_policy_always_empty():
+    """policy 未 bind(D1 语义,数据层未启用)→ 任何声明都判不出敏感,恒 []。"""
+    tools = LocalPythonToolRegistry()
+    assert tools.sensitive_domains(["fs.*", "db.analytics"]) == []
+    assert tools.sensitive_domains([]) == []
+
+
+def test_sensitive_domains_matches_and_fail_closed():
+    """命中 confidential 已注册域的模式入选;只命中 public 域的不入选;
+    声明整体落空(无任何已注册域被命中)→ 按 §3.3 解析失败 = confidential 全入选。"""
+    tools = LocalPythonToolRegistry()
+    tools.bind_data_policy(
+        DataPolicy(
+            domains={
+                "db.analytics": DataDomain(name="db.analytics", sensitivity=CONFIDENTIAL),
+                "fs.shared": DataDomain(name="fs.shared", sensitivity=PUBLIC),
+            }
+        )
+    )
+    # 混合:confidential 命中 + public 命中 + 未命中(另有模式命中时不单独合成)
+    assert tools.sensitive_domains(["db.analytics", "fs.*", "net.intranet"]) == [
+        "db.analytics"
+    ]
+    # 保序:输出跟随声明顺序,不跟随注册表顺序
+    assert tools.sensitive_domains(["fs.*", "db.analytics"]) == ["db.analytics"]
+    # 整体落空 → fail closed:全部按 confidential 计
+    tools2 = LocalPythonToolRegistry()
+    tools2.bind_data_policy(
+        DataPolicy(domains={"other.zone": DataDomain(name="other.zone", sensitivity=PUBLIC)})
+    )
+    assert tools2.sensitive_domains(["db.analytics", "fs.*"]) == ["db.analytics", "fs.*"]

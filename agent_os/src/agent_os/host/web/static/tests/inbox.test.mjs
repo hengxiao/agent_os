@@ -154,4 +154,50 @@ const escQ = (over = {}, ctx = {}) => ({
   assert.ok(!evilHtml.includes("<img"), "skill 名转义");
 }
 
+/* ── 数据域 chips(D4):升权/tool-confirm 确认卡片"碰哪些域、哪些敏感"── */
+{
+  // 升权卡片:domains 成 chips;sensitive 域 --danger 双编码(chips 类 + "敏感"注记)
+  const html = escalationCardHtml(
+    escQ({}, { domains: ["db.analytics", "fs.*"], sensitive: ["db.analytics"] }));
+  assert.ok(html.includes("sup-domains"), "domains 区渲染");
+  assert.ok(html.includes("数据域"), "区标签走 copy(classic 基准)");
+  const sensitiveChip = html.match(/<span class="chip mono chip-sensitive"[^>]*>.*?<\/span><\/span>/s);
+  assert.ok(sensitiveChip, "sensitive 域带 chip-sensitive 类");
+  assert.ok(sensitiveChip[0].includes("db.analytics"), "标色的是 confidential 域");
+  assert.ok(sensitiveChip[0].includes("敏感"), "敏感注记(文字通道,不依赖色觉)");
+  assert.ok(!sensitiveChip[0].includes("fs.*"), "public 域不进敏感 chips");
+  assert.ok(html.includes('<span class="chip mono">fs.*</span>'), "public 域普通 chip");
+
+  // 空/缺 domains → 不渲染该区(含 requested 区正常在)
+  const empty = escalationCardHtml(escQ({}, { domains: [], sensitive: [] }));
+  assert.ok(!empty.includes("sup-domains"), "空 domains 不渲染该区");
+  const legacy = escalationCardHtml(escQ()); // 旧后端 context 无 domains 键
+  assert.ok(!legacy.includes("sup-domains"), "缺 domains 键不渲染该区");
+
+  // tool-confirm:走通用卡片分支,同样呈现数据域 chips
+  const tc = questionCardHtml(q({
+    kind: "tool-confirm",
+    context: {
+      tool: "system.file.delete",
+      args: { path: "a.txt" },
+      side_effect: "irreversible",
+      domains: ["fs.*"],
+      sensitive: ["fs.*"],
+    },
+  }));
+  assert.ok(tc.includes("sup-domains"), "tool-confirm 卡片渲染 domains 区");
+  assert.ok(tc.includes("chip-sensitive"), "tool-confirm 敏感域标色");
+  assert.ok(tc.includes("context"), "context 展开区沿用");
+
+  // 普通问答即使 context 恰好有 domains 键也不渲染(渲染面只认确认卡片 kind)
+  const plain = questionCardHtml(q({ context: { domains: ["fs.*"], sensitive: [] } }));
+  assert.ok(!plain.includes("sup-domains"), "普通问答不渲染 domains 区");
+
+  // XSS:域名/敏感注记均转义
+  const evil = escalationCardHtml(
+    escQ({}, { domains: ['<img src=x onerror="alert(1)">'], sensitive: [] }));
+  assert.ok(!evil.includes("<img"), "域名转义");
+  assert.ok(evil.includes("&lt;img"), "转义实体出现");
+}
+
 console.log("inbox.test.mjs: all assertions passed");

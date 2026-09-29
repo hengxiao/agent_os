@@ -26,6 +26,8 @@ export const COPY = {
   "debug.end.title": "QUEST END",
   "escalation.params": "PARAMS (validated)",
   "escalation.requested": "ASKED POWERS",
+  "confirm.domains": "DATA ZONES",
+  "confirm.sensitive": "SECRET!",
   // Skill Lab(docs/SKILL-DEV.md;L1):编辑器分组/顶部条/状态栏/空态
   "lab.group.identity": "ID",
   "lab.group.contract": "STATS",

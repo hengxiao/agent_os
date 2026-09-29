@@ -20,6 +20,8 @@ export const COPY = {
   "debug.end.title": "run 已归档",
   "escalation.params": "调用参数(已校)",
   "escalation.requested": "申请权限面",
+  "confirm.domains": "涉及数据域",
+  "confirm.sensitive": "涉密",
   // Skill Lab(docs/SKILL-DEV.md;L1):编辑器分组/顶部条/状态栏/空态
   "lab.group.identity": "标识",
   "lab.group.contract": "契约面",

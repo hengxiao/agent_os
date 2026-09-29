@@ -176,6 +176,13 @@ class ContextManager:
         #: KernelBuilder 注入;``None`` = 退回下方内联解析(prefer[0] → RunConfig),
         #: 向后兼容未经 builder 的直接构造者
         self._router = router
+        #: estimator 精确口径挂点(§4.2 "优先用 provider 精确 tokenizer"):providers
+        #: 在场则绑定,cap 判定用精确口径;自定义 estimator 无 bind_providers 时跳过
+        #: (粗估口径不变)
+        if self._providers is not None:
+            bind = getattr(self._estimator, "bind_providers", None)
+            if bind is not None:
+                bind(self._providers)
 
     @classmethod
     def default(
@@ -446,16 +453,32 @@ class ContextManager:
                 lines.append(f"next: {next_str}")
         return "\n".join(lines)
 
+    def _candidate_model(self, manifest: Any) -> str:
+        """估算口径归属的近似模型:manifest ``model.prefer[0]`` 缺省回落
+        ``RunConfig.model``(不经 router 终选——估算只需量级正确)。"""
+        model = ""
+        if manifest.model is not None:
+            model = manifest.model.prefer[0] if manifest.model.prefer else ""
+        return model or self._config.model
+
     async def maintain(self, frame: SkillFrame) -> None:
         manifest = self._skills.get(frame.skill).manifest
-        estimate = self._estimator.estimate(frame.context.messages)
+        estimate = self._estimator.estimate(
+            frame.context.messages, model=self._candidate_model(manifest)
+        )
         frame.context.token_estimate = estimate
         cap = self._cap(manifest.context_policy)
         if cap is None:
             return  # §7.1:compression "off"(RunConfig 消融档或 manifest 档)全部策略短路
         if estimate <= cap or not self._has_compressor():
             return  # 未超限,或无 compressor 可压(静默跳过,估算已更新)
-        await self._compress(frame, manifest.context_policy, estimate, cap)
+        await self._compress(
+            frame,
+            manifest.context_policy,
+            estimate,
+            cap,
+            model=self._candidate_model(manifest),
+        )
 
     async def force_compress(self, frame: SkillFrame) -> None:
         """§7.1 外部强制触发(sidecar ``ForceCompress`` / ``RunControl.force_compress``):
@@ -464,12 +487,21 @@ class ContextManager:
         pre:compress 否决对本路径同样生效(§7.4 不变量 4,见 :meth:`_compress`)。
         """
         manifest = self._skills.get(frame.skill).manifest
-        estimate = self._estimator.estimate(frame.context.messages)
+        estimate = self._estimator.estimate(
+            frame.context.messages, model=self._candidate_model(manifest)
+        )
         frame.context.token_estimate = estimate
         cap = self._cap(manifest.context_policy)
         if cap is None or not self._has_compressor():
             return
-        await self._compress(frame, manifest.context_policy, estimate, cap, forced=True)
+        await self._compress(
+            frame,
+            manifest.context_policy,
+            estimate,
+            cap,
+            model=self._candidate_model(manifest),
+            forced=True,
+        )
 
     def _has_compressor(self) -> bool:
         """注册表或 legacy 单压缩器任一在场即可压缩(都没有 = 静默跳过,估算已更新)。"""
@@ -494,6 +526,7 @@ class ContextManager:
         estimate: int,
         cap: int,
         *,
+        model: str = "",
         forced: bool = False,
     ) -> None:
         """压缩路径(maintain 超限触发与 force_compress 外部强制共用,§7.1/§7.4)。
@@ -546,7 +579,7 @@ class ContextManager:
                 "strategy": compressor.name,
             },
         )
-        after = self._estimator.estimate(frame.context.messages)
+        after = self._estimator.estimate(frame.context.messages, model=model)
         frame.context.token_estimate = after
         if after > cap:
             # §7.1 硬上限:压缩目标是 int(cap*target_ratio),正常链路 after ≤ target

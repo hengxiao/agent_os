@@ -42,6 +42,7 @@ class MockProvider:
         name: str | None = None,
         stream_scripts: list[list[tuple[str, float] | ChatChunk]] | None = None,
         supports_vision: bool = False,
+        token_counter: Callable[[str], int] | None = None,
     ) -> None:
         if name is not None:
             self.name = name
@@ -50,14 +51,17 @@ class MockProvider:
         self.stream_scripts = stream_scripts
         self.stream_attempts = 0
         self._supports_vision = supports_vision
+        self._token_counter = token_counter
 
     def capabilities(self) -> ProviderCaps:
         # 流式能力按 stream_scripts 配置上报:未配则 False,caps 门控调用方自然回落
         # vision 同理(WS1):supports_vision kwarg 开关,缺省 False
+        # token_counter(§4.2 精确口径挂点):kwarg 透传,缺省 None = 估算器回粗估
         return ProviderCaps(
             supports_tools=True,
             supports_vision=self._supports_vision,
             supports_streaming=self.stream_scripts is not None,
+            token_counter=self._token_counter,
         )
 
     async def chat(self, req: ChatRequest) -> ChatResponse:

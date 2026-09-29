@@ -247,6 +247,12 @@ def test_mock_capabilities_vision_flag():
     assert MockProvider(supports_vision=True).capabilities().supports_vision is True
 
 
+def test_mock_capabilities_token_counter():
+    """token_counter kwarg 上报 caps(§4.2 精确口径挂点),缺省 None(同 supports_vision 先例)。"""
+    assert MockProvider().capabilities().token_counter is None
+    assert MockProvider(token_counter=len).capabilities().token_counter is len
+
+
 def test_mock_stream_trailing_terminal_chunk():
     """脚本项可为 ChatChunk(原样透传):尾随终 chunk 携带 finish_reason/usage 记账锚点。"""
     terminal = ChatChunk(finish_reason="stop", usage=ChatUsage(prompt=3, completion=2))

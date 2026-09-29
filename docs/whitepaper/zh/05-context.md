@@ -96,7 +96,7 @@ Memory 检索结果进帧组装的读取侧通道(`docs/DESIGN.md` §11.2 通道
 
 ### 4.8 估算器:口径唯一
 
-`TokenEstimator`(estimator.py):char/4 粗估 + 每消息固定开销 4 token(:14) + tool_calls 参数 JSON 折算 + parts 多模态折算(`len(parts) * IMAGE_PART_TOKENS`,1024/图粗估,:18/:39),`calibration` 系数全局可调。它与 ProviderManager 共用同一口径(§4.2)——压缩水位判断与计费估算不会出现两套数字。`per_provider_factor` 预留各家 tokenizer 偏差的折算入口(:38-43)。
+`TokenEstimator`(estimator.py):char/4 粗估 + 每消息固定开销 4 token(:19) + tool_calls 参数 JSON 折算 + parts 多模态折算(`len(parts) * IMAGE_PART_TOKENS`,1024/图粗估,:23/:56-57),`calibration` 系数全局可调。精确口径挂点已接(2026-09-29):`bind_providers(providers)` 注入 ProviderManager(ContextManager 构造尾绑定)后,`estimate(messages, model="")` 对可 resolve 且 caps 带 `token_counter`(签名约定 `Callable[[str], int]`,text→tokens)的模型精确计数文本(content 与 tool_calls 参数 JSON,:95-116),counter 抛错该消息回粗估 + warning;parts 维持 1024 粗估(真实图像 token 只能由 provider usage 给出,build 前不可估)。口径唯一的真实边界:估算器只被 Context 子系统消费(cap 判定与压缩触发共用同一数字),ProviderManager 不引用它(`api/v1/context.py:65` "共用口径"注释为契约预留);模型归属是近似(prefer[0] or config.model,不经 router 终选)。`per_provider_factor` 预留各家 tokenizer 偏差的折算入口(:118-123),恒 1.0 占位。
 
 ### 4.9 策略链:设计全景与实现落点
 
@@ -128,7 +128,7 @@ Memory 检索结果进帧组装的读取侧通道(`docs/DESIGN.md` §11.2 通道
 
 1. **裸 rolling window(truncate 单档)是已知循环诱因**:丢早期工具结果 → 模型重复调用已丢的工具。源码与 §7.6 都自带定位警告——它只是 hierarchical 链的中间层基座,链尾必须有 summarize 或 spill 承接,**不得读作推荐做法**;链已实现(2026-09-28,§4.9),生产形态应经 manifest `compress` 选 spill/summarize/hierarchical 链,`truncate` 单档仅作基线与消融对照。
 2. **被驱逐信息的可恢复性分档**:spill 可恢复——内容在 blob store,替换串附 `blob://` ref 与 blob_get 分页取回提示;summarize 有损——原区间不可恢复,compact note 只留保留契约要点;纯 truncate 驱逐仍不可恢复。
-3. **char/4 是粗估**:对代码、中文、JSON 密集的上下文偏差可观,cap 判断可能提前或滞后触发;`per_provider_factor` 恒返回 1.0(estimator.py:44),校准系数是占位接口。多模态估算已落地粗估分支——parts 按 `IMAGE_PART_TOKENS`=1024/图折算(estimator.py:18/:39);provider usage / `token_counter` 精确口径仍开口,§7.6 旧述"按分辨率公式"已随之更正。
+3. **char/4 是缺省粗估**:对代码、中文、JSON 密集的上下文偏差可观,cap 判断可能提前或滞后触发。精确口径挂点已接(2026-09-29):provider caps 带 `token_counter`(签名约定 `Callable[[str], int]`)时文本(content 与 tool_calls 参数 JSON)精确计数,counter 抛错该消息回粗估 + warning(估算绝不杀 run);parts 仍按 `IMAGE_PART_TOKENS`=1024/图粗估(estimator.py:23)——真实图像 token 只能由 provider usage 给出,build 前不可估;模型归属是近似(`_candidate_model` = prefer[0] or config.model,不经 router 终选)。`per_provider_factor` 恒返回 1.0(estimator.py:123),仍是无调用方的占位接口,未被本挂点消费;tiktoken 类真实 counter 仍开口(venv 无依赖,extras 决策单列)。(§7.6 旧述"按分辨率公式"已于 2026-09-28 更正。)
 4. **§7.1 硬上限尾路径已实现,"临近模型窗口"独立档仍开口**:全链压完重估仍 `after > cap` → 抛 `ContextOverflowError`(manager.py:63/:421-424),帧失败上抛;但 cap 仍只有一档(manifest `max_tokens` 或默认 128_000,manager.py:111/:355-357),"临近模型窗口"档因模型窗口不可知未实现,真正撞窗口的兜底仍依赖 provider 报错。
 5. **状态栏只实现了"短轨迹逐轮替换"一支**:§7.3 设计了"长轨迹持久追加(完全保缓存)"分支,代码中状态消息每步重建、尾部 ephemeral 追加,等价于逐轮替换;设计中的"当前时间、工具调用计数"字段也未出现在状态行(manager.py:209-215)。以代码为准。
 6. **hint 策略硬编码**:20% 阈值(`LOW_BUDGET_RATIO`)与两条文案写死在 manager 里,技能无法按自身任务形态配置收敛策略;状态栏信任模型(模型无条件信任)放大了这条固定策略的影响面。

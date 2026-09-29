@@ -539,6 +539,34 @@
 > **仍开口**:步内多点排干(裁决不做)、按帧寻址注入、事件过滤/限流、跨 run
 > 队列、status bar events 行(评估后并入批头,不单列)。
 > 全量基线:1836 收集 = 1786 passed + 10 skipped + 40 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-29(多模态 token 精确口径挂点——estimator 经 provider
+> token_counter 精确计数)**:DESIGN §4.2"优先用 provider 精确 tokenizer,
+> 否则统一估算器"的挂点侧兑现(不带数字,全量基线留待主 agent 填入)。
+> ① **挂点**(`context/estimator.py`)——`TokenEstimator.bind_providers(providers)`
+> + `estimate(messages, model="")`;counter 签名约定 `Callable[[str], int]`
+> (text→tokens,仓内首个定稿);模型可 resolve 且 caps.token_counter 在场 →
+> content 与 tool_calls 参数 JSON 精确计数,overhead(4)/`IMAGE_PART_TOKENS`=1024/
+> calibration 照旧;counter 抛错 → 该消息回粗估 + warning(估算绝不杀 run);
+> resolve 失败/counter 缺席 → 逐字旧行为。
+> ② **接线**——ContextManager 构造尾 bind(getattr 防御,自定义 estimator 无
+> `bind_providers` 跳过);`_candidate_model(manifest)` = prefer[0] or
+> config.model(内联单行,不经 async router——估算与实调模型可能不一致,
+> 近似已注明);maintain/force_compress/`_compress` 三处传 model=;各 compressor
+> 内部仍粗估不变(刻意)。
+> ③ **parts 维持 1024 粗估**——真实图像 token 只能由 provider usage 给出
+> (ChatUsage.prompt 总额),build 前不可估(理由已注明)。
+> ④ **Mock**——`MockProvider(token_counter=None)` kwarg(照 supports_vision
+> 先例,caps 透传)。
+> ⑤ **表述更正**——estimator 只被 Context 子系统消费,ProviderManager 无引用;
+> docstring 旧述"与 ProviderManager 共用同一口径"按此更正,
+> `api/v1/context.py:65` 注释为契约预留。
+> 测试:estimator counter 新锚点 + manager 集成(`tests/context/
+> test_estimator_counter.py` / `tests/providers/test_manager.py`)。
+> **仍开口**:`per_provider_factor`(无调用方占位,未被本挂点消费)、tiktoken
+> 类真实 counter(venv 无依赖,extras 决策单列)。上文 2026-09-28(多模态契约 +
+> narrate)块「仍开口」中的"多模态 token 精确口径"据此关闭,dated 原文保留
+> (logprobs 保留开口)。全量基线:1845 收集 = 1795 passed + 10 skipped + 40 xfailed,0 失败。
 
 ## 一、总览
 
@@ -579,6 +607,7 @@
 - **复核 2026-08-24**:Anthropic 原生适配器已实现(`providers/claude.py`,另有 `providers/kimi.py`);真实 `stream()` 仍为 stub(`openai_compatible.py:104` 标 M1、`claude.py:99` 标 M5);ModelRouter 仍只有契约(`api/v1/providers.py:142`);其余各项抽查仍成立。
 - **复核 2026-09-27(流式批)**:真实 `stream()` 已实填(`openai_compatible.py:104` SSE、`claude.py:100` Anthropic 事件序列,KimiProvider 继承;Manager 提交点语义 `manager.py:195-258`),runner 消费与 ttft 记账同步落地(见头部复核块);ModelRouter 仍只有契约(`api/v1/providers.py:141`),logprobs/多模态精确口径仍开口。
 - **复核 2026-09-29(ModelRouter v1)**:`DefaultModelRouter` 已落地(`providers/router.py`,契约 `api/v1/providers.py:141-149` 首个实现)——候选链 `[*prefer, config.model]` 去重保序,逐候选 resolve 前缀 + caps 探测(tools/vision),首个全过胜出,全不过 fail-open 落链首(语义同旧 `prefer[0]` 直取);三处接线(`ContextManager.build` / `MinimalContextManager.build` / `ctx.chat`,router=None 回退内联)+ `[providers] router = "pkg.mod:Class"` 配置键(strict,缺省 DefaultModelRouter);router 侧仍开口:健康度/错误率反馈路由(无数据源)、fallback 动态化、prefer 通配符匹配、params 超 temperature 键;logprobs/多模态精确口径仍开口。
+- **复核 2026-09-29(estimator 精确口径挂点)**:estimator 的 `token_counter` 精确口径挂点已落地(`context/estimator.py` `bind_providers` + `estimate(messages, model="")`;ContextManager 构造尾绑定,三处传 model=,见头部复核块)——上行 dated 行的"多模态精确口径"据此关闭,dated 原文保留;logprobs 仍开口。
 
 ### 3. Tool Registry — ✅ ~80%
 
@@ -609,6 +638,7 @@
 
 - **复核 2026-09-28**:spill/summarize/hierarchical 责任链已落地(见头部复核块与 docs/DESIGN.md §7.2 实现状态);仍开口:narrate(多模态契约)、contextualized preview、压缩缓存失效核算、多模态 token 口径、驱逐价值序。
 - **复核 2026-09-28(多模态批)**:narrate 已落地(`context/narrate.py`;hierarchical 链改序 spill→narrate→summarize,模式表新增 narrate 档),多模态契约 `Message.parts` additive 落地、估算器粗估分支 `IMAGE_PART_TOKENS`=1024/图入估算器(见头部复核块);仍开口:contextualized preview、压缩缓存失效核算、多模态 token **精确**口径、驱逐价值序、MCP image 块 → parts 接线、http_fetch 二进制。
+- **复核 2026-09-29(token_counter 挂点)**:多模态 token 精确口径挂点已落地——provider caps 带 `token_counter`(签名约定 `Callable[[str], int]`)时文本(content/tool_calls 参数 JSON)精确计数,counter 抛错该消息回粗估 + warning;parts 维持 1024 粗估(真实图像 token 只能由 provider usage 给出,build 前不可估);模型归属近似(`_candidate_model` = prefer[0] or config.model,不经 router)已注明(见头部复核块)——上行 dated 行的"多模态 token 精确口径"据此关闭,dated 原文保留;仍开口:contextualized preview、压缩缓存失效核算、驱逐价值序、MCP image 块 → parts 接线、http_fetch 二进制、tiktoken 类真实 counter(extras 决策单列)。
 
 ### 6. Sidecars — ✅ ~80%
 

@@ -329,7 +329,7 @@ def test_system_file_stat_dir_and_traversal_rejected(tmp_path):
 
 def test_system_file_delete_file_with_if_match(tmp_path):
     (tmp_path / "a.txt").write_text("hello agent_os\n", encoding="utf-8")
-    digest = hashlib.sha256("hello agent_os\n".encode()).hexdigest()
+    digest = hashlib.sha256(b"hello agent_os\n").hexdigest()
     reg = LocalPythonToolRegistry.with_builtins()
     ctx = _ctx(tmp_path, ["system.file.delete"])
 

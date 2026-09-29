@@ -1689,6 +1689,24 @@ class Kernel:
                 return True
         return False
 
+    async def _settle_pending_timers(self, frame: SkillFrame) -> int:
+        """resume 结算帧持久化计时器:``working["_timers"]`` 未 done 规格重武装为后台任务。
+
+        在 ``_settle_unpaired_calls`` 之前调用(与其它 settle 同旨):计时器规格随
+        帧 working 落 checkpoint(tools/timer.py),pause/断电只取消进程内任务、
+        规格保留;resume 在此按剩余时长/次数折算重武装(折算语义见
+        ``TimerService.rearm_from_working``:过期 one-shot 立即补投,recurring
+        错过的中间触发不逐次补账)。registry 未持有 timer 服务(裸 registry /
+        嵌入方未装配)→ 静默跳过记 log,不阻断 resume。返回重武装条数。
+        """
+        service = getattr(self.tools, "_timers", None)
+        rearm = getattr(service, "rearm_from_working", None) if service is not None else None
+        if rearm is None:
+            if frame.context.working.get("_timers"):
+                _log.info("timer 服务未装配,帧 %s 的持久化计时器跳过重武装", frame.frame_id)
+            return 0
+        return await rearm(frame, now=time.time())
+
     # ------------------------------------------------------------------
     # §3.4 spawn 后台帧:父帧不挂起,子帧独立预算后台运行;join 退化为读终态
     # ------------------------------------------------------------------

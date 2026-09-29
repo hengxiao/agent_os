@@ -368,7 +368,7 @@ ADD/UPDATE/DELETE/NOOP)/ `memory_consolidate`(周期重构)/ `memory_check`(code
 | 条目 | 阻塞在 |
 |---|---|
 | `ask_human`(特殊档) | ~~需要 tool 层的"挂起 run"语义~~ **挂起-作答-恢复闭环已落地**:`ask_supervisor` 伪工具即此语义——pending 落盘 → 就地挂起等裁决 → 答案作为该 tool result 注入 → resume 重问(`kernel/runner.py` `_ask_supervisor` + `supervisor/manager.py`,升权确认复用同一通道);工具面 `system.user.ask`/`system.user.notify` 也已实填(2026-09-27:WRITE 档,宿主回调经 `bind_user_channel` 装配,未 bind → NOT_FOUND,`tools/builtins.py`;CLI 接线留 TODO)。剩余缺口收窄为 `ask_human` 的 std 形态本身(技能封装与宿主呈现通道)。**2026-09-28 全链收口**:std 形态 `common.user.ask_human` 落地(`std/user.yaml` + `user_handlers.py`,包装 `system.user.ask`,inputs `{question, context?}`,Constrain 两触发语义落 description);宿主呈现通道接线——CLI `_CliUserChannel`(与 `_cli_supervisor` 同构 stdin/stderr,随 supervisor 开关注入,replay 不接线)、Web `_InboxUserChannel`(ask 复用收件箱 `Question(kind="user-ask")`,notify no-op、`user.notify` 信号上移工具层经 `bind_signals` 补发,run/frame 归因,telemetry/SSE 可见)。它是 Constrain 层唯一的 std 落点——已闭环 |
-| `set_timer` | 与 `ask_human` 共用的 checkpoint/resume 通道已随 supervisor 闭环落地;**计时器工具面已落地(2026-09-28)**:`system.timer.set` 内核原语(`tools/timer.py`,WRITE 档;one-shot `delay_seconds` / recurring `interval_seconds`+`count` 缺省无限,二选一缺/并给 INVALID_ARGS,下限钳 0.5s,立即返回 timer_id;到点经 `ctl.inject_message` 向调用帧注入 `[timer 到点]`,帧终态静默弃,run 收尾取消,进程态不持久化——resume 重武装留开口)+ std 形态 `common.task.set_timer`(`std/task.yaml` + `task_handlers.py`);**偏差**:未走挂起/checkpoint 通道——到点即注入(InjectMessage 已闭环),SUPERVISOR.md §10 开放问题 2 据此注记 |
+| `set_timer` | 与 `ask_human` 共用的 checkpoint/resume 通道已随 supervisor 闭环落地;**计时器工具面已落地(2026-09-28)**:`system.timer.set` 内核原语(`tools/timer.py`,WRITE 档;one-shot `delay_seconds` / recurring `interval_seconds`+`count` 缺省无限,二选一缺/并给 INVALID_ARGS,下限钳 0.5s,立即返回 timer_id;到点经 `ctl.inject_message` 向调用帧注入 `[timer 到点]`,帧终态静默弃,run 收尾取消,规格随帧 `working["_timers"]` 落 checkpoint、resume 经 `_settle_pending_timers`/`TimerService.rearm_from_working` 折算重武装(2026-09-29,折算语义见 DESIGN.md §8.3))+ std 形态 `common.task.set_timer`(`std/task.yaml` + `task_handlers.py`);**偏差**:未走挂起/checkpoint 通道——到点即注入(InjectMessage 已闭环),SUPERVISOR.md §10 开放问题 2 据此注记 |
 | `subagent_cancel` / `subagent_status` | ~~引擎缺口 1:子树级联取消~~ **引擎地基已落地**(2026-09-27:`Kernel.cancel_subtree`/`RunControl.cancel_frame`,`kernel/runner.py:1837-1893` + `kernel/control.py:63-71`);**组合子本体已落地**(2026-09-27:`std/combinators.yaml` + `combinators_handlers.py` 的 `common.task.subagent_cancel`(WRITE 语义,ctx.cancel ack)/`common.task.subagent_status`(READ 语义,ctx.frame_status;未知帧 status=null)) |
 | `race_first` 组合子 | 引擎地基已落地(2026-09-27:`parallel_invoke` first_success 模式 + 级联取消,`kernel/runner.py:1482-1763`);**组合子本体已落地**(2026-09-27:`std/combinators.yaml` + `combinators_handlers.py` 的 `common.task.race_first`(code TRUSTED)+ 私有批帧 `common.task.race_batch`——批帧给 watchdog 单一可寻址目标) |
 | 组合子统一 `budget` 参数 | 引擎缺口 3 的读视图已落地(2026-09-27:`Kernel.subtree_usage` 九字段求和,`kernel/runner.py:1951-1988`);**软强制已落地**(2026-09-27:`race_first` watchdog 50ms 轮询批帧 `ctx.frame_status` 子树 usage,超限 `ctx.cancel` 返回部分结果——检查间隔内可超、best-effort);**内核强制已落地**(2026-09-28:manifest `limits.max_steps`(帧自身步数)/`limits.max_cost`(子树求和花费)由内核在记账点沿祖先链强制,`kernel/runner.py:2203-2282`;`budget` 参数软闸保留,软/硬正交) |
@@ -495,7 +495,7 @@ WRITE/EXEC/NET 显式声明 idempotent、`cost_hint` 非空)。新增条目漏�
 
 ### CI 与离线的分界(不可破的线)
 
-现有套件的性质很珍贵:**1755 个测试(1712 passed / 10 skipped / 40 xfailed,
+现有套件的性质很珍贵:**1772 个测试(1729 passed / 10 skipped / 40 xfailed,
 0 失败;`pytest tests --collect-only` 实测口径)、无需 API key、零 flaky**。
 层 1–3 全进 CI;层 4 走 nightly/发版前,需要 key、花钱、报置信区间。
 对抗用例(§7.3a 的"诱导攻击")对 `injection_scan`/`untrusted_content`

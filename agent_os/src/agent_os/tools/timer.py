@@ -4,8 +4,10 @@ TimerService:asyncio 任务表 ``{timer_id: task}``,按 run_id 分桶;到点经�
 回调(``RunControl.inject_message``,``Role.USER``/``Source.INJECTED``)向目标帧
 投递 ``[timer 到点] {note}`` 消息;帧/run 终态 → 静默弃(log);run 收尾
 (``release_run``,runner ``_release_run`` 经 registry 调用)取消该 run 全部
-定时器。定时器是**进程态**:不随 checkpoint 持久化,进程重启即丢(resume 不会
-复活计时——一次性/周期提醒属易失运行时状态,要不要重建由技能自行决定)。
+定时器。计时器规格**随帧持久化**(``frame.context.working["_timers"]``,随
+checkpoint 落档):pause/断电只取消进程内任务、规格保留,resume 结算序列
+(``Kernel._settle_pending_timers``)经 ``rearm_from_working`` 折算重武装——
+暂停/重启不丢计时(错过的中间触发不逐次补账,节奏从 resume 起算)。
 
 ``sleep`` 可注入(缺省 ``asyncio.sleep``;测试用假钟快进,同 StallDetector 注入
 ``clock`` 先例,sidecars/builtins.py)。
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -47,6 +50,11 @@ class TimerService:
     fire 注入通道(``ctl``,RunControl 契约)由 KernelBuilder 在 build 后 bind
     (同 ``bind_user_channel`` 先例);未 bind 时工具侧拦 NOT_FOUND,service 本身
     只防御式丢弃(``bound`` 供工具探测)。
+
+    规格持久化:set 成功即把规格 append 到目标帧 ``working["_timers"]``(经
+    ctl → kernel → stack 反查帧;帧不可达只记 log 不阻断,退回进程态旧行为);
+    fire/终结同步回写规格(``fired``/``next_fire_at``/``done``);resume 经
+    ``rearm_from_working`` 重武装(见该方法 docstring 的折算语义)。
     """
 
     def __init__(self, sleep: Any = None) -> None:
@@ -84,6 +92,10 @@ class TimerService:
         one-shot = ``delay_seconds``;recurring = ``interval_seconds``(``count``
         缺省无限,run 收尾自动取消);两者二选一,缺/并给都是 INVALID_ARGS;
         delay/interval 按下限 ``_MIN_SECONDS`` 钳制(防抖)。
+
+        成功后规格落目标帧 ``working["_timers"]``(随 checkpoint 持久化,resume
+        重武装);帧不可达(ctl 无 kernel/帧不在栈)只记 log 不阻断——规格缺失
+        即退回进程态旧行为。
         """
         if delay_seconds is None and interval_seconds is None:
             return ToolResult(
@@ -119,9 +131,54 @@ class TimerService:
         interval = (
             max(_MIN_SECONDS, float(interval_seconds)) if interval_seconds is not None else None
         )
+        timer_id = self._spawn(
+            run_id=run_id,
+            frame_id=frame_id,
+            delay=delay,
+            interval=interval,
+            count=count,
+            note=note,
+        )
+        now = time.time()
+        spec = {
+            "timer_id": timer_id,
+            "run_id": run_id,
+            "frame_id": frame_id,
+            "delay_seconds": delay,
+            "interval_seconds": interval,
+            "count": count,
+            "fired": 0,
+            "note": note,
+            "created_at": now,
+            "next_fire_at": now + (delay if delay is not None else interval),
+        }
+        if not self._record_spec(frame_id, spec):
+            _log.warning(
+                "timer %s 规格无法落帧 %s 的 working(帧不可达),退回进程态语义:pause/resume 不重武装",
+                timer_id,
+                frame_id,
+            )
+        return timer_id
+
+    def _spawn(
+        self,
+        *,
+        run_id: str,
+        frame_id: str,
+        delay: float | None,
+        interval: float | None,
+        count: int | None,
+        note: str,
+        fired0: int = 0,
+        first_delay: float | None = None,
+    ) -> str:
+        """建后台计时任务并入表(不写规格——规格由 set/rearm 各自维护),返回 timer_id。
+
+        ``fired0``/``first_delay`` 是 resume 重武装形参(透传 ``_run``,语义见该处)。
+        """
         timer_id = uuid.uuid4().hex[:12]
         task = asyncio.get_running_loop().create_task(
-            self._run(timer_id, run_id, frame_id, delay, interval, count, note)
+            self._run(timer_id, run_id, frame_id, delay, interval, count, note, fired0, first_delay)
         )
         self._tasks[timer_id] = task
         self._by_run.setdefault(run_id, set()).add(timer_id)
@@ -131,12 +188,145 @@ class TimerService:
         """run 收尾(registry ``release_run`` 调用):取消本 run 全部在册计时器并清空分桶。
 
         只动本 run 桶(共享 kernel 的并发 run 不得跨 run 误杀,同后台帧回收先例);
-        取消是静默的——任务侧 ``CancelledError`` 直接传播,不再 fire。
+        取消是静默的——任务侧 ``CancelledError`` 直接传播,不再 fire。规格**不标
+        done**:DONE/FAILED/ABORT 收尾的帧 resume 不读,pause 收尾的帧 resume 要
+        靠留下的规格重武装,统一不标最简一致。
         """
         for timer_id in self._by_run.pop(run_id, set()):
             task = self._tasks.pop(timer_id, None)
             if task is not None and not task.done():
                 task.cancel()
+
+    def _frame_for(self, frame_id: str) -> Any:
+        """经 fire 注入通道反查帧(ctl → kernel → stack);ctl/kernel 缺位 → None。"""
+        ctl = self._ctl
+        kernel = getattr(ctl, "_kernel", None) if ctl is not None else None
+        if kernel is None:
+            return None
+        return kernel.stack.get(frame_id)
+
+    def _find_spec(self, frame_id: str, timer_id: str) -> dict[str, Any] | None:
+        """在帧 ``working["_timers"]`` 里按 timer_id 找规格(帧不可达/无此规格 → None)。"""
+        frame = self._frame_for(frame_id)
+        if frame is None:
+            return None
+        for spec in frame.context.working.get("_timers", []):
+            if spec.get("timer_id") == timer_id:
+                return spec
+        return None
+
+    def _record_spec(self, frame_id: str, spec: dict[str, Any]) -> bool:
+        """规格落帧 ``working["_timers"]``(随 checkpoint 持久化);帧不可达 → False(调用方记 log)。"""
+        frame = self._frame_for(frame_id)
+        if frame is None:
+            return False
+        frame.context.working.setdefault("_timers", []).append(spec)
+        return True
+
+    def _sync_spec_fired(
+        self, frame_id: str, timer_id: str, fired: int, interval: float | None
+    ) -> None:
+        """fire 成功后回写规格:已触发次数 + 下一次到点(recurring 的 next_fire_at 随 fire 滚动)。"""
+        spec = self._find_spec(frame_id, timer_id)
+        if spec is None:
+            return
+        spec["fired"] = fired
+        if interval is not None:
+            spec["next_fire_at"] = time.time() + interval
+
+    def _mark_spec_done(self, frame_id: str, timer_id: str) -> None:
+        """任务终结(正常/异常)标规格 done(resume 重武装跳过);release_run 取消不走这里。"""
+        spec = self._find_spec(frame_id, timer_id)
+        if spec is not None:
+            spec["done"] = True
+
+    async def rearm_from_working(self, frame: Any, *, now: float) -> int:
+        """resume 重武装:把帧 ``working["_timers"]`` 里未 done 的规格重新武装为后台任务。
+
+        折算语义(错过的时间**不逐次补账**,节奏从 resume 起算):
+
+        - one-shot:``next_fire_at`` 未到期 → 按剩余时长重睡同参;已过期 → 立即补
+          fire 一次(暂停/断电欠的一次要还)并标 done,不重生任务;
+        - recurring:剩余次数 = ``count - fired``(count None = 无限);``next_fire_at``
+          已过期 → 立即补最近一次(fired+1 后再判 done),其后按 interval 续睡;
+          未到期 → 睡到原到点(首睡 = 剩余时长)再回到 interval 节奏;
+        - 重武装/补偿后规格的 ``timer_id`` 改写为在跑任务的 id(旧任务 pause 时已
+          取消;防同进程再次 resume 时新旧两代并存双火)。
+
+        返回重武装条数(补偿 fire 也算一条);无规格/全部 done → 0(大多数帧的快路径)。
+        """
+        specs = frame.context.working.get("_timers")
+        if not specs:
+            return 0
+        rearmed = 0
+        for spec in specs:
+            if spec.get("done"):
+                continue
+            run_id = spec.get("run_id") or frame.run_id
+            frame_id = spec.get("frame_id") or frame.frame_id
+            delay = spec.get("delay_seconds")
+            interval = spec.get("interval_seconds")
+            if delay is None and interval is None:
+                _log.warning("帧 %s 的计时器规格缺 delay/interval,跳过重武装: %s", frame.frame_id, spec)
+                continue
+            count = spec.get("count")
+            fired = int(spec.get("fired") or 0)
+            note = spec.get("note") or ""
+            next_fire_at = float(spec.get("next_fire_at") or now)
+            remaining = next_fire_at - now
+            if delay is not None:  # one-shot
+                if remaining <= 0:
+                    # 已过期:立即补还欠的一次并终结(不重生任务)
+                    fired += 1
+                    await self._fire(spec["timer_id"], frame_id, note, fired, None)
+                    spec["fired"] = fired
+                    spec["done"] = True
+                    spec["next_fire_at"] = now
+                else:
+                    wait = max(_MIN_SECONDS, remaining)
+                    spec["timer_id"] = self._spawn(
+                        run_id=run_id,
+                        frame_id=frame_id,
+                        delay=wait,
+                        interval=None,
+                        count=None,
+                        note=note,
+                        fired0=fired,
+                    )
+                    spec["next_fire_at"] = now + wait
+                rearmed += 1
+                continue
+            # recurring
+            if count is not None and fired >= count:
+                spec["done"] = True  # 次数已耗尽(防御:正常路径在 fire 时已标 done)
+                continue
+            interval = max(_MIN_SECONDS, float(interval))
+            if remaining <= 0:
+                # 已过期:立即补最近一次(错过的中间触发不逐次补账),其后回到 interval 节奏
+                fired += 1
+                await self._fire(spec["timer_id"], frame_id, note, fired, count)
+                spec["fired"] = fired
+                if count is not None and fired >= count:
+                    spec["done"] = True
+                    spec["next_fire_at"] = now
+                    rearmed += 1
+                    continue
+                wait = interval
+            else:
+                wait = max(_MIN_SECONDS, remaining)
+            spec["timer_id"] = self._spawn(
+                run_id=run_id,
+                frame_id=frame_id,
+                delay=None,
+                interval=interval,
+                count=count,
+                note=note,
+                fired0=fired,
+                first_delay=wait,
+            )
+            spec["next_fire_at"] = now + wait
+            rearmed += 1
+        return rearmed
 
     async def _run(
         self,
@@ -147,23 +337,40 @@ class TimerService:
         interval: float | None,
         count: int | None,
         note: str,
+        fired0: int = 0,
+        first_delay: float | None = None,
     ) -> None:
-        """计时器本体:睡到点 → fire;recurring 按 count 结算(缺省无限),帧终态即停。"""
+        """计时器本体:睡到点 → fire;recurring 按 count 结算(缺省无限),帧终态即停。
+
+        ``fired0``/``first_delay`` 是 resume 重武装形参:recurring 重武装时已触发
+        次数从 ``fired0`` 续计(注入文本的"第 N 次"不重置),首次睡眠用
+        ``first_delay``(睡到原到点,其后回到 interval 节奏);one-shot 重武装
+        等价于换新 delay,``fired0`` 正常为 0。每次 fire 成功回写规格
+        (``_sync_spec_fired``);正常/异常终结标规格 done,取消(release_run)
+        不标——规格留给 resume 重武装。
+        """
         try:
             if delay is not None:  # one-shot
                 await self._sleep(delay)
-                await self._fire(timer_id, frame_id, note, 1, None)
+                if await self._fire(timer_id, frame_id, note, fired0 + 1, None):
+                    self._sync_spec_fired(frame_id, timer_id, fired0 + 1, None)
             else:  # recurring
-                fired = 0
+                fired = fired0
+                wait = first_delay if first_delay is not None else interval
                 while count is None or fired < count:
-                    await self._sleep(interval)
+                    await self._sleep(wait)
+                    wait = interval
                     fired += 1
                     if not await self._fire(timer_id, frame_id, note, fired, count):
                         break  # 帧终态:本次静默弃,后续触发一并停止
+                    self._sync_spec_fired(frame_id, timer_id, fired, interval)
         except asyncio.CancelledError:
-            raise  # run 收尾取消:静默退出(§3.1 取消传播)
+            raise  # run 收尾/pause 取消:静默退出(§3.1);规格不标 done,留给 resume 重武装
         except Exception:  # noqa: BLE001 — 后台计时任务不得把异常漏进事件循环
             _log.exception("timer %s 触发异常,计时器终止", timer_id)
+            self._mark_spec_done(frame_id, timer_id)  # 异常终止:标 done,防 resume 复活坏任务
+        else:
+            self._mark_spec_done(frame_id, timer_id)  # 正常终结(one-shot 完成/count 耗尽/帧终态停)
         finally:
             self._tasks.pop(timer_id, None)
             bucket = self._by_run.get(run_id)
@@ -232,7 +439,9 @@ def timer_set_tool(*, name: str = "system.timer.set", registry: Any) -> Tool:
         Do not use when 能就地等到结果(直接等工具返回)——计时器只在
         "现在没结果、稍后要看"时有意义。one-shot 传 ``delay_seconds``;周期传
         ``interval_seconds``(``count`` 缺省 = 无限,run 收尾自动取消);两者
-        二选一,下限钳制 0.5s(防抖)。宿主未装配 timer 服务 → NOT_FOUND。
+        二选一,下限钳制 0.5s(防抖)。规格随帧 checkpoint 持久化:run 暂停
+        (pause)/进程重启后经 resume 恢复时会按剩余时间重武装继续计时(过期
+        的一次性提醒恢复时立即补投)。宿主未装配 timer 服务 → NOT_FOUND。
         """
         service = getattr(registry, "_timers", None)
         if service is None or not service.bound:

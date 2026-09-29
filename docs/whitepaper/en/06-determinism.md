@@ -73,6 +73,8 @@ load doc → version check (reject unless v == 1) → rebuild Run (restore usage
   → root frame completes → run.finished (run.started is NOT re-emitted)
 ```
 
+Between `_settle_pending_tool_confirm` and `_settle_unpaired_calls` the sequence also runs `_settle_pending_timers` (2026-09-29): timer specs ride the checkpoint in the frame's `working["_timers"]` and are re-armed on resume via `TimerService.rearm_from_working` — a one-shot not yet due sleeps out its remainder, an overdue one fires once immediately (debts are repaid); an overdue recurring timer catches up only the most recent tick and its cadence restarts at resume (missed intermediate ticks are not replayed one by one); the timer_id is rewritten to prevent double-fire, and an unbound service is skipped silently.
+
 The three settlement rules for broken pairings (`kernel/checkpoint.py:281-318`, answering P2/P3):
 
 | Post-crash call shape | Basis | Recovery action |
@@ -121,7 +123,7 @@ The core behavior is pinned by 11 anchor tests, all re-run green while writing t
 - **Periodic checkpoint** (`tests/kernel/test_periodic_checkpoint.py`, 3 cases): with interval=2 the "latest scene" exists by step 2 but not step 1; interval=0 mounts nothing (zero behavior change); the config field passes through `build_kernel`.
 - **replay/diff** (`tests/cli/test_replay.py`, 5 cases): a recorded fib(4) replays to the same result with an empty diff against the original run (both `result_equal` and `signals_equal` true), under a new run_id; two runs with different inputs are judged divergent; two runs with identical inputs diff empty.
 
-The real configuration surface: `[run].checkpoint_interval` in `instance/agent-os.toml` enables periodic snapshots; the CLI surface is `agent-os run/resume/replay/diff` (`host/cli/main.py:455-509`). Overall test baseline: `pytest --collect-only` currently collects **1755** cases (1712 passed / 10 skipped / 40 xfailed, 0 failures; the live count is authoritative).
+The real configuration surface: `[run].checkpoint_interval` in `instance/agent-os.toml` enables periodic snapshots; the CLI surface is `agent-os run/resume/replay/diff` (`host/cli/main.py:455-509`). Overall test baseline: `pytest --collect-only` currently collects **1772** cases (1729 passed / 10 skipped / 40 xfailed, 0 failures; the live count is authoritative).
 
 Ripple effects: debugger breakpoint hits become pendings and ride the same suspend-persist-resume loop (docs/DEBUGGER.md); the Web SSE fan-out and RCA pages are `"*"` subscribers of the bus (docs/RUNNERS.md §4.2); the escalation grant ledger and run-level tool state ride the checkpoint as additive fields — a live instance of the "schema v1 unchanged, fields may be added" contract discipline (`kernel/checkpoint.py:139-141`); the Skill Registry's pre-publish verification gate makes "replay + evaluator confirmation" the trust precondition of self-evolution (docs/DESIGN.md §6.2; the smoke injection mount point landed 2026-09-29 — `bind_register_smoke` / `[skills] register_smoke`, fail-closed with zero writes; the default replay + evaluator implementation remains open).
 

@@ -636,8 +636,8 @@ class LocalPythonToolRegistry:
 
         不删的话 ``mkdtemp`` 的结果只增不减——长驻宿主会把 /tmp 塞满
         (审计发现:全仓原先无任何 rmtree)。已配置 workdir(§W0-1 分区)时
-        不属本注册表所有,不动。WS1:顺带取消该 run 全部在册计时器(进程态,
-        不随 checkpoint 持久化,见 tools/timer.py)。
+        不属本注册表所有,不动。WS1:顺带取消该 run 全部在册计时器(进程任务
+        取消;规格已随帧 working 持久化,resume 重武装,见 tools/timer.py)。
         """
         self._timers.release_run(run_id)
         wd = self._workdirs.pop(run_id, None)

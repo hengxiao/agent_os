@@ -249,7 +249,10 @@ manifest 侧只需 `permissions.tools` 声明 `ask_supervisor`。
    **已答(2026-09-28):不复用**——`system.timer.set` 已落地(`tools/timer.py`,
    one-shot/recurring),到点 = 经 `ctl.inject_message` 向目标帧注入
    `[timer 到点] {note}` 消息(USER/INJECTED;InjectMessage 通道此前已闭环),
-   而非挂起-恢复;计时器为进程态、不随 checkpoint 持久化(resume 重武装留开口);
+   而非挂起-恢复;计时器原为进程态(resume 重武装留开口),持久化已于 2026-09-29
+   落地:规格随帧 `working["_timers"]` 落 checkpoint,resume 结算序列
+   `_settle_pending_timers` 经 `TimerService.rearm_from_working` 折算重武装
+   (one-shot 过期立即补一次、recurring 只补最近一次,详见 DESIGN.md §8.3/§16);
    挂起/未启动 run 的外部事件唤醒原留 DESIGN.md §17 开放问题 4;其主体已于
    2026-09-29 由宿主层 POST /api/events 三通道兑现(running 注入/paused 恢复/
    无 target 起新 run,内核零改动,见 DESIGN.md §16 已关闭清单)。

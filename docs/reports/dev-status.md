@@ -430,6 +430,29 @@
 > 持久事件队列/调度、event.received 是否升格内核契约信号(现宿主层)。上文各
 > 复核块「仍开口」中的"外部事件唤醒/挂起与未启动 run 唤醒"条目据此关闭,
 > dated 原文保留。全量基线:1747 收集 = 1704 passed + 10 skipped + 40 xfailed,0 失败。
+> ---
+> ✅ **复核 2026-09-29(定时器规格持久化 + resume 重武装落地)**:上文 2026-09-28
+> (ask_human/set_timer 工具面)块「仍开口」中的"定时器持久化/resume 重武装"
+> 据此关闭,dated 原文保留。
+> ① **规格持久化**——`frame.context.working["_timers"]` 列表项 10 键
+> {timer_id, run_id, frame_id, delay_seconds, interval_seconds, count, fired, note,
+> created_at, next_fire_at}(JSON 纯类型,checkpoint 整 dict 往返);fire 回写
+> fired/next_fire_at 滚动;终结标 done;`_release_run` 取消不标 done(统一留给
+> resume)。
+> ② **重武装**——`TimerService.rearm_from_working(frame, *, now)`;resume 结算
+> 序列插入 `_settle_pending_timers`(`kernel/checkpoint.py`,`_settle_pending_tool_confirm`
+> 后、`_settle_unpaired_calls` 前),未 bind 静默跳过;帧全 DONE 的 run 结算钩子
+> 不跑,DONE run 不复活。
+> ③ **折算语义**——one-shot 未到期按剩余重睡、过期立即补一次(欠次必还);
+> recurring 剩余 count、过期只补最近一次、错过的中间触发不逐次补账(节奏从
+> resume 起算,防断电轰炸);"第 N 次"计数文本跨 resume 连续;重武装/补偿后
+> timer_id 改写新 id(防双火)。
+> ④ **frame 可达通道**——ToolContext 无 frame 引用,服务侧
+> `ctl._kernel.stack.get(frame_id)` 取帧写规格;帧不可达退回进程态旧行为
+> (记 warning)。
+> **仍开口**:跨 run 计时器、计时器管理工具(cancel/list 留 std 组合子)、裸
+> service(无 ctl)时 fired/done 回写无处可达(真实路径 ctl 恒在)。
+> 全量基线:1772 收集 = 1729 passed + 10 skipped + 40 xfailed,0 失败。
 
 ## 一、总览
 

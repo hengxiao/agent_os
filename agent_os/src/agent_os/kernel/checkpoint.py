@@ -383,6 +383,9 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
             await kernel._settle_pending_escalation(frame)
             # pending 工具确认(WS2,docs/DESIGN.md §8.2):重走 tool-confirm 闸门(清标志重问)
             await kernel._settle_pending_tool_confirm(frame)
+            # pending 计时器(tools/timer.py 规格随帧 working 落档):未 done 规格
+            # 重武装为后台任务——pause/断电/重启不丢计时(折算语义见 rearm_from_working)
+            await kernel._settle_pending_timers(frame)
             _settle_unpaired_calls(kernel, frame)
             skill_obj = kernel.skills.get(frame.skill)
             try:

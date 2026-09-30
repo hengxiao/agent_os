@@ -235,6 +235,9 @@
 > budget.warning(80%)不发射;DESIGN §17 开放问题 1(并行分支预算切分)保持开口。上文
 > 2026-09-27 并发三原语块"明确不做"两条与 std 第 5 波块"剩余"中"组合子 budget 内核强制"
 > 据此关闭,dated 原文保留。全量基线:1551 收集 = 1502 passed + 10 skipped + 39 xfailed,0 失败。
+> (**2026-09-30 更新**:§17 开放问题 1(并行分支预算切分)已关闭——逐分支 `budget` 键 /
+> `spawn_frame` budget kwarg,字段级覆盖 manifest limits,默认按需抢占;`budget.warning`(80%)
+> 发射点亦已于同日补上(帧/子树路径,≥80% 每帧每字段恰好一次)。见头部最新复核块。)
 > ---
 > ✅ **复核 2026-09-28(§11.2 context 注入槽——memory 经验检索进帧组装)**:manifest
 > `context_policy.recall: true` opt-in(ContextPolicy additive 字段,默认关,缺声明零检索零信号)→
@@ -606,6 +609,37 @@
 > 下沉)、judge 健康度反馈/阈值调优。DESIGN §6.2 与下文 §4(Skill Registry)
 > 已同步。测试:tests/skills/test_register_smoke_default.py 18 例全绿。
 > 全量基线:1863 收集 = 1813 passed + 10 skipped + 40 xfailed,0 失败(+18 例)。
+> ---
+> ✅ **复核 2026-09-30(并行分支预算切分——DESIGN §17 开放问题 1 关闭)**:上文
+> 2026-09-28(帧/子树级预算内核强制)块「不改」中的"§17 开放问题 1 保持开口、
+> budget.warning(80%)不发射"两条据此关闭(该块已附更新注,dated 原文保留)。
+> ① **决策**——默认保持按需抢占(共享 run 池、记账点事后检查,与记账模型同构:
+> LLM 花费事前不可知,无预留挂点);显式切分 = 逐分支 `budget` 键,调用方按任务
+> 语义给额度(均分 = 每分支同额度的特例),引擎只提供强制原语、切分策略归调用方。
+> ② **机制**——分支 dict 新可选键 `budget={"max_steps": int>0, "max_cost": float>0}`
+> (strict 键集,bool/非数值/非正/空 dict → SkillLoadError,镜像 manifest limits
+> 校验;`_validate_branch_budget`,`kernel/runner.py:180`):`parallel_invoke` 分支
+> dict 批形态预检段校验(`runner.py:1952`,登记 `_branch_budgets` :2103)+
+> `spawn_frame(..., budget=…)` keyword-only kernel API(:1884-1891,登记
+> :1910-1912);LogicContext.spawn 与 syscall spawn 刻意不暴露该参数(契约冻结)。
+> ③ **语义**——逐次调用的帧/子树预算,字段级覆盖 manifest `limits:`(override
+> 优先,缺席字段回落 manifest);口径相同:max_steps 限分支根帧自身步数、max_cost
+> 限子树求和;超限 = 该分支 SubtreeCancelled(parallel 条目 ok=False、兄弟无感、
+> run 存活;spawn 的 wait_frame 原样上抛),根帧语义不变(BudgetExceeded 炸 run)。
+> ④ **可观测**——`budget.exceeded` payload additive `"source": "branch"|"manifest"`;
+> `budget.warning`(冻结目录成员)补上发射点:帧/子树预算任一有效字段用量 ≥80%
+> 上限时每帧每字段恰好一次(`_budget_warned` (frame_id, field) 进程态防重,
+> `runner.py:2561-2587`),先于 exceeded、不消费 trip,payload 同 exceeded 键 +
+> source + `field`;同一记账点已超限时 warning 先行、exceeded 随后;run 级/
+> BudgetGuard 不动(status-bar `budget_remaining` 已担软提示)。
+> ⑤ **状态**——`_branch_budgets`/`_budget_warned` 均进程态、不随 checkpoint
+> (parallel resume 整批重放由调用方重供,与 `_budget_tripped` 同旨);沙箱桥零改动
+> (branches dict 逐字透传 syscall,code 技能 `ctx.parallel` 分支带 budget 直接生效)。
+> 留尾均有意不做:批级 budget 语法糖(逐分支键已够表达)、max_tokens 维度(token
+> 花费由 cost 折算承担)、预留式均分(与按需抢占互斥)。DESIGN §17 清单条目 1
+> 已移除(余条重编号),§3.4/§5.1 信号目录注与 STDLIB §2 缺口 3、§5 开放问题 8
+> 已同步。测试:tests/kernel/test_branch_budget.py 16 例全绿。
+> 全量基线:1879 收集 = 1829 passed + 10 skipped + 40 xfailed,0 失败(+16 例)。
 
 ## 一、总览
 

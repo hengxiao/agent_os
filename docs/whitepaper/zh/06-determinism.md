@@ -123,7 +123,7 @@ InProcessSignalBus(订阅序 await;handler 异常吞掉)
 - **周期检查点**(`tests/kernel/test_periodic_checkpoint.py`,3 例):interval=2 时第 2 步即见"最近现场"、第 1 步不落盘;interval=0 不挂载(零行为变化);配置项经 `build_kernel` 透传。
 - **replay/diff**(`tests/cli/test_replay.py`,5 例):录制 fib(4) 后 replay 产出相同结果且与原 run 的 diff 为空(`result_equal` 与 `signals_equal` 均真),replay 是新 run_id;不同参数的两次 run 被 diff 判定分叉;同参数两次 run diff 为空。
 
-真实配置面:`instance/agent-os.toml` 的 `[run].checkpoint_interval` 即可开启周期快照;CLI 消费面为 `agent-os run/resume/replay/diff`(`host/cli/main.py:271-320`)。测试基线整体口径:当前 `pytest --collect-only` 收集 **1863 例**(1813 passed / 10 skipped / 40 xfailed,0 失败;早期文稿记 812/854 例,以实际收集为准)。
+真实配置面:`instance/agent-os.toml` 的 `[run].checkpoint_interval` 即可开启周期快照;CLI 消费面为 `agent-os run/resume/replay/diff`(`host/cli/main.py:271-320`)。测试基线整体口径:当前 `pytest --collect-only` 收集 **1879 例**(1829 passed / 10 skipped / 40 xfailed,0 失败;早期文稿记 812/854 例,以实际收集为准)。
 
 涟漪效应:调试器的断点命中即 pending,走同一挂起-落盘-恢复闭环(docs/DEBUGGER.md);Web SSE 扇出与 RCA 页是总线 `"*"` 订阅者(docs/RUNNERS.md §4.2);升权台账与 run 级工具状态以 additive 字段随 checkpoint 落盘,是"schema v1 不变、字段可加"契约纪律的实例(`kernel/checkpoint.py:139-141`);Skill Registry 的入库前验证门把"重放 + evaluator 确认"设计为自我进化的信任前提(docs/DESIGN.md §6.2;smoke 注入挂点已落地 2026-09-29——`bind_register_smoke` / `[skills] register_smoke`,fail-closed 零写;默认重放 + evaluator 实现亦已同日落地——`register_smoke = "default"`,drafts 用例重放 + expected 确定性深比较 + expect 廉价模型裁判,全过才放行)。
 

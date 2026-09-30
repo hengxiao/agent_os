@@ -177,7 +177,7 @@ is an escalation nobody guards.
 
 ## 5. Effects and Verification (What)
 
-**Test evidence** (all green, part of the 1863-case Python baseline):
+**Test evidence** (all green, part of the 1879-case Python baseline):
 
 - `tests/kernel/test_supervisor.py`: **12 cases** covering the kernel side of the §9
   anchor list — handler round-trip; in-place suspension (the parent's await point does

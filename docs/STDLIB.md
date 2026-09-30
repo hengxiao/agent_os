@@ -75,7 +75,7 @@ v1 条目九成落在前两层;v2 的新增集中在后三层(验证器分层 §
 
 1. ~~**子树级联取消**(现只有 run 级 stop)——`race_first` 依赖~~ → **已落地**(2026-09-27):`Kernel.cancel_subtree` + `_collect_subtree` DFS(`kernel/runner.py:1837-1893`)、`RunControl.cancel_frame`(`kernel/control.py:63-71`);`SubtreeCancelled` 独立于 RunAborted——子树终态不杀 run,后台帧经 wait_frame 原样上抛;边界:point-in-time 收集(取消发起后新 spawn 不在集内)、帧级 stop 标志仅 prompt 帧在 safe point 消费且不持久化;
 2. **取消后工具副作用语义**;
-3. ~~**组合子级预算**(§4.5 的 budget 参数需内核按子树切分记账)~~ → **已落地**(2026-09-27 读视图 + 2026-09-28 内核强制):`Kernel.subtree_usage` 九字段求和(`kernel/runner.py:1951-1988`)+ `RunControl.get_subtree_usage`(`kernel/control.py:97-103`);强制面 = manifest `limits.max_steps`(**帧自身**步数)/`limits.max_cost`(**子树求和**花费)在 `account()` 末尾沿 parent_id 链逐祖先检查(`kernel/runner.py:2203-2282`),超限分档(根帧炸 run / 当前帧 SubtreeCancelled / 祖先 cancel_subtree),触发前发 `budget.exceeded`;**偏差**:写路径不动(父帧 usage 不含子帧),取检查侧等效语义,非批注原话的"沿祖先链累加";§4.5 的 `budget` 参数软闸保留,软/硬正交;并行分支间的预算切分仍开口(DESIGN §17 开放问题 1);
+3. ~~**组合子级预算**(§4.5 的 budget 参数需内核按子树切分记账)~~ → **已落地**(2026-09-27 读视图 + 2026-09-28 内核强制):`Kernel.subtree_usage` 九字段求和(`kernel/runner.py:1951-1988`)+ `RunControl.get_subtree_usage`(`kernel/control.py:97-103`);强制面 = manifest `limits.max_steps`(**帧自身**步数)/`limits.max_cost`(**子树求和**花费)在 `account()` 末尾沿 parent_id 链逐祖先检查(`kernel/runner.py:2203-2282`),超限分档(根帧炸 run / 当前帧 SubtreeCancelled / 祖先 cancel_subtree),触发前发 `budget.exceeded`;**偏差**:写路径不动(父帧 usage 不含子帧),取检查侧等效语义,非批注原话的"沿祖先链累加";§4.5 的 `budget` 参数软闸保留,软/硬正交;并行分支间的预算切分亦已落地(2026-09-30,DESIGN §17 开放问题 1 关闭):逐分支 `budget` 键(`parallel_invoke` 分支 dict,`kernel/runner.py:1952`)/ `spawn_frame(..., budget=…)`(:1884),字段级覆盖 manifest limits(缺席字段回落),默认不给 = 按需抢占共享 run 池;`budget.warning`(80%)发射点同补(帧/子树路径);
 4. ~~**工作目录不可配置**~~ → **已落地**(§W0-1):`[run] workdir` +
    `read_paths` 只读挂载进 RunConfig,fs/shell 工具共用 `resolve_work_path`
    三段判定;缺省仍为 per-run 临时目录(安全边界不静默放宽)。per-skill
@@ -441,8 +441,10 @@ judge 类技能附加门槛:金标准集(100-200 条)+ Cohen's kappa ≥ 0.7,
 7. inline 组合的 cache key 收敛:use-site 的 style 组合应收敛到少数
    固定集合(防 2^N cache 变体),需要 lint 还是文档约定;
 8. ~~组合子级 budget 需要内核按子树切分记账的支持,与引擎立项联动~~ →
-   已落地(2026-09-28 内核强制,见 §2 缺口 3);残余开口:并行分支间的
-   预算切分(DESIGN §17 开放问题 1);
+   已落地(2026-09-28 内核强制,见 §2 缺口 3);残余开口亦已关闭
+   (2026-09-30):并行分支预算切分落地——逐分支 `budget` 键 /
+   `spawn_frame` budget kwarg,字段级覆盖 manifest limits(机制见
+   §2 缺口 3 更新);
 9. **编排脚本的沉淀路径**(v2.1):跑通的一次性脚本要不要经
    `verify_before_store` 固化成 `learned/` code skill——这是自进化闭环
    (§4.8)的最短路径,也直接关联开放问题 6 的写侧治理;

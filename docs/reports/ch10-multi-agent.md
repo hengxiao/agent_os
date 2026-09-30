@@ -132,6 +132,7 @@
 2. **级联终止的竞态与幂等结算**:
    - Experiment 10-6:首个成功上报锁定状态、后续上报判重忽略、terminate 后等全部 ack 或超时再结算。
    - `parallel_invoke`(§3.4)只有 `asyncio.gather`,无 first-success 语义;§14 开放问题 1 只谈预算切分,未覆盖结算竞态。并行原语落地时这是必答题。
+   (**落地注记 2026-09-30**:本条两问至此均有答案——first-success 幂等结算已先行落地(2026-09-27,`parallel_invoke` first_success 模式:done-flag 只赢一次 + 级联取消败方 + 等 ack/超时 + 父侧唯一 join 点幂等结算);预算切分于本日关闭(DESIGN §17 开放问题 1):逐分支 `budget` 键 / `spawn_frame` budget kwarg,字段级覆盖 manifest limits,默认按需抢占。详见 ../DESIGN.md §16 已关闭清单与 dev-status.md 头部复核块。)
 3. **共享存储的并发控制**:
    - VFS 四区域模型(Table 10-4:可见性×生命周期×读写权限×并发控制)比"工作目录 + blob store"完整;乐观锁(版本号写时校验)与 worktree 隔离(copy-on-write、冲突推迟到合并点)是现成方案。
    - 并行分支(§3.4)与黑板(§11.3 预留)落地后,共享文件冲突立刻成为现实问题;§14 开放问题 4 目前只有问题没有候选答案。

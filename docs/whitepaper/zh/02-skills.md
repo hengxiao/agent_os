@@ -30,7 +30,7 @@ Skill 是 Agent OS 的统一执行单元(编程概念映射表中的"函数"):�
 
 ### 4.1 契约:manifest 与 Registry 协议
 
-`SkillManifest` 字段逐字对齐 DESIGN.md §2.1:`name/version/kind/description/inputs/outputs/verifier/permissions/model/context_policy/limits/entry/prompt/handler/logic/inline/trust`(`api/v1/skills.py:91-114`)。其中 `description` 被要求写成**路由规则**("Use when / Do not use when" + 负例),因为父模型靠它决定调不调——加载期 lint 只警告不阻断(`manifest.py:151-154`)。`SkillRegistry` Protocol 四个方法:`get / visible_to / make_frame / register`(`api/v1/skills.py:161-175`),`register()` 签名在 §14.1 冻结清单内(自我进化供给侧,见 §6)。
+`SkillManifest` 字段逐字对齐 DESIGN.md §2.1:`name/version/kind/description/inputs/outputs/verifier/permissions/model/context_policy/limits/entry/prompt/handler/logic/inline/trust`(`api/v1/skills.py:91-114`)。其中 `description` 被要求写成**路由规则**("Use when / Do not use when" + 负例),因为父模型靠它决定调不调——加载期 lint 只警告不阻断(`manifest.py:151-154`)。`SkillRegistry` Protocol 四个方法:`get / visible_to / make_frame / register`(`api/v1/skills.py:161-175`),`register()` 签名在 §14.1 冻结清单内(自我进化供给侧,见 §6)。`limits` 块的内核强制(max_steps/max_cost,2026-09-28)见第 01 章 §4.2;2026-09-30 起预算新增**逐调用覆盖源**:`parallel_invoke` 分支 dict / `spawn_frame` 的 `budget` 键按字段覆盖 manifest `limits`(override 优先,缺席字段回落 manifest),额度不再只有 manifest 静态声明一条来路(见第 01 章 §4.6)。
 
 ### 4.2 加载流水线
 

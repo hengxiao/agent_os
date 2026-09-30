@@ -56,9 +56,10 @@ below — the full list lives in each chapter's §6 and endnotes.
   is constraint admission — `^`/`~`/exact forms validated fail-closed at load,
   multi-version solving ruled out by verdict, DESIGN.md updated).
 - **Sidecar arbitration surface is smaller than designed**: `pre:skill.invoke`,
-  `pre:llm.request` emit but are not arbitrated; the
-  `budget.warning` signal has no emitter (`budget.exceeded` gained its first
-  emitter on 2026-09-28 via frame/subtree budget enforcement, ch. 07; `pre:compress`
+  `pre:llm.request` emit but are not arbitrated;
+  `budget.warning` long had no emitter (added on 2026-09-30: the frame/subtree
+  budget ≥80% path, ch. 07; `budget.exceeded` gained its first
+  emitter on 2026-09-28 via frame/subtree budget enforcement; `pre:compress`
   gained veto on 2026-09-28, see ch. 05).
 - **D1 deviations in data authZ (converged in D2)**: unconfigured domains are not
   intercepted (the design said confidential; since D2 a bound `[data]` policy

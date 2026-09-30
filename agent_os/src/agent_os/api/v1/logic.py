@@ -224,7 +224,9 @@ class LogicContext(Protocol):
     async def parallel(self, branches: list[dict[str, Any]], **kw: Any) -> list[dict[str, Any]]:
         """§3.4 fork/join 扇出:批内故障隔离,按分支序返回
         ``[{"ok", "value", "error", "frame_id"}]``;``kw`` 含 mode(``all_settled``/
-        ``first_success``)/max_concurrency/settle_timeout。"""
+        ``first_success``)/max_concurrency/settle_timeout。分支 dict 可选
+        ``budget={"max_steps","max_cost"}``(逐分支预算覆盖 manifest limits 对应
+        字段,§17.1)。"""
         ...
 
     async def cancel(self, frame_id: str, reason: str = "") -> list[str]:

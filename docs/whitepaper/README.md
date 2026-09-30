@@ -50,8 +50,9 @@
   (第 02 章注;2026-09-29 起依赖检查升级为约束准入——`^`/`~`/精确三形态
   加载期 fail-closed,多版本求解裁决不做,DESIGN.md 已同步)。
 - **副车仲裁面小于设计**:`pre:skill.invoke`/`pre:llm.request` 只发射不仲裁;
-  `budget.warning` 无发射点(`budget.exceeded` 已于 2026-09-28 由帧/子树预算
-  强制首发,第 07 章注;`pre:compress` 已于 2026-09-28 落地否决,见第 05 章)。
+  `budget.warning` 原无发射点(已于 2026-09-30 补上:帧/子树预算用量 ≥80%
+  路径,第 07 章注;`budget.exceeded` 已于 2026-09-28 由帧/子树预算
+  强制首发;`pre:compress` 已于 2026-09-28 落地否决,见第 05 章)。
 - **数据层 D1 偏差(D2 已收敛)**:未配置域 = 不拦截(设计原文为 confidential;
   D2 起 `[data]` policy 在场即恢复 confidential,policy 缺席仍保持 D1 语义);
   `system.shell.exec` 不在数据闸覆盖面(第 10 章注)。

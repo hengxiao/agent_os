@@ -40,6 +40,7 @@ import jsonschema
 from agent_os.api.v1 import (
     ASK_SUPERVISOR_TOOL,
     BUDGET_EXCEEDED,
+    BUDGET_WARNING,
     ORCHESTRATE_TOOL,
     POST_FRAME_POP,
     POST_FRAME_PUSH,
@@ -89,6 +90,7 @@ from agent_os.api.v1 import (
     SkillCall,
     SkillFrame,
     SkillKind,
+    SkillLimits,
     SkillManifest,
     SkillRef,
     Source,
@@ -173,6 +175,33 @@ def _cancelled_payload(message: str, hint: str | None = None) -> dict[str, Any]:
     语义区分(后者是 §3.1 中断配对占位)。
     """
     return {"kind": "cancelled", "message": message, "retryable": False, "hint": hint or ""}
+
+
+def _validate_branch_budget(raw: Any, *, where: str) -> dict[str, Any]:
+    """逐分支预算校验(§17.1):``{"max_steps"?, "max_cost"?}``,至少一项。
+
+    fail-closed:非 dict / 未知键 / 空 dict(空预算等于没给)/ 非正值即
+    SkillLoadError(带 ``where`` 前缀)。``max_steps`` 须为正整数、``max_cost``
+    须为正数(int/float)——bool 是 int 子类,单列排除(同 manifest
+    ``limits.max_cost`` 的加载期拒绝先例,skills/manifest.py:运行期比较绝不
+    炸 TypeError)。返回净化 dict(值原样保留,不做单位换算)。
+    """
+    if not isinstance(raw, dict):
+        raise SkillLoadError(f"{where} 的 budget 应为 dict,得到: {type(raw).__name__}")
+    unknown = sorted(set(raw) - {"max_steps", "max_cost"})
+    if unknown:
+        raise SkillLoadError(f"{where} 的 budget 含未知键: {unknown}(仅 max_steps/max_cost)")
+    if not raw:
+        raise SkillLoadError(f"{where} 的 budget 为空(空预算等于没给)")
+    out: dict[str, Any] = {}
+    for field_name, value in raw.items():
+        if field_name == "max_steps":
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise SkillLoadError(f"{where} 的 budget.max_steps 应为正整数,得到: {value!r}")
+        elif isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise SkillLoadError(f"{where} 的 budget.max_cost 应为正数(美元),得到: {value!r}")
+        out[field_name] = value
+    return out
 
 
 def _result_payload(result: ToolResult) -> dict[str, Any]:
@@ -263,6 +292,18 @@ class Kernel:
         #: 帧 id 全局唯一、按触发帧数有界,无清理点;进程态不随 checkpoint 持久化
         #: (新进程 resume 会再触发一次:cancel ack 幂等 + BudgetExceeded 重抛同语义)
         self._budget_tripped: set[str] = set()
+        #: 逐分支预算表(frame_id → {"max_steps"?, "max_cost"?};§17.1 显式拆分
+        #: 决策:parallel_invoke 分支 dict 的 ``budget`` 键 / spawn_frame 的
+        #: ``budget`` kwarg 登记,记账点 _check_subtree_budgets 按字段覆盖
+        #: manifest limits)。与 _budget_tripped 同先例:进程态、帧 id 全局唯一
+        #: 按帧有界无清理点、不随 checkpoint(parallel resume 整批重放,调用方
+        #: 重供预算)
+        self._branch_budgets: dict[str, dict[str, Any]] = {}
+        #: budget.warning 防重表((frame_id, field) 集合;用量 ≥80% 时每帧每字段
+        #: 恰好一次)。与 _budget_tripped 同先例:进程态、帧 id 全局唯一按帧有界
+        #: 无清理点、不随 checkpoint;预警不占 _budget_tripped——之后真实超限
+        #: 仍发 budget.exceeded 并走分档
+        self._budget_warned: set[tuple[str, str]] = set()
         #: RunControl 句柄(装配 sidecars 时由 KernelBuilder 注入;pre:step 的
         #: InjectMessage/ForceCompress verdict 经它落地)
         self.ctl: Any = None
@@ -1840,7 +1881,14 @@ class Kernel:
             payload["escalated"] = escalated
         await self.signals.emit(self._sig(POST_SKILL_INVOKE, parent, payload))
 
-    async def spawn_frame(self, parent: SkillFrame, skill: str, input: dict[str, Any]) -> str:
+    async def spawn_frame(
+        self,
+        parent: SkillFrame,
+        skill: str,
+        input: dict[str, Any],
+        *,
+        budget: dict[str, Any] | None = None,
+    ) -> str:
         """spawn 后台帧(§3.4):白名单/深度/升权检查与 invoke 一致,返回子帧 frame_id。
 
         子帧经 ``asyncio.create_task`` 后台运行并登记在 ``self._spawned``;
@@ -1849,10 +1897,19 @@ class Kernel:
         拒绝/参数不合以 SkillLoadError 上抛(与白名单拒绝同形,交 code 技能处理)。
         升权放行时:子帧 ``context.working["_escalated_from"]`` 落父档快照,
         POST_SKILL_INVOKE payload 带 ``escalated`` 标记(均与 _invoke_skill 同旨)。
+
+        ``budget``(§17.1 逐分支预算,kernel 级 additive kwarg):``{"max_steps",
+        "max_cost"}`` 严格键集,非法即 SkillLoadError;登记进 ``_branch_budgets``
+        后在记账点按字段覆盖 manifest limits。LogicContext.spawn 与 syscall spawn
+        面**故意不暴露**该参数(契约冻结;并行面覆盖 §17.1)。
         """
+        branch_budget = None if budget is None else _validate_branch_budget(budget, where="spawn")
         self._spawn_whitelist_check(parent, skill)
         target_tier, escalated = await self._spawn_gate(parent, skill, input)
         child = self.skills.make_frame(SkillCall(name=skill, args=dict(input)), parent)
+        if branch_budget is not None:
+            # 逐分支预算(§17.1):记账点生效,按字段覆盖 manifest limits
+            self._branch_budgets[child.frame_id] = branch_budget
         # 子帧继承被调 skill 推导档(与 _invoke_skill 同旨),后代调用的升权判定才有基准
         child.tier = target_tier
         if escalated:
@@ -1907,8 +1964,9 @@ class Kernel:
         - **起批前串行预检**:逐分支复用 spawn 管线前置段
           (``_spawn_whitelist_check`` + ``_spawn_gate``——白名单/PRE 信号/深度
           兜底/升权闸,升权确认 await 发生在本调用点)。批形态错(branches 非
-          list、分支缺 skill、depends_on 越界/成环、mode/max_concurrency 非法)
-          与白名单外分支 → 抛 SkillLoadError(与 spawn_frame 一致);深度超限抛
+          list、分支缺 skill、depends_on 越界/成环、mode/max_concurrency 非法、
+          分支 budget 非法)与白名单外分支 → 抛 SkillLoadError(与 spawn_frame
+          一致);深度超限抛
           MaxDepthExceeded(硬失败,不折叠);单分支参数不合 schema/升权被拒等
           **分支级**预检失败折叠为该分支 ``ok=False`` 条目(批内故障隔离);
         - **all_settled(默认)**:结构化 gather——普通分支异常折叠为该分支
@@ -1924,6 +1982,12 @@ class Kernel:
           不折叠——先取消所有在跑分支并等 ack,再沿栈上抛炸 run;批自身被取消
           (CancelledError)同样先取消所有分支任务、等 ack、再上抛;
         - **max_concurrency**:asyncio.Semaphore 包住每分支 run_frame;
+        - **逐分支预算(§17.1)**:分支 dict 可选 ``budget={"max_steps",
+          "max_cost"}``(严格键集、正数/正整数,非法即批形态错 SkillLoadError);
+          登记进 ``_branch_budgets``,记账点按字段覆盖 manifest limits——超限
+          = 该分支 SubtreeCancelled(兄弟无感,run 存活),``budget.exceeded``
+          payload 带 ``"source": "branch"``;不给 budget 即共享 run 池事后检查
+          的缺省语义(§17 开放问题 1 决策);
         - **concurrency_safe 闸**(§3.4"工具须声明 concurrency_safe 才批内并发"
           的首个强制消费):code 分支的 manifest permissions.tools 含未声明
           ``concurrency_safe``/``concurrent_safe``(双拼写任一)的工具(注册表
@@ -1977,13 +2041,16 @@ class Kernel:
                 raise SkillLoadError(
                     f"分支 {index} 形态错:depends_on 应为 [0, {len(branches)}) 内非自身的下标列表"
                 )
-            specs.append(
-                {
-                    "skill": skill,
-                    "input": dict(branch_input),
-                    "depends_on": list(dict.fromkeys(deps)),
-                }
-            )
+            # 逐分支预算(§17.1):budget 键非法即批形态错(与形态预检同档拒绝)
+            branch_budget = branch.get("budget")
+            spec: dict[str, Any] = {
+                "skill": skill,
+                "input": dict(branch_input),
+                "depends_on": list(dict.fromkeys(deps)),
+            }
+            if branch_budget is not None:
+                spec["budget"] = _validate_branch_budget(branch_budget, where=f"分支 {index}")
+            specs.append(spec)
         # depends_on 成环即批形态错(Kahn:逐轮摘入度 0 节点,摘不完则有环)
         indegree = {i: set(spec["depends_on"]) for i, spec in enumerate(specs)}
         resolved = 0
@@ -2031,6 +2098,9 @@ class Kernel:
                 # 升权派生帧标记(与 spawn_frame 同旨;随 working 入 checkpoint)
                 child.context.working["_escalated_from"] = parent.tier
                 branch_escalated[index] = escalated
+            if spec.get("budget"):
+                # 逐分支预算(§17.1):随帧登记,记账点按字段覆盖 manifest limits
+                self._branch_budgets[child.frame_id] = spec["budget"]
             branch_frames[index] = child
 
         # ---- concurrency_safe 闸(§3.4):code 分支含未声明并发安全的工具 → 串行降级 ----
@@ -2402,7 +2472,8 @@ class Kernel:
         await self._check_subtree_budgets(frame)
 
     async def _check_subtree_budgets(self, frame: SkillFrame) -> None:
-        """帧/子树级预算检查(manifest ``limits.max_cost``/``max_steps`` 执行点)。
+        """帧/子树级预算检查(manifest ``limits.max_cost``/``max_steps`` 与逐分支
+        ``budget`` 覆盖的执行点,§17.1)。
 
         沿 ``parent_id`` 链收集祖先(含自身),逐预算帧(声明了 max_cost/max_steps
         的帧)判定;链上无预算声明直接返回(快路径,零预算 run 零开销)。判定口径:
@@ -2412,6 +2483,15 @@ class Kernel:
         - ``max_steps``:**帧自身**——该帧 ``usage.steps`` > max_steps(该帧自身
           agent loop 的迭代上限,与 RunConfig.max_steps"全 run 总步数"对仗;
           既有 manifest 均按此口径声明)。
+
+        覆盖来源(§17.1 逐分支预算):帧登记了 ``_branch_budgets``
+        (parallel_invoke 分支 dict 的 ``budget`` 键 / spawn_frame 的 ``budget``
+        kwarg)时按字段覆盖 manifest limits——override 有的字段以 override 为准,
+        缺的字段回落 manifest;来源记入 ``budget.exceeded``/``budget.warning``
+        payload 的 ``"source"``(``"branch"``/``"manifest"``,帧级:登记了覆盖
+        即标 branch),reason 串以"分支预算 …"/"limits.…"区分。登记簿与
+        ``_budget_tripped`` 同进程态边界(不随 checkpoint;parallel resume 整批
+        重放,调用方重供预算)。
 
         触发分档(先登记 ``_budget_tripped`` 防重 + 发 ``budget.exceeded`` 信号,
         信号恰好一次;一帧触发即返回——链上多预算同时超,最老/近根的先):
@@ -2425,6 +2505,12 @@ class Kernel:
           穿透(子帧终态错误观察/SubtreeCancelled 上抛,恢复策略交 code 技能);
           当前帧是 code 帧时(``ctx.chat`` 记账路径)同理。
 
+        预警(``budget.warning``):未触发帧任一有效字段用量 ≥80% 上限时发一次
+        (``_budget_warned`` (frame_id, field) 防重,每帧每字段恰好一次),
+        payload 同 budget.exceeded 并加 ``"field"``;预警**不占**
+        ``_budget_tripped``——之后真实超限仍发 budget.exceeded 并走分档;同一
+        记账点已超限时预警先行、exceeded 随后(恰好跨阈值的通知不补发第二次)。
+
         ``_budget_tripped`` 是进程态,不随 checkpoint 持久化:新进程 resume 时
         同一预算帧会再触发一次,幂等(cancel ack 幂等;BudgetExceeded 重抛同语义);
         **同进程** resume 则命中防重跳过(该帧级预算不再拦截,run 级检查仍逐次
@@ -2435,16 +2521,35 @@ class Kernel:
         while node is not None:
             chain.append(node)
             node = self.stack.get(node.parent_id) if node.parent_id is not None else None
-        budgeted: list[tuple[SkillFrame, Any]] = []
+        budgeted: list[tuple[SkillFrame, SkillLimits, str]] = []
         for ancestor in chain:
             limits = self.skills.get(ancestor.skill).manifest.limits
-            if limits is not None and (limits.max_cost is not None or limits.max_steps is not None):
-                budgeted.append((ancestor, limits))
+            override = self._branch_budgets.get(ancestor.frame_id)
+            # 逐字段求有效上限:override 有的字段以 override 为准,缺的回落 manifest
+            eff_cost = (
+                override["max_cost"]
+                if override and "max_cost" in override
+                else (limits.max_cost if limits else None)
+            )
+            eff_steps = (
+                override["max_steps"]
+                if override and "max_steps" in override
+                else (limits.max_steps if limits else None)
+            )
+            if eff_cost is None and eff_steps is None:
+                continue
+            budgeted.append(
+                (
+                    ancestor,
+                    SkillLimits(max_steps=eff_steps, max_cost=eff_cost),
+                    "branch" if override else "manifest",
+                )
+            )
         if not budgeted:
             return
-        for budget_frame, limits in reversed(budgeted):  # 最老(近根)先查
+        for budget_frame, limits, source in reversed(budgeted):  # 最老(近根)先查
             if budget_frame.frame_id in self._budget_tripped:
-                continue  # 已触发过:子树已终态/在取消,信号不重复发
+                continue  # 已触发过:子树已终态/在取消,信号不重复发(预警同免)
             over_steps = (
                 limits.max_steps is not None and budget_frame.usage.steps > limits.max_steps
             )
@@ -2453,15 +2558,49 @@ class Kernel:
             if limits.max_cost is not None:
                 usage = self._subtree_usage_sum(budget_frame.frame_id)
                 over_cost = usage.cost > limits.max_cost
+            # ---- budget.warning:用量 ≥80% 上限即预警(每帧每字段恰好一次)----
+            warn_fields: list[tuple[str, float, float]] = []
+            if limits.max_steps is not None:
+                warn_fields.append(("max_steps", budget_frame.usage.steps, limits.max_steps))
+            if limits.max_cost is not None and usage is not None:
+                warn_fields.append(("max_cost", usage.cost, limits.max_cost))
+            for field_name, current, cap in warn_fields:
+                warn_key = (budget_frame.frame_id, field_name)
+                if current < 0.8 * cap or warn_key in self._budget_warned:
+                    continue
+                self._budget_warned.add(warn_key)
+                if usage is None:
+                    usage = self._subtree_usage_sum(budget_frame.frame_id)  # 信号 payload 用
+                await self.signals.emit(
+                    self._sig(
+                        BUDGET_WARNING,
+                        budget_frame,
+                        {
+                            "max_cost": limits.max_cost,
+                            "max_steps": limits.max_steps,
+                            "subtree_cost": usage.cost,
+                            "subtree_steps": usage.steps,
+                            "source": source,
+                            "field": field_name,
+                        },
+                    )
+                )
             if not (over_cost or over_steps):
                 continue
             if usage is None:
                 usage = self._subtree_usage_sum(budget_frame.frame_id)  # 信号 payload 用
-            reason = (
-                f"子树成本 {usage.cost:.4f} 超过 limits.max_cost={limits.max_cost}"
-                if over_cost
-                else f"帧步数 {budget_frame.usage.steps} 超过 limits.max_steps={limits.max_steps}"
-            )
+            if over_cost:
+                reason = (
+                    f"子树成本 {usage.cost:.4f} 超过 分支预算 max_cost={limits.max_cost}"
+                    if source == "branch"
+                    else f"子树成本 {usage.cost:.4f} 超过 limits.max_cost={limits.max_cost}"
+                )
+            else:
+                reason = (
+                    f"帧步数 {budget_frame.usage.steps} 超过 分支预算 max_steps={limits.max_steps}"
+                    if source == "branch"
+                    else f"帧步数 {budget_frame.usage.steps} 超过 limits.max_steps={limits.max_steps}"
+                )
             self._budget_tripped.add(budget_frame.frame_id)
             await self.signals.emit(
                 self._sig(
@@ -2472,6 +2611,7 @@ class Kernel:
                         "max_steps": limits.max_steps,
                         "subtree_cost": usage.cost,
                         "subtree_steps": usage.steps,
+                        "source": source,
                     },
                 )
             )

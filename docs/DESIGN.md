@@ -281,11 +281,11 @@ async def pop(frame, result):
 
 1. **串行调用**(默认):父帧 await 子帧。
 2. **`parallel_invoke([...])`** fork/join 扇出:`asyncio.gather` 语义 + 四条规则——
-   - 每分支独立帧、独立预算记账;
+   - 每分支独立帧、独立预算记账(逐分支额度机制已落地,2026-09-30:分支 dict `budget` 键,字段级覆盖 manifest `limits`,见 §16 已关闭清单);
    - **批内故障隔离**:某分支失败只级联中止声明了依赖的同批分支,不影响独立分支与父帧;
    - **first-success 模式**(可选):首个成功分支锁定结果,级联取消其余,等 ack 或超时后**幂等结算一次**(只结算一次,竞态安全);
    - `max_concurrency` 上限;工具须声明 `concurrency_safe` 才允许批内并发执行(默认否,fail-safe)。
-3. **`spawn(skill, input)`** 后台帧:父帧**不挂起**,子帧独立预算后台运行;父子经 Blackboard 交换滚动状态(见第 12 章);join 退化为读终态。配套校验 hook:**父帧读到子帧终态为完成前,拒绝输出"已完成"类结论**("不说 done" 铁律)。实时/快慢解耦场景(前台保场、后台深想)的统一表达。
+3. **`spawn(skill, input)`** 后台帧:父帧**不挂起**,子帧独立预算后台运行(逐次调用额度已落地,2026-09-30:`spawn_frame(..., budget=…)` keyword-only,与逐分支 budget 键同口径);父子经 Blackboard 交换滚动状态(见第 12 章);join 退化为读终态。配套校验 hook:**父帧读到子帧终态为完成前,拒绝输出"已完成"类结论**("不说 done" 铁律)。实时/快慢解耦场景(前台保场、后台深想)的统一表达。
 
 协程级并行的限制注明:并行分支共享同一事件循环,CPU 密集的 code 技能应放 Logic Kernel 沙箱进程,避免阻塞兄弟分支。
 
@@ -377,7 +377,7 @@ pre:skill.invoke      post:skill.invoke
 pre:logic.exec        post:logic.exec        # 逻辑代码执行,pre 可否决
 pre:compress          post:compress
 blackboard.publish    blackboard.write       # 黑板读写可审计(见第 12 章)
-budget.warning (80%)  budget.exceeded   # exceeded 已发射(2026-09-28,帧/子树预算强制,§3.1 步骤 7);warning 仍无发射点
+budget.warning (80%)  budget.exceeded   # exceeded 已发射(2026-09-28,帧/子树预算强制,§3.1 步骤 7);warning 发射点已补(2026-09-30,帧/子树路径:用量 ≥80% 每帧每字段恰好一次,先于 exceeded)
 ```
 
 信号是 Telemetry(第 10 章)的持久化数据源;Telemetry 是总线的特权订阅者,不算 sidecar。
@@ -987,6 +987,8 @@ agent_os/                  # 工作区(DESIGN.md / reports/ / ai-agent-book/)
 >
 > 已关闭(2026-09-29,register() 验证门默认实现——默认重放 evaluator(兑现 ch08-self-evolution.md:90/119-121 的「入库前验证门」);测试 +18(`tests/skills/test_register_smoke_default.py`);全量基线:1863 collected = 1813 passed + 10 skipped + 40 xfailed):① **默认重放验证门**——新模块 `skills/register_smoke.py` `DefaultRegisterSmoke`(`bind_register_smoke` 契约 `smoke(name, entry) -> {"ok","detail"}` 的默认实现):重放用例取自草稿 `drafts/<name>/tests/*.json`(DraftStore;按文件名排序,超 `max_cases=8` 截断并注明),候选技能从**被注册 entry** 物化(非草稿文件;parse → prompt 补丁 → materialize 同 gate.py validate_draft 先例)、经 `CompoundSkillRegistry` 候选层叠生产层(子技能引用生产兜底,只读),逐例装配**全新冒烟内核**、overlay 换接三处引用点(同 `swap_skills_overlay`),可选 `mock_script`(dict 形态 ChatResponse 列表)经 MockProvider 确定性重放、不给则走装配 provider 真跑;判定链(首个失败即定案):run 异常 → outputs schema 校验(内核输出闸双保险)→ `expected` 结构归一化深比较(int/float 统一、dict 键序无关、bool≠1,同 `common.memory.verify` 语义)→ `expect` LLM 裁判(temperature=0,严格 JSON `{"pass","reason"}` 无围栏,非 JSON/缺键/调用异常一律 fail-closed,DistillSidecar verify 先例),全过才放行,失败 detail 截 ≤400 字符;② **用例形态扩两键**——`expected`(任意 JSON 值,确定性判定)/`expect`(自然语言期望,LLM 裁判),两者皆缺 = 纯冒烟(跑通 + outputs schema 即过);两键仅 register 默认验证门消费,Lab G4/test-run 行为不变;③ **配置**——`[skills] register_smoke = "default"` 哨兵(豁免 `pkg.mod:func` 形态要求;dotted path 仍为自定义 hook 逃生门)+ 新键 `[skills] register_judge_model`(expect 裁判模型,缺省跟 `[run] model`;无 providers 时带 expect 的用例 fail-closed 并给配置指引);草稿根约定:`[lab].drafts_root` 优先,缺省 skills 路径同级 `drafts/`(文件与目录形态皆同级——目录形态下 drafts/ 放进技能目录会被 loader 当技能包);冒烟内核由 `_smoke_kernel_factory` 按例重建(剥离 register_smoke 重绑/watch_interval=0/`[mcp]`/`[sidecars]`,防按例泄漏 watcher daemon 线程与 MCP 子进程、防蒸馏副作用)——推论边界:候选技能引用 mcp.* 工具/宿主通道(user_channel/supervisor)→ 用例 fail-closed;code 技能 fail-closed(handler 落盘在验证门之后,entry 内无源码);无草稿/无用例 = 拒(写路径闸门,没有证据即不放行,不与 Lab G4"无用例 warn"的编辑器哲学对齐);hook 契约不变(仍 `(name, entry)`,无 provenance)。**留尾**:code 技能冒烟、recorded-run 重放(provenance.run_id,需 host replay 下沉)、judge 健康度反馈/阈值调优。上文 §6.2 的开口表述已改写,M6 余项行与 2026-09-29(register() 留尾四件)块「仍开口」中的"默认重放 + evaluator 实现"条目已同步移除。
 
+> 已关闭(2026-09-30,并行分支预算切分——§17 开放问题 1 关闭;测试 +16(`tests/kernel/test_branch_budget.py`,16 例全绿);全量基线:1879 collected = 1829 passed + 10 skipped + 40 xfailed):① **决策**——默认保持**按需抢占**(共享 run 池、记账点事后检查,与记账模型同构:LLM 花费事前不可知,无预留挂点);显式切分 = **逐分支 `budget` 键**,调用方按任务语义给额度,均分 = 每分支同额度的特例——引擎只提供强制原语,切分策略归调用方;② **机制**——分支 dict 新可选键 `budget={"max_steps": int>0, "max_cost": float>0}`(strict 键集,bool/非数值/非正/空 dict → SkillLoadError,镜像 manifest limits 校验;`_validate_branch_budget`,`kernel/runner.py:180`):`parallel_invoke` 分支 dict(批形态预检段校验,`runner.py:1952`/`_branch_budgets` 登记 :2103)+ `spawn_frame(..., budget=…)` kernel API(keyword-only,:1884-1891,登记 :1910-1912);**LogicContext.spawn 与 syscall spawn 刻意不加该参数**(契约冻结,并行面已覆盖);③ **语义**——逐次调用的帧/子树预算,**字段级覆盖** manifest `limits:`(override 优先,缺席字段回落 manifest);口径与 manifest 相同:`max_steps` 限分支根帧自身步数、`max_cost` 限子树求和;超限 = 该分支 SubtreeCancelled(parallel 条目 ok=False、兄弟无感、run 存活;spawn 的 wait_frame 原样抛 SubtreeCancelled);根帧语义不变(BudgetExceeded 炸 run);④ **可观测**——`budget.exceeded` payload additive `"source": "branch"|"manifest"`;**`budget.warning` 补上发射点**(冻结目录成员,此前无发射点,§5.1 信号目录注曾明记):帧/子树预算任一有效字段用量 ≥80% 上限时每帧每字段恰好一次(`_budget_warned` (frame_id, field) 进程态防重,`runner.py:2561-2587`),先于 exceeded、不消费 trip;payload 同 exceeded 键 + source + `field`;同一记账点已超限时 warning 先行、exceeded 随后(已注明);run 级/BudgetGuard 不动(status-bar `budget_remaining` 已担软提示);⑤ **状态**——`_branch_budgets`/`_budget_warned` 均进程态、不随 checkpoint(parallel resume 整批重放由调用方重供,与 `_budget_tripped` 同旨);⑥ **沙箱桥零改动**——branches dict 逐字透传 syscall,budget 键随 dict 流动,code 技能 `ctx.parallel` 分支带 budget 直接生效。**留尾(均有意不做)**:批级 budget 语法糖(逐分支键已够表达,批级糖只会造第二口径)、max_tokens 维度(预算口径以 steps/cost 为准,token 花费由 cost 折算承担)、预留式均分(与按需抢占决策互斥,LLM 花费事前不可知故无预留挂点)。上文 2026-09-28(帧/子树级预算内核强制)块「不改」中的"§17 开放问题 1 保持开口、budget.warning(80%)不发射"两条据此关闭,dated 原文保留;§17 开放问题清单条目 1 已移除(余条重编号),§3.4 措辞与 §5.1 信号目录注已同步。
+
 每个里程碑交付恰是对应子系统的 baseline;高级形态(版本求解、fallback 链、hierarchical 压缩、目录包技能源、OTLP)都在 baseline 跑通后以"替换注册项"的方式进入,不动契约。
 
 **契约冻结点**:v1.0 前过 §14.1 清单,字段全进 `api/v1`(可无实现)。
@@ -1020,10 +1022,9 @@ agent_os/                  # 工作区(DESIGN.md / reports/ / ai-agent-book/)
 
 **开放问题**(设计预留,不阻塞 M0-M4):
 
-1. 并行分支的预算如何切分(均分 vs 按需抢占)?
-2. 压缩保真基准落地:固定任务集 + judge 技能 + 配对显著性检验(方法论已备,随 M6 的 summarize 验收)?
-3. 检查点恢复与热重载叠加时,在跑帧钉住旧版技能的序列化形态?
-4. ~~外部事件唤醒入口:事件源 → 信号总线 → 挂起/未启动 run 的唤醒路径(含 `initiate_X` 异步工具命名约定与事件批处理)?~~ **宿主层已答(2026-09-29,POST /api/events 三通道;在跑通道批处理同日落地)**——running 按 `[events] batch` 分流(缺省入根帧队列 `working["_event_queue"]`、下一步 build 前排干为批头消息;关则经跨线程桥 `ctl.inject_message` 立即注入,USER/INJECTED)、paused 经 checkpoint 根帧注入后 resume、无 target 经 skill 起新 run;契约零改动,内核只加 build 前排干点(见 §16 已关闭清单末两条与 docs/RUNNERS.md §4.3)。仍开口子项:`initiate_X` 命名约定(纯文档,已落 docs/SKILL-DEV.md §6)、`monitor_shell`/`connect_channel`、持久事件队列与调度、`event.received` 是否升格内核契约信号(现宿主层)。
-5. 技能可见集膨胀后(运行期注册大量产物),`visible_to` 是否需要语义检索层?
-6. 是否支持 FrameContext 继承/克隆(共享上下文角色链,"超窗口 50% 则不共享"判据)?
-7. 帧树粒度天然适配 turn-level credit assignment——若未来做 agent RL,记账与轨迹导出如何对接?
+1. 压缩保真基准落地:固定任务集 + judge 技能 + 配对显著性检验(方法论已备,随 M6 的 summarize 验收)?
+2. 检查点恢复与热重载叠加时,在跑帧钉住旧版技能的序列化形态?
+3. ~~外部事件唤醒入口:事件源 → 信号总线 → 挂起/未启动 run 的唤醒路径(含 `initiate_X` 异步工具命名约定与事件批处理)?~~ **宿主层已答(2026-09-29,POST /api/events 三通道;在跑通道批处理同日落地)**——running 按 `[events] batch` 分流(缺省入根帧队列 `working["_event_queue"]`、下一步 build 前排干为批头消息;关则经跨线程桥 `ctl.inject_message` 立即注入,USER/INJECTED)、paused 经 checkpoint 根帧注入后 resume、无 target 经 skill 起新 run;契约零改动,内核只加 build 前排干点(见 §16 已关闭清单末两条与 docs/RUNNERS.md §4.3)。仍开口子项:`initiate_X` 命名约定(纯文档,已落 docs/SKILL-DEV.md §6)、`monitor_shell`/`connect_channel`、持久事件队列与调度、`event.received` 是否升格内核契约信号(现宿主层)。
+4. 技能可见集膨胀后(运行期注册大量产物),`visible_to` 是否需要语义检索层?
+5. 是否支持 FrameContext 继承/克隆(共享上下文角色链,"超窗口 50% 则不共享"判据)?
+6. 帧树粒度天然适配 turn-level credit assignment——若未来做 agent RL,记账与轨迹导出如何对接?

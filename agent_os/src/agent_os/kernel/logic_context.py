@@ -161,7 +161,8 @@ class KernelLogicContext:
 
         批形态错/白名单外分支抛 SkillLoadError(与 spawn 同形);分支级失败折叠为
         该分支 ``{"ok": False, ...}`` 条目不抛;``kw`` 透传 mode/max_concurrency/
-        settle_timeout。
+        settle_timeout。分支 dict 可选 ``budget={"max_steps","max_cost"}``(逐分支
+        预算覆盖 manifest limits 对应字段,§17.1)。
         """
         return await self._kernel.parallel_invoke(self._frame, branches, **kw)
 

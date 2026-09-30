@@ -34,6 +34,9 @@ client 列表(``connect_and_register`` 装配钩子注入;kernel 寿命——Ker
 均无 close 钩子,进程清理由各 client 自带 close()/atexit 兜底)。
 D4:``sensitive_domains`` 是确认卡片(升权/tool-confirm)的"敏感"判定公开口,
 与数据闸共用 ``_resolve_declared_domains`` 解析(判定不另写第二份)。
+D3(§17-3):``bind_schedule`` 注入宿主调度服务(store-backed),作
+``system.schedule.set`` 跨 run 自动派生的登记面(注册点在构造器,同 timer
+先例;未 bind → "schedule 服务未装配"结构化错误)。
 """
 
 from __future__ import annotations
@@ -159,6 +162,14 @@ class LocalPythonToolRegistry:
         self.register(ask_user_tool(name="system.user.ask", registry=self))
         self.register(notify_user_tool(name="system.user.notify", registry=self))
         self.register(timer_set_tool(name="system.timer.set", registry=self))
+        #: D3(§17-3)system.schedule.set 的宿主调度服务(``bind_schedule`` 装配钩子
+        #: 注入;web 宿主在 [schedule] 段启用时绑 store-backed 服务)。注册点同在
+        #: 构造器(与 timer 同一先例);未 bind 时调用报"schedule 服务未装配"
+        #: 结构化错误(NOT_FOUND),CLI 等未绑宿主行为与引入前一致
+        from agent_os.tools.schedule import schedule_set_tool
+
+        self._schedule: Any = None
+        self.register(schedule_set_tool(name="system.schedule.set", registry=self))
 
     def tool(
         self, *, name: str | None = None, permission: Permission = Permission.READ, timeout: float = 30.0, **spec_kw: Any
@@ -273,6 +284,18 @@ class LocalPythonToolRegistry:
         工具在场但按"timer 服务未装配"报结构化错误,行为与引入前一致。
         """
         self._timers.bind(ctl)
+
+    def bind_schedule(self, service: Any) -> None:
+        """装配钩子(D3,同 bind_timer 先例):注入 store-backed 调度服务,作
+        ``system.schedule.set`` 的登记面(§17-3 宿主调度器的工具喂入源)。
+
+        service 形态:带 ``set(*, skill, input, fire_at, note, via_run_id, principal)``
+        方法的宿主对象(web 宿主 = host/shared/scheduler.py 的
+        ``StoreScheduleService``,``[schedule]`` 段启用时由
+        ``RunManager.start_scheduler`` 装配)。缺省(未 bind)= 工具在场但按
+        "schedule 服务未装配"报结构化错误,行为与引入前一致。
+        """
+        self._schedule = service
 
     def bind_blob(self, store: Any) -> None:
         """装配钩子(M3,同 bind_memory 先例):替换 spill 的 blob store(如文件版 FileBlobStore)。
@@ -675,9 +698,12 @@ class LocalPythonToolRegistry:
         ``bind_user_channel`` 注入(未 bind 调用报"user 通道未装配"结构化错误,同 memory 先例)。
         WS1:system.timer.set(§8.3 扩展,一次性/周期计时器)的 fire 注入通道经
         ``bind_timer`` 注入(未 bind 调用报"timer 服务未装配"结构化错误,同 user 通道先例)。
-        这三个工具的**注册点在构造器**(不在本方法):std 域文件声明了它们的
+        D3(§17-3):system.schedule.set(跨 run 自动派生,WRITE·confirm=True)的调度
+        服务经 ``bind_schedule`` 注入(未 bind 调用报"schedule 服务未装配"结构化错误)。
+        这四个工具的**注册点在构造器**(不在本方法):std 域文件声明了 ask/timer 的
         permissions.tools,§6.1 闸门联动要求空工具表也能装配(同 fetch_page 先例,
-        见 __init__ 注释);本方法拿到的是构造器已装好的面,不再重复注册。
+        见 __init__ 注释);notify/schedule.set 挂同一注册点与各自的服务绑定先例
+        对齐;本方法拿到的是构造器已装好的面,不再重复注册。
         Phase 3(library-design-plan §4.2/§4.4):system.file.stat(读/写决策前探查)/system.file.delete
         (高危,confirm=True,仅文件与空目录)/system.file.mkdir(parents/exist_ok,幂等)/
         system.net.http_request(非 GET 通用 HTTP,与 http_fetch 共用执行体);新工具无旧名,不设别名。

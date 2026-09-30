@@ -444,11 +444,13 @@ cascade cancel and the subtree accounting read view); the multimodal
 contract (`Message.parts`, additive) and the narrate compression strategy
 have landed; Skill Lab
 L1-L5 is complete; all six Web themes pass the contract tests; the test
-baseline is 1935 Python tests (1885 passed, 10 skipped, 40 xfailed,
+baseline is 1987 Python tests (1936 passed, 10 skipped, 41 xfailed,
 0 failures) plus 32 frontend test files, all green.
 Designed but not yet implemented: the D3
-remainder (cross-run automatic delegation — the engine has no trigger point
-and hosts declare the via chain — plus the full multi-user session mapping), the
+remainder (the full multi-user session mapping; cross-run automatic
+delegation landed 2026-10-01 with the host scheduler — the `[schedule]`
+section + `system.schedule.set`, with hosts still declaring the via
+chain), the
 M6 remainder (sandbox callback channel; register()'s default
 replay+evaluator gate implementation landed 2026-09-29 — constraint
 admission, the directory

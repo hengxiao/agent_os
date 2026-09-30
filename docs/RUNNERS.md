@@ -56,7 +56,7 @@ compression = "hierarchical"        # off|truncate|spill|summarize|hierarchical;
                                       # 按序探测 caps(tools/vision),fail-open 落链首)
 
 [tools]
-builtins = true                     # 内置工具面(22 件规范名:system.file.*/shell/net/blob/time/task/skill/memory/user 等,旧扁平名留别名)
+builtins = true                     # 内置工具面(25 件规范名:system.file.*/shell/net/blob/time/task/skill/memory/user/timer/schedule 等,旧扁平名留别名;system.schedule.set = 跨 run 派生(2026-10-01,WRITE·confirm=True),web 宿主 [schedule] 段在场时绑 store-backed 服务,CLI 不绑 → 结构化"未装配")
 python_exec = "docker"              # docker | subprocess | off
 
 [skills]
@@ -177,6 +177,13 @@ backoff_base = 0.5
                                        # 原子性;队列随 checkpoint 落盘,resume 自然排干);false = 立即注入根帧
 # batch_max = 50                       # 单批条数上限;超出丢最旧,批头 meta.dropped 计数
 # event_text_max = 2000                # 事件文本截断字符数([event:<type>] <payload JSON> 超此截断)
+
+# [schedule]                           # 宿主调度器(2026-10-01,§17-3 持久事件调度 / §8.3 跨 run 计时器 / D3 自动派生的统一节拍;仅 Web 宿主装配——
+                                       # 持久调度表 <artifacts_root>/schedule.json(原子写),POST /api/events 带 delay_seconds/at 的停车条目
+                                       # 与 system.schedule.set 的派生条目到点经 RunManager.dispatch_event 派发,paused run 的过期计时器
+                                       # 先 settle-in-file 再 resume(先结算后唤醒不双火));段缺席 = 调度器不启动(零破坏:停车 409、工具报"未装配");
+                                       # 单宿主假设:schedule.json 由本进程独占,多宿主共用同一 artifacts_root 会重复派发(跨进程互斥未做)
+# interval_seconds = 5.0               # 调度节拍秒数(float>0,strict;守护线程每拍现读,改动即生效)
 ```
 
 加载器落点:`runtime/config.py`(已实现:CLI/Web 两个宿主共用,均支持 `--config`)。
@@ -334,7 +341,7 @@ FastAPI app ─── RunManager(进程内)
    └── RunRecord 读取层(host/shared):trace/checkpoint/result 读取与分页
 ```
 
-- **RunManager**:单进程、单事件循环;run 作为 asyncio task 运行;状态只留内存 + 产物目录(`.agent-os/runs/`)——重启后历史 run 从产物目录重建索引(冷数据),在跑的 run 重启即丢(开发工具,可接受);
+- **RunManager**:单进程、单事件循环;run 作为 asyncio task 运行;状态只留内存 + 产物目录(`.agent-os/runs/`)——重启后历史 run 从产物目录重建索引(冷数据),在跑的 run 重启即丢(开发工具,可接受);持久调度表(`[schedule]` 段启用时的 `<artifacts_root>/schedule.json`,2026-10-01)随产物目录原子落盘,重启后到点条目由调度器继续结算——**单宿主假设**:调度器假定单一宿主进程独占 artifacts_root,多宿主共用同一目录会重复派发(跨进程互斥留开口);
 - **SSE 扇出**:RunManager 在装配内核时向总线订阅 `"*"`,把信号写进 per-run 环形缓冲(默认 2000 条)并广播给 SSE 客户端;新客户端先收回放再收实时;
 - **前端**:单页静态应用(一个 `index.html` + 原生 JS + SSE `EventSource`),FastAPI 挂静态目录;**无 npm 构建、无框架依赖**——它是 dev 工具,维护成本必须趋近于零;
 - **依赖**:`fastapi` + `uvicorn` 进 optional extra(`pip install agent-os[web]`),不进主依赖。
@@ -350,7 +357,8 @@ GET    /api/runs/{id}/frames/{fid}   → 帧完整上下文(messages 逐条、us
 POST   /api/runs/{id}/stop           → RunControl.stop
 POST   /api/runs/{id}/pause          → RunControl.pause(可恢复挂起;可选 {"reason"},缺省 "web pause";仅 running 生效,否则 409)
 POST   /api/runs/{id}/resume         → 从 checkpoint 恢复(aborted/paused 均可)
-POST   /api/events                   → 外部事件唤醒入口(2026-09-29;在跑通道批处理同日落地)。请求 {type(必填非空), payload=dict|str, target?:{run_id}, skill?, input?, wait?};三通道:target 且 running → 按 [events].batch 分流(§2.1):开(缺省)→ 事件条目 {type, text, at} 入根帧队列 working["_event_queue"],下一步 build 前排干为一条批头消息([event 批处理 N 条],USER/INJECTED;超 batch_max 丢最旧计 dropped;队列随 checkpoint,resume 零钩子自然排干)→ {action:"queued"};关 → 立即注入根帧(ctl.inject_message,USER/INJECTED)→ {action:"injected"};target 且 paused → checkpoint 根帧注入事件后 resume → {action:"resumed"};无 target → skill 必填起新 run(input 缺省 {"event":{...}},wait/principal 透传)→ {action:"started"}。错误语义:缺 type/skill 400;未知 run 404;注入失败/paused checkpoint 坏或缺根帧/run 终态 409。路由成功后 per-run hub 投 event.received received/routed 两条(SSE 可见;刻意不进 api/v1、不写 trace.jsonl)
+POST   /api/events                   → 外部事件唤醒入口(2026-09-29;在跑通道批处理同日落地;定时停车 2026-10-01 落地)。请求 {type(必填非空), payload=dict|str, target?:{run_id}, skill?, input?, wait?, delay_seconds?, at?};delay_seconds(相对秒数)/at(epoch 秒绝对时刻)二选一且须 >0(同现/非正 → 400)→ 停车进持久调度表(<artifacts_root>/schedule.json,ScheduleStore 原子写),响应 {"action":"scheduled", schedule_id, fire_at},到点由宿主调度器经 RunManager.dispatch_event 派发(与即时通道同一份三通道由);两键缺席 = 逐字旧行为;调度器未启用([schedule] 段缺席)时请求调度 → 409 fail-closed。即时三通道:target 且 running → 按 [events].batch 分流(§2.1):开(缺省)→ 事件条目 {type, text, at} 入根帧队列 working["_event_queue"],下一步 build 前排干为一条批头消息([event 批处理 N 条],USER/INJECTED;超 batch_max 丢最旧计 dropped;队列随 checkpoint,resume 零钩子自然排干)→ {action:"queued"};关 → 立即注入根帧(ctl.inject_message,USER/INJECTED)→ {action:"injected"};target 且 paused → checkpoint 根帧注入事件后 resume → {action:"resumed"};无 target → skill 必填起新 run(input 缺省 {"event":{...}},wait/principal 透传)→ {action:"started"}。错误语义:缺 type/skill 400;未知 run 404;注入失败/paused checkpoint 坏或缺根帧/run 终态 409。路由成功后 per-run hub 投 event.received received/routed 两条(SSE 可见;刻意不进 api/v1、不写 trace.jsonl)
+GET    /api/schedule                 → 持久调度表挂起条目清单(2026-10-01;[schedule] 段未启用 → 空表)
 GET    /api/runs/{id}/stream         → SSE:先回放缓冲,后实时信号
 GET    /api/skills                   → 已加载技能清单(manifest 摘要)
 POST   /api/skills/reload            → 热重载 skills.yaml
@@ -397,4 +405,4 @@ POST   /api/skills/reload            → 热重载 skills.yaml
 
 ## 7. 非目标
 
-多用户与权限、持久化队列/分布式 worker(含持久事件队列)、生产级部署形态、前端框架化(npm/构建链)、run 的定时调度(外部事件唤醒入口与在跑通道批处理已落地:POST /api/events 三通道 + [events] 段,2026-09-29,见 §4.3/§2.1)、CLI 的交互式 TUI。
+多用户与权限、持久化队列/分布式 worker、生产级部署形态、前端框架化(npm/构建链)、cron 表达式与跨进程多宿主互斥(单宿主定时调度已落地:POST /api/events 三通道 + [events] 段(2026-09-29)+ [schedule] 段宿主调度器与 system.schedule.set(2026-10-01),见 §4.3/§2.1)、CLI 的交互式 TUI。

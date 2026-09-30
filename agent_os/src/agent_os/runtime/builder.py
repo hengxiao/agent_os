@@ -93,6 +93,19 @@ class EventsSection:
     event_text_max: int = 2000  # 事件文本截断字符数(web 侧,注入/入队前截断)
 
 
+@dataclass
+class ScheduleSection:
+    """``[schedule]`` 段的装配形态:宿主调度器节拍(E5,§17-3/§8.3/D3 统一调度)。
+
+    纯 web 宿主消费(RunManager.start_scheduler / Scheduler.interval 每拍现读),
+    内核不消费——build_kernel 只在段在场时过严格解析(fail-closed:键拼错在
+    装配期炸掉,不静默落默认)。段缺席 = 调度器不启动(零打扰)。
+    字段缺省值与 TOML 段缺键时的全默认一致。
+    """
+
+    interval_seconds: float = 5.0  # 调度节拍间隔(秒;守护线程每拍现读,改动即生效)
+
+
 def _compressor_plugins() -> dict[str, Any]:
     """entry point ``agent_os.compressors`` 插件加载(docs/DESIGN.md §7.5/§14.3)。
 

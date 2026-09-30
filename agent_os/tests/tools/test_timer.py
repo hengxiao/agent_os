@@ -44,7 +44,7 @@ from agent_os.logic.inprocess import InProcessLogicKernel
 from agent_os.runtime.builder import KernelBuilder
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.local_registry import LocalPythonToolRegistry
-from agent_os.tools.timer import TimerService
+from agent_os.tools.timer import TimerService, format_fire_text, settle_overdue
 
 
 class _FakeSleep:
@@ -692,3 +692,116 @@ def test_timer_spec_checkpoint_json_roundtrip():
     }
     assert spec["interval_seconds"] == 2.0 and spec["count"] == 3 and spec["fired"] == 0
     assert spec["note"] == "轮询构建" and spec["delay_seconds"] is None
+
+
+# ---------------------------------------------------------------------------
+# settle_overdue / format_fire_text 纯函数(§17-3 宿主调度器 settle-in-file 共用出口)
+# ---------------------------------------------------------------------------
+
+
+def _spec(**over) -> dict:
+    """手工构造计时器规格(形状与 TimerService.set 落档的一致;缺省 one-shot 未到期)。"""
+    now = time.time()
+    base = {
+        "timer_id": "t-pure",
+        "run_id": "r1",
+        "frame_id": "f1",
+        "delay_seconds": 5.0,
+        "interval_seconds": None,
+        "count": None,
+        "fired": 0,
+        "note": "复查",
+        "created_at": now,
+        "next_fire_at": now + 5,
+    }
+    base.update(over)
+    return base
+
+
+def test_format_fire_text_is_the_single_shape():
+    """注入文本唯一构造点:one-shot 无共 N 次后缀,recurring 带计数;与 _fire 落帧文本字节一致。"""
+    assert format_fire_text("复查", "t1", 1, None) == "[timer 到点] 复查(timer_id=t1,第 1 次)"
+    assert format_fire_text("轮询", "t2", 2, 3) == "[timer 到点] 轮询(timer_id=t2,第 2 次/共 3 次)"
+    assert format_fire_text("", "t3", 1, None) == "[timer 到点] (timer_id=t3,第 1 次)"
+
+
+def test_settle_overdue_not_due_leaves_spec_untouched():
+    """未到期(next_fire_at > now)→ None,规格逐字节不动(快照对比)。"""
+    now = time.time()
+    for spec in (
+        _spec(next_fire_at=now + 60),  # one-shot 未到期
+        _spec(delay_seconds=None, interval_seconds=2.0, count=3, next_fire_at=now + 1),  # recurring 未到期
+    ):
+        before = json.loads(json.dumps(spec))
+        assert settle_overdue(spec, now) is None
+        assert spec == before, "未到期规格不得被触碰"
+
+
+def test_settle_overdue_done_and_shapeless_skip():
+    """已 done / 缺 delay+interval → None,规格不动。"""
+    now = time.time()
+    done_spec = _spec(next_fire_at=now - 1, done=True)
+    shapeless = _spec(delay_seconds=None, interval_seconds=None, next_fire_at=now - 1)
+    for spec in (done_spec, shapeless):
+        before = json.loads(json.dumps(spec))
+        assert settle_overdue(spec, now) is None
+        assert spec == before
+
+
+def test_settle_overdue_one_shot_overdue_settles_and_returns_text():
+    """one-shot 过期:fired+=1、done、next_fire_at=now,返回 fire 文本(欠次必还)。"""
+    now = time.time()
+    spec = _spec(next_fire_at=now - 5)
+    text = settle_overdue(spec, now)
+    assert text == "[timer 到点] 复查(timer_id=t-pure,第 1 次)"
+    assert spec["fired"] == 1 and spec["done"] is True
+    assert spec["next_fire_at"] == now
+    # 二次结算:已 done → None(不双火)
+    assert settle_overdue(spec, now) is None
+
+
+def test_settle_overdue_recurring_overdue_compensates_once_and_advances():
+    """recurring 过期(次数未耗尽):只补最近一次,fired+=1,next_fire_at = now + interval。"""
+    now = time.time()
+    spec = _spec(
+        delay_seconds=None,
+        interval_seconds=2.0,
+        count=3,
+        fired=1,
+        next_fire_at=now - 100,  # 错过约 50 次到点
+    )
+    text = settle_overdue(spec, now)
+    assert text == "[timer 到点] 复查(timer_id=t-pure,第 2 次/共 3 次)"
+    assert spec["fired"] == 2 and "done" not in spec
+    assert spec["next_fire_at"] == now + 2.0, "错过的中间触发不逐次补账,节奏从结算点起算"
+    # 二次结算(同一 now):next_fire_at 已推进 → None(不双火)
+    assert settle_overdue(spec, now) is None
+
+
+def test_settle_overdue_recurring_overdue_exhausts_count():
+    """recurring 过期且本次补完即耗尽 count:fired+=1、done、next_fire_at=now。"""
+    now = time.time()
+    spec = _spec(delay_seconds=None, interval_seconds=2.0, count=2, fired=1, next_fire_at=now - 1)
+    text = settle_overdue(spec, now)
+    assert text == "[timer 到点] 复查(timer_id=t-pure,第 2 次/共 2 次)"
+    assert spec["fired"] == 2 and spec["done"] is True
+    assert spec["next_fire_at"] == now
+
+
+def test_settle_overdue_recurring_count_exhausted_no_fire():
+    """recurring 次数已耗尽(fired>=count 但 done 未标的防御态)→ None 不补火,规格不动
+    (resume 重武装的防御分支会补标 done;rearm 与该纯函数共管同一规格语义)。"""
+    now = time.time()
+    spec = _spec(delay_seconds=None, interval_seconds=2.0, count=3, fired=3, next_fire_at=now - 10)
+    before = json.loads(json.dumps(spec))
+    assert settle_overdue(spec, now) is None
+    assert spec == before
+
+
+def test_settle_overdue_recurring_interval_clamped():
+    """recurring 结算推进 next_fire_at 时 interval 按下限钳制(与 rearm 的 max(_MIN_SECONDS) 一致)。"""
+    now = time.time()
+    spec = _spec(delay_seconds=None, interval_seconds=0.01, count=None, fired=0, next_fire_at=now - 1)
+    text = settle_overdue(spec, now)
+    assert text is not None and "第 1 次" in text
+    assert spec["next_fire_at"] == now + 0.5, "interval 钳到下限 0.5s(防抖)"

@@ -102,6 +102,23 @@ E4 增量(§17 开放问题 4 外部事件唤醒的宿主层形态;tests/web/tes
   ``_message_to_dict`` 落盘形态),写回后走原 execute_resume 路径;
 - ``emit_event`` + ``EVENT_RECEIVED``:事件到达与路由结果经 per-run hub 投
   ``event.received`` 行(宿主层信号,刻意不进 api/v1),SSE/回看可见。
+
+E5 增量(§17-3 持久事件队列与调度 / §8.3 跨 run 计时器 / D3 跨 run 自动派生;
+tests/web/test_schedule_api.py、tests/web/test_scheduler.py 锚点):
+
+- ``dispatch_event``:**POST /api/events 的三通道路由本体**(E4 路由逐字迁入,
+  路由层与宿主调度器共用):running → ``inject_event``、paused → checkpoint
+  追加后 ``resume_run``、无 target → ``start_run``;``run_status`` 是路由判据
+  (内存态优先,冷数据 result.json 重建);
+- ``schedule_event``:``POST /api/events`` 带 ``delay_seconds``/``at`` 的停车
+  通道——条目落 ``ScheduleStore``(``<artifacts_root>/schedule.json``,
+  source="api",principal 落档),到点由调度器经 ``dispatch_event`` 派发;
+- ``start_scheduler``(幂等;``create_app`` 在 ``[schedule]`` 段在场时调用):
+  装配 ScheduleStore + store-backed 派生服务(``system.schedule.set`` 的
+  ``bind_schedule`` 源,此后装配的 run 内核才绑得上)+ ``Scheduler`` 守护
+  (daemon 线程,间隔每拍现读 ``schedule_section``;同 token refresher 先例
+  无 shutdown 钩子);段缺席 = 调度器不启动——停车 409、工具报"未装配",
+  零打扰。
 """
 
 from __future__ import annotations
@@ -133,16 +150,28 @@ from agent_os.api.v1 import (
     Source,
     web_single_user_principal,
 )
-from agent_os.host.shared.artifacts import _write_json, execute_resume, execute_run
+from agent_os.host.shared.artifacts import (
+    _write_json,
+    execute_resume,
+    execute_run,
+    read_result,
+)
 from agent_os.host.shared.replay import build_mock_script, replace_providers
 from agent_os.host.shared.runrecord import STATUS_FAILED
+from agent_os.host.shared.scheduler import (
+    Scheduler,
+    ScheduleStore,
+    StoreScheduleService,
+    new_entry,
+)
 from agent_os.kernel.control import EVENT_QUEUE_KEY
 from agent_os.kernel.debug import RESUME_COMMANDS as DEBUG_RESUME_COMMANDS
 from agent_os.kernel.debug import DebugController
 from agent_os.kernel.errors import AgentOSError
-from agent_os.runtime.builder import EventsSection
+from agent_os.runtime.builder import EventsSection, ScheduleSection
 from agent_os.runtime.config import (
     _events_section,
+    _schedule_section,
     build_kernel,
     load_config,
     load_skillsets,
@@ -247,6 +276,16 @@ def _event_type_of(text: str) -> str:
     if text.startswith("[event:") and "]" in text:
         return text[len("[event:"):text.index("]")]
     return "unknown"
+
+
+def _event_text(event_type: str, payload: dict[str, Any] | str, max_chars: int) -> str:
+    """事件 → 注入/落盘的 USER 文本:``[event:<type>] <payload JSON>``(截 max_chars 字符)。
+
+    E5 起从路由层迁入(dispatch_event 与调度器共用);``max_chars`` 取
+    ``[events].event_text_max``(``events_section()`` 现读)。
+    """
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return f"[event:{event_type}] {raw}"[:max_chars]
 
 
 def _root_frame_id(tree: list[dict[str, Any]]) -> str | None:
@@ -449,6 +488,11 @@ class RunManager:
         #: run 收尾摘除);``inject_event`` 经 run_coroutine_threadsafe 投递过去
         #: (与调试命令桥 ``_debug_loops`` 同构,但不依赖调试会话)
         self._run_loops: dict[str, asyncio.AbstractEventLoop] = {}
+        #: E5 宿主调度器([schedule] 段在场时由 ``start_scheduler`` 装配;缺省 None =
+        #: 调度未启用——事件停车归 409、system.schedule.set 报"未装配",零打扰)
+        self._schedule_store: Any = None
+        self._schedule_service: Any = None
+        self._scheduler: Any = None
 
     def skillsets(self) -> dict[str, Path]:
         """全部 set(name → 目录,按名字序;``GET /api/skillsets`` 数据源,D6)。"""
@@ -555,6 +599,11 @@ class RunManager:
         # (形态定案见 _InboxUserChannel docstring)
         if hasattr(kernel.tools, "bind_user_channel"):
             kernel.tools.bind_user_channel(_InboxUserChannel(self._inbox))
+        # E5(§17-3/D3):调度服务在场([schedule] 段启用,start_scheduler 已装配)时
+        # 把 store-backed 服务绑进工具表(system.schedule.set 跨 run 自动派生);
+        # 未启用不绑 → 工具报"schedule 服务未装配"结构化错误(同 timer 通道先例)
+        if self._schedule_service is not None and hasattr(kernel.tools, "bind_schedule"):
+            kernel.tools.bind_schedule(self._schedule_service)
         return kernel
 
     def _principal(self) -> Any:
@@ -611,6 +660,84 @@ class RunManager:
             return _events_section(load_config(self._config_path).get("events") or {})
         except Exception:  # noqa: BLE001 — 同 token_principal 先例:失败退化默认,不阻断请求
             return EventsSection()
+
+    # ------------------------------------------------------------------
+    # E5 宿主调度器(§17-3 持久调度 / §8.3 跨 run 计时器 / D3 自动派生)
+    # ------------------------------------------------------------------
+
+    def schedule_section(self) -> ScheduleSection:
+        """``[schedule]`` 段(调度节拍):Scheduler 每拍现读的配置源(同 events_section 先例)。
+
+        读取/解析失败退化全默认(5s),不杀节拍——段畸形时 run 装配早已
+        ConfigError 快速失败(build_kernel 的严格解析),这里只覆盖
+        "调度器运行中配置被改坏"的窗口。
+        """
+        try:
+            return _schedule_section(load_config(self._config_path).get("schedule") or {})
+        except Exception:  # noqa: BLE001 — 同 events_section 先例:失败退化默认,不杀节拍
+            return ScheduleSection()
+
+    def has_schedule(self) -> bool:
+        """``[schedule]`` 段是否配置(``create_app`` 的调度器启动闸门;段缺席 = 不启动)。
+
+        读取失败按未配置(同 ``has_token_map`` 先例:不阻断装配)。
+        """
+        try:
+            return load_config(self._config_path).get("schedule") is not None
+        except Exception:  # noqa: BLE001 — 同上:失败按未配置
+            return False
+
+    @property
+    def schedule_store(self) -> Any:
+        """持久调度表(``start_scheduler`` 装配;``None`` = 调度未启用,``GET /api/schedule`` 归空表)。"""
+        return self._schedule_store
+
+    def start_scheduler(self) -> Any:
+        """启动宿主调度器(幂等;``create_app`` 在 ``[schedule]`` 段在场时调用,E5)。
+
+        装配三件套:``ScheduleStore``(``<artifacts_root>/schedule.json``,原子写)、
+        store-backed 派生服务(``system.schedule.set`` 的 ``bind_schedule`` 源——
+        此后 ``_assemble_kernel`` 装配的 run 内核才绑得上)、``Scheduler`` 守护
+        (daemon 线程,间隔每拍现读 ``schedule_section``;同 token refresher
+        先例无 shutdown 钩子,随进程退场)。
+        """
+        if self._scheduler is not None:
+            return self._scheduler
+        store = ScheduleStore(self._artifacts_root / "schedule.json")
+        self._schedule_store = store
+        self._schedule_service = StoreScheduleService(store)
+        scheduler = Scheduler(self, store, self._artifacts_root)
+        self._scheduler = scheduler
+        scheduler.start()
+        return scheduler
+
+    def schedule_event(
+        self, body: dict[str, Any], fire_at: float, *, principal: Any = None
+    ) -> dict[str, Any]:
+        """把事件停进持久调度表(``POST /api/events`` 的 ``delay_seconds``/``at`` 形态)。
+
+        store 未装配(``[schedule]`` 段缺席,调度器未启动)→ ``RuntimeError``
+        (路由层归 409:功能未启用,不是请求畸形,fail-closed 不静默收下)。
+        条目 ``source="api"``;``principal``(请求级身份,D3-lite)落档为纯 dict,
+        到点派发时重建——定时 run 的身份与停车请求一致。
+        """
+        store = self._schedule_store
+        if store is None:
+            raise RuntimeError("调度器未启用(配置缺 [schedule] 段;加上后重启宿主生效)")
+        target = body.get("target") or {}
+        entry = new_entry(
+            event_type=str(body.get("type") or ""),
+            payload=body.get("payload", {}),
+            target={"run_id": target["run_id"]} if target.get("run_id") else None,
+            skill=body.get("skill"),
+            input=body.get("input"),
+            wait=bool(body.get("wait", False)),
+            principal=principal,
+            fire_at=fire_at,
+            source="api",
+        )
+        store.add(entry)
+        return entry
 
     def assemble_lab_kernel(self, overlay: Any) -> Any:
         """装配"生产 + 草稿层"内核(docs/SKILL-DEV.md §1.1;L3):Lab test-run/G4 专用。
@@ -898,9 +1025,90 @@ class RunManager:
                     "meta": {"event": {"type": _event_type_of(text)}},
                 }
             )
-        checkpoint_path.write_text(
-            json.dumps(doc, ensure_ascii=False, indent=2, default=repr), encoding="utf-8"
+        # 原子重写(artifacts 同款 tmp+os.replace):与调度器 settle-in-file
+        # (host/shared/scheduler.py)改同一文件,堵半写窗口
+        _write_json(checkpoint_path, doc)
+
+    def run_status(self, run_id: str) -> str | None:
+        """run 当前状态(E4 路由判据,自路由层 ``_run_status`` 迁入):内存态优先,
+        冷数据从 result.json 重建;未知 run → ``None``。"""
+        state = self.state_of(run_id)
+        if state is not None:
+            return state.get("status")
+        run_dir = self._artifacts_root / "runs" / run_id
+        if (run_dir / "result.json").is_file():
+            try:
+                return read_result(run_dir).get("status")
+            except (OSError, json.JSONDecodeError):
+                return None  # 产物落盘半写窗口:按未知处理(调用方可重试)
+        return None
+
+    async def dispatch_event(
+        self, body: dict[str, Any], *, principal: Any = None
+    ) -> dict[str, Any]:
+        """``POST /api/events`` 的三通道路由本体(E4 逻辑逐字迁入;路由层与 E5 调度器共用)。
+
+        body 形状:``{type, payload?, target?, skill?, input?, wait?}``
+        (``target = {"run_id": ...}``)。``principal``(D3-lite):请求级身份,
+        透传给无 target 通道的 ``start_run``;缺省 None → 单用户语义。
+
+        返回 ``{"ok": True, "action": queued|injected|resumed|started, "run_id"}``。
+        错误语义(路由层归 HTTP,调度器按条目丢弃):未知 run →
+        ``FileNotFoundError``(404);终态/无法注入 → ``ResumeConflictError``
+        (409);无 target 缺 skill / checkpoint 畸形 → ``ValueError``(400);
+        run 未开始的校验错 → ``RunValidationError``(路由层归
+        ``200 + {"status": "failed"}``)。
+        """
+        event_type = str(body.get("type") or "")
+        if not event_type:
+            raise ValueError("事件 type 必填非空")
+        text = _event_text(event_type, body.get("payload", {}), self.events_section().event_text_max)
+        event_doc = {"type": event_type, "payload": _jsonable(body.get("payload", {}))}
+        target = body.get("target") or {}
+        target_run = target.get("run_id") or None
+        if target_run is not None:
+            status = self.run_status(target_run)
+            if status is None:
+                raise FileNotFoundError(f"找不到 run: {target_run}")
+            if status == "running":
+                action = await self.inject_event(target_run, text, event_type)
+                if action is None:
+                    raise ResumeConflictError(
+                        f"run {target_run} 无法接收事件(帧不在或刚结束,可重试)"
+                    )
+                self.emit_event(target_run, {"phase": "received", "event": event_doc})
+                self.emit_event(
+                    target_run, {"phase": "routed", "action": action, "event": event_doc}
+                )
+                return {"ok": True, "action": action, "run_id": target_run}
+            if status == "paused":
+                try:
+                    await self.resume_run(target_run, inject=[text])
+                except ValueError as e:
+                    # 与 E4 路由的 400 detail 逐字一致(checkpoint 畸形前缀在此拼,
+                    # 让"无 target 缺 skill"的 ValueError 不带此前缀)
+                    raise ValueError(f"checkpoint 畸形: {e}") from e
+                # resume 内换过新 hub 且已关闭:emit 仍入其缓冲,SSE 回放可见
+                self.emit_event(target_run, {"phase": "received", "event": event_doc})
+                self.emit_event(
+                    target_run, {"phase": "routed", "action": "resumed", "event": event_doc}
+                )
+                return {"ok": True, "action": "resumed", "run_id": target_run}
+            raise ResumeConflictError(f"run {target_run} 已终态({status}),无法接收事件")
+        skill = body.get("skill")
+        if not skill:
+            raise ValueError("无 target 的事件必须带 skill(起新 run)")
+        run_input = body.get("input") if body.get("input") is not None else {"event": event_doc}
+        run_id = await self.start_run(
+            skill,
+            run_input,
+            wait=bool(body.get("wait", False)),
+            # D3-lite:请求级身份(未给 → None,start_run 回落单用户)
+            principal=principal,
         )
+        self.emit_event(run_id, {"phase": "received", "event": event_doc})
+        self.emit_event(run_id, {"phase": "routed", "action": "started", "event": event_doc})
+        return {"ok": True, "action": "started", "run_id": run_id}
 
     async def inject_event(self, run_id: str, text: str, event_type: str = "unknown") -> str | None:
         """``POST /api/events`` 的在跑注入通道(E4):按 ``[events].batch`` 分两路。

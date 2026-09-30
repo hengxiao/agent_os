@@ -23,6 +23,13 @@ E4 增量(§17 开放问题 4 外部事件唤醒的宿主层形态):``POST /api/
 缺省;下一步批头并入)或立即注入根帧(关)、paused 追加 checkpoint 后
 resume、无 target 起新 run;事件到达与路由结果经 per-run hub 投
 ``event.received``(宿主层信号,不进 api/v1)。
+
+E5 增量(§17-3 持久调度 / §8.3 跨 run 计时器 / D3 自动派生):``POST /api/events``
+带 ``delay_seconds``/``at`` 停车进持久调度表(``ScheduleStore``,到点由
+``Scheduler`` 守护经 ``RunManager.dispatch_event`` 走同一三通道派发——路由
+本体已从本层迁入 manager,本层只校验 + 归 HTTP);``GET /api/schedule`` 列
+挂起条目;``[schedule]`` 段在场时 ``create_app`` 启动调度器(token refresher
+先例),段缺席零打扰。
 """
 
 from __future__ import annotations
@@ -200,12 +207,18 @@ class EventTarget(BaseModel):
 
 
 class EventBody(BaseModel):
-    """``POST /api/events`` 请求体(§17 开放问题 4 宿主层形态;E4)。
+    """``POST /api/events`` 请求体(§17 开放问题 4 宿主层形态;E4 即时 + E5 定时)。
 
     ``type`` 必填非空(缺省空串,端点统一归 400——不用 pydantic 必填是刻意:
     校验语义与"无 target 缺 skill"一致,都走 400 而非 422);``payload`` dict
     或字符串;``target.run_id`` 在场走定向三通道路由,缺省走 ``skill`` 起新
     run(``input`` 缺省 ``{"event": {"type", "payload"}}``,``wait`` 透传)。
+
+    E5 定时停车:``delay_seconds``(相对秒数)/``at``(epoch 秒绝对时刻)给其一
+    → 条目停进持久调度表(``ScheduleStore``,到点由宿主调度器经同一三通道
+    路由派发),响应 ``{"action": "scheduled", schedule_id, fire_at}``。两者
+    deliberately ``Any``:互斥/非正/坏类型的校验在端点手动做,统一归 400
+    (pydantic 类型校验会归 422,与本体的校验语义不一致)。
     """
 
     type: str = ""
@@ -214,6 +227,8 @@ class EventBody(BaseModel):
     skill: str | None = None
     input: dict[str, Any] | None = None
     wait: bool = False
+    delay_seconds: Any = None
+    at: Any = None
 
 
 class SupervisorAnswerBody(BaseModel):
@@ -369,29 +384,30 @@ def _run_dir(artifacts_root: Path, run_id: str) -> Path:
     return artifacts_root / "runs" / run_id
 
 
-#: 事件文本的缺省最大长度(注入根帧/落 checkpoint 前截断,防巨型 payload 灌爆帧上下文;
-#: 配置 [events].event_text_max 覆盖——路由经 manager.events_section() 现读)
-_EVENT_TEXT_MAX = 2000
+def _schedule_fire_at(body: EventBody) -> float | None:
+    """``delay_seconds``/``at`` → ``fire_at``(epoch 秒);都缺 → ``None``(立即派发)。
 
-
-def _event_text(event_type: str, payload: dict[str, Any] | str, max_chars: int = _EVENT_TEXT_MAX) -> str:
-    """事件 → 注入/落盘的 USER 文本:``[event:<type>] <payload JSON>``(截 max_chars 字符)。"""
-    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    return f"[event:{event_type}] {raw}"[:max_chars]
-
-
-def _run_status(artifacts_root: Path, manager: RunManager, run_id: str) -> str | None:
-    """run 当前状态(E4 路由判据):内存态优先,冷数据从 result.json 重建;未知 run → None。"""
-    state = manager.state_of(run_id)
-    if state is not None:
-        return state.get("status")
-    run_dir = _run_dir(artifacts_root, run_id)
-    if (run_dir / "result.json").is_file():
-        try:
-            return read_result(run_dir).get("status")
-        except (OSError, json.JSONDecodeError):
-            return None  # 产物落盘半写窗口:按未知处理(404,调用方可重试)
-    return None
+    校验全归 400(路由把 ``ValueError``/``TypeError`` 都归 400,与 EventBody 的
+    400-over-422 语义一致):二选一互斥;须为数字(bool 不算,坏类型归
+    ``TypeError``);``> 0``。``at`` 在过去但为正 = 立即到点(下一拍即派发——
+    过期折算留给调度器,入口不拒)。
+    """
+    delay, at = body.delay_seconds, body.at
+    if delay is None and at is None:
+        return None
+    if delay is not None and at is not None:
+        raise ValueError("delay_seconds 与 at 二选一,不能同时给")
+    if delay is not None:
+        if isinstance(delay, bool) or not isinstance(delay, (int, float)):
+            raise TypeError(f"delay_seconds 须为数字,得到: {delay!r}")
+        if delay <= 0:
+            raise ValueError(f"delay_seconds 须为正数,得到: {delay!r}")
+        return time.time() + float(delay)
+    if isinstance(at, bool) or not isinstance(at, (int, float)):
+        raise TypeError(f"at 须为数字(epoch 秒),得到: {at!r}")
+    if at <= 0:
+        raise ValueError(f"at 须为正数(epoch 秒),得到: {at!r}")
+    return float(at)
 
 
 def _detail(artifacts_root: Path, manager: RunManager, run_id: str) -> dict[str, Any] | None:
@@ -633,12 +649,20 @@ def create_app(
     manager = RunManager(config_path, Path(artifacts_root), skillsets_dir=skillsets_dir)
     root = Path(artifacts_root)
     app = FastAPI(title="Agent OS Web UI")
+    #: 嵌入方/测试的 programmatic 入口(E5:调度器 tick 驱动等)
+    app.state.manager = manager
 
     # OAuth 凭证 15 分钟过期:daemon 线程用 refresh_token 自动续期(见 token_refresh.py;
     # 凭证库不存在时(如用长期 API key 部署)自动不启用)
     from agent_os.host.web.token_refresh import start_token_refresher
 
     start_token_refresher()
+
+    # E5 宿主调度器(§17-3 持久调度 / §8.3 跨 run 计时器 / D3 自动派生):
+    # [schedule] 段在场才启动(token refresher 先例:daemon 线程,无 shutdown 钩子);
+    # 段缺席 = 零打扰(store/工具绑定/定时停车全关——停车 409、工具报"未装配")
+    if manager.has_schedule():
+        manager.start_scheduler()
 
     if token or manager.has_token_map():
         @app.middleware("http")
@@ -827,77 +851,73 @@ def create_app(
 
     @app.post("/api/events")
     async def post_event(body: EventBody, request: Request) -> dict[str, Any]:
-        """外部事件唤醒入口(§17 开放问题 4 宿主层形态;E4):按目标 run 状态三通道路由。
+        """外部事件唤醒入口(§17 开放问题 4 宿主层形态;E4 即时 + E5 定时停车)。
 
-        - ``target.run_id`` 在场:running → ``inject_event``(``[events].batch``
-          开时入根帧事件队列、``action="queued"``,关时立即注入根帧、
-          ``action="injected"``;投递失败 409);paused → checkpoint 根帧追加
-          事件消息后 resume(错误语义沿用 resume 端点:404/400/409);
-          终态(done/failed/aborted)→ 409;未知 → 404;
-        - 无 target:``skill`` 必填(缺 → 400)起新 run,``input`` 缺省
-          ``{"event": {"type", "payload"}}``,``wait`` 透传 ``start_run``
-          (校验错沿用 ``POST /api/runs`` 的 ``200 + {"status": "failed"}`` 归口);
+        - ``delay_seconds``/``at`` 给其一(E5):停车进持久调度表,响应
+          ``{"action": "scheduled", schedule_id, fire_at}``;到点由宿主调度器
+          经 ``manager.dispatch_event`` 派发(与下方即时通道**同一份三通道
+          路由**);调度器未启用(``[schedule]`` 段缺席)→ 409;
+        - 即时通道(``dispatch_event``,按目标 run 状态):running →
+          ``inject_event``(``[events].batch`` 开时入根帧事件队列、
+          ``action="queued"``,关时立即注入根帧、``action="injected"``);
+          paused → checkpoint 根帧追加事件消息后 resume(``action="resumed"``);
+          无 target → ``skill`` 起新 run(``action="started"``);
+        - 错误归口:缺 type / 无 target 缺 skill / 定时参数互斥·非正·坏类型
+          → 400;未知 run → 404;终态/无法注入 → 409;run 未开始的校验错 →
+          ``200 + {"status": "failed"}``(照 ``POST /api/runs``);
         - 事件到达与路由结果经 per-run hub 投 ``event.received``(宿主层信号,
-          不进 api/v1),SSE/回看可见;principal 透传照 ``POST /api/runs``。
+          不进 api/v1),SSE/回看可见;principal 透传照 ``POST /api/runs``
+          (定时条目落档,到点派发时重建)。
         """
         if not body.type:
             raise HTTPException(status_code=400, detail="事件 type 必填非空")
-        text = _event_text(body.type, body.payload, manager.events_section().event_text_max)
-        event_doc = {"type": body.type, "payload": _jsonable(body.payload)}
-        target_run = (body.target.run_id or None) if body.target else None
-        if target_run is not None:
-            status = _run_status(root, manager, target_run)
-            if status is None:
-                raise HTTPException(status_code=404, detail=f"找不到 run: {target_run}")
-            if status == "running":
-                action = await manager.inject_event(target_run, text, body.type)
-                if action is None:
-                    raise HTTPException(
-                        status_code=409,
-                        detail=f"run {target_run} 无法接收事件(帧不在或刚结束,可重试)",
-                    )
-                manager.emit_event(target_run, {"phase": "received", "event": event_doc})
-                manager.emit_event(
-                    target_run, {"phase": "routed", "action": action, "event": event_doc}
-                )
-                return {"ok": True, "action": action, "run_id": target_run}
-            if status == "paused":
-                try:
-                    await manager.resume_run(target_run, inject=[text])
-                except FileNotFoundError as e:
-                    raise HTTPException(status_code=404, detail=str(e)) from e
-                except ResumeConflictError as e:
-                    raise HTTPException(status_code=409, detail=str(e)) from e
-                except ValueError as e:
-                    raise HTTPException(status_code=400, detail=f"checkpoint 畸形: {e}") from e
-                # resume 内换过新 hub 且已关闭:emit 仍入其缓冲,SSE 回放可见
-                manager.emit_event(target_run, {"phase": "received", "event": event_doc})
-                manager.emit_event(
-                    target_run, {"phase": "routed", "action": "resumed", "event": event_doc}
-                )
-                return {"ok": True, "action": "resumed", "run_id": target_run}
-            raise HTTPException(
-                status_code=409,
-                detail=f"run {target_run} 已终态({status}),无法接收事件",
-            )
-        if not body.skill:
-            raise HTTPException(
-                status_code=400, detail="无 target 的事件必须带 skill(起新 run)"
-            )
-        run_input = body.input if body.input is not None else {"event": event_doc}
         try:
-            run_id = await manager.start_run(
-                body.skill,
-                run_input,
-                wait=body.wait,
-                # D3-lite:Bearer 映射的逐请求身份(未映射 → None,start_run 回落单用户)
-                principal=getattr(request.state, "principal", None),
-            )
+            fire_at = _schedule_fire_at(body)
+        except (ValueError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        # D3-lite:Bearer 映射的逐请求身份(未映射 → None;start_run/派发回落单用户)
+        principal = getattr(request.state, "principal", None)
+        if fire_at is not None:
+            # E5 定时停车:条目落持久调度表(crash-safe),到点由调度器派发
+            try:
+                entry = manager.schedule_event(body.model_dump(), fire_at, principal=principal)
+            except RuntimeError as e:
+                raise HTTPException(status_code=409, detail=str(e)) from e
+            return {
+                "ok": True,
+                "action": "scheduled",
+                "schedule_id": entry["id"],
+                "fire_at": entry["fire_at"],
+            }
+        try:
+            return await manager.dispatch_event(body.model_dump(), principal=principal)
         except RunValidationError as e:
             return {"status": "failed", "error": str(e)}
-        manager.emit_event(run_id, {"phase": "received", "event": event_doc})
-        manager.emit_event(run_id, {"phase": "routed", "action": "started", "event": event_doc})
-        return {"ok": True, "action": "started", "run_id": run_id}
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ResumeConflictError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @app.get("/api/schedule")
+    def list_schedule() -> dict[str, Any]:
+        """持久调度表挂起条目(E5,§17-3):``{"pending": [...]}``(调度器未启用 → 空表)。"""
+        store = manager.schedule_store
+        pending = store.pending() if store is not None else []
+        return {
+            "pending": [
+                {
+                    "id": e.get("id"),
+                    "type": e.get("type"),
+                    "fire_at": e.get("fire_at"),
+                    "target": e.get("target"),
+                    "skill": e.get("skill"),
+                    "source": e.get("source"),
+                }
+                for e in pending
+            ]
+        }
 
     @app.get("/api/supervisor/pending")
     def list_supervisor_pending() -> list[dict[str, Any]]:

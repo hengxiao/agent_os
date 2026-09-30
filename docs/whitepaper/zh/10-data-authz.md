@@ -6,7 +6,9 @@
 > `credentials["_authz"]`);D3-lite 已落地(`[web.tokens]` 多用户映射);D3 派生链
 > 最弱一环已实现(2026-09-28,via 链逐环判定);升权决策数据面经审计面板暴露;
 > 确认卡片数据域展示已落地(2026-09-29,`domains`/`sensitive` 浅层并集);
-> 仍开口:跨 run 自动派生、完整多用户会话映射、卡片域的递归子技能并集与
+> 跨 run 自动派生已落地(2026-10-01,宿主调度器 `[schedule]` 段 +
+> `system.schedule.set`,via 链仍由宿主声明注入);
+> 仍开口:完整多用户会话映射、卡片域的递归子技能并集与
 > 审批选项按域动态化 ·
 > 依据:`docs/DATA-AUTHZ.md`、`agent_os/src/agent_os/api/v1/principal.py`、
 > `agent_os/src/agent_os/tools/local_registry.py`、
@@ -245,7 +247,9 @@ additive `domains`/`sensitive`——白名单工具 `data_domains` 的浅层并�
    这一点,防注入扩散依赖的是帧隔离与升权闸,不是数据闸。
 6. **完整会话映射未实现;确认卡片数据面已落地、留两项增强开口**(D3 余项):
    派生链最弱一环已落地(2026-09-28——`attrs["via"]` 链每环过 `allow`、
-   fail-closed、深度上限 8,链由宿主声明注入,跨 run 自动派生无引擎触发点);
+   fail-closed、深度上限 8,链由宿主声明注入;跨 run 自动派生已落地
+   (2026-10-01,宿主调度器 `[schedule]` 段 + `system.schedule.set`,
+   链仍由宿主声明、引擎不伪造));
    确认卡片附"本调用将访问的域与敏感度"(§5.3)已落地(2026-09-29,additive
    `domains`/`sensitive` 浅层并集 + chips 渲染,见 §5 涟漪效应),仍开口的是
    递归子技能域并集与审批选项按域动态化;升权决策数据面另由审计面板暴露

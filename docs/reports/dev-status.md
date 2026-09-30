@@ -340,6 +340,7 @@
 > chip-sensitive --danger 双编码,六主题 copy confirm.domains/confirm.sensitive),
 > `to_pending` 不带 domains(resume 重走闸门现算);py +8、mjs 1 块,全量基线
 > 全量基线:1755 收集 = 1712 passed + 10 skipped + 40 xfailed,0 失败。新开口:递归子技能域并集、审批选项按域动态化。)
+> (**2026-10-01 更新**:留尾「D3 跨 run 自动派生(引擎无触发点)」已关闭——宿主调度器(`[schedule]` 段节拍,`host/shared/scheduler.py`)+ `system.schedule.set`(WRITE·confirm=True)登记派生条目,到点经 `RunManager.dispatch_event` 无 target 通道起新 run;via 链与 principal 仍由宿主声明注入,引擎不伪造口径不变。见下文 2026-10-01 复核块。)
 > ---
 > ✅ **复核 2026-09-28(ask_human/set_timer 工具面 + std 形态 + 宿主接线)**:
 > ① **`system.timer.set` 内核原语**——`tools/timer.py`(`TimerService` asyncio
@@ -437,6 +438,7 @@
 > 升格内核契约信号(现宿主层)。上文各
 > 复核块「仍开口」中的"外部事件唤醒/挂起与未启动 run 唤醒"条目据此关闭,
 > dated 原文保留。全量基线:1747 收集 = 1704 passed + 10 skipped + 40 xfailed,0 失败。
+> (**2026-10-01 更新**:留尾「持久事件队列/调度」已关闭——`POST /api/events` 加 `delay_seconds`/`at` 停车进持久调度表(`ScheduleStore`,schedule.json,原子写),宿主调度器 tick 到点经 `dispatch_event` 派发(调度器未启用时请求调度 409 fail-closed;`GET /api/schedule` 列 pending);`monitor_shell`/`connect_channel` 与 event.received 升格仍开口。见下文 2026-10-01 复核块。)
 > ---
 > ✅ **复核 2026-09-29(定时器规格持久化 + resume 重武装落地)**:上文 2026-09-28
 > (ask_human/set_timer 工具面)块「仍开口」中的"定时器持久化/resume 重武装"
@@ -460,6 +462,7 @@
 > **仍开口**:跨 run 计时器、计时器管理工具(cancel/list 留 std 组合子)、裸
 > service(无 ctl)时 fired/done 回写无处可达(真实路径 ctl 恒在)。
 > 全量基线:1772 收集 = 1729 passed + 10 skipped + 40 xfailed,0 失败。
+> (**2026-10-01 更新**:留尾「跨 run 计时器」已关闭——宿主调度器 `scan_due_timers` 扫 paused run checkpoint,过期规格先 settle-in-file(纯函数 `settle_overdue` 与进程内 rearm 共用折算语义,fire 文本追加根帧 + 原子写回)再 daemon 线程 resume,先结算后唤醒不双火;计时器管理工具(cancel/list)仍开口。见下文 2026-10-01 复核块。)
 > ---
 > ✅ **复核 2026-09-29(MCP Streamable HTTP 传输 + 协议版本策略 + 真实 server 互测)**:
 > 上文 2026-09-28(MCP stdio 适配器落地)块「仍开口」中的"Streamable HTTP 传输"与
@@ -747,6 +750,17 @@
 > `test_debug_error_semantics` 为另一族低置信开口,不在本批;code-quality-audit §3.6
 > 已加同日更正注,DESIGN §16 已加同日条目。
 > 全量基线:1937 收集 = 1887 passed + 10 skipped + 40 xfailed,0 失败(+2 例)。
+> ---
+> ✅ **复核 2026-10-01(跨 run 系列:宿主调度器——一处机制关闭三处文档轨道开口)**:DESIGN §17 开放问题 3 子句「持久事件队列与调度」、§8.3 留口「跨 run 计时器」与 DATA-AUTHZ D3「跨 run 自动派生(引擎无触发点)」同批关闭。
+> ① **宿主调度器**(`host/shared/scheduler.py`,511 行)——`ScheduleStore`(`<artifacts_root>/schedule.json`,原子写复用 `_write_json`,`{"v":1,"pending":[…]}`,缺席 = 空表、畸形记 log 按空表起步不杀宿主启动)+ `scan_due_timers`(扫 paused run 的 result.json/checkpoint.json,逐帧非 DONE 的 `working._timers` 过 `settle_overdue`,纯发现通道)+ `Scheduler.tick(now)`(同步可测):到期调度事件 pop → `manager.dispatch_event`(与 POST /api/events 同一份三通道路由);到期计时器按 run 聚合——`settle_run_checkpoint` 先 settle-in-file(纯结算 + fire 文本追加根帧 + 原子写回)再 daemon 线程 `resume_run`,**先结算后唤醒**,内核 resume 的 `rearm_from_working` 见到已结算规格不再补火(双火协调有两级测试锚);逐条目/逐 run 异常隔离不炸 tick;daemon `start()` 幂等、interval 每拍现读 `schedule_section()`。
+> ② **纯函数抽取**——`format_fire_text`/`settle_overdue` 从 `tools/timer.py` 的 `rearm_from_working` 抽出共用(22 例存量全绿证行为不变;现 30 例)。
+> ③ **事件调度面**——`POST /api/events` 加 `delay_seconds`/`at`(二选一且 >0,同现/非正 400)→ 落 store 返 `{"action":"scheduled", schedule_id, fire_at}`,缺席逐字旧行为,调度器未启用 → **409 fail-closed**;`GET /api/schedule` 列 pending;三通道分发抽成 `RunManager.dispatch_event`(路由与调度器共用);`_inject_into_checkpoint` 顺带改原子写。
+> ④ **`system.schedule.set`**(`tools/schedule.py`,WRITE·confirm=True——派生新 run = 开新工作单元,人审防增殖)——参数 skill/input/delay_seconds|at/note;web 宿主绑 `StoreScheduleService`(条目带 source="tool" + via_run_id + principal,via 链宿主声明、引擎不伪造,D3 口径不变);CLI 不绑 → 结构化"未装配"(NOT_FOUND)。
+> ⑤ **配置**——`[schedule]` strict 段 `interval_seconds`(float>0,缺省 5.0),缺段不起调度器(零破坏:停车 409、工具报"未装配")。
+> ⑥ **文档债**——std/task.yaml set_timer 过期描述(「进程重启即丢」)改与持久化现实一致。
+> **仍开口**:monitor_shell/connect_channel、CLI 调度(web-only)、cron 表达式、调度并发上限、死信/重试(投递失败即弃 + log)、event.received 升格内核契约信号、跨进程多宿主互斥(单宿主假设)、Web shutdown 钩子(与 OTLP close 同族)。
+> 上文 2026-09-28(E3/D3 余项)、2026-09-29(外部事件唤醒入口)、2026-09-29(定时器持久化)三块「仍开口」中的相应条目据此关闭,dated 原文保留、各加同日关闭注;DESIGN §16/§17/§8.3、DATA-AUTHZ、RUNNERS、SKILL-DEV §6、ch04-tools 与白皮书 00/01/03/10(zh/en)同批更新。
+> 全量基线:1987 收集 = 1936 passed + 10 skipped + 41 xfailed,0 失败(+50 例;xfail +1 = 新内置工具触发 std gate 逐参数元测试,属预期)。
 
 ## 一、总览
 

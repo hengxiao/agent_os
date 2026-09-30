@@ -80,6 +80,10 @@
                    根帧队列、下一步批头并入,缺省 true;false = 立即注入)/batch_max
                    (单批条数上限,默认 50,超出丢最旧)/event_text_max(事件文本
                    截断,默认 2000);缺段 = 全默认
+    [schedule]   → E5 宿主调度器(§17-3 持久调度 / §8.3 跨 run 计时器 / D3 自动派生):
+                   interval_seconds(调度节拍秒数,默认 5.0);**段在场才启动**
+                   (web 宿主 create_app 闸门;缺段零打扰),内核不消费本段,
+                   但段在场即过严格解析(装配期 fail-closed)
 
 两个错误归类的锚点:配置文件缺失/畸形/provider 装配失败抛 :class:`ConfigError`
 (宿主归退出码 4);技能清单/权限闸门问题由 KernelBuilder 抛 SkillLoadError(归 2)。
@@ -121,6 +125,7 @@ from agent_os.runtime.builder import (
     EventsSection,
     KernelBuilder,
     MemorySection,
+    ScheduleSection,
 )
 from agent_os.sidecars.builtins import (
     BudgetGuard,
@@ -176,6 +181,9 @@ _MEMORY_FIELDS = ("dir", "recall_k", "recall_entry_chars", "recall_total_chars")
 
 #: ``[events]`` 支持的字段(E4 事件批处理;缺段 = 全默认,见 EventsSection)
 _EVENTS_FIELDS = ("batch", "batch_max", "event_text_max")
+
+#: ``[schedule]`` 支持的字段(E5 宿主调度器;段缺席 = 调度器不启动,见 ScheduleSection)
+_SCHEDULE_FIELDS = ("interval_seconds",)
 
 
 class CredentialScope:
@@ -679,6 +687,21 @@ def _events_section(cfg: dict[str, Any]) -> EventsSection:
     ):
         raise ConfigError(f"[events] event_text_max 须为 >= 1 的整数,得到: {event_text_max!r}")
     return EventsSection(batch=batch, batch_max=batch_max, event_text_max=event_text_max)
+
+
+def _schedule_section(cfg: dict[str, Any]) -> ScheduleSection:
+    """``[schedule]`` 段 → :class:`ScheduleSection`(E5 宿主调度器节拍;缺段 = 全默认)。
+
+    严格未知字段 + 类型校验(同 ``_events_section`` 先例):顶层段无白名单,
+    不解析的段会被静默忽略——节拍键拼错会不痛不痒地落默认 5s,宁可装配期炸掉。
+    """
+    unknown = sorted(set(cfg) - set(_SCHEDULE_FIELDS))
+    if unknown:
+        raise ConfigError(f"[schedule] 含未知字段: {unknown}(支持: {list(_SCHEDULE_FIELDS)})")
+    interval = cfg.get("interval_seconds", 5.0)
+    if not isinstance(interval, (int, float)) or isinstance(interval, bool) or interval <= 0:
+        raise ConfigError(f"[schedule] interval_seconds 须为正数,得到: {interval!r}")
+    return ScheduleSection(interval_seconds=float(interval))
 
 
 #: ``[telemetry]`` 支持的字段(§10.2;dir = WAL 目录,redact = PII 脱敏 hook,otlp = OTLP exporter 子表)
@@ -1226,6 +1249,11 @@ def build_kernel(
     builder.context_section(_context_section(cfg.get("context") or {}))
     # [events] 段(E4 事件批处理)——缺段也过一遍校验函数,落全默认 EventsSection(同 [context] 先例)
     builder.events_section(_events_section(cfg.get("events") or {}))
+    # [schedule] 段(E5 宿主调度器):内核不消费,但段在场即过严格解析——顶层段无
+    # 白名单,不解析会被静默忽略;键拼错在装配期 ConfigError(fail-closed,同
+    # [events] 严格化先例)。调度器启动闸门在 web 宿主(RunManager.has_schedule)
+    if cfg.get("schedule") is not None:
+        _schedule_section(cfg["schedule"])
     prices = _prices(cfg.get("prices") or {})
     builder.prices(prices)
     if not prices:

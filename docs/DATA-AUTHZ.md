@@ -68,9 +68,11 @@ v1 不做 SSO/OIDC 集成;宿主配置里静态映射即可,协议面(principal 
 > (含当前 principal)都过 `allow()` 才放行,任一环拒 = 拒(拒绝消息含
 > `链环 #N`,`data.access.denied` payload additive `via_link` 键);
 > fail-closed:via 非 list / 元素缺 subject / 递归深度 > 8 一律拒(payload
-> 加 `via_error`)。**引擎不伪造链**:via 由宿主声明注入,跨 run 自动派生
-> 无引擎触发点(仍开口)。约定偏差(已注记):`Principal.attrs` 声明类型是
-> `Mapping[str, str]`,via 载结构化列表是约定层扩展。
+> 加 `via_error`)。**引擎不伪造链**:via 由宿主声明注入;跨 run 自动派生
+> 已落地(2026-10-01,宿主调度器 `[schedule]` 段 + `system.schedule.set`
+> 工具——条目经宿主 `StoreScheduleService` 登记,via 链与 principal 仍由
+> 宿主声明注入,引擎不伪造口径不变)。约定偏差(已注记):`Principal.attrs`
+> 声明类型是 `Mapping[str, str]`,via 载结构化列表是约定层扩展。
 
 ## 3. authZ:授权模型
 
@@ -207,7 +209,7 @@ run 详情页可按 principal 过滤:谁、读了哪些域、被拒几次。
 > 4. `allow()` 的第二判据(per-subject 域白名单)与 `ToolContext.credentials`
 >    判据回写依赖配置段,属 D2;`action` 参数为协议面占位,D1 不参与判定。
 | D2 ✅ | 域配置段 + db/net 工具声明 + 审计信号 + 拒绝面不泄内容检查。已实现(2026-08-31):`[data]` 配置段(domains 表数组:name/sensitivity 缺省 confidential/`path_prefix`|`url_prefix` 恰一;`[data.principals."<subject>"] domains = [...]` glob 白名单——解析在 runtime/config.py `_data_policy`,产物契约层 `DataPolicy`,api/v1/principal.py:60);registry `bind_data_policy`/`register_net_domain` 装配钩子;`_check_data_access` 泛化(fs.* 逐字不动;net.* 按 `call.args["url"]` 前缀匹配,未命中 → `net.unconfigured` confidential;db.* 等其余族 glob 对 `policy.domains` 匹配;**policy 在场才恢复"未配置域=confidential",缺省缺席保持 D1 语义**);`allow()` 增 `whitelist=None` 关键字(None 与 D1 逐字一致);审计信号 `data.access.denied`/`data.access.granted`(已入 SIGNAL_NAMES,33 个);判据回写 `ctx.credentials["_authz"]`;`http_fetch`/`http_request`/`fetch_page` 声明 `data_domains=["net.*"]`;拒绝面只带域名/敏感度/clearance,不回显路径/URL 与域内内容 |
-| D3 | 派生链最弱一环 + EscalationRequest 数据面展示 + 多用户 Web 会话映射。**D3-lite 已落地**(2026-08-31):`[web.tokens] "<token>" = "user:<login>"` 映射;Bearer 中间件命中 → `Principal(issuer="api-token", clearance=confidential)` 挂 `request.state` → `start_run(principal=)` → `execute_run`;未命中/无配置 → 单用户行为逐字不变(host/web/app.py,host/web/run_manager.py)。**派生链最弱一环已落地**(2026-09-28,WS1):via 链逐环判定、fail-closed、深度上限 8、引擎不伪造链(实现注见 §2.3)。**升权决策数据面已暴露**(2026-09-28,WS2):`GET /api/runs/{run_id}/escalations` 审计面板(docs/ESCALATION.md §5 实现注)。**确认卡片数据域展示已落地**(2026-09-29):`EscalationRequest` additive `domains`/`sensitive`(api/v1/escalation.py;`to_supervisor_args` context 直通)——domains = 被调技能白名单工具 `data_domains` 的浅层并集(保序去重,不递归子技能,与 `derive_tools_tier` 同口径),sensitive = 其中 policy 判 confidential 的子集(无 [data] policy → 空);tool-confirm 通道 context 同样带 domains/sensitive(直接取 `spec.data_domains`);判定复用公开口 `sensitive_domains`,与数据闸共用 `_resolve_declared_domains`(实现注见 §3.3);渲染 inbox.js `domainsChipsHtml`(升权卡片 + tool-confirm 通用卡,敏感域 chip-sensitive --danger 双编码"敏感",空不渲染),六主题 copy 表加 confirm.domains/confirm.sensitive,CLI context 直通;`to_pending` 不带 domains(resume 重走闸门现算,无陈旧快照)。**仍未做**:跨 run 自动派生(引擎无触发点,via 链靠宿主声明)、完整多用户会话映射、卡片数据域的递归子技能并集与审批选项按域动态化 |
+| D3 | 派生链最弱一环 + EscalationRequest 数据面展示 + 多用户 Web 会话映射。**D3-lite 已落地**(2026-08-31):`[web.tokens] "<token>" = "user:<login>"` 映射;Bearer 中间件命中 → `Principal(issuer="api-token", clearance=confidential)` 挂 `request.state` → `start_run(principal=)` → `execute_run`;未命中/无配置 → 单用户行为逐字不变(host/web/app.py,host/web/run_manager.py)。**派生链最弱一环已落地**(2026-09-28,WS1):via 链逐环判定、fail-closed、深度上限 8、引擎不伪造链(实现注见 §2.3)。**升权决策数据面已暴露**(2026-09-28,WS2):`GET /api/runs/{run_id}/escalations` 审计面板(docs/ESCALATION.md §5 实现注)。**确认卡片数据域展示已落地**(2026-09-29):`EscalationRequest` additive `domains`/`sensitive`(api/v1/escalation.py;`to_supervisor_args` context 直通)——domains = 被调技能白名单工具 `data_domains` 的浅层并集(保序去重,不递归子技能,与 `derive_tools_tier` 同口径),sensitive = 其中 policy 判 confidential 的子集(无 [data] policy → 空);tool-confirm 通道 context 同样带 domains/sensitive(直接取 `spec.data_domains`);判定复用公开口 `sensitive_domains`,与数据闸共用 `_resolve_declared_domains`(实现注见 §3.3);渲染 inbox.js `domainsChipsHtml`(升权卡片 + tool-confirm 通用卡,敏感域 chip-sensitive --danger 双编码"敏感",空不渲染),六主题 copy 表加 confirm.domains/confirm.sensitive,CLI context 直通;`to_pending` 不带 domains(resume 重走闸门现算,无陈旧快照)。**跨 run 自动派生已落地**(2026-10-01):宿主调度器(`[schedule]` 段节拍,host/shared/scheduler.py)+ `system.schedule.set` 工具(WRITE·confirm=True)登记派生条目,到点经 `RunManager.dispatch_event` 无 target 通道起新 run;via 链与 principal 仍由宿主声明注入(条目带 via_run_id + principal),引擎不伪造口径不变。**仍未做**:完整多用户会话映射、卡片数据域的递归子技能并集与审批选项按域动态化 |
 
 ## 9. 不做
 

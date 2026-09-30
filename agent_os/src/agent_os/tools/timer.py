@@ -11,6 +11,13 @@ checkpoint 落档):pause/断电只取消进程内任务、规格保留,resume �
 
 ``sleep`` 可注入(缺省 ``asyncio.sleep``;测试用假钟快进,同 StallDetector 注入
 ``clock`` 先例,sidecars/builtins.py)。
+
+纯函数出口(§17-3 宿主调度器共用):``format_fire_text`` 是 ``[timer 到点]`` 注入
+文本的唯一构造点(进程内 ``_fire`` 与宿主调度器补投字节一致);``settle_overdue``
+是"过期欠一次"的纯结算(就地改规格 + 返回 fire 文本,不注入不建任务)——
+``rearm_from_working`` 的过期分支与宿主调度器的 settle-in-file(host/shared/
+scheduler.py)共用同一实现,折算语义单一来源防漂移(双火协调 = settle 先行,
+resume 的 rearm 见到已结算规格不再补火)。
 """
 
 from __future__ import annotations
@@ -42,6 +49,61 @@ _MIN_SECONDS = 0.5
 
 #: 终态帧集合:到点时帧已终态 → 消息静默弃(注入终态帧的 context 无人再读)
 _TERMINAL = (FrameStatus.DONE, FrameStatus.FAILED)
+
+
+def format_fire_text(note: str, timer_id: str, fired: int, count: int | None) -> str:
+    """``[timer 到点]`` 注入文本的唯一构造点(进程内 ``_fire`` 与宿主调度器补投字节一致)。"""
+    suffix = f"第 {fired} 次" + (f"/共 {count} 次" if count else "")
+    return f"[timer 到点] {note}(timer_id={timer_id},{suffix})"
+
+
+def settle_overdue(spec: dict[str, Any], now: float) -> str | None:
+    """结算规格里"已过期欠的一次"(§17-3 宿主调度器 settle-in-file 通道的纯函数本体)。
+
+    折算语义与 ``rearm_from_working`` 的过期分支逐字一致(两处共用本实现):
+
+    - 已 ``done`` / 缺 delay+interval / 未到期(``next_fire_at > now``)→ ``None``,
+      规格**不动**;
+    - one-shot 过期:``fired+=1``、标 ``done``、``next_fire_at=now``,返回 fire 文本
+      (欠次必还);
+    - recurring 过期:``fired+=1``;次数耗尽标 ``done`` + ``next_fire_at=now``,否则
+      ``next_fire_at = now + interval``(错过的中间触发不逐次补账,节奏从结算点
+      起算),返回 fire 文本;recurring 次数已耗尽(``fired >= count`` 但未标 done
+      的防御态)→ ``None`` 不补火(resume 重武装的防御分支会补标 done)。
+
+    纯函数:只就地改 ``spec`` dict 并返回文本,不注入、不建任务——注入由调用方
+    负责(进程内 rearm 走 ``_fire``;宿主调度器把文本追加进 checkpoint 根帧消息列)。
+    """
+    if spec.get("done"):
+        return None
+    delay = spec.get("delay_seconds")
+    interval = spec.get("interval_seconds")
+    if delay is None and interval is None:
+        return None
+    count = spec.get("count")
+    fired = int(spec.get("fired") or 0)
+    next_fire_at = float(spec.get("next_fire_at") or now)
+    if next_fire_at - now > 0:
+        return None  # 未到期
+    note = spec.get("note") or ""
+    timer_id = str(spec.get("timer_id") or "")
+    if delay is not None:  # one-shot 过期:补还欠的一次并终结(不重生任务)
+        fired += 1
+        spec["fired"] = fired
+        spec["done"] = True
+        spec["next_fire_at"] = now
+        return format_fire_text(note, timer_id, fired, None)
+    if count is not None and fired >= count:
+        return None  # recurring 次数已耗尽(防御:正常路径在 fire 时已标 done)
+    # recurring 过期:只补最近一次(错过的中间触发不逐次补账)
+    fired += 1
+    spec["fired"] = fired
+    if count is not None and fired >= count:
+        spec["done"] = True
+        spec["next_fire_at"] = now
+    else:
+        spec["next_fire_at"] = now + max(_MIN_SECONDS, float(interval))
+    return format_fire_text(note, timer_id, fired, count)
 
 
 class TimerService:
@@ -253,6 +315,10 @@ class TimerService:
         - 重武装/补偿后规格的 ``timer_id`` 改写为在跑任务的 id(旧任务 pause 时已
           取消;防同进程再次 resume 时新旧两代并存双火)。
 
+        过期结算委托纯函数 :func:`settle_overdue`(就地改规格 + 返回 fire 文本;
+        与 §17-3 宿主调度器 settle-in-file 共用同一实现,折算语义单一来源)——
+        调度器在 resume 前已 settle-in-file 的规格此处不再补火(双火协调)。
+
         返回重武装条数(补偿 fire 也算一条);无规格/全部 done → 0(大多数帧的快路径)。
         """
         specs = frame.context.working.get("_timers")
@@ -274,14 +340,11 @@ class TimerService:
             note = spec.get("note") or ""
             next_fire_at = float(spec.get("next_fire_at") or now)
             remaining = next_fire_at - now
+            overdue_text = settle_overdue(spec, now)  # 过期 → 就地结算规格 + fire 文本
             if delay is not None:  # one-shot
-                if remaining <= 0:
-                    # 已过期:立即补还欠的一次并终结(不重生任务)
-                    fired += 1
-                    await self._fire(spec["timer_id"], frame_id, note, fired, None)
-                    spec["fired"] = fired
-                    spec["done"] = True
-                    spec["next_fire_at"] = now
+                if overdue_text is not None:
+                    # 已过期:立即补还欠的一次并终结(不重生任务;规格已结算)
+                    await self._fire(spec["timer_id"], frame_id, note, spec["fired"], None)
                 else:
                     wait = max(_MIN_SECONDS, remaining)
                     spec["timer_id"] = self._spawn(
@@ -301,14 +364,10 @@ class TimerService:
                 spec["done"] = True  # 次数已耗尽(防御:正常路径在 fire 时已标 done)
                 continue
             interval = max(_MIN_SECONDS, float(interval))
-            if remaining <= 0:
+            if overdue_text is not None:
                 # 已过期:立即补最近一次(错过的中间触发不逐次补账),其后回到 interval 节奏
-                fired += 1
-                await self._fire(spec["timer_id"], frame_id, note, fired, count)
-                spec["fired"] = fired
-                if count is not None and fired >= count:
-                    spec["done"] = True
-                    spec["next_fire_at"] = now
+                await self._fire(spec["timer_id"], frame_id, note, spec["fired"], count)
+                if spec.get("done"):
                     rearmed += 1
                     continue
                 wait = interval
@@ -321,7 +380,7 @@ class TimerService:
                 interval=interval,
                 count=count,
                 note=note,
-                fired0=fired,
+                fired0=spec["fired"],
                 first_delay=wait,
             )
             spec["next_fire_at"] = now + wait
@@ -393,12 +452,11 @@ class TimerService:
             if frame is None or frame.status in _TERMINAL:
                 _log.info("timer %s 到点但帧 %s 已终态/不存在,消息静默丢弃", timer_id, frame_id)
                 return False
-        suffix = f"第 {index} 次" + (f"/共 {count} 次" if count else "")
         await ctl.inject_message(
             frame_id,
             Message(
                 role=Role.USER,
-                content=f"[timer 到点] {note}(timer_id={timer_id},{suffix})",
+                content=format_fire_text(note, timer_id, index, count),
                 source=Source.INJECTED,
             ),
         )

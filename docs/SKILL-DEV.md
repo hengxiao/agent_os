@@ -320,7 +320,11 @@ task id 与初始状态**,不占工具调用回合空等结果;**完成走事件
 事件批处理已落地(2026-09-29,RUNNERS.md §2.1/§4.3):在跑事件按 `[events]`
 段分流——缺省入根帧队列,下一步 build 前排干为一条批头消息(`[event 批处理
 N 条]`,其计数承担 status bar 标记的注意力职能);关掉批处理则维持立即注入。
-仍开口:`monitor_shell`/`connect_channel`、持久事件队列与调度。
+持久事件队列与调度已落地(2026-10-01,宿主调度器:`[schedule]` 段节拍 +
+`POST /api/events` 的 `delay_seconds`/`at` 定时停车 + `GET /api/schedule` +
+`system.schedule.set` 跨 run 派生工具——发起/完成解耦的定时回灌通道自此可用,
+见 DESIGN.md §16 已关闭清单与 RUNNERS.md §2.1/§4.3)。
+仍开口:`monitor_shell`/`connect_channel`。
 
 ---
 

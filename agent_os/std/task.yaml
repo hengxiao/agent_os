@@ -68,7 +68,7 @@ skills:
     properties:
       timer_id:
         type: string
-        description: 计时器 id(本 run 内有效;进程重启即丢,不持久化)
+        description: 计时器 id(本 run 内有效;规格随帧 checkpoint 持久化——pause/进程重启后 resume 按剩余时间折算重武装,过期欠的一次恢复时立即补投;跨重启自动到点补投由宿主调度器 [schedule] 段负责)
     required:
     - timer_id
   permissions:

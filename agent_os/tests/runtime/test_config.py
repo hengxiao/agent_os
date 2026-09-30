@@ -38,6 +38,7 @@ from agent_os.runtime.config import (
     ConfigError,
     _events_section,
     _mcp_servers,
+    _schedule_section,
     build_kernel,
     load_config,
     load_skillsets,
@@ -932,6 +933,46 @@ def test_events_section_type_errors_rejected():
         build_kernel(_base_cfg(events={"event_text_max": -1}))
     with pytest.raises(ConfigError, match=r"\[events\] event_text_max 须为"):
         build_kernel(_base_cfg(events={"event_text_max": "2000"}))
+
+
+# ---------------------------------------------------------------------------
+# [schedule] 段(E5 宿主调度器):interval_seconds 解析;缺段 = 全默认;
+# 严格未知字段/类型校验(顶层段无白名单,不解析的段会被静默忽略——必须严格)
+# ---------------------------------------------------------------------------
+
+
+def test_schedule_section_absent_uses_defaults():
+    """缺 [schedule] 段 = 全默认(interval 5.0);build_kernel 不消费本段也不炸。"""
+    section = _schedule_section({})
+    assert section.interval_seconds == 5.0
+    build_kernel(_base_cfg())  # 缺段照常装配(零打扰)
+
+
+def test_schedule_section_explicit_values():
+    """显式 interval_seconds 解析为 float(int 也接受,落 float)。"""
+    section = _schedule_section({"interval_seconds": 2})
+    assert section.interval_seconds == 2.0
+    assert isinstance(section.interval_seconds, float)
+    build_kernel(_base_cfg(schedule={"interval_seconds": 0.5}))  # 在场即过严格解析,合法照常装配
+
+
+def test_schedule_section_unknown_field_rejected():
+    """严格先例(同 [events]):节拍键拼错会静默落默认 5s——宁可装配期炸掉。"""
+    with pytest.raises(ConfigError, match=r"\[schedule\] 含未知字段"):
+        _schedule_section({"interval_Seconds": 2})
+    with pytest.raises(ConfigError, match=r"\[schedule\] 含未知字段"):
+        build_kernel(_base_cfg(schedule={"interval_Seconds": 2}))
+
+
+def test_schedule_section_type_errors_rejected():
+    with pytest.raises(ConfigError, match=r"\[schedule\] interval_seconds 须为正数"):
+        _schedule_section({"interval_seconds": 0})
+    with pytest.raises(ConfigError, match=r"\[schedule\] interval_seconds 须为正数"):
+        _schedule_section({"interval_seconds": -1})
+    with pytest.raises(ConfigError, match=r"\[schedule\] interval_seconds 须为正数"):
+        _schedule_section({"interval_seconds": True})
+    with pytest.raises(ConfigError, match=r"\[schedule\] interval_seconds 须为正数"):
+        build_kernel(_base_cfg(schedule={"interval_seconds": "5"}))
 
 
 # ---------------------------------------------------------------------------

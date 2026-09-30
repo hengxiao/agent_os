@@ -606,7 +606,11 @@
 > 工具/宿主通道(user_channel/supervisor)→ 用例 fail-closed(冒烟内核剥离所致);
 > hook 契约不变(仍 `(name, entry)`,无 provenance)。
 > **留尾**:code 技能冒烟、recorded-run 重放(provenance.run_id,需 host replay
-> 下沉)、judge 健康度反馈/阈值调优。DESIGN §6.2 与下文 §4(Skill Registry)
+> 下沉)、judge 健康度反馈/阈值调优。(**2026-09-30 更新**:留尾前两条已关闭——
+> code 技能冒烟经 `entry["_source"]` 瞬态键 + 临时目录登台沙箱真跑落地,
+> recorded-run 重放经 `source_run_id` provenance 引用 + replay 下沉
+> telemetry/replay.py 落地;hook 契约同日扩为可选第三参
+> `(name, entry, provenance)`;详见头部最新复核块。)DESIGN §6.2 与下文 §4(Skill Registry)
 > 已同步。测试:tests/skills/test_register_smoke_default.py 18 例全绿。
 > 全量基线:1863 收集 = 1813 passed + 10 skipped + 40 xfailed,0 失败(+18 例)。
 > ---
@@ -681,6 +685,46 @@
 > ch06-evaluation 落地注记、RUNNERS §2.1 `[telemetry]` 配置参考、agent-os.example.toml
 > 注释示例同批更新。
 > 全量基线:1911 收集 = 1861 passed + 10 skipped + 40 xfailed,0 失败(+32 例)。
+> ---
+> ✅ **复核 2026-09-30(register() 验证门留尾收尾——code 技能冒烟 + recorded-run 重放)**:
+> 上文 2026-09-29(register() 验证门默认实现)块「留尾」中的"code 技能冒烟、
+> recorded-run 重放"两条据此关闭(该块已就地标注;下文 §4 dated 行原文保留、
+> 下行标注关闭)。
+> ① **hook 契约可选第三参**——`bind_register_smoke` bind 时 `inspect.signature`
+> 内省位置形参(`skills/local_file.py:346-370`):≥3 个位置形参 → 调用时追加
+> `provenance`,二参存量零破坏;契约现为 `callable(name, entry)` 或
+> `callable(name, entry, provenance)`;code 技能冒烟时 entry 传
+> `{**entry, "_source": artifact.code}` 瞬态键(步骤 6 写盘的仍是原 entry,
+> 生产 yaml 零污染,有测试钉)。
+> ② **replay 下沉 + 压缩对齐修复**——`build_mock_script`/`replace_providers`
+> 从 `host/shared/replay.py` 下沉 `telemetry/replay.py`(trace 格式所有者;
+> skills/ 依赖白名单加 `telemetry.*`,验证门自此合法消费);
+> `host/shared/replay.py` re-export 兼容(cli/main.py、cli/debug.py、
+> web/run_manager.py、web/app.py 四处调用点不动),`diff_runs` 留 host;
+> 顺带修复:对齐计数过滤 `source=="compress"` 的 post:llm.response(压缩排干
+> 补发信号无对应 assistant 消息,此前 CLI replay 对压缩 run 会错配/ValueError)。
+> ③ **code 技能冒烟**(`register_smoke.py` `_staged_code_handler`)——`_source`
+> 源码写临时目录 `generated_handlers/<mod>.py`(regular package 带 `__init__.py`)
+> + sys.path 前置 + sys.modules 弹出/invalidate_caches(进入与 finally 双做,
+> 同 `_write_generated_handler` 纪律)→ 沙箱子进程经 PYTHONPATH 拿源码真跑;
+> 无 sandbox(`[tools] python_exec=off`)→ fail-closed 指路;`_source` 缺席 →
+> 旧 fail-closed 文案不变;shadow/restore 语义有测试(生产旧版 handler 不被污染)。
+> ④ **recorded-run 证据阶段**(`register_smoke.py` `_replay_source_run`)——
+> `provenance.detail["source_run_id"]` 非空时在草稿用例阶段**之前**跑:读
+> `<runs_root>/<id>/{meta,result,trace,checkpoint}` → `build_mock_script` →
+> fresh 冒烟内核 + `replace_providers` → 真重放源技能;run 异常/源技能缺席/
+> status≠done/结果与录制归一化比对不符 → fail-closed 各自文案;judge 在场加裁
+> "任务真完成"(严格 JSON fail-closed),缺席纯确定性并注明。**引用源 run
+> 不免除草稿用例**(证据真实性 ≠ 候选本体正确性,两阶段都必需);
+> `provenance.run_id` 永不作证据(注册 run 在跑,trace 不完整)。
+> ⑤ **工具/配置面**——`system.skill.register` 加可选参 `source_run_id`(落
+> provenance.detail,逐字进 register.jsonl);`[skills]` 新键 `register_runs_root`
+> (str;缺省 `.agent-os/runs`,与 CLI/Web artifacts 缺省一致)。
+> **留尾(仍开口)**:judge 健康度反馈/阈值调优(沿用)、冒烟 run 的 WAL 尾巴
+> (每用例一份 traces 文件,已知低成本)、Lab promote 不过 register() 不接线。
+> 测试 +24;DESIGN §6.2/§15/§16、SKILL-DEV §7、RUNNERS §2.1/§2.2/§3.4、
+> 白皮书 02(zh/en)、ch08 落地注同批更新。
+> 全量基线:1935 收集 = 1885 passed + 10 skipped + 40 xfailed,0 失败(+24 例)。
 
 ## 一、总览
 
@@ -744,6 +788,7 @@
 - **复核 2026-09-27**:`register()` 已落地(`skills/local_file.py:314-484`,闸门 + pre:skill.register 否决 + 原子写 + provenance),消费面 `system.skill.register` 工具(confirm=True 过 tool-confirm 闸门);DirectorySkillSource 写路径、版本约束求解、文件监听热重载、完整重放+evaluator 门仍开口。
 - **复核 2026-09-29(register() 留尾四件已关闭)**:① semver 依赖约束准入已落地(`skills/semver.py`;`permissions.skills` 条目 `name@^x.y.z`/`@~x.y.z`/`@x.y.z`,非法条目加载期 SkillLoadError fail-closed;接入 `_load_all` `local_file.py:238-257`;**裁决:不做多版本求解/range,注册表仍单版本/name**);② 目录形态 register() 已落地(目标恒 `<dir>/registered.yaml`,`package._atomic_write_registered` staging 整目录证明 → .bak + os.replace;人管 yaml 撞名 → SkillLoadError 不碰人管文件);③ 文件监听热重载已落地(`start_watching(interval_s)`/`stop_watching()` daemon 轮询 mtime,失败吞异常旧表不动;`[skills] watch_interval` 默认关);④ 验证门 smoke hook 已落地(`bind_register_smoke`,G1-G3 后 pre 信号前,sync/async 兼容,ok 非真/异常 → GateError fail-closed 零写;`[skills] register_smoke`;jsonl gates 增 `"smoke"` 键,smoke 拒绝落 `action="rejected"` 记录);仍开口:默认重放 + evaluator 实现(挂点已就位)、watch 线程的内核 close 钩子、可见集膨胀后的语义检索层。
 - **复核 2026-09-29(默认重放验证门落地)**:`bind_register_smoke` 的默认实现已落地(`skills/register_smoke.py` `DefaultRegisterSmoke`,`[skills] register_smoke = "default"` 哨兵启用;drafts/<name>/tests/*.json 重放 + `expected` 确定性归一化深比较 + `expect` LLM 裁判,全过才放行,fail-closed 零写;冒烟内核剥离 watcher/MCP/sidecars,code 技能 fail-closed;详见头部复核块)——上行 dated 行的"默认重放 + evaluator 实现"据此关闭,dated 原文保留;仍开口:code 技能冒烟、recorded-run 重放(provenance.run_id)、judge 健康度反馈、watch 线程的内核 close 钩子、可见集膨胀后的语义检索层。
+- **复核 2026-09-30(验证门留尾收尾)**:code 技能冒烟(`entry["_source"]` 瞬态键 + `_staged_code_handler` 临时目录登台 + 沙箱真跑;无沙箱后端/缺 `_source` 仍 fail-closed)与 recorded-run 重放(`system.skill.register` 新参 `source_run_id` 落 provenance.detail;`_replay_source_run` 在草稿用例阶段之前跑,telemetry/replay.py 重建录制脚本确定性重放源技能;证据真实性 ≠ 候选本体正确性,草稿用例不免除)已落地;hook 契约扩为可选第三参 `(name, entry, provenance)`(bind 时签名内省,二参零破坏);`[skills]` 新键 `register_runs_root`(缺省 `.agent-os/runs`);顺带修复 replay 对压缩 run 的对齐错配(过滤 `source=="compress"` 补发信号)——上行 dated 行的"code 技能冒烟、recorded-run 重放"两条据此关闭,dated 原文保留;仍开口:judge 健康度反馈、watch 线程的内核 close 钩子、可见集膨胀后的语义检索层(另:冒烟 run 的 WAL 尾巴、Lab promote 不过 register() 不接线)。
 
 ### 5. Context(上下文)— 🟡 ~55%
 

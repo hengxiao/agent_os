@@ -7,5 +7,13 @@
 from .jsonl_exporter import JsonlExporter, JsonlTelemetrySink
 from .otlp_exporter import OtlpExporter
 from .redact import redact_payload
+from .replay import build_mock_script, replace_providers
 
-__all__ = ["JsonlExporter", "JsonlTelemetrySink", "OtlpExporter", "redact_payload"]
+__all__ = [
+    "JsonlExporter",
+    "JsonlTelemetrySink",
+    "OtlpExporter",
+    "build_mock_script",
+    "redact_payload",
+    "replace_providers",
+]

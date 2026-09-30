@@ -17,6 +17,8 @@
 - 验证门 smoke(bind_register_smoke):ok=False / 抛异常 → GateError(detail 透传 /
   fail-closed),生产零变化,jsonl gates.smoke 记 fail(action="rejected");
   ok → 注册成功 gates.smoke=pass;未 bind → skip(现状回归);
+  三参契约(2026-09-30 扩展):>=3 位置形参的回调调用时追加 Provenance,
+  keyword-only 第三参不触发;
   config ``[skills] register_smoke`` 模块路径接线 / 非法值 ConfigError;
 - 工具面:``system.skill.register`` 随 with_builtins 常驻(WRITE·confirm·skills.*);
   bind 缺失调用报 NOT_FOUND(同 memory 工具先例);
@@ -669,6 +671,42 @@ def test_register_smoke_async_compatible(production):
     ref = _register(production, _prompt_artifact())
     assert ref.name == "gen.tone"
     assert _read_jsonl(production)[0]["gates"]["smoke"] == "pass"
+
+
+def test_register_smoke_three_arg_hook_receives_provenance(production):
+    """三参契约(2026-09-30 扩展):bind 时按签名位数判定,>=3 位置形参的回调
+    调用时追加本次注册的 Provenance(identity + 内容逐字段)。"""
+    seen = []
+
+    def smoke3(name, entry, provenance):
+        seen.append((name, entry, provenance))
+        return {"ok": True}
+
+    production.bind_register_smoke(smoke3)
+    provenance = Provenance(run_id="r9", task="t9", note="三参钩子", detail={"source_run_id": "src1"})
+    ref = asyncio.run(production.register(_prompt_artifact(), provenance))
+
+    assert ref == SkillRef(name="gen.tone", version="0.1.0")
+    assert len(seen) == 1
+    name, entry, got = seen[0]
+    assert name == "gen.tone" and entry["name"] == "gen.tone"
+    assert got is provenance, "第三参须为本次注册的 Provenance 本体(identity)"
+    assert got.run_id == "r9" and got.detail["source_run_id"] == "src1"
+    assert _read_jsonl(production)[0]["gates"]["smoke"] == "pass"
+
+
+def test_register_smoke_keyword_only_third_param_stays_two_arg(production):
+    """keyword-only 第三参不算三参契约(只数位置形参):仍按两参调用,不炸。"""
+    seen = []
+
+    def smoke(name, entry, *, provenance=None):
+        seen.append(provenance)
+        return {"ok": True}
+
+    production.bind_register_smoke(smoke)
+    ref = _register(production, _prompt_artifact())
+    assert ref.name == "gen.tone"
+    assert seen == [None], "keyword-only 形参不触发 provenance 注入"
 
 
 def test_register_without_smoke_skips_gate(production):

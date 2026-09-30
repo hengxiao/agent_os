@@ -902,6 +902,7 @@ def skill_register_tool(*, name: str = "system.skill.register", registry: LocalP
         prompt: str = "",
         code: str = "",
         note: str = "",
+        source_run_id: str = "",
         ctx: ToolContext | None = None,
     ) -> dict[str, Any] | ToolResult:
         """把运行期生成的技能注册进 skills registry(默认不信任的信任管线),返回 {name, version}。
@@ -911,8 +912,10 @@ def skill_register_tool(*, name: str = "system.skill.register", registry: LocalP
         (那不是注册面)。manifest 为 §2.1 清单 dict(name 须点分层级名,kind
         prompt|code,description 写 Use when 触发条件);prompt 技能把指令体放
         prompt 参数;code 技能把源码放 code 参数(须含 async def run(input, ctx),
-        强制 sandbox 执行)。同名再注册自动 patch bump;注册是高危动作,每次都会
-        挂起等人工确认(confirm),被拒/被闸门拦下时按提示修正后重试。
+        强制 sandbox 执行)。source_run_id 引用一条已完成的动机 run 作验证门证据
+        (默认验证门会重放该 run 确认任务真完成)。同名再注册自动 patch bump;
+        注册是高危动作,每次都会挂起等人工确认(confirm),被拒/被闸门拦下时
+        按提示修正后重试。
         """
         skills = getattr(registry, "_skills", None)  # bind_skills 注入,同 skill_search 先例
         register_fn = getattr(skills, "register", None)
@@ -944,6 +947,8 @@ def skill_register_tool(*, name: str = "system.skill.register", registry: LocalP
             run_id=ctx.run_id if ctx is not None else None,
             task=ctx.frame_id if ctx is not None else None,
             note=note,
+            # 录制 run 引用(验证门证据 A 阶段;默认验证门重放该 run 判任务真完成)
+            detail={"source_run_id": source_run_id} if source_run_id else {},
         )
         try:
             ref = await register_fn(artifact, provenance)

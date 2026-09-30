@@ -64,7 +64,7 @@ drafts/
     ├── prompt.md        # kind=prompt 的指令体(entry 槽位启用)
     ├── handler.py       # kind=code 的处理器(可选)
     └── tests/
-        ├── case1.json   # {input, mock_script?, expected?, expect?}(mock_script 见 L3 注 4;expected/expect 仅 register 验证门默认实现消费,见 §7)
+        ├── case1.json   # {input, mock_script?, expected?, expect?}(mock_script 见 L3 注 4;expected/expect 仅 register 验证门默认实现消费,见 §7;register 时的录制 run 证据 source_run_id 亦见 §7)
         └── ...
 ```
 
@@ -261,6 +261,8 @@ promote 后想回滚 → skills.yaml 的 .bak(promote 自动备份)+ git。
 >    (自然语言期望,需 judge 模型)于 2026-09-29 加入,**只被 register()
 >    验证门默认实现消费**(§7)——Lab 的 G4 与 test-run 不读它们
 >    (gate.py G4 只判 smoke_runner 返回的 ok/error),G4 行为不变。
+>    2026-09-30 起验证门另支持 `source_run_id` 录制 run 证据——那是
+>    `system.skill.register` 的工具参数(落 provenance.detail),不是用例键(§7)。
 | L4 ✅ | Agent 助手:`skill.dev.assistant` + `lab.draft.*` 工具组 + chat 栏 | 对话式建/改 skill,助手无 promote 能力。已实现:五工具(档显式声明)、assistant meta-skill(overlay extra 注入)、`/api/lab/assistant`、中栏 chat + diff 行高亮;805 Python + 22 前端测试全绿 |
 
 > 实现注(L4):
@@ -326,7 +328,9 @@ N 条]`,其计数承担 status bar 标记的注意力职能);关掉批处理则�
 
 DESIGN §6.2「入库前验证门」的默认形态落地为 `skills/register_smoke.py` 的
 `DefaultRegisterSmoke`——`bind_register_smoke` 契约(`smoke(name, entry)
--> {"ok", "detail"}`)的默认实现,兑现 ch08-self-evolution.md:90/119-121。
+-> {"ok", "detail"}`;2026-09-30 起可选第三参 `smoke(name, entry, provenance)`,
+bind 时 `inspect.signature` 内省,二参形态零破坏)的默认实现,兑现
+ch08-self-evolution.md:90/119-121。
 与 Lab 闸门的关系:Lab G4 是编辑器哲学(无用例 warn、可 ack 提交),register
 默认验证门是**写路径闸门**(没有证据即不放行,无草稿/无用例 = 拒,fail-closed
 零写);两者不互相替代。
@@ -339,6 +343,7 @@ path = "./skills.yaml"
 register_smoke = "default"        # 哨兵值:装配默认重放验证门(豁免 "pkg.mod:func" 形态要求)
 # register_smoke = "my_pkg.gates:smoke"  # 逃生门:自定义 hook 仍走 dotted path(sync/async 均可)
 register_judge_model = "kimi/cheap"      # expect 判定的裁判模型(缺省跟 [run] model)
+# register_runs_root = ".agent-os/runs"  # 录制 run 证据阶段的 run 产物根(2026-09-30;缺省同 CLI/Web artifacts 缺省)
 ```
 
 - **草稿根约定**:`[lab].drafts_root` 优先(与 Web Lab 同一配置键),缺省
@@ -359,16 +364,50 @@ register_judge_model = "kimi/cheap"      # expect 判定的裁判模型(缺省�
 - **expect 的裁判面**:需 `[providers]` 有可用 provider;未配置时带 expect
   的用例 fail-closed 并给配置指引(或改用 expected 确定性深比较)。
 
+**录制 run 证据(`source_run_id`,2026-09-30)**:
+
+- **工具参数**:`system.skill.register` 新可选参 `source_run_id`,落
+  `provenance.detail["source_run_id"]`(逐字进 register.jsonl);非空时
+  验证门在草稿用例阶段**之前**先跑录制重放证据阶段;
+- **重放形态**:读 `<runs_root>/<source_run_id>/` 的 meta/result/trace/
+  checkpoint 四件套,经 `build_mock_script`(telemetry/replay.py,2026-09-30
+  自 host/shared 下沉)重建录制 mock 脚本,fresh 冒烟内核 +
+  `replace_providers` 确定性重放**源技能**(meta.json 记录的 skill/input,
+  不是候选技能);判定:run 产物缺失/畸形、源技能已不在注册表、重放异常、
+  结果与录制 result 归一化比对不符、录制 status ≠ done——一律 fail-closed
+  各自文案;
+- **语义边界(两阶段都必需)**:录制重放证的是**证据真实性**(源 run 的
+  任务真完成),草稿用例证的是**候选本体正确性**——引用源 run 不免除草稿
+  用例;`provenance.run_id`(注册 run 自身)永不作证据:注册 run 还在跑,
+  trace 不完整;
+- **judge 退化**:配置了裁判(`register_judge_model` + `[providers]`)时
+  加裁"任务真完成"(严格 JSON,fail-closed);未配置时降级为仅确定性比对
+  并在 detail 注明——不拒(与 expect 用例缺裁判即 fail-closed 相反);
+- **配置**:`[skills] register_runs_root`(str)指定 run 产物根,缺省
+  `.agent-os/runs`(与 CLI/Web artifacts 缺省一致);
+- **顺带修复**(2026-09-30,telemetry/replay.py):replay 对齐计数过滤
+  `payload.source == "compress"` 的 post:llm.response(压缩排干补发信号
+  无对应 assistant 消息,此前 CLI replay 对压缩 run 会错配/ValueError)。
+
 **v1 边界(全部 fail-closed)**:
 
-- **code 技能不冒烟**:handler 源码落盘发生在验证门之后(register 步骤 6),
-  entry 内无可执行源码——需验证 code 技能请用 `register_smoke = "pkg.mod:func"`
-  自定义 hook;
+- **code 技能冒烟**(2026-09-30 起支持):register() 管线以 `entry["_source"]`
+  瞬态键随调用携带 handler 源码(步骤 6 写盘的仍是原 entry,生产 yaml
+  零污染);验证门把源码登台为**临时目录**的 `generated_handlers/<mod>.py`
+  正规包(带 `__init__.py`;sys.path 前置 + sys.modules 弹出/
+  invalidate_caches 进出双做,不碰生产 generated_handlers/),沙箱子进程
+  经 PYTHONPATH 拿到这份源码真跑。条件:`[tools] python_exec` 非 `off`
+  (code 技能强制沙箱执行,无沙箱后端 → fail-closed 并给配置指引)且
+  `_source` 在场(绕过 register() 管线直调 hook 时缺席 → 维持旧
+  fail-closed 文案;自定义 `register_smoke = "pkg.mod:func"` hook 仍是
+  逃生门);
 - **冒烟内核剥离 watcher/MCP/sidecars**(配置工厂 `_smoke_kernel_factory`
   按例重建:`watch_interval=0` 防 watcher daemon 线程按例泄漏、`[mcp]` 剥离
   防子进程泄漏、`[sidecars]` 剥离防蒸馏副作用,register_smoke 重绑一并移除);
   推论:候选技能引用 `mcp.*` 工具或宿主通道(user_channel/supervisor handler)
   时用例 fail-closed——这是文档化的边界,不是缺陷;
-- **留尾**:code 技能冒烟、recorded-run 重放(provenance.run_id,需 host
-  replay 下沉)、judge 健康度反馈/阈值调优;hook 契约不变(仍 `(name, entry)`,
-  无 provenance)。
+- **留尾**:judge 健康度反馈/阈值调优(沿用);冒烟 run 的 WAL 尾巴
+  (每用例一份 traces 文件,已知低成本);Lab promote 不过 register() 不接线。
+  (code 技能冒烟与 recorded-run 重放两条已于 2026-09-30 关闭,见上两段;
+  hook 契约同日扩为可选第三参 `smoke(name, entry, provenance)`——bind 时
+  `inspect.signature` 内省位置形参,二参存量零破坏。)

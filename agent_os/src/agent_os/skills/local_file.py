@@ -202,9 +202,12 @@ class LocalFileSkillRegistry:
         #: 观察;None = 不发射,行为与引入前一致)
         self._bus = bus
         #: register() 可选验证门 smoke(§6.2 验证门降级形态):bind_register_smoke
-        #: 注入 callable(name, entry) -> {"ok": bool, ...};None = 跳过(同 Lab G4
-        #: 无 runner 时 skip 哲学——嵌入路径不强制)
+        #: 注入 callable(name, entry[, provenance]) -> {"ok": bool, ...};None = 跳过
+        #: (同 Lab G4 无 runner 时 skip 哲学——嵌入路径不强制)
         self._register_smoke: Any = None
+        #: bind 时按签名位数判定(bind_register_smoke):>=3 个位置形参 → 调用时追加
+        #: 本次注册的 Provenance;内省失败(部分 builtin 无签名)保守按两参契约
+        self._register_smoke_takes_provenance: bool = False
         #: 轮询热重载看门狗(start_watching 起的 daemon 线程;None = 未在看)
         self._watch_thread: threading.Thread | None = None
         self._watch_stop = threading.Event()
@@ -344,11 +347,27 @@ class LocalFileSkillRegistry:
         """装配钩子(§6.2 验证门降级形态;bind 模式同 tools ``bind_user_channel`` 先例):
         注入 register() 管线的冒烟验证回调。
 
-        smoke 形态 ``callable(name: str, entry: dict) -> dict``(同步/async 均可,
-        兼容先例 tools/builtins.py user_channel):``ok`` 真 → 放行;非真 → register
-        抛 GateError(detail 透传,不写盘);抛异常 → GateError(fail-closed,异常
-        文本入消息)。缺省(未 bind)= 跳过(嵌入路径不强制)。
+        smoke 形态 ``callable(name: str, entry: dict) -> dict`` 或
+        ``callable(name: str, entry: dict, provenance: Provenance) -> dict``
+        (同步/async 均可,兼容先例 tools/builtins.py user_channel):``ok`` 真 → 放行;
+        非真 → register 抛 GateError(detail 透传,不写盘);抛异常 →
+        GateError(fail-closed,异常文本入消息)。缺省(未 bind)= 跳过(嵌入路径不强制)。
+
+        三参形态(2026-09-30 契约扩展):bind 时经 ``inspect.signature`` 数位置形参,
+        >= 3 则调用时追加本次注册的 ``Provenance``(默认验证门据此引用
+        ``detail["source_run_id"]`` 录制 run 作证据,见 skills/register_smoke.py);
+        内省失败(部分 builtin 无签名)→ 保守按两参契约调用。
         """
+        try:
+            positional = [
+                p
+                for p in inspect.signature(smoke).parameters.values()
+                if p.kind
+                in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            ]
+            self._register_smoke_takes_provenance = len(positional) >= 3
+        except (TypeError, ValueError):  # 内省失败:保守两参
+            self._register_smoke_takes_provenance = False
         self._register_smoke = smoke
 
     def get_by_name(self, name: str) -> Skill:
@@ -410,7 +429,10 @@ class LocalFileSkillRegistry:
            ``validate_draft(strict_refs=True)`` 取 G1-G3,fail 即拒;未注入跳过
            (同 Lab G4 无 runner 时 skip 哲学——嵌入路径不强制);
         4. 可选验证门 smoke(``bind_register_smoke`` 注入时;§6.2 验证门降级形态):
-           ``smoke(name, entry)``(同步/async 均可)——ok 非真 → GateError(detail
+           ``smoke(name, entry)`` 或 ``smoke(name, entry, provenance)``(bind 时按
+           签名位置形参数判定;同步/async 均可)——code 技能的 entry 以拷贝形态附
+           ``_source`` handler 源码(步骤 6 写盘的仍是原 entry,``_source`` 不污染
+           生产 yaml);ok 非真 → GateError(detail
            透传),抛异常 → GateError(fail-closed,异常文本入消息);拒绝同样落
            jsonl(action="rejected",gates.smoke 记 fail detail)但生产零变化;
            未注入 → gates.smoke 记 skip;
@@ -517,8 +539,19 @@ class LocalFileSkillRegistry:
 
         # —— 4. 可选验证门 smoke(bind_register_smoke 注入时;拒绝落 jsonl 但不写盘)——
         if self._register_smoke is not None:
+            # code 技能:handler 源码落盘在步骤 6,验证门要真冒烟须随调用携带;
+            # {**entry} 拷贝附 _source——步骤 6 写盘的是原 entry 对象,生产 yaml 零污染。
+            # prompt 技能指令体已内联 entry,原样传递即可
+            smoke_entry = (
+                {**entry, "_source": artifact.code or ""}
+                if manifest.kind is SkillKind.CODE
+                else entry
+            )
             try:
-                outcome = self._register_smoke(name, entry)
+                if self._register_smoke_takes_provenance:
+                    outcome = self._register_smoke(name, smoke_entry, provenance)
+                else:
+                    outcome = self._register_smoke(name, smoke_entry)
                 if inspect.isawaitable(outcome):  # 回调可同步可 async(user_channel 先例)
                     outcome = await outcome
             except Exception as e:

@@ -64,12 +64,16 @@ path = "./skills.yaml"              # LocalFileSkillRegistry(也可指目录:多
 # watch_interval = 5.0               # 热重载 watcher 轮询秒数(2026-09-29;daemon 线程查源文件 mtime,变了 reload,失败吞异常旧表不动;默认 0 = 关)
 # register_smoke = "default"            # register() 入库前验证门(2026-09-29):"default" 哨兵 = 默认重放 evaluator
                                         # (skills/register_smoke.py:草稿 drafts/<name>/tests/*.json 重放 + expected 确定性深比较
-                                        # + expect LLM 裁判,全过才放行;code 技能 fail-closed,冒烟内核剥离 watcher/MCP/sidecars);
-                                        # 或 "my_pkg.gates:smoke" 自定义 hook("module:func",sync/async 均可;
+                                        # + expect LLM 裁判,全过才放行;code 技能经 entry["_source"] 源码登台临时目录 + 沙箱真冒烟
+                                        # (2026-09-30;无沙箱后端/缺 _source 仍 fail-closed),冒烟内核剥离 watcher/MCP/sidecars);
+                                        # 或 "my_pkg.gates:smoke" 自定义 hook("module:func",sync/async 均可;签名 (name, entry)
+                                        # 或 (name, entry, provenance)(2026-09-30 可选第三参,bind 时签名内省,二参零破坏);
                                         # ok 非真/异常 → GateError fail-closed 零写)
 # register_judge_model = "kimi/cheap"    # 默认验证门 expect 判定的裁判模型(缺省跟 [run] model;需 [providers] 有可用 provider,
                                         # 否则带 expect 的用例 fail-closed)
-# 注:strict 校验;watch_interval/register_smoke/register_judge_model 需配合 path,缺 path → ConfigError;
+# register_runs_root = ".agent-os/runs"  # 默认验证门录制重放证据阶段的 run 产物根(2026-09-30;str,缺省同 CLI/Web artifacts 缺省;
+                                        # system.skill.register 的 source_run_id 引用的 <runs_root>/<id>/ 四件套在此下找)
+# 注:strict 校验;watch_interval/register_smoke/register_judge_model/register_runs_root 需配合 path,缺 path → ConfigError;
 # 默认验证门草稿根 = [lab].drafts_root(缺省 skills path 同级 drafts/;详见 SKILL-DEV.md §7)
 
 [sidecars]
@@ -183,7 +187,7 @@ backoff_base = 0.5
 
 ```
 .agent-os/runs/<run_id>/
-├── meta.json         # {run_id, skill, input, config 摘要, started_at, host: "cli"|"web"}
+├── meta.json         # {run_id, skill, input, host: "cli"|"web", started_at}(resume 产物目录加 resumed_from)
 ├── trace.jsonl       # Telemetry WAL(版本头,全部信号)
 ├── checkpoint.json   # 结束/中止/挂起(paused)时自动快照(帧含完整上下文)
 └── result.json       # {status, result, error, usage 汇总}
@@ -298,7 +302,7 @@ agent-os lab validate <name> [--config agent-os.toml] [--json]
 
 ### 3.4 replay 与 golden 调试
 
-- trace 的 `pre:llm.request`/`post:llm.response` 载荷含模型与消息摘要;replay 按**顺序匹配**构建 MockProvider 脚本(与 fib 测试同一机制),重放整棵帧树;
+- trace 的 `pre:llm.request`/`post:llm.response` 载荷含模型与消息摘要;replay 按**顺序匹配**构建 MockProvider 脚本(与 fib 测试同一机制),重放整棵帧树;脚本重建(`build_mock_script`/`replace_providers`)已下沉 `telemetry/replay.py`(2026-09-30,trace 格式所有者;register() 验证门的录制重放证据同样消费,`host/shared/replay.py` re-export 兼容、`diff_runs` 留 host);**对齐修复(2026-09-30)**:对齐计数过滤 `payload.source=="compress"` 的 post:llm.response——压缩排干补发信号无对应 assistant 消息,此前 CLI replay 对压缩 run 会错配/ValueError;
 - 用途 A(回归):改了技能实现后 replay,`diff` 与原始 run 的信号序列;
 - 用途 B(复现):线上失败的 run 拿回本地 replay,在 checkpoint 上 `inspect` 逐帧检查;
 - 边界:replay 只能覆盖 LLM 调用面;工具副作用(fs/shell/docker)按真实环境执行。`--sandbox` 档(把 system.shell.exec/python_exec 强制切到 docker 后端)未实现——目前只能改 `[tools] python_exec` 配置。

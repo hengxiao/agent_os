@@ -1,9 +1,11 @@
 """复现层(docs/RUNNERS.md §3.4;replay 脚本重建与 run 结构化 diff,两个 runner 共用)。
 
-replay:runner 只在帧上下文追加 LLM 响应(§3.1),故 trace 中**第 N 个属于帧 F 的
-``post:llm.response`` 信号 ↔ checkpoint 中帧 F 的第 N 条 role=="assistant" 消息**;
-按信号出现顺序取出这些消息即可重建 MockProvider 脚本,确定性重放整棵帧树
-(不碰真实 API;工具副作用仍按真实环境执行,§3.4 边界)。
+replay 脚本重建(``build_mock_script``/``replace_providers``)已下沉
+telemetry/replay.py(2026-09-30:register() 验证门的录制重放证据同样要消费,
+skills/ 层不反向依赖 host/,telemetry/ 是双方都能到达的最低点);此处 re-export
+保持既有消费面(cli/main.py、cli/debug.py、web/run_manager.py、web/app.py)零改动。
+对齐规则(含压缩排干 ``source == "compress"`` 再排放必须过滤的修正)见
+telemetry/replay.py 模块 docstring。
 
 diff:两次 run 的信号序列按 ``(name, payload.skill, payload.tool, payload.ok,
 payload.depth)`` 逐位比较(缺失为 None,忽略 frame_id/ts 等动态值),外加
@@ -15,99 +17,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from agent_os.api.v1 import (
-    POST_LLM_RESPONSE,
-    ChatResponse,
-    ChatUsage,
-    Message,
-    Role,
-    Source,
-    ToolCall,
-)
-from agent_os.host.shared.artifacts import read_checkpoint, read_result, read_trace
-from agent_os.providers.manager import ProviderManager
-from agent_os.providers.mock import MockProvider
+from agent_os.host.shared.artifacts import read_result, read_trace
 
+# 下沉后的唯一实现(re-export;勿在此再放一份拷贝)
+from agent_os.telemetry.replay import build_mock_script, replace_providers
 
-def _message_from_dict(data: dict[str, Any]) -> Message:
-    """checkpoint 消息 dict → 契约 Message(与 §10.2 checkpoint schema v1 序列化互逆)。"""
-    return Message(
-        role=Role(data["role"]),
-        content=data.get("content", ""),
-        tool_calls=[
-            ToolCall(id=tc.get("id", ""), name=tc.get("name", ""), args=tc.get("args", {}))
-            for tc in data.get("tool_calls", [])
-        ],
-        tool_call_id=data.get("tool_call_id"),
-        name=data.get("name"),
-        reasoning=data.get("reasoning"),
-        source=Source(data.get("source", "system")),
-        meta=data.get("meta", {}),
-    )
-
-
-def build_mock_script(run_dir: str | Path) -> list[ChatResponse]:
-    """产物目录 → 按 trace 顺序重放的 MockProvider 脚本(§3.4;对齐规则见模块 docstring)。
-
-    ``finish_reason`` 按有无 tool_calls 定;``usage`` 取信号载荷——prompt/
-    completion/cost 为基线三维,cache/thinking 三维与 ttft/total_ms 读回 trace
-    已记录维度(additive 扩展,见 runner._usage_payload;旧 trace 缺键置零)。
-    信号缺对应帧或 assistant 消息时抛 ``ValueError``(宿主归退出码 2;
-    trace/checkpoint 文件畸形同样归此)。
-    """
-    rows = read_trace(run_dir)
-    checkpoint = read_checkpoint(run_dir)
-    frames = {f["frame_id"]: f for f in checkpoint.get("frames", [])}
-    responses = [
-        row
-        for row in rows
-        if row.get("type") == "signal" and row.get("name") == POST_LLM_RESPONSE
-    ]
-    seen: dict[str, int] = {}  # frame_id → 该帧已对齐的响应数
-    script: list[ChatResponse] = []
-    for row in responses:
-        frame_id = row.get("frame_id")
-        n = seen.get(frame_id, 0)
-        seen[frame_id] = n + 1
-        frame = frames.get(frame_id)
-        if frame is None:
-            raise ValueError(f"post:llm.response 的帧 {frame_id} 不在 checkpoint 中")
-        assistants = [
-            m
-            for m in (frame.get("context") or {}).get("messages", [])
-            if m.get("role") == "assistant"
-        ]
-        if n >= len(assistants):
-            raise ValueError(f"帧 {frame_id} 的第 {n + 1} 个响应信号无对应 assistant 消息")
-        message = _message_from_dict(assistants[n])
-        usage = (row.get("payload") or {}).get("usage") or {}
-        script.append(
-            ChatResponse(
-                message=message,
-                finish_reason="tool_calls" if message.tool_calls else "stop",
-                usage=ChatUsage(
-                    prompt=usage.get("prompt", 0),
-                    completion=usage.get("completion", 0),
-                    cost=usage.get("cost", 0.0),
-                    cache_read=usage.get("cache_read_tokens", 0),
-                    cache_write=usage.get("cache_write_tokens", 0),
-                    thinking=usage.get("thinking_tokens", 0),
-                ),
-                ttft_ms=usage.get("ttft_ms", 0),
-                total_ms=usage.get("total_ms", 0),
-            )
-        )
-    return script
-
-
-def replace_providers(kernel: Any, script: list[ChatResponse]) -> None:
-    """把内核的 provider 面整体替换为回放脚本(MockProvider 单例 + 新 ProviderManager)。
-
-    MockProvider 注册名取 config model 的前缀(``"mock/fib"`` → ``"mock"``),
-    模型路由与原 run 自然吻合;原 run 用真实 provider 时回放同样落在 mock 上。
-    """
-    prefix = (kernel.config.model or "").partition("/")[0]
-    kernel.providers = ProviderManager([MockProvider(script=script, name=prefix or None)])
+__all__ = ["build_mock_script", "diff_runs", "replace_providers"]
 
 
 #: diff 逐信号比较的载荷字段(§3.2;缺失为 None,frame_id/ts 等动态值忽略)

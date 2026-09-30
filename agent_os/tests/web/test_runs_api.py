@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.helpers.web import make_client as _client
-from tests.helpers.web import run_and_wait
+from tests.helpers.web import run_and_wait, wait_status
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
@@ -48,10 +48,7 @@ def test_post_run_async_mode(tmp_path):
     r = client.post("/api/runs", json={"skill": "demo.fib", "input": {"n": 2}})
     assert r.status_code == 200
     run_id = r.json()["run_id"]
-    for _ in range(200):
-        detail = client.get(f"/api/runs/{run_id}").json()
-        if detail["status"] in ("done", "failed", "aborted"):
-            break
+    detail = wait_status(client, run_id)  # 10s 预算 50ms 间隔,替代无 sleep 忙轮询
     assert detail["status"] == "done"
     assert detail["result"] == {"seq": [0, 1]}
 
@@ -155,3 +152,72 @@ def test_index_page_served(tmp_path):
     r = client.get("/")
     assert r.status_code == 200
     assert "<html" in r.text.lower()
+
+
+# ---------------------------------------------------------------------------
+# 回归:test_post_run_async_mode flake 根因(产物半写窗口 + 内存分支硬编码 result=None)
+# ---------------------------------------------------------------------------
+
+
+def test_detail_memory_branch_carries_record_result(tmp_path):
+    """_detail 内存分支:终态且 record 在场时响应必须带 record.result(非 None)。
+
+    原实现硬编码 ``"result": None``——result.json 重写窗口内产物分支读失败回落
+    内存分支,轮询会看到 ``{"status": "done", "result": null}``(flake 根因)。
+    """
+    from agent_os.host.web.app import _detail
+
+    class _Mgr:
+        def state_of(self, run_id):
+            return {
+                "status": "done",
+                "record": {"result": {"seq": [0, 1]}, "usage": {"steps": 3}},
+            }
+
+    detail = _detail(tmp_path, _Mgr(), "run-x")  # 产物目录空 → 必走内存分支
+    assert detail["status"] == "done"
+    assert detail["result"] == {"seq": [0, 1]}
+    assert detail["usage"] == {"steps": 3}
+
+
+def test_write_json_atomic_readers_never_torn(tmp_path):
+    """_write_json 原子性:并发重写期间读者只读到完整旧/新 JSON(tmp + os.replace)。
+
+    写完目标即完整可解析、无 .tmp 残留;并发读写交叉多轮,任何一次读都不得
+    抛出 JSONDecodeError(旧实现 bare write_text 的 truncate-write 窗口会)。
+    """
+    import json as _json
+    import threading
+
+    from agent_os.host.shared.artifacts import _write_json
+
+    target = tmp_path / "result.json"
+    _write_json(target, {"seq": 0})
+    assert _json.loads(target.read_text(encoding="utf-8")) == {"seq": 0}
+    assert not (tmp_path / "result.json.tmp").exists()  # tmp 已被 replace 收走
+
+    stop = threading.Event()
+    errors: list[Exception] = []
+
+    def _writer() -> None:
+        for i in range(1, 300):
+            _write_json(target, {"seq": i, "pad": "x" * 4000})
+        stop.set()
+
+    def _reader() -> None:
+        while not stop.is_set():
+            try:
+                doc = _json.loads(target.read_text(encoding="utf-8"))
+                assert isinstance(doc["seq"], int)
+            except Exception as e:  # noqa: BLE001 — 收集一切撕裂读证据
+                errors.append(e)
+                stop.set()
+
+    w = threading.Thread(target=_writer)
+    r = threading.Thread(target=_reader)
+    w.start()
+    r.start()
+    w.join()
+    r.join()
+    assert errors == []
+    assert _json.loads(target.read_text(encoding="utf-8"))["seq"] == 299

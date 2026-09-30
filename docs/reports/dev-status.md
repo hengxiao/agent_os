@@ -726,6 +726,28 @@
 > 白皮书 02(zh/en)、ch08 落地注同批更新。
 > 全量基线:1935 收集 = 1885 passed + 10 skipped + 40 xfailed,0 失败(+24 例)。
 
+> ✅ **复核 2026-09-30(测试健康批——flaky 根治 + 慢文件提速,顺带两个生产修复)**:
+> ① **flaky 根治**(`test_post_run_async_mode` 三连 flake + 同根 `test_debug_step_over`)
+> ——根因在 app 侧三处,busy-poll 只是放大器:`_detail` 内存分支硬编码 `"result": None`
+> (`host/web/app.py:427`,现从 record 取,usage 行同口径);worker 收尾顺序改为 record
+> 先于 status(`host/web/run_manager.py:737-740`,终态 status 发布即蕴含 record 在场,
+> 反序留"done 但 result=None"窗口);产物写原子化——`_write_json` 同目录 tmp +
+> `os.replace`(`host/shared/artifacts.py:38-43`),`_tag_artifacts` 重写同用
+> (`run_manager.py:771`)——半写窗口家族关闭;测试侧防御 busy-poll 换 `wait_status`
+> (`tests/web/test_runs_api.py:51`),20× 循环零失败;
+> ② **yaml C 加载器**——registry 加载热路径 `yaml.safe_load` → `CSafeLoader`
+> (getattr 回落纯 Python,语义等价;`skills/local_file.py:247-250`),std registry
+> 加载 82ms→11.1ms;写路径(gate.py/package.py/draft_store.py)刻意不动;
+> ③ **慢文件提速**——`tests/skills/test_std_files_edge.py` 4.92s→1.20s(4.1×;44 次
+> 内核重建共享进程级 `std_registry()` 懒加载单例,`tests/helpers/kernels.py:22-36`);
+> ④ **顺带**——`token_refresh.py` refresher 进程级去重(模块锁 + 已起线程,每进程
+> 至多一个 daemon;此前每个 create_app 一条,~50 web 测试累积 ~50 线程)。
+> 回归测试 +2(内存分支带 result:`test_detail_memory_branch_carries_record_result`;
+> 原子写读者不撕:`test_write_json_atomic_readers_never_torn`,均 `tests/web/test_runs_api.py`)。
+> `test_debug_error_semantics` 为另一族低置信开口,不在本批;code-quality-audit §3.6
+> 已加同日更正注,DESIGN §16 已加同日条目。
+> 全量基线:1937 收集 = 1887 passed + 10 skipped + 40 xfailed,0 失败(+2 例)。
+
 ## 一、总览
 
 - **里程碑**:M0–M5 完成(其中 M5 拆为 a/b/c 三个子提交);**M6(演化)未开始**。

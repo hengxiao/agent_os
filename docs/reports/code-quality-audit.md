@@ -142,6 +142,8 @@ pytest tests/examples/test_{support_desk,travel_planner}.py → 4 failed
 
 已复现一例真 flaky(`test_post_run_async_mode` 的无 sleep 忙轮询,`tests/helpers/web.py:26` 已有正确实现却没用)。其余风险:`test_travel_planner.py:169` 的 skipif 在**模块导入期发真实 HTTPS 请求**(每次 collect 都发,违反"CI 不联网"的线);根 `conftest.py:24-28` 为迁就它**改了整个进程的默认 UA**;`brains.py:116` 的 `_cut_state` 模块级可变全局靠手动 reset;providers 的 live smoke **无 marker 保护**,设了 key 的机器一句 `pytest` 就真花钱。
 
+> **更正(2026-09-30)**:本段把 `test_post_run_async_mode` 的 flaky 归因于测试侧 busy-poll——复核确认 busy-poll 只是**放大器**,根因在 app 侧三处:① `_detail` 内存分支硬编码 `"result": None`(`host/web/app.py:427`,现从 record 取,usage 行同口径);② worker 收尾顺序——record 先于 status 落内存态(`host/web/run_manager.py:737-740`,反序留"done 但 result=None"窗口);③ 产物写非原子——`_write_json` 改同目录 tmp + `os.replace`(`host/shared/artifacts.py:38-43`),`_tag_artifacts` 重写同用(`run_manager.py:771`)。三处修复后半写窗口家族关闭,同根 flake 的 `test_debug_step_over` 一并根治(20× 循环零失败);测试侧仍换 `wait_status` 作防御(`tests/web/test_runs_api.py:51`),回归锚点 +2(内存分支带 result :162、原子写读者不撕 :183)。`test_debug_error_semantics` 属另一族低置信开口,不在本批。
+
 **pytest-xdist 目前无法启用**,阻塞项按优先级:examples 撞名 → `cut_brain` 全局 → 多处不撤销的 `sys.path.insert` → docker 测试的全局容器名过滤。
 
 ---

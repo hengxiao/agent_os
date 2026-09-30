@@ -27,14 +27,12 @@ from agent_os.logic.inprocess import InProcessLogicKernel
 from agent_os.logic.python_sandbox import PythonSandboxLogicKernel
 from agent_os.providers.mock import MockProvider
 from agent_os.runtime.builder import KernelBuilder
-from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.tools.local_registry import LocalPythonToolRegistry
+from tests.helpers.kernels import std_registry
 
 #: handler 内 ValueError/FileNotFoundError 经 Logic Kernel 折为 ToolDispatchError;
 #: inputs schema 拒绝在 Kernel.run 入口抛 SkillLoadError(§3.2/§9.4)
 HANDLER_ERRORS = (ToolDispatchError, SkillLoadError)
-
-STD_DIR = Path(__file__).resolve().parents[2] / "std"
 
 
 def _kernel(workdir: Path):
@@ -46,7 +44,9 @@ def _kernel(workdir: Path):
         KernelBuilder(config)
         .providers(MockProvider())
         .tools(LocalPythonToolRegistry.with_builtins())
-        .skills(LocalFileSkillRegistry(str(STD_DIR)))
+        # 进程级共享注册表(tests/helpers/kernels.py):44 次内核装配只解析一遍
+        # std/*.yaml;本文件无 register()/reload() 调用,不污染共享实例
+        .skills(std_registry())
         .logic_kernels(InProcessLogicKernel(), PythonSandboxLogicKernel())
         .build()
     )

@@ -29,6 +29,11 @@ _CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"  # kimi-code 公开 OAuth cl
 _CHECK_INTERVAL_S = 60
 _REFRESH_BEFORE_S = 180  # 距过期 3 分钟内就续(15 分钟票留足余量)
 
+#: 进程级单例(模块锁 + 已起线程):create_app 每次调用都会 start,测试场景
+#: 几十次装配不该堆积几十条续期线程——同一凭证文件一条线程足矣
+_start_lock = threading.Lock()
+_started: threading.Thread | None = None
+
 
 def _cred_path() -> Path:
     return Path(
@@ -87,18 +92,27 @@ def _refresh_once(path: Path) -> bool:
 
 
 def start_token_refresher(stop: threading.Event | None = None) -> threading.Thread | None:
-    """启动 daemon 续期线程;凭证文件不存在时不启动(返回 None)。"""
+    """启动 daemon 续期线程;凭证文件不存在时不启动(返回 None)。
+
+    进程级幂等:已起过线程(且未随 stop 退出语义显式重建)直接返回既有线程,
+    不为每个 app 实例重复起线(凭证文件是进程共享的,续期效果本就全局)。
+    """
+    global _started
     path = _cred_path()
     if not path.exists():
         _log.info("未找到 kimi-code 凭证(%s),token 续期未启用", path)
         return None
+    with _start_lock:
+        if _started is not None:
+            return _started
 
-    def _loop() -> None:
-        while not (stop and stop.is_set()):
-            _refresh_once(path)
-            time.sleep(_CHECK_INTERVAL_S)
+        def _loop() -> None:
+            while not (stop and stop.is_set()):
+                _refresh_once(path)
+                time.sleep(_CHECK_INTERVAL_S)
 
-    t = threading.Thread(target=_loop, name="agent-os-token-refresh", daemon=True)
-    t.start()
-    print(f"[token_refresh] OAuth token 自动续期已启动(每 {_CHECK_INTERVAL_S}s 检查 {path})", flush=True)
-    return t
+        t = threading.Thread(target=_loop, name="agent-os-token-refresh", daemon=True)
+        t.start()
+        _started = t
+        print(f"[token_refresh] OAuth token 自动续期已启动(每 {_CHECK_INTERVAL_S}s 检查 {path})", flush=True)
+        return t

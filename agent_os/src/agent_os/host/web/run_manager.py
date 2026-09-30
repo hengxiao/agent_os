@@ -133,7 +133,7 @@ from agent_os.api.v1 import (
     Source,
     web_single_user_principal,
 )
-from agent_os.host.shared.artifacts import execute_resume, execute_run
+from agent_os.host.shared.artifacts import _write_json, execute_resume, execute_run
 from agent_os.host.shared.replay import build_mock_script, replace_providers
 from agent_os.host.shared.runrecord import STATUS_FAILED
 from agent_os.kernel.control import EVENT_QUEUE_KEY
@@ -734,8 +734,10 @@ class RunManager:
                 )
                 record["skill_set"] = tag
                 self._tag_artifacts(record["run_id"], tag)
-                state["status"] = record["status"]
+                # 先 record 后 status:终态 status 发布即蕴含 record 已在场(_detail 内存分支
+                # 以 status 判终态后取 record.result,反序会留下"done 但 result=None"窗口)
                 state["record"] = record
+                state["status"] = record["status"]
             except Exception as e:  # noqa: BLE001 — 与 execute_run 同旨:校验/装配错归 RunRecord,不炸宿主(§3.3)
                 state["status"] = STATUS_FAILED
                 state["error"] = f"{type(e).__name__}: {e}"
@@ -766,9 +768,7 @@ class RunManager:
             except (OSError, json.JSONDecodeError):
                 continue  # 产物落盘半写窗口:跳过,内存态仍带 tag
             doc["skill_set"] = tag
-            path.write_text(
-                json.dumps(doc, ensure_ascii=False, indent=2, default=repr), encoding="utf-8"
-            )
+            _write_json(path, doc)  # 原子重写(artifacts 同款 tmp+os.replace):读者不遇半写
 
     async def stop_run(self, run_id: str) -> bool:
         """``POST stop``(§4.3):``RunControl.stop`` 置中止标志,run 在下一个 safe point 中止。

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,7 +36,11 @@ from agent_os.kernel.errors import RunAborted, RunPaused
 
 
 def _write_json(path: Path, doc: Any) -> None:
-    path.write_text(json.dumps(doc, ensure_ascii=False, indent=2, default=repr), encoding="utf-8")
+    """原子落盘:同目录 tmp + ``os.replace``(同文件系统 rename 原子)——读者只见完整旧/新
+    内容,堵半写窗口(_detail 轮询与 finalize/_tag_artifacts 重写竞态的 flake 根因)。"""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, default=repr), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _archive_trace(kernel: Any, run_id: str, run_dir: Path) -> None:

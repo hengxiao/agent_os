@@ -242,7 +242,12 @@ class LocalFileSkillRegistry:
         """读全部源文件并走完整加载流水线;抛 SkillLoadError 时不触碰调用方状态(reload 保留旧表)。"""
         entries: list = []
         for source in self._sources():
-            data = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+            # CSafeLoader(libyaml C 实现)语义同 SafeLoader,缺库回落纯 Python;
+            # 注册表加载是内核装配热路径(每次 build 全量解析),值得 C 加速
+            data = yaml.load(
+                source.read_text(encoding="utf-8"),
+                Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader),
+            ) or {}
             entries.extend(data.get("skills") or [])
         manifests = [parse_manifest(e) for e in entries]
         names = [m.name for m in manifests]

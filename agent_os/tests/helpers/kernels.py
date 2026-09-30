@@ -17,6 +17,22 @@ from agent_os.tools.local_registry import LocalPythonToolRegistry
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIB_SKILLS_YAML = PROJECT_ROOT / "skills" / "skills.yaml"
+STD_DIR = PROJECT_ROOT / "std"
+
+_std_registry: LocalFileSkillRegistry | None = None
+
+
+def std_registry() -> LocalFileSkillRegistry:
+    """进程级共享的 std/ 技能注册表(懒加载单例):std/*.yaml 全量解析只做一次。
+
+    注册表加载是纯读(parse + validate,不起热重载看门狗),装配侧只调幂等的
+    ``load()`` 与只读的 ``manifests()``——共享实例不携带调用方状态,各测试仍
+    各自 build 独立内核。调用方不得 register()/reload()(会污染全局)。
+    """
+    global _std_registry
+    if _std_registry is None:
+        _std_registry = LocalFileSkillRegistry(str(STD_DIR))
+    return _std_registry
 
 
 async def auto_approve(question) -> dict:

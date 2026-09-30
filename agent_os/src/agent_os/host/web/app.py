@@ -422,7 +422,9 @@ def _detail(artifacts_root: Path, manager: RunManager, run_id: str) -> dict[str,
     return {
         "run_id": run_id,
         "status": state["status"],
-        "result": None,
+        # 终态后 record 已在场(run_manager 先 record 后 status):取 record.result,
+        # 不硬编码 None——否则 result.json 半写窗口内轮询会看到 "done" 配 null
+        "result": (state.get("record") or {}).get("result"),
         "error": state.get("error"),
         "usage": (state.get("record") or {}).get("usage") or {},
         "frames": [],

@@ -14,12 +14,14 @@ provenance(支撑 loss masking)。
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from pathlib import Path
 from typing import IO, Any
 
 from agent_os.api.v1 import Checkpoint, Exporter, Signal
+from agent_os.telemetry.redact import redact_payload
 
 
 def _signal_line(sig: Signal) -> dict[str, Any]:
@@ -40,13 +42,25 @@ class JsonlTelemetrySink:
 
     全部信号 append 到 ``<traces_dir>/<run_id>.jsonl``(追加模式,行缓冲);
     每个文件首行为版本头。payload 遇不可 JSON 序列化值用 ``repr`` 兜底。
+
+    ``redact=True``(§10.2 PII 脱敏 hook,**默认关闭**):``record`` 入口先把
+    payload 换成脱敏副本,WAL 行与 exporters 共用同一份(telemetry/redact.py
+    regex 快筛)。开启后 WAL 不再逐字保真(合规取舍);replay 依赖的
+    ``post:llm.response`` usage 是数值,不受影响。
     """
 
     SCHEMA: str = "agent_os.trace/1"
 
-    def __init__(self, traces_dir: str = "./traces", exporters: list[Exporter] | None = None) -> None:
+    def __init__(
+        self,
+        traces_dir: str = "./traces",
+        exporters: list[Exporter] | None = None,
+        *,
+        redact: bool = False,
+    ) -> None:
         self.traces_dir = traces_dir
         self.exporters: list[Exporter] = list(exporters or [])
+        self._redact = redact
         Path(traces_dir).mkdir(parents=True, exist_ok=True)
         #: run_id → 行缓冲文件句柄(懒打开,首行写版本头)
         self._files: dict[str, IO[str]] = {}
@@ -75,6 +89,9 @@ class JsonlTelemetrySink:
 
     async def record(self, sig: Signal) -> None:
         """追加一行信号(总线特权订阅者入口,§5.1);随后转发注册的 exporters。"""
+        if self._redact:
+            # §10.2 PII 脱敏 hook:WAL 行与 exporters 收同一份脱敏副本
+            sig = dataclasses.replace(sig, payload=redact_payload(sig.payload))
         self._file_for(sig.run_id).write(
             json.dumps(_signal_line(sig), ensure_ascii=False, default=repr) + "\n"
         )

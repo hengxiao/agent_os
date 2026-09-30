@@ -1159,3 +1159,153 @@ def test_custom_router_bad_value_rejected(value, match):
     )
     with pytest.raises(ConfigError, match=match):
         build_kernel(cfg)
+
+
+# ---------------------------------------------------------------------------
+# [telemetry] 段(§10.2):严格解析(闭合唯一非严格段缺口)+ OTLP 接线 + EP 组
+# ---------------------------------------------------------------------------
+
+
+def test_telemetry_unknown_field_rejected(tmp_path):
+    """[telemetry] 未知字段硬拒(同各段先例:键拼错会静默不接线)。"""
+    cfg = _base_cfg(telemetry={"dir": str(tmp_path), "dri": "x"})
+    with pytest.raises(ConfigError, match=r"\[telemetry\] 含未知字段"):
+        build_kernel(cfg)
+
+
+def test_telemetry_redact_non_bool_rejected(tmp_path):
+    cfg = _base_cfg(telemetry={"dir": str(tmp_path), "redact": "on"})
+    with pytest.raises(ConfigError, match="redact 须为布尔"):
+        build_kernel(cfg)
+
+
+def test_telemetry_otlp_endpoint_required(tmp_path):
+    """[telemetry.otlp] 缺 endpoint / 非 http(s) 前缀 → ConfigError。"""
+    cfg = _base_cfg(telemetry={"dir": str(tmp_path), "otlp": {}})
+    with pytest.raises(ConfigError, match="endpoint 必填"):
+        build_kernel(cfg)
+    cfg = _base_cfg(telemetry={"dir": str(tmp_path), "otlp": {"endpoint": "ftp://x"}})
+    with pytest.raises(ConfigError, match="endpoint 必填"):
+        build_kernel(cfg)
+
+
+def test_telemetry_otlp_unknown_field_rejected(tmp_path):
+    cfg = _base_cfg(
+        telemetry={"dir": str(tmp_path), "otlp": {"endpoint": "http://x", "batchmax": 3}}
+    )
+    with pytest.raises(ConfigError, match=r"\[telemetry.otlp\] 含未知字段"):
+        build_kernel(cfg)
+
+
+def test_telemetry_otlp_bad_number_rejected(tmp_path):
+    """调参须为正数(0/负数/布尔同拒,同 [mcp.servers] timeout 先例)。"""
+    for key in ("batch_max", "flush_interval", "queue_max", "timeout"):
+        cfg = _base_cfg(
+            telemetry={"dir": str(tmp_path), "otlp": {"endpoint": "http://x", key: 0}}
+        )
+        with pytest.raises(ConfigError, match=f"{key} 须为正数"):
+            build_kernel(cfg)
+
+
+def test_telemetry_otlp_without_dir_rejected():
+    """otlp/redact 配置了但缺 dir → ConfigError(OTLP 是 exporter 不是 sink 替代)。"""
+    cfg = _base_cfg(telemetry={"otlp": {"endpoint": "http://localhost:4318"}})
+    with pytest.raises(ConfigError, match="缺 dir"):
+        build_kernel(cfg)
+    cfg = _base_cfg(telemetry={"redact": True})
+    with pytest.raises(ConfigError, match="缺 dir"):
+        build_kernel(cfg)
+
+
+def test_telemetry_otlp_headers_env_resolution(monkeypatch, tmp_path):
+    """headers 值 ``{env = "VAR"}`` 装配时现读 os.environ(不落盘明文,mcp 先例)。"""
+    monkeypatch.setenv("AGENT_OS_TEST_OTLP_TOKEN", "TESTSECRET-OTLP")
+    cfg = _base_cfg(
+        telemetry={
+            "dir": str(tmp_path),
+            "otlp": {
+                "endpoint": "http://localhost:4318",
+                "headers": {"X-Literal": "a", "X-Token": {"env": "AGENT_OS_TEST_OTLP_TOKEN"}},
+            },
+        }
+    )
+    kernel = build_kernel(cfg)
+    (otlp,) = kernel.telemetry.exporters
+    assert otlp._headers == {"X-Literal": "a", "X-Token": "TESTSECRET-OTLP"}
+    assert otlp._endpoint == "http://localhost:4318"
+
+
+def test_telemetry_otlp_headers_env_missing_rejected(tmp_path, monkeypatch):
+    monkeypatch.delenv("AGENT_OS_TEST_OTLP_MISSING", raising=False)
+    cfg = _base_cfg(
+        telemetry={
+            "dir": str(tmp_path),
+            "otlp": {
+                "endpoint": "http://localhost:4318",
+                "headers": {"X-Token": {"env": "AGENT_OS_TEST_OTLP_MISSING"}},
+            },
+        }
+    )
+    with pytest.raises(ConfigError, match="环境变量 AGENT_OS_TEST_OTLP_MISSING 不存在"):
+        build_kernel(cfg)
+
+
+def test_telemetry_redact_and_defaults_wired(tmp_path):
+    """redact 接线到 sink;缺省段(dir only)行为不变:redact 关、无 exporter。"""
+    kernel = build_kernel(_base_cfg(telemetry={"dir": str(tmp_path / "a"), "redact": True}))
+    assert kernel.telemetry._redact is True
+    assert kernel.telemetry.exporters == []
+    kernel = build_kernel(_base_cfg(telemetry={"dir": str(tmp_path / "b")}))
+    assert kernel.telemetry._redact is False
+    assert kernel.telemetry.traces_dir == str(tmp_path / "b")
+
+
+class _EpInstanceExporter:
+    """假遥测插件(实例形态 EP):name="ep_rec" 注册进 sink。"""
+
+    name = "ep_rec"
+
+    async def export(self, sig):  # pragma: no cover — 只验装配
+        raise AssertionError("不应被调用")
+
+    async def close(self):  # pragma: no cover — 只验装配
+        pass
+
+
+class _EpClassExporter:
+    """假遥测插件(类形态 EP):无参实例化后注册。"""
+
+    name = "ep_cls"
+
+    async def export(self, sig):  # pragma: no cover — 只验装配
+        raise AssertionError("不应被调用")
+
+    async def close(self):  # pragma: no cover — 只验装配
+        pass
+
+
+def test_telemetry_entry_points_loaded_after_config_wired(monkeypatch, tmp_path):
+    """entry point ``agent_os.telemetry``:实例/类形态注册进 sink,坏 EP 警告跳过;
+    排在配置接线的 exporter([telemetry.otlp])之后(同压缩器 EP 先例)。"""
+    from agent_os.telemetry.otlp_exporter import OtlpExporter
+
+    instance_ep = _EpInstanceExporter()
+    eps = [
+        _FakeEntryPoint("ep-rec", instance_ep),  # 实例直接用
+        _FakeEntryPoint("ep-cls", _EpClassExporter),  # 类 → 无参实例化
+        _FakeEntryPoint("ep-bad", RuntimeError("坏 EP")),  # 坏 EP:警告跳过,不杀 build
+    ]
+    monkeypatch.setattr(
+        "importlib.metadata.entry_points",
+        lambda group=None: eps if group == "agent_os.telemetry" else (),
+    )
+    cfg = _base_cfg(
+        telemetry={"dir": str(tmp_path), "otlp": {"endpoint": "http://localhost:4318"}}
+    )
+    with pytest.warns(UserWarning, match="遥测 exporter entry point 加载失败"):
+        kernel = build_kernel(cfg)
+    exporters = kernel.telemetry.exporters
+    assert isinstance(exporters[0], OtlpExporter), "配置接线的 exporter 在前"
+    assert exporters[1] is instance_ep
+    assert isinstance(exporters[2], _EpClassExporter)
+    assert len(exporters) == 3, "坏 EP 被跳过"

@@ -88,7 +88,27 @@ loop_detector = { threshold = 3, max_strikes = 2 }
                                       # (指令注入/秘密 PII/可迁移性),fail-closed 拒写且不计连败
 
 [telemetry]
-dir = ".agent-os/traces"
+dir = ".agent-os/traces"             # WAL 目录(strict 段;配 redact/otlp 缺 dir → ConfigError——OTLP 是 exporter 不是 sink 替代)
+# redact = true                      # PII 脱敏 hook(2026-09-30,DESIGN §10.2;默认 false):record 入口把 payload 换成
+                                     # 脱敏副本,WAL 行与 exporters 共用同一份(telemetry/redact.py 五形态 regex 快筛:
+                                     # email/phone_cn/id_card_cn/bank_card/api_key → [EMAIL] 式占位,与 std 技能
+                                     # common.security.redact_pii 同款语义);开启后 WAL 不再逐字保真(合规取舍),
+                                     # replay 依赖的 usage 数值不受影响
+# [telemetry.otlp]                   # OTLP exporter(2026-09-30,telemetry/otlp_exporter.py):信号流 → span 树,
+                                     # OTLP/HTTP JSON POST {endpoint}/v1/traces(零新依赖,无 protobuf);
+                                     # best-effort——POST 失败丢批不重试、队列满丢最旧(限速 warning);
+                                     # export() 零 IO(有界队列 + 后台 drainer),不阻塞 run 关键路径
+# endpoint = "http://localhost:4318" # 必填,http(s):// 单端点;缺/非 http(s) → ConfigError
+# headers = { Authorization = { env = "OTLP_TOKEN" } }
+                                     # 值 = 字符串字面量或 { env = "VAR" } 间接引用(装配时现读 os.environ,
+                                     # 不落盘明文,同 [credentials]/mcp headers 先例;变量缺席 → ConfigError)
+# batch_max = 64                     # 单批 span 数上限(攒够即 flush)
+# flush_interval = 2.0               # 周期 flush 秒数(到点发)
+# queue_max = 1000                   # 有界队列上限;满丢最旧 + _dropped 计数
+# timeout = 5.0                      # 单次 POST 超时秒数;四个调参键均须正数(strict,未知键 ConfigError)
+                                     # 宿主责任:close() 是唯一排干点——CLI run/resume/replay finally 已接
+                                     # (_close_telemetry);Web 宿主无 shutdown/lifespan 钩子未接,进程退出
+                                     # 丢弃 exporter 队列余量(best-effort 语义内,已知缺口)
 
 [retry]
 max_attempts = 3

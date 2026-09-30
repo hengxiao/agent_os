@@ -113,6 +113,27 @@ def _compressor_plugins() -> dict[str, Any]:
     return registry
 
 
+def _telemetry_plugins() -> list[Any]:
+    """entry point ``agent_os.telemetry`` 插件加载(docs/DESIGN.md §10.1/§14.3)。
+
+    逐条 ``ep.load()``:是类则无参实例化,是实例直接用;须有非空 ``.name``
+    (``Exporter`` 契约,api/v1/telemetry.py);单条坏只 ``warnings.warn`` 跳过,
+    不杀装配;零条目 no-op(同 :func:`_compressor_plugins` 先例)。
+    """
+    exporters: list[Any] = []
+    for ep in importlib.metadata.entry_points(group="agent_os.telemetry"):
+        try:
+            obj = ep.load()
+            instance = obj() if isinstance(obj, type) else obj
+            name = getattr(instance, "name", None)
+            if not isinstance(name, str) or not name:
+                raise TypeError(f"entry point {ep.name!r} 的遥测 exporter 缺 name 属性")
+            exporters.append(instance)
+        except Exception as e:  # noqa: BLE001 — 单条坏 EP 只警告,不杀 build
+            warnings.warn(f"遥测 exporter entry point 加载失败,已跳过: {ep.name}: {e}", stacklevel=2)
+    return exporters
+
+
 def _distill_trigger(sidecar: DistillSidecar, ctl: Any) -> Any:
     """DistillSidecar 的总线直连 handler(装配理由见 build 内注释):内联触发判定。"""
 
@@ -299,7 +320,8 @@ class KernelBuilder:
         ContextManager.build 与 kernel.router(KernelLogicContext.chat 路由);
         logic_kernels 按 TrustLevel 索引装配为 LogicKernelRouter(§9.2);
         sidecars(M4)装配 RunControlImpl + SidecarSupervisor 并注册到总线(§5);
-        telemetry(M5a)作为总线特权订阅者接入(§5.1:全量订阅,不算 sidecar);
+        telemetry(M5a)作为总线特权订阅者接入(§5.1:全量订阅,不算 sidecar;
+        sink 在场时先注册 entry point ``agent_os.telemetry`` 插件 exporter,§10.1/§14.3);
         blackboard(M5b)接线到 kernel.blackboard(§12:StatusBoard 与帧间消息);
         memory(M6)接线到 kernel.memory 并经 bind_memory 注入工具 registry
         (§11.2:memory_search/memory_write 数据源,bind 模式同 bind_skills);
@@ -442,6 +464,20 @@ class KernelBuilder:
                 if hasattr(provider, "blob"):
                     provider.blob = self._blob
         if self._telemetry is not None:
+            # §10.1/§14.3:entry point ``agent_os.telemetry`` 插件 exporter 注册进 sink
+            # (排在配置接线的 exporter 之后;sink 无 register_exporter 槽位则警告丢弃)
+            plugins = _telemetry_plugins()
+            if plugins:
+                register = getattr(self._telemetry, "register_exporter", None)
+                if register is None:
+                    warnings.warn(
+                        f"遥测 entry point 插件无处置放(sink 缺 register_exporter),已丢弃: "
+                        f"{[getattr(p, 'name', '?') for p in plugins]}",
+                        stacklevel=2,
+                    )
+                else:
+                    for exporter in plugins:
+                        register(exporter)
             # §5.1:Telemetry 是总线的特权订阅者(全量订阅),不算 sidecar
             bus.subscribe("*", self._telemetry.record)
         kernel = Kernel(

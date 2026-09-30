@@ -57,6 +57,21 @@ loop_detector = { threshold = 3, max_strikes = 2 }
 
 [telemetry]
 dir = ".agent-os/traces"
+# redact = true                       # PII 脱敏 hook(2026-09-30,默认关):record 入口把 payload 换成脱敏副本,
+                                      # WAL 与 exporters 共用(五形态 regex 快筛:email/手机/身份证/银行卡/api key
+                                      # → [EMAIL] 式占位,telemetry/redact.py);开启后 WAL 不再逐字保真(合规取舍),
+                                      # replay 依赖的 usage 数值不受影响
+# [telemetry.otlp]                    # OTLP exporter(2026-09-30):OTLP/HTTP JSON POST {endpoint}/v1/traces
+                                      # (无 protobuf);best-effort——失败丢批不重试、队列满丢最旧;
+                                      # 注意:配了 otlp/redact 就不能缺上面的 dir(OTLP 是 exporter 不是 sink 替代)
+# endpoint = "http://localhost:4318"  # 必填,http(s)://;缺/非 http(s) → ConfigError
+# headers = { Authorization = { env = "OTLP_TOKEN" } }
+                                      # 值 = 字面量或 { env = "VAR" } 间接引用(装配时现读,不落盘明文;
+                                      # 变量缺席 → ConfigError,同 [credentials]/mcp headers 先例)
+# batch_max = 64                      # 单批 span 数上限(攒够即 flush)
+# flush_interval = 2.0                # 周期 flush 秒数(到点发)
+# queue_max = 1000                    # 有界队列上限;满丢最旧 + 限速 warning
+# timeout = 5.0                       # 单次 POST 超时秒数(四键均须正数,strict)
 
 [retry]
 max_attempts = 3

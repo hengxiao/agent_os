@@ -49,9 +49,11 @@ def _message_from_dict(data: dict[str, Any]) -> Message:
 def build_mock_script(run_dir: str | Path) -> list[ChatResponse]:
     """产物目录 → 按 trace 顺序重放的 MockProvider 脚本(§3.4;对齐规则见模块 docstring)。
 
-    ``finish_reason`` 按有无 tool_calls 定;``usage`` 取信号载荷(prompt/completion/
-    cost,其余维度 trace 未记录,置零)。信号缺对应帧或 assistant 消息时抛
-    ``ValueError``(宿主归退出码 2;trace/checkpoint 文件畸形同样归此)。
+    ``finish_reason`` 按有无 tool_calls 定;``usage`` 取信号载荷——prompt/
+    completion/cost 为基线三维,cache/thinking 三维与 ttft/total_ms 读回 trace
+    已记录维度(additive 扩展,见 runner._usage_payload;旧 trace 缺键置零)。
+    信号缺对应帧或 assistant 消息时抛 ``ValueError``(宿主归退出码 2;
+    trace/checkpoint 文件畸形同样归此)。
     """
     rows = read_trace(run_dir)
     checkpoint = read_checkpoint(run_dir)
@@ -87,7 +89,12 @@ def build_mock_script(run_dir: str | Path) -> list[ChatResponse]:
                     prompt=usage.get("prompt", 0),
                     completion=usage.get("completion", 0),
                     cost=usage.get("cost", 0.0),
+                    cache_read=usage.get("cache_read_tokens", 0),
+                    cache_write=usage.get("cache_write_tokens", 0),
+                    thinking=usage.get("thinking_tokens", 0),
                 ),
+                ttft_ms=usage.get("ttft_ms", 0),
+                total_ms=usage.get("total_ms", 0),
             )
         )
     return script

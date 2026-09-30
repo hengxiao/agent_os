@@ -57,6 +57,58 @@ def test_replay_reproduces_same_result_and_signals(tmp_path, capsys):
 
 
 # ---------------------------------------------------------------------------
+# replay 脚本重建:usage additive 维度读回
+# ---------------------------------------------------------------------------
+
+
+def test_mock_script_reads_recorded_usage_dims(tmp_path):
+    """build_mock_script 读回 trace 已记录的 additive 维度(runner._usage_payload 扩展:
+
+    cache_read/cache_write/thinking_tokens 与 ttft/total_ms 随 ChatUsage/ChatResponse
+    重建;旧 trace 缺键置零)。
+    """
+    from agent_os.host.shared.replay import build_mock_script
+
+    run_dir = tmp_path / "r1"
+    run_dir.mkdir()
+    usage = {
+        "prompt": 5,
+        "completion": 3,
+        "cost": 0.01,
+        "cache_read_tokens": 7,
+        "cache_write_tokens": 11,
+        "thinking_tokens": 13,
+        "ttft_ms": 17,
+        "total_ms": 23,
+    }
+    (run_dir / "trace.jsonl").write_text(
+        json.dumps({"v": 1, "type": "header", "schema": "agent_os.trace/1"}) + "\n"
+        + json.dumps({
+            "v": 1, "type": "signal", "name": "post:llm.response", "run_id": "r1",
+            "frame_id": "f1", "ts": 0.0, "payload": {"model": "m", "usage": usage},
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "checkpoint.json").write_text(
+        json.dumps({
+            "v": 1,
+            "frames": [{
+                "frame_id": "f1",
+                "context": {"messages": [{"role": "assistant", "content": '{"seq": [0]}'}]},
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    (resp,) = build_mock_script(run_dir)
+    assert (resp.usage.prompt, resp.usage.completion, resp.usage.cost) == (5, 3, 0.01)
+    assert resp.usage.cache_read == 7
+    assert resp.usage.cache_write == 11
+    assert resp.usage.thinking == 13
+    assert (resp.ttft_ms, resp.total_ms) == (17, 23)
+
+
+# ---------------------------------------------------------------------------
 # diff
 # ---------------------------------------------------------------------------
 

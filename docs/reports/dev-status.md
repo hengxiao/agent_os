@@ -640,6 +640,47 @@
 > 已移除(余条重编号),§3.4/§5.1 信号目录注与 STDLIB §2 缺口 3、§5 开放问题 8
 > 已同步。测试:tests/kernel/test_branch_budget.py 16 例全绿。
 > 全量基线:1879 收集 = 1829 passed + 10 skipped + 40 xfailed,0 失败(+16 例)。
+> ---
+> ✅ **复核 2026-09-30(OTLP 导出 + PII 脱敏 hook——DESIGN §10.2 两条落地)**:下文
+> §8 Telemetry 的 OTLP/PII 两条与 P2 清单「OTLP 导出」行据此关闭(各 dated 原文保留,
+> 就地标注)。
+> ① **PII 脱敏 hook**(`telemetry/redact.py`)——`redact_payload()` 递归 walk
+> (dict 只脱值、键保留稳 WAL schema;list/tuple/str 下钻),五形态 regex
+> (email/phone_cn/id_card_cn/bank_card/api_key → `[EMAIL]` 式占位,重叠按模式表序
+> 认领),与 std 技能 `common.security.redact_pii` 同款语义
+> (`agent_os/std/transform.py:491-498`;std/ 不在 wheel 内不可 import,内联复刻并注明);
+> 接线 `JsonlTelemetrySink(redact=False)`(**默认关**,§10.2 逐字),开启后 WAL 写脱敏
+> 副本不再逐字保真(合规取舍),replay 依赖的 usage 数值不受影响;本地小模型深扫档未做。
+> ② **`OtlpExporter`**(`telemetry/otlp_exporter.py`)——`sink.register_exporter`
+> 注册制槽位;`export()` 零 IO(有界 deque + 懒启动后台 drainer,不阻塞 run 关键路径),
+> batch_max=64 攒批 / flush_interval=2.0 到点 flush;OTLP/HTTP JSON POST
+> `{endpoint}/v1/traces`(httpx 阻塞 Client + trust_env=False + to_thread,零新依赖,
+> 无 protobuf);POST 失败丢批不重试(best-effort v1),队列满丢最旧 + 限速 warning,
+> `close()` 幂等排干;traceId=sha256(run_id)[:32],span 名 run/skill:/tool:/llm:,
+> OpenInference 风格 `llm.*` 属性(token 五维 + cost + ttft/total),其余信号 → span
+> event,未配对/乱序跳过不抛。
+> ③ **usage payload 扩键 + replay 读回**——post:llm.response 增
+> cache_read/cache_write/thinking/ttft_ms/total_ms(`kernel/runner.py:550-571`,
+> ttft/total 仅主循环发送点),`build_mock_script` 读回新维度(旧 trace 缺键置零,
+> `host/shared/replay.py:88-97`)——重放保真提升。
+> ④ **`[telemetry]` 配置 strict 化**(`runtime/config.py:683-758`)——闭合全仓唯一
+> 非 strict 段缺口:dir 非空字符串 / redact 布尔(默认 false)/ `[telemetry.otlp]`
+> 子表(endpoint 必填 http(s)://;headers 值字面量或 `{env="VAR"}` 装配时现读,
+> 缺席 ConfigError;batch_max/flush_interval/queue_max/timeout 正数);配 otlp/redact
+> 缺 dir → ConfigError(OTLP 是 exporter 不是 sink 替代)。
+> ⑤ **EP 组实名化**——`agent_os.telemetry` 组在 pyproject.toml 声明(空组占位),
+> builder `_telemetry_plugins()` 加载(坏 EP 只 warning 不杀装配,EP exporter 排在
+> 配置接线之后)。
+> ⑥ **CLI close 接线**——run/resume/replay 三命令 finally `_close_telemetry`
+> (`host/cli/main.py:171-189`,duck-typed,失败仅 stderr 警告不改退出码);**已知缺口:
+> Web 宿主无 shutdown/lifespan 钩子,未接**——Web 进程退出时 exporter 队列余量丢弃
+> (best-effort 语义内,`host/web/app.py:626-629` docstring 已注明宿主责任)。
+> 留尾:MetricsCollector、RL-trajectory 导出、protobuf 编码、PII 深扫档(本地小模型)、
+> 导出重试/backoff、metrics/logs 管道、跨进程 traceparent 传播、Web 宿主 close 接线。
+> 测试 +32;DESIGN §10.2/§15/§16 与 §14.3 组注、白皮书 06(zh/en)状态头与局限性段、
+> ch06-evaluation 落地注记、RUNNERS §2.1 `[telemetry]` 配置参考、agent-os.example.toml
+> 注释示例同批更新。
+> 全量基线:1911 收集 = 1861 passed + 10 skipped + 40 xfailed,0 失败(+32 例)。
 
 ## 一、总览
 
@@ -731,13 +772,14 @@
 - **复核 2026-08-24**:系统级网络隔离已由 Docker 容器档落地(`logic/docker_sandbox.py`:`--network none` + `--read-only` + `--cap-drop ALL` + tmpfs,commit `4750e4e`),实际走的是容器路线而非 unshare/nsjail;subprocess 档仍不隔离网络与文件系统,但已补 env 白名单与 cwd 临时目录隔离(`logic/python_sandbox.py:148-164/297-310`,commit `6ced3d3`),凭证直读缺口已堵。沙箱回调通道已实现(socketpair + `_serve_syscalls` + runner `_syscall_dispatcher`,见 ../CODE-ORCHESTRATION.md)。`merge_limits` 仍 M5 stub(`logic/limits.py:34`);`mem_peak` 仍不记账(`logic/inprocess.py:6`)。
 - **复核 2026-09-27(清理批)**:`merge_limits` 已实填(`logic/limits.py:32`,两级取紧链式得三级,返回新实例;尚无调用点);`mem_peak` 仍不记账。
 
-### 8. Telemetry — 🟡 ~50%
+### 8. Telemetry — ✅ ~75%
 
-完成:JsonlTelemetrySink(版本头 WAL、按 run_id 分文件、总线特权订阅);内核 checkpoint/resume(帧含完整上下文序列化、按深度结算未配对调用、恢复只补未完成部分)。
+完成:JsonlTelemetrySink(版本头 WAL、按 run_id 分文件、总线特权订阅);内核 checkpoint/resume(帧含完整上下文序列化、按深度结算未配对调用、恢复只补未完成部分);`sink.snapshot()`(WAL 视角快照)与 `JsonlExporter`(2026-09-27 清理批实填,见下复核行);OTLP/OpenInference 导出与 PII 脱敏 hook(2026-09-30,见下复核行)。
 
-未开发:`sink.snapshot()`;OTLP/OpenInference 导出;训练就绪导出(压缩前原始报文 + provenance);PII 脱敏 hook;MetricsCollector。
+未开发:训练就绪导出(压缩前原始报文 + provenance,RL-trajectory);MetricsCollector。
 
 - **复核 2026-09-27(清理批)**:`sink.snapshot()` 已实现为 WAL 视角快照(`telemetry/jsonl_exporter.py:112`,seq = 已落盘信号数、`state={}`;帧树重建留 `kernel/checkpoint.py`),`JsonlExporter` 同批实填(全 run 汇聚单文件、close 幂等);OTLP/PII/MetricsCollector 仍开口。
+- **复核 2026-09-30(OTLP + PII 落地)**:OTLP 导出(`telemetry/otlp_exporter.py` `OtlpExporter`:OTLP/HTTP JSON POST `{endpoint}/v1/traces`,`export()` 零 IO + 后台 drainer 攒批,best-effort——无 protobuf、失败不重试、队列满丢最旧;CLI run/resume/replay finally `_close_telemetry` 已接,**Web 宿主无 shutdown/lifespan 钩子未接**为已知缺口)与 PII 脱敏 hook(`telemetry/redact.py` 五形态 regex 快筛,`JsonlTelemetrySink(redact=False)` 默认关,开后 WAL 不再逐字保真)已落地;`[telemetry]` 段 strict 化(dir/redact/`[telemetry.otlp]`,`runtime/config.py:683-758`)与 `agent_os.telemetry` EP 组实名化(builder `_telemetry_plugins()`)同批(详见头部复核块);训练就绪导出(RL-trajectory)与 MetricsCollector 仍开口。
 
 ### 9. Memory — ⬜ ~5%
 
@@ -785,6 +827,8 @@
 (**复核 2026-09-27(stub 清零+流式)**:`ask_user`/`notify_user`、runner 消费 `stream()`(真实 provider SSE/Anthropic 序列 + `post:llm.chunk` + ttft 记账)、死 stub 清理(`dispatch.py` 删除、`check_control_flags` 与裸 `python_exec` 移除)已关闭,见头部复核块;OTLP、"不说 done" hook、恢复熔断通用化、蒸馏 sidecar 仍开口。)
 
 (**复核 2026-09-28**:蒸馏 sidecar 已关闭(见头部复核块);OTLP、"不说 done" hook、恢复熔断通用化仍开口。)
+
+(**复核 2026-09-30**:OTLP 导出已关闭(OTLP/HTTP JSON exporter + `[telemetry.otlp]` 配置接线 + CLI close 排干,见头部复核块);"不说 done" hook、恢复熔断通用化仍开口。)
 
 **P3(开放问题)**:事件唤醒入口;语义检索可见层;FrameContext 继承/克隆;帧树粒度信用分配。
 

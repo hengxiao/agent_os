@@ -34,6 +34,9 @@ from agent_os.api.v1 import (
     POST_LOGIC_EXEC,
     POST_TOOL_CALL,
     ChatRequest,
+    ChatResponse,
+    ChatUsage,
+    Message,
     Permission,
     Role,
     RunConfig,
@@ -127,3 +130,39 @@ def test_output_validation_failure_aborts_run():
     kernel = fib_kernel(bad_brain)
     with pytest.raises(OutputValidationError):
         run(kernel, "demo.fib", {"n": 1})
+
+
+def test_usage_payload_carries_additive_dims():
+    """post:llm.response usage 的 additive 扩展(runner._usage_payload,§10.2 增量):
+
+    响应携带时补 cache_read/cache_write/thinking 三维(键名对齐 §2.3 Usage 契约)
+    与 ttft_ms/total_ms;基线三维 prompt/completion/cost 不变(旧消费者不受影响)。
+    """
+
+    def rich_brain(req: ChatRequest) -> ChatResponse:
+        return ChatResponse(
+            message=Message(role=Role.ASSISTANT, content=json.dumps({"seq": [0]})),
+            finish_reason="stop",
+            usage=ChatUsage(
+                prompt=5, completion=3, cache_read=7, cache_write=11, thinking=13, cost=0.01
+            ),
+            ttft_ms=17,
+            total_ms=23,
+        )
+
+    kernel = fib_kernel(rich_brain)
+    seen = record_all(kernel)
+    assert run(kernel, "demo.fib", {"n": 1}) == {"seq": [0]}
+
+    responses = [s for s in seen if s.name == POST_LLM_RESPONSE]
+    assert len(responses) == 1
+    assert responses[0].payload["usage"] == {
+        "prompt": 5,
+        "completion": 3,
+        "cost": 0.01,
+        "cache_read_tokens": 7,
+        "cache_write_tokens": 11,
+        "thinking_tokens": 13,
+        "ttft_ms": 17,
+        "total_ms": 23,
+    }

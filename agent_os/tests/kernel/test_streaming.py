@@ -193,7 +193,10 @@ def test_post_llm_response_once_with_usage(tmp_path):
 
     responses = [s for s in seen if s.name == POST_LLM_RESPONSE]
     assert len(responses) == 1
-    assert responses[0].payload["usage"] == {"prompt": 3, "completion": 2, "cost": 0.0}
+    # additive 扩展后为超集断言(cache/thinking/ttft/total 随响应携带,runner._usage_payload)
+    usage = responses[0].payload["usage"]
+    assert usage["prompt"] == 3 and usage["completion"] == 2 and usage["cost"] == 0.0
+    assert usage["total_ms"] >= usage["ttft_ms"] > 0  # 流式响应恒带计时(additive 键在场)
     root = _root(kernel)
     assert (root.usage.prompt_tokens, root.usage.completion_tokens) == (3, 2)
     assert root.usage.steps == 1

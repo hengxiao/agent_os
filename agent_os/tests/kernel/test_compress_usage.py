@@ -130,10 +130,11 @@ def test_compress_usage_accounted_without_steps(tmp_path):
     compress = [s for s in responses if s.payload.get("source") == "compress"]
     assert len(main) == state["main_calls"] == 4
     assert len(compress) == state["summarize_calls"] >= 1
-    # 压缩条目与主循环同形状 + additive:model/usage 键齐全,多 source
+    # 压缩条目与主循环同形状 + additive:model/usage 键齐全,多 source;
+    # usage 键集为超集断言(additive 扩展先例:cache/thinking 三维,runner._usage_payload)
     for s in compress:
         assert s.payload["model"] == "mock/chatty"
-        assert set(s.payload["usage"]) == {"prompt", "completion", "cost"}
+        assert {"prompt", "completion", "cost"} <= set(s.payload["usage"])
         assert s.payload["usage"]["prompt"] == SUMMARIZE_USAGE.prompt
 
     run_id = next(s for s in seen if s.name == RUN_STARTED).run_id

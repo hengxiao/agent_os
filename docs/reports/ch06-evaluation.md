@@ -80,9 +80,9 @@ Agent OS 的定位恰恰是本章所称的 Harness,因此本章对内核设计�
 
 **可观测性**
 
-- trace/span 树模型;**OpenTelemetry** 通用标准 + **OpenInference** LLM 语义约定(prompt、模型参数、token 用量的记录规范);标准协议让采集与分析解耦、避免厂商锁定。
+- trace/span 树模型;**OpenTelemetry** 通用标准 + **OpenInference** LLM 语义约定(prompt、模型参数、token 用量的记录规范);标准协议让采集与分析解耦、避免厂商锁定。(**落地注记 2026-09-30**:OTLP/OpenInference 映射已落地——`telemetry/otlp_exporter.py` 把帧树机械映射为 span 树(span 名 `run`/`skill:{…}`/`tool:{…}`/`llm:{…}`),LLM 落 OpenInference 风格 `llm.*` 属性(token 五维 + cost + ttft/total),OTLP/HTTP JSON POST `{endpoint}/v1/traces`,`[telemetry.otlp]` 配置接线;边界:无 protobuf、失败丢批不重试、队列满丢最旧、Web 宿主 close 未接。)
 - LangSmith/Langfuse/Phoenix;异步批量采集不影响 Agent 延迟;A/B 测试与 prompt 版本管理。
-- **生产 trace 回流为评测资产**:失败/可疑案例 → 脱敏 → 蒸馏为新测试与回归用例;评测集从一次性静态集合变为随产品演化的活资产。
+- **生产 trace 回流为评测资产**:失败/可疑案例 → 脱敏 → 蒸馏为新测试与回归用例;评测集从一次性静态集合变为随产品演化的活资产。(**落地注记 2026-09-30**:脱敏环节已有引擎侧 hook——`[telemetry] redact = true` 落盘前五形态 regex 快筛(`telemetry/redact.py`,默认关,开后 WAL 不再逐字保真);"回流"的通道端 = 同日落地的 OTLP 导出(见上条注记)。)
 
 **从报告到改进 + 内部评测基础设施**
 
@@ -132,7 +132,7 @@ Agent OS 的定位恰恰是本章所称的 Harness,因此本章对内核设计�
 
 1. **评测子系统整体缺位——本章最大提醒**。../DESIGN.md 只有内核自身测试策略(§13),没有"评测跑在内核上的 Skill/Agent"的任何设施。本章立场:消融、flag、prompt 回归必须架构期内置,事后加装代价高。我们虽不必照搬产品级 feature flag,但 M5 之后"评测模式"缺位会立刻显现。
 2. **Usage 记账字段不足以支撑成本归因**。本章要求区分:input/output 分开计价、**cache read/write**(约 0.1×/1.25× 输入价)、**thinking tokens**(不可见但计费)、TTFT 与总延迟、每个工具返回的 token 体量。我们的 `Usage(steps, tokens, cost)`(§2.3)与 `ChatResponse.usage{prompt, completion, cost}`(§4.1)过粗,`ProviderCaps`(§4.1)也未声明 cache/thinking 能力。没有这组字段,"哪个 Skill/工具是成本大头"无从回答,本章实验 6-7 的成本基线无法建立。
-3. **Trace 未对齐标准协议**。本章明确 OpenTelemetry + OpenInference 的价值在采集/分析解耦、避免厂商锁定;TraceRecorder 目前是私有 JSONL(§5.5)。帧树本就是 span 树,补 OTLP/OpenInference 映射成本极低,收益是直接接入 LangSmith/Phoenix 生态与"trace 回流评测资产"通道。
+3. **Trace 未对齐标准协议**。本章明确 OpenTelemetry + OpenInference 的价值在采集/分析解耦、避免厂商锁定;TraceRecorder 目前是私有 JSONL(§5.5)。帧树本就是 span 树,补 OTLP/OpenInference 映射成本极低,收益是直接接入 LangSmith/Phoenix 生态与"trace 回流评测资产"通道。(**落地注记 2026-09-30**:本条已关闭——`OtlpExporter` 经 `sink.register_exporter` 注册制槽位挂接,帧树 ≡ span 树机械映射,OTLP/HTTP JSON(零新依赖,httpx 阻塞 Client + to_thread,无 protobuf);私有 JSONL 仍是 WAL baseline,OTLP 是 exporter 不是替代。留尾:protobuf 编码、导出重试/backoff、metrics/logs 管道、跨进程 traceparent 传播。)
 4. **过程指标无汇聚点**。action legality rate、path efficiency、回溯频率都能从信号流算出,但设计中没有任何指标汇聚定义(哪怕一个 ASYNC MetricsCollector)。LoopDetector(§5.4)已是 path efficiency 的在线特例,说明信息足够,只差汇聚语义。
 5. **统计显著性与多次采样无抓手**。`RunConfig`(§2.4)没有 seed/temperature 钉死等复现性支持,也没有"n 次运行 + 均值/离散度汇总"的批量入口。可在内核外 eval harness 实现,但设计文档应指明归属,否则无人认领。
 6. **评审工程质量知识未覆盖**。judge calibration(kappa 门槛)、位置偏置(交换顺序)、长度偏置(罚冗长)、多源异构评审——若提供 judge skill 示例,这些应写进示例而非留给用户踩坑。

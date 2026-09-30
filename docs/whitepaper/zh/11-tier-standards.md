@@ -183,7 +183,7 @@ G3 的两个机制细节值得展开:
 **API 级**:`tests/web/test_lab_api.py` 的
 `test_validate_endpoint_report_shape`、`test_validate_fail_blocks_and_promote_rejections`、
 `test_promote_end_to_end_and_stale_report` 走 HTTP 全链路(报告形态、
-fail 阻断、过期报告 409)。本文修订时全仓测试基线为 Python 1879 例 +
+fail 阻断、过期报告 409)。本文修订时全仓测试基线为 Python 1911 例 +
 前端 32 个测试文件(pytest --collect-only / `static/tests/*.test.mjs` 计数)。
 
 **真实示例**:`agent_os/examples/workspace_janitor` 四技能覆盖三档剧情

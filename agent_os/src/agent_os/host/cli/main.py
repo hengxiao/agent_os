@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -167,6 +168,27 @@ def _emit_record(record: dict[str, Any], as_json: bool) -> None:
     print(line)
 
 
+def _close_telemetry(kernel: Any) -> None:
+    """宿主退出点排干遥测 sink(§10.2:exporter 的正确性不依赖 run.finished 送达——
+    ``close()`` 才是排干点;内核只按 run 调 ``close_run``,sink/exporter 的
+    ``close()`` 归宿主)。
+
+    duck-typed(同 runner._release_run 先例):telemetry 缺席/无 close 即 no-op;
+    失败只警告——遥测是观察通道,收尾失败不该改变退出码(§5.3 精神)。
+    execute_run/execute_resume 各跑各的 ``asyncio.run``,run loop 已销毁,
+    close 在新 loop 上跑(exporter 的异步收尾不绑定旧 loop)。
+    """
+    close = getattr(getattr(kernel, "telemetry", None), "close", None)
+    if close is None:
+        return
+    try:
+        result = close()
+        if inspect.isawaitable(result):
+            asyncio.run(result)
+    except Exception as e:  # noqa: BLE001 — 遥测收尾失败仅告警(见 docstring)
+        print(f"遥测收尾失败(忽略,不影响退出码): {type(e).__name__}: {e}", file=sys.stderr)
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     try:
         run_input = _parse_input(args.input)
@@ -195,6 +217,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         # run 未开始的根帧输入校验/技能寻址错(execute_run 上抛)→ 2(§3.3)
         print(f"校验错误: {e}", file=sys.stderr)
         return 2
+    finally:
+        _close_telemetry(kernel)  # 排干 sink/exporter(§10.2;close 是排干点)
     _emit_record(record, args.json)
     return 0 if record["status"] == STATUS_DONE else 3
 
@@ -284,6 +308,8 @@ def _cmd_resume(args: argparse.Namespace) -> int:
     except (OSError, ValueError) as e:
         print(f"checkpoint 无效: {e}", file=sys.stderr)
         return 2
+    finally:
+        _close_telemetry(kernel)  # 同 run:resume 收尾也排干 sink/exporter(§10.2)
     _emit_record(record, args.json)
     return 0 if record["status"] == STATUS_DONE else 3
 
@@ -323,6 +349,8 @@ def _cmd_replay(args: argparse.Namespace) -> int:
     except SkillLoadError as e:
         print(f"校验错误: {e}", file=sys.stderr)
         return 2
+    finally:
+        _close_telemetry(kernel)  # replay 也真跑内核(§3.4),收尾同样排干
     _emit_record(record, args.json)
     return 0 if record["status"] == STATUS_DONE else 3
 

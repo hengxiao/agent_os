@@ -47,7 +47,11 @@
                    写不了可调用 handler——此处只加载策略字段,handler 由宿主经
                    build_kernel(supervisor_handler=...) 注入,S2:Web 收件箱
                    默认通道 / CLI stderr 协议)
-    [telemetry]  → JsonlTelemetrySink(目录自动创建)
+    [telemetry]  → JsonlTelemetrySink(目录自动创建);redact = true 开 PII 脱敏 hook
+                   (§10.2,默认关闭,regex 快筛,开启后 WAL 不再逐字保真);
+                   [telemetry.otlp] 子表接 OTLP exporter(endpoint 必填;
+                   headers 支持 {env = "VAR"} 间接;batch_max/flush_interval/
+                   queue_max/timeout 调参;best-effort:失败丢批不重试)
     [memory]     → M6 记忆子系统(docs/DESIGN.md §11.2):dir = "./memory"
                    (LocalFileMemoryService 根目录);段存在才接线,缺段完全不 bind
                    (同 [credentials] 先例;接线后 system.memory.search/write 可用)
@@ -126,6 +130,7 @@ from agent_os.sidecars.builtins import (
 from agent_os.skills.draft_store import DraftStore
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.telemetry.jsonl_exporter import JsonlTelemetrySink
+from agent_os.telemetry.otlp_exporter import OtlpExporter
 from agent_os.tools.blob import FileBlobStore
 from agent_os.tools.builtins import python_exec_tool
 from agent_os.tools.local_registry import LocalPythonToolRegistry
@@ -668,6 +673,91 @@ def _events_section(cfg: dict[str, Any]) -> EventsSection:
     return EventsSection(batch=batch, batch_max=batch_max, event_text_max=event_text_max)
 
 
+#: ``[telemetry]`` 支持的字段(§10.2;dir = WAL 目录,redact = PII 脱敏 hook,otlp = OTLP exporter 子表)
+_TELEMETRY_FIELDS = ("dir", "redact", "otlp")
+
+#: ``[telemetry.otlp]`` 支持的字段(endpoint 必填;其余为 OtlpExporter 调参,缺省随其默认值)
+_TELEMETRY_OTLP_FIELDS = ("endpoint", "headers", "batch_max", "flush_interval", "queue_max", "timeout")
+
+
+def _telemetry_section(cfg: dict[str, Any]) -> dict[str, Any]:
+    """``[telemetry]`` 段严格解析(§10.2)→ 装配形态 dict(``dir``/``redact``/``otlp``)。
+
+    严格未知字段 + 类型校验(同 ``_context_section`` 先例;闭合本段此前是全仓
+    唯一非严格段的缺口——键拼错会静默不接线,best-effort exporter 静默丢数据,
+    宁可装配期炸掉):
+
+    - ``dir`` 非空字符串(WAL 目录;OTLP 是 exporter 不是 sink 替代);
+    - ``redact`` 布尔(§10.2 逐字"默认关闭";开启后 WAL 不再逐字保真,合规取舍);
+    - ``otlp`` 子表:``endpoint`` 必填 http(s):// 字符串;``headers`` 值为
+      字符串字面量或 ``{env = "VAR"}`` 间接引用(``os.environ`` **装配时**现读,
+      不落盘明文——同 ``_mcp_servers`` headers 先例,唯解析时点不同:mcp 连
+      接时现读,otlp 一次性解析;变量缺席 → ConfigError);
+      ``batch_max``/``flush_interval``/``queue_max``/``timeout`` 正数。
+    """
+    unknown = sorted(set(cfg) - set(_TELEMETRY_FIELDS))
+    if unknown:
+        raise ConfigError(f"[telemetry] 含未知字段: {unknown}(支持: {list(_TELEMETRY_FIELDS)})")
+    section: dict[str, Any] = {"dir": None, "redact": False, "otlp": None}
+    trace_dir = cfg.get("dir")
+    if trace_dir is not None:
+        if not isinstance(trace_dir, str) or not trace_dir:
+            raise ConfigError(f"[telemetry] dir 须为非空字符串路径,得到: {trace_dir!r}")
+        section["dir"] = trace_dir
+    redact = cfg.get("redact", False)
+    if not isinstance(redact, bool):
+        raise ConfigError(f"[telemetry] redact 须为布尔,得到: {redact!r}")
+    section["redact"] = redact
+    otlp = cfg.get("otlp")
+    if otlp is not None:
+        if not isinstance(otlp, dict):
+            raise ConfigError(f"[telemetry.otlp] 应为表({{ endpoint = \"http://...\" }}),得到: {otlp!r}")
+        unknown = sorted(set(otlp) - set(_TELEMETRY_OTLP_FIELDS))
+        if unknown:
+            raise ConfigError(
+                f"[telemetry.otlp] 含未知字段: {unknown}(支持: {list(_TELEMETRY_OTLP_FIELDS)})"
+            )
+        endpoint = otlp.get("endpoint")
+        if not isinstance(endpoint, str) or not endpoint.startswith(("http://", "https://")):
+            raise ConfigError(f"[telemetry.otlp] endpoint 必填,须为 http(s):// URL,得到: {endpoint!r}")
+        headers: dict[str, str] = {}
+        raw_headers = otlp.get("headers") or {}
+        if not isinstance(raw_headers, dict):
+            raise ConfigError(f"[telemetry.otlp] headers 应为表,得到: {raw_headers!r}")
+        for key, value in raw_headers.items():
+            if isinstance(value, str):
+                headers[key] = value
+                continue
+            ok = (
+                isinstance(value, dict)
+                and set(value) == {"env"}
+                and isinstance(value["env"], str)
+                and value["env"]
+            )
+            if not ok:
+                raise ConfigError(
+                    f'[telemetry.otlp] headers.{key} 须为字符串字面量或 '
+                    f'{{ env = "VAR" }} 间接引用,得到: {value!r}'
+                )
+            env_value = os.environ.get(value["env"])
+            if env_value is None:
+                raise ConfigError(
+                    f'[telemetry.otlp] headers.{key} 间接引用的环境变量 {value["env"]} 不存在'
+                    f'(不落盘明文;请先 export {value["env"]}=...)'
+                )
+            headers[key] = env_value
+        kwargs: dict[str, Any] = {"endpoint": endpoint, "headers": headers}
+        for key in ("batch_max", "flush_interval", "queue_max", "timeout"):
+            raw = otlp.get(key)
+            if raw is None:
+                continue
+            if not isinstance(raw, (int, float)) or isinstance(raw, bool) or raw <= 0:
+                raise ConfigError(f"[telemetry.otlp] {key} 须为正数,得到: {raw!r}")
+            kwargs[key] = raw
+        section["otlp"] = kwargs
+    return section
+
+
 def _data_policy(cfg: dict[str, Any]) -> DataPolicy:
     """``[data]`` 段 → :class:`DataPolicy`(D2;docs/DATA-AUTHZ.md §3.1/§3.2)。
 
@@ -1084,9 +1174,20 @@ def build_kernel(
         # M1 §8.3:system.user.ask/notify 的宿主回调通道(handler 同写不进 TOML,
         # 由宿主注入,同 supervisor_handler 先例)
         builder.user_channel(user_channel)
-    telemetry_dir = (cfg.get("telemetry") or {}).get("dir")
-    if telemetry_dir:
-        builder.telemetry(JsonlTelemetrySink(telemetry_dir))
+    telemetry_cfg = cfg.get("telemetry")
+    if telemetry_cfg is not None:
+        # §10.2:严格段解析(dir/redact/otlp 三键;未知字段 ConfigError,同各段先例)
+        section = _telemetry_section(telemetry_cfg)
+        if section["dir"] is None and (section["redact"] or section["otlp"] is not None):
+            raise ConfigError(
+                '[telemetry] 配置了 redact/otlp 但缺 dir(OTLP 是 exporter 不是 sink 替代——'
+                'sink 需要 WAL 目录;请补 dir = "./traces")'
+            )
+        if section["dir"] is not None:
+            sink = JsonlTelemetrySink(section["dir"], redact=section["redact"])
+            if section["otlp"] is not None:
+                sink.register_exporter(OtlpExporter(**section["otlp"]))
+            builder.telemetry(sink)
     memory_cfg = cfg.get("memory")
     if memory_cfg is not None:
         # M6:[memory] 段存在才接线(同 [credentials] 先例);缺席完全不 bind。

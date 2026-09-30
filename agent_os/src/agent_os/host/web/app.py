@@ -622,6 +622,11 @@ def create_app(
     Bearer token 额外解析为逐请求 principal(挂 ``request.state.principal``,
     创建 run 时透传给 start_run);未命中/无 token 的请求维持单用户语义,
     行为与引入映射前完全一致。
+
+    已知缺口(§10.2):本 app 尚无 shutdown/lifespan 钩子,遥测 sink 的
+    ``close()``(exporter 排干点,见 host/cli/main.py ``_close_telemetry`` 的
+    宿主责任注释)在 Web 长驻宿主侧未接线——进程退出即丢弃 exporter 队列余量
+    (OTLP best-effort 语义内可承受;引入 shutdown 钩子时在此补接)。
     """
     manager = RunManager(config_path, Path(artifacts_root), skillsets_dir=skillsets_dir)
     root = Path(artifacts_root)

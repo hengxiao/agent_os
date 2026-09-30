@@ -547,11 +547,28 @@ class Kernel:
         )
 
     @staticmethod
-    def _usage_payload(usage: ChatUsage | None) -> dict[str, Any]:
-        """post:llm.response 的 usage 载荷(BudgetGuard 的记账数据源,§5.4)。"""
+    def _usage_payload(usage: ChatUsage | None, resp: ChatResponse | None = None) -> dict[str, Any]:
+        """post:llm.response 的 usage 载荷(BudgetGuard 的记账数据源,§5.4)。
+
+        additive 扩展(同 budget.exceeded ``source`` 先例):usage 非 None 时补
+        cache/thinking 三维(键名对齐帧/run 级 ``Usage`` 契约,§2.3);``resp``
+        在场时(主循环发送点)再补 ttft_ms/total_ms——压缩链排干点
+        (:meth:`_drain_compress_usage`)的暂存条目不含计时,不带这两键。
+        """
         if usage is None:
             return {"prompt": 0, "completion": 0, "cost": 0.0}
-        return {"prompt": usage.prompt, "completion": usage.completion, "cost": usage.cost}
+        payload: dict[str, Any] = {
+            "prompt": usage.prompt,
+            "completion": usage.completion,
+            "cost": usage.cost,
+            "cache_read_tokens": usage.cache_read,
+            "cache_write_tokens": usage.cache_write,
+            "thinking_tokens": usage.thinking,
+        }
+        if resp is not None:
+            payload["ttft_ms"] = resp.ttft_ms
+            payload["total_ms"] = resp.total_ms
+        return payload
 
     async def run_frame(self, frame: SkillFrame) -> Any:
         """单帧 agent loop(§3.1):压栈 → loop → outputs 校验 → 弹栈。
@@ -644,7 +661,7 @@ class Kernel:
                 self._sig(
                     POST_LLM_RESPONSE,
                     frame,
-                    {"model": req.model, "usage": self._usage_payload(resp.usage)},
+                    {"model": req.model, "usage": self._usage_payload(resp.usage, resp)},
                 )
             )
             frame.context.messages.append(resp.message)

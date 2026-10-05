@@ -1815,6 +1815,25 @@ class Kernel:
             return 0
         return await rearm(frame, now=time.time())
 
+    async def _settle_pending_monitors(self, frame: SkillFrame) -> int:
+        """resume 结算帧持久化监控:``working["_monitors"]`` 未 done 规格重武装为后台任务。
+
+        紧随 ``_settle_pending_timers`` 调用(同一批 settle,同旨):监控规格随帧
+        working 落 checkpoint(tools/monitor.py),pause/断电只取消进程内任务、
+        规格保留;resume 在此重武装——shell 源从头重跑命令(输出重放可能重复
+        命中,replay caveat),channel 源从持久化 offset 续读**不重放**(折算
+        语义见 ``MonitorService.rearm_from_working``)。registry 未持有 monitor
+        服务(裸 registry/嵌入方未装配)→ 静默跳过记 log,不阻断 resume。
+        返回重武装条数。
+        """
+        service = getattr(self.tools, "_monitors", None)
+        rearm = getattr(service, "rearm_from_working", None) if service is not None else None
+        if rearm is None:
+            if frame.context.working.get("_monitors"):
+                _log.info("monitor 服务未装配,帧 %s 的持久化监控跳过重武装", frame.frame_id)
+            return 0
+        return await rearm(frame, now=time.time())
+
     # ------------------------------------------------------------------
     # §3.4 spawn 后台帧:父帧不挂起,子帧独立预算后台运行;join 退化为读终态
     # ------------------------------------------------------------------

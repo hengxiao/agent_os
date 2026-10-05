@@ -371,8 +371,8 @@ per-subject 白名单、net/db 域判定与 data.access.* 审计信号,D3-lite
 已下沉)已实现;§3.4 并发三原语齐备(`parallel_invoke` fork/join 落地,
 配套子树级联取消与子树记账读视图);多模态契约(`Message.parts`
 additive)与 narrate 压缩策略已落地;Skill Lab L1-L5 全部落地;
-Web 六主题全部通过契约测试;测试基线 Python 1987 例(1936 passed /
-10 skipped / 41 xfailed)+ 前端 32 个测试文件全绿。已设计未实现:
+Web 六主题全部通过契约测试;测试基线 Python 2021 例(1968 passed /
+10 skipped / 43 xfailed)+ 前端 32 个测试文件全绿。已设计未实现:
 D3 余项(完整多用户会话映射;跨 run 自动派生已于 2026-10-01 随宿主
 调度器落地——`[schedule]` 段 + `system.schedule.set`,via 链仍由宿主
 声明)、M6 余项(沙箱回调

@@ -49,6 +49,13 @@ async def set_timer_probe(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     return {"timer_id": r["value"]["timer_id"]}
 
 
+async def monitor_probe(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """经 ctx.call_tool 调 system.monitor.set(ch04 monitor 工具面/run 收尾接线测试用)。"""
+    r = await ctx.call_tool("system.monitor.set", dict(input.get("args") or {}))
+    assert r["ok"], r
+    return {"monitor_id": r["value"]["monitor_id"]}
+
+
 async def naughty(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """调用白名单外的子技能(用于权限拒绝测试)。"""
     await ctx.invoke("demo.fib", {"n": 3})

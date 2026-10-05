@@ -56,7 +56,7 @@ compression = "hierarchical"        # off|truncate|spill|summarize|hierarchical;
                                       # 按序探测 caps(tools/vision),fail-open 落链首)
 
 [tools]
-builtins = true                     # 内置工具面(25 件规范名:system.file.*/shell/net/blob/time/task/skill/memory/user/timer/schedule 等,旧扁平名留别名;system.schedule.set = 跨 run 派生(2026-10-01,WRITE·confirm=True),web 宿主 [schedule] 段在场时绑 store-backed 服务,CLI 不绑 → 结构化"未装配")
+builtins = true                     # 内置工具面(27 件规范名:system.file.*/shell/net/blob/time/task/skill/memory/user/timer/schedule/monitor/channel 等,旧扁平名留别名;system.schedule.set = 跨 run 派生(2026-10-01,WRITE·confirm=True),web 宿主 [schedule] 段在场时绑 store-backed 服务,CLI 不绑 → 结构化"未装配";system.monitor.set(EXEC)/system.channel.connect(WRITE) = ch04 事件监控两件(2026-10-01 落地),fire 通道经 bind_monitor 恒装配,未 bind → 结构化"未装配",行为边界见本节末「内置事件监控工具」段)
 python_exec = "docker"              # docker | subprocess | off
 
 [skills]
@@ -187,6 +187,14 @@ backoff_base = 0.5
 ```
 
 加载器落点:`runtime/config.py`(已实现:CLI/Web 两个宿主共用,均支持 `--config`)。
+
+**内置事件监控工具 monitor/channel 行为边界(2026-10-01 落地,`tools/monitor.py` 的 MonitorService;两个 runner 共用内核,行为一致)**:
+
+- **触发**:`system.monitor.set`(`{command, pattern?, note?, max_fires=20}` → monitor_id;EXEC 档)起 asyncio 子进程(独立进程组,stdout/stderr 合并逐行读);`system.channel.connect`(`{path, pattern?, note?, interval=1.0, max_fires=20}` → channel_id;WRITE 档,路径经 `resolve_work_path` 三段判定、越界 INVALID_ARGS)轮询事件文件(缺省 1.0s,下限钳 0.5s)新增完整行。两者均 regex 命中即经 `ctl.inject_message` 注入**调用帧**(USER/INJECTED);工具本身立即返回 id,不占调用回合空等。
+- **封顶**:命中次数到 `max_fires`(缺省 20)注入一条封顶事件后自停(shell 源同步终止进程组);shell 进程退出另发 exit 事件(带 exit_code)并标规格 done。
+- **重武装边界**:规格随帧 `working["_monitors"]` 落 checkpoint,resume 经 `_settle_pending_monitors` 重武装——shell 源 = **命令从头重跑**(输出重放可能重复命中,caveat 已注明);channel 源 = 从持久化 `offset` 续读**不重放**(末尾残行不消费;rotation(size < offset)→ offset=0 从文件头续读,记 log 不注入)。
+- **单 run 作用域**:run 收尾 `release_run` 取消本 run 全部在册监控(shell 源进程组同步 SIGKILL),不跨 run 误杀、不标 done(统一留给 resume 重武装)。
+- **防空耗**:pattern 可选 regex(缺省空串 = 每行命中,description 明示慎用)+ `max_fires` 封顶 + 命中行截 200 字符;注入文本由纯函数 `format_match_text`/`format_exit_text`/`format_cap_text` 单点构造。
 
 ### 2.2 产物布局 `.agent-os/runs/<run_id>/`
 

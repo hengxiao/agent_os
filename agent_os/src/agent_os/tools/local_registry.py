@@ -170,6 +170,19 @@ class LocalPythonToolRegistry:
 
         self._schedule: Any = None
         self.register(schedule_set_tool(name="system.schedule.set", registry=self))
+        #: ch04 Event-Triggered(monitor_shell/connect_channel):system.monitor.set 与
+        #: system.channel.connect 共用一张 MonitorService 事件监控表(fire 注入通道
+        #: ctl 由 KernelBuilder 经 bind_monitor 注入;注册点同在构造器,与 timer 同一
+        #: §6.1 闸门联动先例;未 bind 时调用报"monitor 服务未装配"结构化错误)
+        from agent_os.tools.monitor import (
+            MonitorService,
+            channel_connect_tool,
+            monitor_set_tool,
+        )
+
+        self._monitors = MonitorService()
+        self.register(monitor_set_tool(name="system.monitor.set", registry=self))
+        self.register(channel_connect_tool(name="system.channel.connect", registry=self))
 
     def tool(
         self, *, name: str | None = None, permission: Permission = Permission.READ, timeout: float = 30.0, **spec_kw: Any
@@ -284,6 +297,15 @@ class LocalPythonToolRegistry:
         工具在场但按"timer 服务未装配"报结构化错误,行为与引入前一致。
         """
         self._timers.bind(ctl)
+
+    def bind_monitor(self, ctl: Any) -> None:
+        """装配钩子(ch04 Event-Triggered,同 bind_timer 先例):给 MonitorService 注入 fire 的帧消息注入通道。
+
+        ctl 形态:``agent_os.api.v1.RunControl`` 实现(内核 ``RunControlImpl``);
+        KernelBuilder 在 build 后(kernel/ctl 就位)调用。缺省(未 bind)=
+        工具在场但按"monitor 服务未装配"报结构化错误,行为与引入前一致。
+        """
+        self._monitors.bind(ctl)
 
     def bind_schedule(self, service: Any) -> None:
         """装配钩子(D3,同 bind_timer 先例):注入 store-backed 调度服务,作
@@ -661,8 +683,11 @@ class LocalPythonToolRegistry:
         (审计发现:全仓原先无任何 rmtree)。已配置 workdir(§W0-1 分区)时
         不属本注册表所有,不动。WS1:顺带取消该 run 全部在册计时器(进程任务
         取消;规格已随帧 working 持久化,resume 重武装,见 tools/timer.py)。
+        ch04:顺带取消该 run 全部在册监控(shell 源进程组同步 SIGKILL;
+        规格同样留帧 working 供 resume 重武装,见 tools/monitor.py)。
         """
         self._timers.release_run(run_id)
+        self._monitors.release_run(run_id)
         wd = self._workdirs.pop(run_id, None)
         if wd:
             shutil.rmtree(wd, ignore_errors=True)
@@ -700,6 +725,9 @@ class LocalPythonToolRegistry:
         ``bind_timer`` 注入(未 bind 调用报"timer 服务未装配"结构化错误,同 user 通道先例)。
         D3(§17-3):system.schedule.set(跨 run 自动派生,WRITE·confirm=True)的调度
         服务经 ``bind_schedule`` 注入(未 bind 调用报"schedule 服务未装配"结构化错误)。
+        ch04(Event-Triggered):system.monitor.set/system.channel.connect(后台输出
+        监控/事件文件接入,共用 MonitorService)的 fire 注入通道经 ``bind_monitor``
+        注入(未 bind 调用报"monitor 服务未装配"结构化错误,同 timer 先例)。
         这四个工具的**注册点在构造器**(不在本方法):std 域文件声明了 ask/timer 的
         permissions.tools,§6.1 闸门联动要求空工具表也能装配(同 fetch_page 先例,
         见 __init__ 注释);notify/schedule.set 挂同一注册点与各自的服务绑定先例

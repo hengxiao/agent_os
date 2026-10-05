@@ -365,6 +365,10 @@
 > 重武装、`monitor_shell`/`connect_channel`、TUI 接线。上文 std 第 5 波块"剩余"
 > 中的"ask_human/set_timer 工具面"与 §3(Tool Registry)复核注的 user 通道
 > "CLI 接线留 TODO"据此关闭,dated 原文保留。全量基线:1670 收集 = 1620 passed + 10 skipped + 40 xfailed,0 失败。
+> (**2026-10-06 更新**:留尾「Event Trigger 余两件 `monitor_shell`/`connect_channel`」已关闭
+> (2026-10-01 落地,DESIGN §16 已关闭清单同日期条目)——`system.monitor.set`/`system.channel.connect`
+> + MonitorService + std 两件;「挂起/未启动 run 唤醒」与「定时器持久化/resume 重武装」
+> 先于 2026-09-29 关闭;TUI 接线仍开口。见下文 2026-10-06 复核块。)
 > ---
 > ✅ **复核 2026-09-29(pause 真语义落地,WS1 内核 + WS2 Web)**:DESIGN §16 跨里程碑
 > 开口第一条"pause 真语义"据此关闭。
@@ -439,6 +443,11 @@
 > 复核块「仍开口」中的"外部事件唤醒/挂起与未启动 run 唤醒"条目据此关闭,
 > dated 原文保留。全量基线:1747 收集 = 1704 passed + 10 skipped + 40 xfailed,0 失败。
 > (**2026-10-01 更新**:留尾「持久事件队列/调度」已关闭——`POST /api/events` 加 `delay_seconds`/`at` 停车进持久调度表(`ScheduleStore`,schedule.json,原子写),宿主调度器 tick 到点经 `dispatch_event` 派发(调度器未启用时请求调度 409 fail-closed;`GET /api/schedule` 列 pending);`monitor_shell`/`connect_channel` 与 event.received 升格仍开口。见下文 2026-10-01 复核块。)
+> (**2026-10-06 更新**:`monitor_shell`/`connect_channel` 亦已关闭(2026-10-01 落地)——
+> `system.monitor.set`(EXEC 档)/`system.channel.connect`(WRITE 档)共用 MonitorService,
+> 规格随帧 checkpoint、resume 重武装(shell 源重跑命令、channel 源从持久化 offset 续读
+> **不重放**),std 包装 `common.task.monitor_shell`/`common.task.connect_channel`;
+> event.received 升格仍开口。见下文 2026-10-06 复核块。)
 > ---
 > ✅ **复核 2026-09-29(定时器规格持久化 + resume 重武装落地)**:上文 2026-09-28
 > (ask_human/set_timer 工具面)块「仍开口」中的"定时器持久化/resume 重武装"
@@ -761,6 +770,48 @@
 > **仍开口**:monitor_shell/connect_channel、CLI 调度(web-only)、cron 表达式、调度并发上限、死信/重试(投递失败即弃 + log)、event.received 升格内核契约信号、跨进程多宿主互斥(单宿主假设)、Web shutdown 钩子(与 OTLP close 同族)。
 > 上文 2026-09-28(E3/D3 余项)、2026-09-29(外部事件唤醒入口)、2026-09-29(定时器持久化)三块「仍开口」中的相应条目据此关闭,dated 原文保留、各加同日关闭注;DESIGN §16/§17/§8.3、DATA-AUTHZ、RUNNERS、SKILL-DEV §6、ch04-tools 与白皮书 00/01/03/10(zh/en)同批更新。
 > 全量基线:1987 收集 = 1936 passed + 10 skipped + 41 xfailed,0 失败(+50 例;xfail +1 = 新内置工具触发 std gate 逐参数元测试,属预期)。
+> (**2026-10-06 更新**:留尾「monitor_shell/connect_channel」已关闭(2026-10-01 同日落地,
+> DESIGN §16 已关闭清单同日期条目);CLI 调度(web-only)、cron 表达式、调度并发上限、
+> 死信/重试、event.received 升格、跨进程多宿主互斥、Web shutdown 钩子仍开口。
+> 见下文 2026-10-06 复核块。)
+> ---
+> ✅ **复核 2026-10-06(ch04 Event-Triggered 三件套收口:monitor_shell/connect_channel 落地,
+> `set_timer`/`monitor_shell`/`connect_channel` 三件套齐)**:形态 2026-10-01 落地
+> (DESIGN §16 已关闭清单同日期条目);ch04-tools.md 的 Event-Triggered 三件套设计轨道就此
+> 闭合(事件过滤/限流、LLM event router 仍开口)。
+> ① **MonitorService + `system.monitor.set`**(`tools/monitor.py`,780 行,EXEC 档)——
+> 一个服务管两类后台监视源,生命周期与 TimerService 逐行对仗:asyncio 任务表按 run 分桶
+> (`_by_run`)、规格落帧 `working["_monitors"]` 随 checkpoint、`release_run` 取消不标 done、
+> `rearm_from_working` 重生 + id 改写防双重、终态帧静默弃、注入 = `ctl.inject_message`
+> 进调用帧(USER/INJECTED);shell 源 = asyncio 子进程(start_new_session 独立进程组,
+> stdout/stderr 合并逐行读,规格带原 workdir),regex 命中注入 `[monitor 命中] {line}`,
+> `max_fires` 到顶(缺省 20)发封顶事件并终止进程组,进程退出发 exit 事件(带 exit_code);
+> kill 纪律复用 builtins `_kill`(进程组 SIGKILL)+ `_reap` 次序;resume 重武装 =
+> **命令从头重跑**(输出重放可能重复命中,caveat 注明)。
+> ② **`system.channel.connect`**(WRITE 档 + `data_domains=["fs.*"]`)——文件通道:
+> 路径经 `resolve_work_path` 三段判定(只读区可读/越界 INVALID_ARGS);轮询(缺省 1.0s,
+> 下限钳 0.5s)读持久化 `offset` 后新增完整行(末尾残行不消费,下轮补全后再出);
+> **offset 随规格持久 → resume 续读不重放**;rotation(size < offset)→ offset=0
+> 从文件头续读(记 log 一次,不注入)。
+> ③ **防空耗**——pattern 可选 regex(缺省空串 = 每行命中,description 明示慎用)+
+> max_fires 封顶(缺省 20)+ 命中行截 200 字符;纯函数单点
+> `format_match_text`/`format_exit_text`/`format_cap_text`。
+> ④ **resume 接线**——`Kernel._settle_pending_monitors`(紧随 `_settle_pending_timers`,
+> 同一批 settle)+ checkpoint 结算序列加行 + registry `release_run` 链加 MonitorService;
+> fire 通道 `bind_monitor` 恒装配(同 bind_timer 先例),未 bind → NOT_FOUND;
+> 注册点在构造器(同 timer/schedule 的 §6.1 闸门联动先例)。
+> ⑤ **std 两件**——`common.task.monitor_shell`/`common.task.connect_channel`
+> (`std/task.yaml` 薄透传,与 set_timer 同形),过 std gate。
+> **留尾(仍开口)**:持久 shell 会话(session_id 保 cwd/env,STDLIB §3.3 另一半)、
+> unix socket/管道/pid-watch 通道、按帧批排干、全局事件过滤/限流、LLM event router、
+> event.received 升格内核契约信号、shell 重武装重复命中抑制。
+> 上文 2026-09-28(ask_human/set_timer)、2026-09-29(外部事件唤醒入口)、2026-10-01
+> (宿主调度器)三块「仍开口/留尾」中的 monitor_shell/connect_channel 条目据此关闭,
+> dated 原文保留、各加同日关闭注;DESIGN §16/§17-3、STDLIB §3.3、SKILL-DEV §6、
+> RUNNERS §2.1、ch04-tools 与白皮书 01/03(zh/en)同批更新。
+> 全量基线:2021 收集 = 1968 passed + 10 skipped + 43 xfailed,0 失败(+34 例 =
+> 22 monitor 专测 `tests/tools/test_monitor.py` + 12 std-gate 自动参数化;xfail +2 =
+> 两个新内置工具触发 std gate 逐参数元测试,属预期)。
 
 ## 一、总览
 
@@ -791,6 +842,7 @@
 - **复核 2026-09-28(压缩链)**:summarize 压缩已有独立连败熔断(默认 3 次,熔断退化纯截断,`context/summarize.py`);恢复熔断通用化仍开口。
 - **复核 2026-09-29(事件入口)**:外部事件唤醒入口已以宿主层形态落地(`POST /api/events` 三通道:running 注入/paused 恢复/无 target 起新 run;内核零改动,见头部复核块)——本条就此关闭;其余开口(`monitor_shell`/`connect_channel`、持久事件队列/调度、`event.received` 是否升格内核契约信号)归宿主层与文档范畴,非内核未开发项。
 - **复核 2026-09-29(事件批处理)**:事件批处理/queued 策略已落地(内核 `Kernel._drain_event_queue` 在 build 前排干根帧 `working["_event_queue"]` 为批头消息 + `[events]` 段三键 + `inject_event` queued/injected 分流,见头部复核块)——"事件批处理"一项就此关闭,上行 dated 行括号已同步移除;其余开口仍归宿主层与文档范畴。
+- **复核 2026-10-06(monitor/channel 工具面)**:`monitor_shell`/`connect_channel` 已以内置工具形态落地(2026-10-01:`system.monitor.set`(EXEC)/`system.channel.connect`(WRITE)+ MonitorService(规格随帧 checkpoint、resume 重武装)+ std 两件,见头部复核块)——上行 dated 行的同名开口据此关闭,dated 原文保留;其余开口(`event.received` 是否升格内核契约信号)仍归宿主层与文档范畴,非内核未开发项。
 
 ### 2. Providers — ✅ ~75%
 

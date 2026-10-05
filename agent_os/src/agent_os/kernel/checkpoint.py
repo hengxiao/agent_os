@@ -386,6 +386,9 @@ async def resume_from_checkpoint(kernel: Any, path: str) -> Any:
             # pending 计时器(tools/timer.py 规格随帧 working 落档):未 done 规格
             # 重武装为后台任务——pause/断电/重启不丢计时(折算语义见 rearm_from_working)
             await kernel._settle_pending_timers(frame)
+            # pending 监控(tools/monitor.py 规格随帧 working 落档):shell 源重跑命令、
+            # channel 源从持久化 offset 续读不重放——与计时器同帧独立结算
+            await kernel._settle_pending_monitors(frame)
             _settle_unpaired_calls(kernel, frame)
             skill_obj = kernel.skills.get(frame.skill)
             try:

@@ -75,3 +75,84 @@ skills:
     tools:
     - system.timer.set
   handler: task_handlers:set_timer
+- name: common.task.monitor_shell
+  version: 1.0.0
+  kind: code
+  description: '后台 shell 输出监控(经 system.monitor.set 内核原语):起子进程逐行读输出,
+    正则命中即把 "[monitor 命中] {line}" 注入调用帧上下文,立即返回 monitor_id。Use when
+    要等长任务输出里的关键信号(构建报错/服务就绪行),如 {"command": "tail -f build.log",
+    "pattern": "ERROR|Ready"} → {"monitor_id": "..."} 后继续干别的,命中自会收到消息;
+    Do not use when 命令很快结束且要直接看全部输出(用 system.shell.exec 更直接)或只需
+    定时复查(用 common.task.set_timer)。进程退出注入退出事件(带 exit_code);max_fires
+    到顶(缺省 20)自动终止进程组。返回 {"monitor_id": str}。'
+  inputs:
+    type: object
+    properties:
+      command:
+        type: string
+        description: 被监控的 shell 命令(在帧工作目录内运行,stdout/stderr 合并逐行读)
+      pattern:
+        type: string
+        description: 命中正则(缺省空串 = 每行都命中,慎用——输出即消息)
+      note:
+        type: string
+        description: 备注文本(随规格落档,观测/对账用)
+      max_fires:
+        type: integer
+        description: 命中次数上限(到顶注入封顶事件并终止进程组;缺省 20)
+    required:
+    - command
+  outputs:
+    type: object
+    properties:
+      monitor_id:
+        type: string
+        description: 监控 id(本 run 内有效;规格随帧 checkpoint 持久化——resume 重跑命令重武装,输出重放可能重复命中)
+    required:
+    - monitor_id
+  permissions:
+    tools:
+    - system.monitor.set
+  handler: task_handlers:monitor_shell
+- name: common.task.connect_channel
+  version: 1.0.0
+  kind: code
+  description: '外部事件源接入(经 system.channel.connect 内核原语):轮询跟踪事件文件新增行
+    (类 tail -F),正则命中即把 "[channel 命中] {line}" 注入调用帧上下文,立即返回 channel_id。
+    Use when 外部进程/系统把事件追加写进日志文件(构建状态/回调通知),需要事件触达而非
+    定时盲查,如 {"path": "events.log", "pattern": "done|failed"} → {"channel_id": "..."};
+    Do not use when 事件源不是文件(HTTP 回调走宿主事件通道)或要一次性读现有内容(用
+    system.file.read)。rotation(截断重写)自动从文件头续读;max_fires 到顶(缺省 20)
+    停止。返回 {"channel_id": str}。'
+  inputs:
+    type: object
+    properties:
+      path:
+        type: string
+        description: 事件文件路径(帧工作目录/read_paths 内;可不存在——出现后才开始出事件)
+      pattern:
+        type: string
+        description: 命中正则(缺省空串 = 每个新增行都命中)
+      note:
+        type: string
+        description: 备注文本(随规格落档,观测/对账用)
+      interval:
+        type: number
+        description: 轮询间隔秒数(下限钳制 0.5;缺省 1.0)
+      max_fires:
+        type: integer
+        description: 命中次数上限(到顶注入封顶事件并停止;缺省 20)
+    required:
+    - path
+  outputs:
+    type: object
+    properties:
+      channel_id:
+        type: string
+        description: 通道 id(本 run 内有效;规格含已读 offset 随帧 checkpoint 持久化——resume 从 offset 续读,不重放)
+    required:
+    - channel_id
+  permissions:
+    tools:
+    - system.channel.connect
+  handler: task_handlers:connect_channel

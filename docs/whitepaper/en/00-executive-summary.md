@@ -444,7 +444,7 @@ cascade cancel and the subtree accounting read view); the multimodal
 contract (`Message.parts`, additive) and the narrate compression strategy
 have landed; Skill Lab
 L1-L5 is complete; all six Web themes pass the contract tests; the test
-baseline is 1987 Python tests (1936 passed, 10 skipped, 41 xfailed,
+baseline is 2021 Python tests (1968 passed, 10 skipped, 43 xfailed,
 0 failures) plus 32 frontend test files, all green.
 Designed but not yet implemented: the D3
 remainder (the full multi-user session mapping; cross-run automatic

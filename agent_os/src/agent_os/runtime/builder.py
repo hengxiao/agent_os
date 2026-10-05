@@ -548,4 +548,10 @@ class KernelBuilder:
             if kernel.ctl is None:
                 kernel.ctl = RunControlImpl(kernel)
             tools.bind_timer(kernel.ctl)
+        if hasattr(tools, "bind_monitor"):
+            # ch04 Event-Triggered:system.monitor.set/system.channel.connect 的 fire
+            # 注入通道(同 bind_timer 先例;ctl 已在上方补装,防御式再判)
+            if kernel.ctl is None:
+                kernel.ctl = RunControlImpl(kernel)
+            tools.bind_monitor(kernel.ctl)
         return kernel

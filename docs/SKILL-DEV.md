@@ -310,10 +310,17 @@ task id 与初始状态**,不占工具调用回合空等结果;**完成走事件
 入口回灌 run。名称与 description 本身要传达异步语义,靠模型的语言理解力自然
 推断,不依赖额外协议。
 
-现行两条通道:
+现行四条通道:
 
 - `system.timer.set`(std 包装 `common.task.set_timer`):延时/周期触发的内置
   形态,到点经 `ctl.inject_message` 注入调用帧(USER/INJECTED);
+- `system.monitor.set` / `system.channel.connect`(2026-10-01,std 包装
+  `common.task.monitor_shell`/`common.task.connect_channel`):后台监视两件——
+  调用**立即返回 monitor_id/channel_id**(子进程/轮询在后台),regex 命中、
+  进程退出(带 exit_code)、达 max_fires 上限三类事件经 `ctl.inject_message`
+  注入调用帧(USER/INJECTED);规格随帧 checkpoint 持久化,resume 重武装
+  (shell 源重跑命令——输出重放可能重复命中,channel 源从持久化 offset 续读
+  **不重放**);
 - `POST /api/events`(宿主事件入口,2026-09-29,RUNNERS.md §4.3):外部事件源
   → running 注入 / paused 恢复 / 无 target 起新 run 三通道。
 
@@ -324,7 +331,9 @@ N 条]`,其计数承担 status bar 标记的注意力职能);关掉批处理则�
 `POST /api/events` 的 `delay_seconds`/`at` 定时停车 + `GET /api/schedule` +
 `system.schedule.set` 跨 run 派生工具——发起/完成解耦的定时回灌通道自此可用,
 见 DESIGN.md §16 已关闭清单与 RUNNERS.md §2.1/§4.3)。
-仍开口:`monitor_shell`/`connect_channel`。
+`monitor_shell`/`connect_channel` 亦已于同日落地(见上「现行四条通道」与
+DESIGN.md §16 已关闭清单)——ch04 Event-Triggered 三件套
+(`set_timer`/`monitor_shell`/`connect_channel`)自此齐。
 
 ---
 

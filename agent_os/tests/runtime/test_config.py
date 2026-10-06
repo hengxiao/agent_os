@@ -1301,6 +1301,70 @@ def test_telemetry_redact_and_defaults_wired(tmp_path):
     assert kernel.telemetry.traces_dir == str(tmp_path / "b")
 
 
+def test_telemetry_metrics_keys_rejected(tmp_path):
+    """[telemetry.metrics] 表内任何键 → ConfigError(v1 空表即启用,调参拼错不静默)。"""
+    cfg = _base_cfg(telemetry={"dir": str(tmp_path), "metrics": {"interval": 5}})
+    with pytest.raises(ConfigError, match=r"\[telemetry.metrics\] 含未知字段"):
+        build_kernel(cfg)
+    cfg = _base_cfg(telemetry={"dir": str(tmp_path), "metrics": True})
+    with pytest.raises(ConfigError, match=r"\[telemetry.metrics\] 应为表"):
+        build_kernel(cfg)
+
+
+def test_telemetry_metrics_wired(tmp_path):
+    """[telemetry.metrics] 空表即启用:MetricsCollector 注册进 sink,与 WAL 同目录。"""
+    kernel = build_kernel(_base_cfg(telemetry={"dir": str(tmp_path), "metrics": {}}))
+    (collector,) = kernel.telemetry.exporters
+    assert collector.name == "metrics"
+    assert collector.traces_dir == str(tmp_path)
+
+
+def test_telemetry_rl_export_path_required(tmp_path):
+    """[telemetry.rl_export] path 必填非空字符串。"""
+    cfg = _base_cfg(telemetry={"dir": str(tmp_path), "rl_export": {}})
+    with pytest.raises(ConfigError, match="path 必填"):
+        build_kernel(cfg)
+    cfg = _base_cfg(telemetry={"dir": str(tmp_path), "rl_export": {"path": ""}})
+    with pytest.raises(ConfigError, match="path 必填"):
+        build_kernel(cfg)
+    cfg = _base_cfg(telemetry={"dir": str(tmp_path), "rl_export": {"path": 3}})
+    with pytest.raises(ConfigError, match="path 必填"):
+        build_kernel(cfg)
+
+
+def test_telemetry_rl_export_unknown_field_rejected(tmp_path):
+    cfg = _base_cfg(
+        telemetry={"dir": str(tmp_path), "rl_export": {"path": "x.jsonl", "pat": "y"}}
+    )
+    with pytest.raises(ConfigError, match=r"\[telemetry.rl_export\] 含未知字段"):
+        build_kernel(cfg)
+
+
+def test_telemetry_metrics_and_rl_export_without_dir_rejected():
+    """metrics/rl_export 配置了但缺 dir → ConfigError(exporter 不是 sink 替代,同 otlp 先例)。"""
+    cfg = _base_cfg(telemetry={"metrics": {}})
+    with pytest.raises(ConfigError, match="缺 dir"):
+        build_kernel(cfg)
+    cfg = _base_cfg(telemetry={"rl_export": {"path": "x.jsonl"}})
+    with pytest.raises(ConfigError, match="缺 dir"):
+        build_kernel(cfg)
+
+
+def test_telemetry_rl_export_wired_and_capture_flag(tmp_path):
+    """[telemetry.rl_export] 接线:RlTrajectoryExporter 注册进 sink,builder 见其
+    exporter 即置 kernel._rl_capture(duck-typed;缺省内核无此属性 = payload 逐字节不变)。"""
+    kernel = build_kernel(
+        _base_cfg(
+            telemetry={"dir": str(tmp_path), "rl_export": {"path": str(tmp_path / "rl.jsonl")}}
+        )
+    )
+    (exporter,) = kernel.telemetry.exporters
+    assert exporter.name == "rl_trajectory"
+    assert kernel._rl_capture is True
+    kernel2 = build_kernel(_base_cfg(telemetry={"dir": str(tmp_path / "plain")}))
+    assert getattr(kernel2, "_rl_capture", False) is False
+
+
 class _EpInstanceExporter:
     """假遥测插件(实例形态 EP):name="ep_rec" 注册进 sink。"""
 

@@ -1,6 +1,6 @@
 # 06 信号、Telemetry 与确定性工程
 
-> 章次:06 · 状态:已实现(信号总线 / 信号目录 / JSONL WAL / 检查点与恢复 / 周期检查点 / replay / diff / OTLP-HTTP JSON 导出与 PII 脱敏 hook(2026-09-30);RL-trajectory 导出与 MetricsCollector 为已设计未实现) · 依据:`agent_os/src/agent_os/api/v1/signals.py`、`agent_os/src/agent_os/kernel/signals.py`、`agent_os/src/agent_os/kernel/checkpoint.py`、`agent_os/src/agent_os/telemetry/jsonl_exporter.py`、`agent_os/src/agent_os/telemetry/otlp_exporter.py`、`agent_os/src/agent_os/telemetry/redact.py`、`agent_os/src/agent_os/host/shared/replay.py`、`agent_os/src/agent_os/host/shared/artifacts.py`、`docs/DESIGN.md` §5.1/§10、`docs/RUNNERS.md` §3.4
+> 章次:06 · 状态:已实现(信号总线 / 信号目录 / JSONL WAL / 检查点与恢复 / 周期检查点 / replay / diff / OTLP-HTTP JSON 导出与 PII 脱敏 hook(2026-09-30)/ RL-trajectory 导出 v0 与 MetricsCollector(2026-10-06)) · 依据:`agent_os/src/agent_os/api/v1/signals.py`、`agent_os/src/agent_os/kernel/signals.py`、`agent_os/src/agent_os/kernel/checkpoint.py`、`agent_os/src/agent_os/telemetry/jsonl_exporter.py`、`agent_os/src/agent_os/telemetry/otlp_exporter.py`、`agent_os/src/agent_os/telemetry/redact.py`、`agent_os/src/agent_os/host/shared/replay.py`、`agent_os/src/agent_os/host/shared/artifacts.py`、`docs/DESIGN.md` §5.1/§10、`docs/RUNNERS.md` §3.4
 
 ## 1. 概述
 
@@ -123,7 +123,7 @@ InProcessSignalBus(订阅序 await;handler 异常吞掉)
 - **周期检查点**(`tests/kernel/test_periodic_checkpoint.py`,3 例):interval=2 时第 2 步即见"最近现场"、第 1 步不落盘;interval=0 不挂载(零行为变化);配置项经 `build_kernel` 透传。
 - **replay/diff**(`tests/cli/test_replay.py`,5 例):录制 fib(4) 后 replay 产出相同结果且与原 run 的 diff 为空(`result_equal` 与 `signals_equal` 均真),replay 是新 run_id;不同参数的两次 run 被 diff 判定分叉;同参数两次 run diff 为空。
 
-真实配置面:`instance/agent-os.toml` 的 `[run].checkpoint_interval` 即可开启周期快照;CLI 消费面为 `agent-os run/resume/replay/diff`(`host/cli/main.py:271-320`)。测试基线整体口径:当前 `pytest --collect-only` 收集 **2035 例**(1982 passed / 10 skipped / 43 xfailed,0 失败;早期文稿记 812/854 例,以实际收集为准)。
+真实配置面:`instance/agent-os.toml` 的 `[run].checkpoint_interval` 即可开启周期快照;CLI 消费面为 `agent-os run/resume/replay/diff`(`host/cli/main.py:271-320`)。测试基线整体口径:当前 `pytest --collect-only` 收集 **2053 例**(2000 passed / 10 skipped / 43 xfailed,0 失败;早期文稿记 812/854 例,以实际收集为准)。
 
 涟漪效应:调试器的断点命中即 pending,走同一挂起-落盘-恢复闭环(docs/DEBUGGER.md);Web SSE 扇出与 RCA 页是总线 `"*"` 订阅者(docs/RUNNERS.md §4.2);升权台账与 run 级工具状态以 additive 字段随 checkpoint 落盘,是"schema v1 不变、字段可加"契约纪律的实例(`kernel/checkpoint.py:139-141`);Skill Registry 的入库前验证门把"重放 + evaluator 确认"设计为自我进化的信任前提(docs/DESIGN.md §6.2;smoke 注入挂点已落地 2026-09-29——`bind_register_smoke` / `[skills] register_smoke`,fail-closed 零写;默认重放 + evaluator 实现亦已同日落地——`register_smoke = "default"`,drafts 用例重放 + expected 确定性深比较 + expect 廉价模型裁判,全过才放行)。
 
@@ -137,7 +137,7 @@ InProcessSignalBus(订阅序 await;handler 异常吞掉)
 - **周期快照是覆盖写。** "最近现场"不保留历史;崩溃窗口内(不足 N 步)的进展仍要重放,N 是恢复点提前量与 IO 开销的手工折中。
 - **diff 不是语义等价判定。** 只比五元组,工具参数值、token 数、消息文本的变化不视为分叉(usage 另列供人读);frame_id/ts 被忽略也意味着并发交错差异不在比较面内。
 - **观察面故障静默。** handler 异常只进日志(`kernel/signals.py:53-56`),Telemetry 若持续写盘失败,trace 缺行不会有任何 run 级告警——这是故障隔离的反面代价。
-- **已设计未实现项。** RL-trajectory 训练导出与 MetricsCollector(docs/DESIGN.md §10.2)仍为文档预留;OTLP/OpenInference 映射与 PII 脱敏 hook 已于 2026-09-30 摘出落地(`telemetry/otlp_exporter.py` / `telemetry/redact.py`,docs/DESIGN.md §10.2/§16)。(更正:早期文稿称 `TelemetrySink.snapshot` 与 `JsonlExporter.export` 在代码里是 `NotImplementedError`——二者已于 2026-09-27 实填(docs/DESIGN.md §16 已关闭清单):`jsonl_exporter.py:129-137` WAL 视角快照 `Checkpoint(run_id, seq=已落盘信号数, state={})`、`:162-170` 全 run 汇聚导出 + close 幂等;"帧树快照语义由 `Kernel.checkpoint` 承担"的分工不变。)
+- **导出通道落地历程。** OTLP/OpenInference 映射与 PII 脱敏 hook 于 2026-09-30 摘出落地(`telemetry/otlp_exporter.py` / `telemetry/redact.py`);RL-trajectory 训练导出 v0 与 MetricsCollector 于 2026-10-06 摘出落地(`telemetry/rl_exporter.py` / `telemetry/metrics.py`,docs/DESIGN.md §10.2/§16)——导出 v0 的报文是**模型实际所见的线报文**(emit 点处压缩已发生,train-on-what-the-model-saw;压缩前原始报文 + 完整 provenance 形态留 v1),MetricsCollector 在线汇聚 per-run 指标、run 终态原子写 `<run_id>.metrics.json` 并归档 `runs/<id>/metrics.json`(消费面 v1 = run dir 文件);仍预留:完整 provenance v1(消息级 id + 被逐 id)、protobuf 编码、PII 深扫档、导出重试/backoff、跨进程 traceparent。(更正:早期文稿称 `TelemetrySink.snapshot` 与 `JsonlExporter.export` 在代码里是 `NotImplementedError`——二者已于 2026-09-27 实填(docs/DESIGN.md §16 已关闭清单):`jsonl_exporter.py:129-137` WAL 视角快照 `Checkpoint(run_id, seq=已落盘信号数, state={})`、`:162-170` 全 run 汇聚导出 + close 幂等;"帧树快照语义由 `Kernel.checkpoint` 承担"的分工不变。)
 
 ## 7. 引用
 

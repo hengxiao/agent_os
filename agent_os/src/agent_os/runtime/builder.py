@@ -511,6 +511,15 @@ class KernelBuilder:
             # [events] 段:内核只消费 batch_max(排干上限);缺省全默认
             events_batch_max=(self._events_section or EventsSection()).batch_max,
         )
+        if self._telemetry is not None and any(
+            getattr(exporter, "name", None) == "rl_trajectory"
+            for exporter in getattr(self._telemetry, "exporters", [])
+        ):
+            # §10.2 RL 轨迹导出:sink 上注册了 rl_trajectory exporter(配置接线
+            # [telemetry.rl_export] 或手工 register)即开内核报文捕获——duck-typed
+            # 置位;runner 读 getattr(self, "_rl_capture", False),缺省 False =
+            # pre/post:llm.* payload 与 legacy 逐字节一致
+            kernel._rl_capture = True
         if self._sidecars:
             # §5.2/§5.3:RunControl 是 sidecar 操控运行的唯一通道;supervisor 统一托管
             ctl = RunControlImpl(kernel)

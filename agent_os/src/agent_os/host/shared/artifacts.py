@@ -6,6 +6,7 @@
     trace.jsonl      # 从 telemetry 目录归档的 WAL(<run_id>.jsonl;缺则空文件)
     checkpoint.json  # run 结束/中止时经 kernel.checkpoint 快照(RCA 与 resume 数据源)
     result.json      # {status, result, error, usage 汇总}
+    metrics.json     # opt-in:[telemetry.metrics] 开时归档的每 run 计数报告(§10.2;缺则不在)
 
 错误归类锚点(§3.3):run 未开始即抛的校验类异常(SkillLoadError:根帧输入不合
 schema、技能寻址失败)原样上抛,由宿主归退出码 2;run 开始后的异常一律捕获进
@@ -54,6 +55,18 @@ def _archive_trace(kernel: Any, run_id: str, run_dir: Path) -> None:
         target.write_text("", encoding="utf-8")
 
 
+def _archive_metrics(kernel: Any, run_id: str, run_dir: Path) -> None:
+    """把 telemetry 目录下的 ``<run_id>.metrics.json`` 归档进产物目录;缺则静默跳过(§10.2 v1)。
+
+    与 :func:`_archive_trace` 同形但**不写空文件**:metrics 是 opt-in 产物
+    ([telemetry.metrics] 在场 MetricsCollector 才落盘),缺席是正常态而非缺失态。
+    """
+    traces_dir = getattr(kernel.telemetry, "traces_dir", None)
+    src = Path(traces_dir) / f"{run_id}.metrics.json" if traces_dir is not None else None
+    if src is not None and src.is_file():
+        shutil.copyfile(src, run_dir / "metrics.json")
+
+
 def _finalize_run(
     kernel: Any,
     run_id: str,
@@ -75,6 +88,7 @@ def _finalize_run(
     if not meta_path.exists():
         _write_json(meta_path, meta)
     _archive_trace(kernel, run_id, run_dir)
+    _archive_metrics(kernel, run_id, run_dir)
     checkpoint_path = run_dir / "checkpoint.json"
     kernel.checkpoint(run_id, str(checkpoint_path))
     checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))

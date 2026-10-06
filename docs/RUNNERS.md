@@ -92,7 +92,7 @@ loop_detector = { threshold = 3, max_strikes = 2 }
                                       # (指令注入/秘密 PII/可迁移性),fail-closed 拒写且不计连败
 
 [telemetry]
-dir = ".agent-os/traces"             # WAL 目录(strict 段;配 redact/otlp 缺 dir → ConfigError——OTLP 是 exporter 不是 sink 替代)
+dir = ".agent-os/traces"             # WAL 目录(strict 段;配 redact/otlp/metrics/rl_export 任一缺 dir → ConfigError——exporter 不是 sink 替代)
 # redact = true                      # PII 脱敏 hook(2026-09-30,DESIGN §10.2;默认 false):record 入口把 payload 换成
                                      # 脱敏副本,WAL 行与 exporters 共用同一份(telemetry/redact.py 五形态 regex 快筛:
                                      # email/phone_cn/id_card_cn/bank_card/api_key → [EMAIL] 式占位,与 std 技能
@@ -113,6 +113,24 @@ dir = ".agent-os/traces"             # WAL 目录(strict 段;配 redact/otlp 缺
                                      # 宿主责任:close() 是唯一排干点——CLI run/resume/replay finally 已接
                                      # (_close_telemetry);Web 宿主无 shutdown/lifespan 钩子未接,进程退出
                                      # 丢弃 exporter 队列余量(best-effort 语义内,已知缺口)
+# [telemetry.metrics]                # MetricsCollector(2026-10-06,DESIGN §10.2 收口):空表即启用(v1 不支持调参,
+                                     # 表内任何键 → ConfigError)——Exporter 变体在线汇聚 per-run 指标:
+                                     # llm.{calls,prompt,completion,cost}(非 compress 源)、tools.{calls,ok,errors,legality_rate}
+                                     # (post:tool.call 口径,Veto/白名单拒绝不入分母)、data_denied、steps、frames、
+                                     # compress.{count,evicted,strategies}、escalations、supervisor、budget.{warnings,exceeded}、
+                                     # run.status;run 终态(finished/aborted/paused 各算一个观察窗)原子写
+                                     # <dir>/<run_id>.metrics.json,宿主 finalize 归档 runs/<id>/metrics.json
+                                     # (_archive_trace 同形,无空文件兜底——opt-in 产物);消费面 v1 = run dir 文件(不加路由)
+# [telemetry.rl_export]              # RL 轨迹导出 v0(2026-10-06,DESIGN §10.2;telemetry/rl_exporter.py):
+                                     # builder 见 rl_trajectory exporter 即置 kernel._rl_capture(duck-typed),
+                                     # pre/post:llm.* payload 才带 messages/message 报文键(未配置 = 逐字节旧行为);
+                                     # 按 (run_id, frame_id) FIFO 配对写 agent_os.rl-trace/1 JSONL
+                                     # (行 {seq, model, request.messages, response.message, usage, ts}),
+                                     # compress 源过滤、缺对不抛、run 终态清孤儿、seq 跨 pause→resume 单调;
+                                     # 保真边界:request.messages = 模型实际所见线报(emit 点处压缩已发生,
+                                     # train-on-what-the-model-saw),被逐历史不在行内,完整 provenance 留 v1;
+                                     # redact 开启时行内同样脱敏
+# path = "./rl-trace.jsonl"          # rl_export 必填非空字符串路径(未知键 ConfigError)
 
 [retry]
 max_attempts = 3

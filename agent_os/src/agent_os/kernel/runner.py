@@ -109,6 +109,7 @@ from agent_os.api.v1 import (
 )
 from agent_os.kernel.checkpoint import (
     _last_tool_message,
+    _message_to_dict,
     dump_checkpoint,
     resume_from_checkpoint,
 )
@@ -643,7 +644,13 @@ class Kernel:
             await self.context.maintain(frame)
             await self._drain_compress_usage(frame)
             req = await self.context.build(frame)
-            await self.signals.emit(self._sig(PRE_LLM_REQUEST, frame, {"model": req.model}))
+            pre_llm_payload: dict[str, Any] = {"model": req.model}
+            if getattr(self, "_rl_capture", False):
+                # §10.2 RL 轨迹导出(builder 见 rl_trajectory exporter 置位,缺省 False
+                # = payload 与 legacy 逐字节一致):build 后实发线报随 pre 信号走,
+                # checkpoint _message_to_dict 同款形状(WAL 行 ↔ checkpoint 消息可对照)
+                pre_llm_payload["messages"] = [_message_to_dict(m) for m in req.messages]
+            await self.signals.emit(self._sig(PRE_LLM_REQUEST, frame, pre_llm_payload))
             resp = await self._llm_call(frame, req)
             # dict 形 tool_calls 归一化为 ToolCall(§4.1 契约形态;mock/第三方 provider
             # 可能回 dict)——在进帧上下文前统一,分发/调用签名/检查点只处理一种形态
@@ -657,13 +664,14 @@ class Kernel:
                 else tc
                 for tc in resp.message.tool_calls
             ]
-            await self.signals.emit(
-                self._sig(
-                    POST_LLM_RESPONSE,
-                    frame,
-                    {"model": req.model, "usage": self._usage_payload(resp.usage, resp)},
-                )
-            )
+            post_llm_payload: dict[str, Any] = {
+                "model": req.model,
+                "usage": self._usage_payload(resp.usage, resp),
+            }
+            if getattr(self, "_rl_capture", False):
+                # §10.2 RL 轨迹导出:响应报文(归一化后)随 post 信号走,同 pre 的捕获口径
+                post_llm_payload["message"] = _message_to_dict(resp.message)
+            await self.signals.emit(self._sig(POST_LLM_RESPONSE, frame, post_llm_payload))
             frame.context.messages.append(resp.message)
             await self.account(frame, resp.usage, ttft_ms=resp.ttft_ms, total_ms=resp.total_ms)
             if not resp.message.tool_calls:

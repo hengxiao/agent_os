@@ -862,6 +862,47 @@
 > 派生工具是装配期动态注册,不进 with_builtins 静态面,std gate 逐参数元测试不新增,已验证;
 > 真实 stdio interop(npx `@modelcontextprotocol/server-filesystem`)不受影响跑通)。
 
+> ✅ **复核 2026-10-06(§10.2 收口:MetricsCollector + RL-trajectory 导出 v0)**:
+> 上文 2026-09-30(OTLP 导出 + PII 脱敏 hook)块「留尾」中的"MetricsCollector、RL-trajectory 导出"
+> 两条据此关闭,dated 原文保留。
+> ① **MetricsCollector**(`telemetry/metrics.py`,210 行)——Exporter 契约变体在线汇聚(§10.2 逐字
+> 「在线汇聚」):`export` 纯内存计数(绝不 await IO——sink 在 `record` 里 inline-await 每个 exporter),
+> per-run 计数器,run 终态(finished/aborted/paused 各算一个观察窗)原子写
+> `<traces_dir>/<run_id>.metrics.json` + `report(run_id)` 读口(在跑/未知 run → None);
+> 口径逐条锚定(模块 docstring):llm.{calls, prompt_tokens, completion_tokens, cost}(post:llm.response
+> 主循环源,非 compress)、tools.{calls, ok, errors, legality_rate}(post:tool.call 口径——Veto/白名单
+> 拒绝路径(runner.py:904-927)根本不发 post:tool.call,不入分母;零调用 legality_rate = None)、
+> data_denied、steps(pre:step 计)、frames、compress.{count, evicted, strategies}、
+> escalations.{granted, denied}(granted 只计 decision != "deny" 三态、denied 走 skill.escalation.denied,
+> 单边计防双)、supervisor.{asks, timeouts}、budget.{warnings, exceeded}、run.status;
+> 宿主 `_finalize_run` 加 `_archive_metrics`(`host/shared/artifacts.py:58-67`)归档
+> `runs/<id>/metrics.json`(`_archive_trace` 同形,**无空文件兜底**——metrics 是 opt-in 产物);
+> 消费面 v1 = run dir 文件(不加路由)。
+> ② **RL-trajectory 导出 v0**(`telemetry/rl_exporter.py` + runner emit 点)——
+> `[telemetry.rl_export] path` 开启,builder 见 sink 上注册了 `rl_trajectory` exporter 即置
+> `kernel._rl_capture`(duck-typed,配置接线与手工 register 通吃;缺省 False = pre/post:llm.*
+> payload 与 legacy 逐字节一致,锚测试钉),`pre:llm.request` payload 加 `messages`、
+> `post:llm.response` payload 加 `message`;序列化复用 `kernel/checkpoint.py:_message_to_dict`
+> (WAL 行与 checkpoint 消息同形态);按 (run_id, frame_id) FIFO 配对写 `agent_os.rl-trace/1` JSONL
+> (per-request 行 {seq, model, request.messages, response.message, usage, ts});压缩链补发
+> (source="compress")过滤(同 replay.py:82-94/otlp_exporter.py:320-325 口径),缺对/乱序
+> `_skipped` 计数绝不抛,run 终态清收孤儿 pre,seq 跨 pause→resume 不清零保持单调。
+> **保真边界(如实)**:request.messages 是模型实际所见的线报文(emit 点处压缩已发生,
+> train-on-what-the-model-saw);summarize/truncate 被逐历史不在行内(可凭 WAL compress 信号 +
+> checkpoint 部分复原)——「压缩前原始报文 + 完整 provenance」完整形态(消息级 id +
+> post:compress 携带被逐 id)留 v1;redact 开启时行内同样脱敏(train-on-redacted,合规取舍)。
+> ③ **OtlpExporter 守卫**——`_flatten` 跳过顶层 `messages`/`message` 两键(additive;防开
+> `_rl_capture` 后 span event 体暴涨至单事件数 MB,OTLP 语义归 llm span 属性)。
+> ④ **配置两子表**——`[telemetry.metrics]`(**空表即启用**,v1 不支持调参,表内任何键 → ConfigError)、
+> `[telemetry.rl_export] = { path }`(path 必填非空字符串,未知键 ConfigError);配
+> redact/otlp/metrics/rl_export 任一而缺 dir 仍 ConfigError(报错文案覆盖四键)。
+> **留尾(仍开口)**:完整 provenance v1(消息级 id + 被逐 id)、Metrics 消费面(v1 = run dir 文件,
+> 无路由/面板)、turn-level credit 记账口径(DESIGN §17-6 条目保留)、outputs 校验失败计数
+> (v1 无专用信号源)、logprobs 联动(跨里程碑开口保留)。
+> 下文 §8(Telemetry)完成度再估(~75% → ~90%)并加 2026-10-06 复核行;DESIGN §10.2/§15/§16/§17-6、
+> ch06/ch07、RUNNERS、白皮书 06(zh/en)同批更新。
+> 全量基线:2053 收集 = 2000 passed + 10 skipped + 43 xfailed,0 失败(+18 例;xfail 不变 43)。
+
 ## 一、总览
 
 - **里程碑**:M0–M5 完成(其中 M5 拆为 a/b/c 三个子提交);**M6(演化)未开始**。
@@ -955,7 +996,7 @@
 - **复核 2026-08-24**:系统级网络隔离已由 Docker 容器档落地(`logic/docker_sandbox.py`:`--network none` + `--read-only` + `--cap-drop ALL` + tmpfs,commit `4750e4e`),实际走的是容器路线而非 unshare/nsjail;subprocess 档仍不隔离网络与文件系统,但已补 env 白名单与 cwd 临时目录隔离(`logic/python_sandbox.py:148-164/297-310`,commit `6ced3d3`),凭证直读缺口已堵。沙箱回调通道已实现(socketpair + `_serve_syscalls` + runner `_syscall_dispatcher`,见 ../CODE-ORCHESTRATION.md)。`merge_limits` 仍 M5 stub(`logic/limits.py:34`);`mem_peak` 仍不记账(`logic/inprocess.py:6`)。
 - **复核 2026-09-27(清理批)**:`merge_limits` 已实填(`logic/limits.py:32`,两级取紧链式得三级,返回新实例;尚无调用点);`mem_peak` 仍不记账。
 
-### 8. Telemetry — ✅ ~75%
+### 8. Telemetry — ✅ ~75%(2026-10-06 再估 ~90%:训练就绪导出与 MetricsCollector 已落地,剩余项见下复核行重列)
 
 完成:JsonlTelemetrySink(版本头 WAL、按 run_id 分文件、总线特权订阅);内核 checkpoint/resume(帧含完整上下文序列化、按深度结算未配对调用、恢复只补未完成部分);`sink.snapshot()`(WAL 视角快照)与 `JsonlExporter`(2026-09-27 清理批实填,见下复核行);OTLP/OpenInference 导出与 PII 脱敏 hook(2026-09-30,见下复核行)。
 
@@ -963,6 +1004,7 @@
 
 - **复核 2026-09-27(清理批)**:`sink.snapshot()` 已实现为 WAL 视角快照(`telemetry/jsonl_exporter.py:112`,seq = 已落盘信号数、`state={}`;帧树重建留 `kernel/checkpoint.py`),`JsonlExporter` 同批实填(全 run 汇聚单文件、close 幂等);OTLP/PII/MetricsCollector 仍开口。
 - **复核 2026-09-30(OTLP + PII 落地)**:OTLP 导出(`telemetry/otlp_exporter.py` `OtlpExporter`:OTLP/HTTP JSON POST `{endpoint}/v1/traces`,`export()` 零 IO + 后台 drainer 攒批,best-effort——无 protobuf、失败不重试、队列满丢最旧;CLI run/resume/replay finally `_close_telemetry` 已接,**Web 宿主无 shutdown/lifespan 钩子未接**为已知缺口)与 PII 脱敏 hook(`telemetry/redact.py` 五形态 regex 快筛,`JsonlTelemetrySink(redact=False)` 默认关,开后 WAL 不再逐字保真)已落地;`[telemetry]` 段 strict 化(dir/redact/`[telemetry.otlp]`,`runtime/config.py:683-758`)与 `agent_os.telemetry` EP 组实名化(builder `_telemetry_plugins()`)同批(详见头部复核块);训练就绪导出(RL-trajectory)与 MetricsCollector 仍开口。
+- **复核 2026-10-06(§10.2 收口:MetricsCollector + RL-trajectory 导出 v0 落地)**:训练就绪导出与 MetricsCollector 双双落地——MetricsCollector(`telemetry/metrics.py`:Exporter 变体在线汇聚 per-run 指标,`export` 纯内存计数,run 终态(finished/aborted/paused 各算一个观察窗)原子写 `<traces_dir>/<run_id>.metrics.json` + `report(run_id)` 读口;口径含 llm.{calls,prompt,completion,cost}(非 compress 源)、tools.{calls,ok,errors,legality_rate}(post:tool.call 口径,Veto/白名单拒绝不入分母)、data_denied、steps、frames、compress.{count,evicted,strategies}、escalations、supervisor、budget、run.status;宿主 `_archive_metrics` 归档 `runs/<id>/metrics.json`,无空文件兜底)与 RL-trajectory 导出 v0(`telemetry/rl_exporter.py`:`[telemetry.rl_export] path` 开启,builder 置 `kernel._rl_capture` 后 pre/post:llm.* payload 带报文(未配置 = 逐字节旧行为),(run_id, frame_id) FIFO 配对写 `agent_os.rl-trace/1` JSONL;**保真边界**:request.messages = 模型实际所见线报(emit 点处压缩已发生,train-on-what-the-model-saw),被逐历史不在行内,「压缩前原始报文 + 完整 provenance」形态留 v1;redact 开启时行内同样脱敏)已落地(详见头部复核块);本行上方「未开发」行与上行 dated 行的"训练就绪导出(RL-trajectory)与 MetricsCollector 仍开口"据此关闭,dated 原文保留。**剩余项重列(完成度再估 ~90%)**:完整 provenance v1(消息级 id + 被逐 id)、Metrics 消费面(v1 = run dir 文件,无路由/面板)、PII 深扫档(本地小模型)、导出重试/backoff、metrics/logs 管道、跨进程 traceparent 传播、Web 宿主 close 接线、outputs 校验失败计数(v1 无专用信号源)、logprobs 联动。
 
 ### 9. Memory — ⬜ ~5%
 

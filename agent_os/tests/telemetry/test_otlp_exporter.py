@@ -348,3 +348,64 @@ def test_aborted_run_force_closes_open_spans(otlp_server):
     names = [s["name"] for s in _all_spans(state)]
     assert names == ["llm:m", "skill:s", "run"], "内层残留先强关,根最后"
     assert otlp._skipped == 0
+
+
+# ---------------------------------------------------------------------------
+# rl_capture 守卫:报文键永不进 span 事件体
+# ---------------------------------------------------------------------------
+
+
+def test_flatten_skips_rl_message_keys():
+    """_flatten 顶层 messages/message 键一律跳过(rl_capture 报文会撑爆事件体);
+    嵌套同名键(如 error.message)与其他键不受影响。"""
+    from agent_os.telemetry.otlp_exporter import _flatten
+
+    payload = {
+        "model": "m",
+        "messages": [{"role": "system", "content": "x" * 5000}],
+        "message": {"role": "assistant", "content": "y" * 5000},
+        "usage": {"prompt": 1},
+        "error": {"message": "嵌套保留"},
+    }
+    assert _flatten(payload) == {
+        "model": "m",
+        "usage.prompt": 1,
+        "error.message": "嵌套保留",
+    }
+
+
+def test_rl_capture_payloads_never_reach_span_events(otlp_server, tmp_path):
+    """rl_capture 开(配置接线 rl_export)的 run:pre/post:llm.* payload 带报文键,
+    全部 span 事件的属性键无 messages/message(守卫端到端锚;RL 行照常出产)。"""
+    url, state, _server = otlp_server
+    tdir = tmp_path / "traces"
+    rl_path = tmp_path / "rl.jsonl"
+    kernel = build_kernel(
+        {
+            "run": {"model": "mock/fib", "compression": "off"},
+            "providers": {"mock": {"brain": "tests.helpers.brains:fib_brain"}},
+            "tools": {"python_exec": "subprocess"},
+            "skills": {"path": str(FIB_SKILLS_YAML)},
+            "telemetry": {"dir": str(tdir), "rl_export": {"path": str(rl_path)}},
+        }
+    )
+    assert kernel._rl_capture is True
+    kernel.telemetry.register_exporter(OtlpExporter(url, flush_interval=0.05))
+
+    assert asyncio.run(kernel.run("demo.fib", {"n": 1})) == {"seq": [0]}
+    asyncio.run(kernel.telemetry.close())
+
+    spans = _all_spans(state)
+    assert spans, "罐头端点未收到任何 span"
+    event_keys = {
+        a["key"] for s in spans for e in s.get("events", []) for a in e["attributes"]
+    }
+    assert "messages" not in event_keys and "message" not in event_keys
+    assert not any(k.startswith(("messages.", "message.")) for k in event_keys)
+    # RL 侧照常成行(捕获确实开着):fib(1) base case 恰好 1 次主循环交换
+    rows = [
+        json.loads(line)
+        for line in rl_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and '"header"' not in line
+    ]
+    assert len(rows) == 1 and rows[0]["request"]["messages"]

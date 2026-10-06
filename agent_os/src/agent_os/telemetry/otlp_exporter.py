@@ -101,9 +101,17 @@ def _attr(key: str, value: Any) -> dict[str, Any]:
 
 
 def _flatten(payload: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-    """payload 递归拍平为点分键标量表;容器/None 等杂项 JSON 化(None 跳过)。"""
+    """payload 递归拍平为点分键标量表;容器/None 等杂项 JSON 化(None 跳过)。
+
+    顶层 ``messages``/``message`` 两键一律跳过(additive 守卫):内核开
+    ``_rl_capture`` 后 pre/post:llm.* payload 带全量报文(§10.2 RL 轨迹导出),
+    落进 span 事件体会爆炸(单事件数 MB);OTLP 语义归 llm span 属性(_map),
+    事件扁平化不承载报文。
+    """
     attrs: dict[str, Any] = {}
     for key, value in payload.items():
+        if not prefix and key in ("messages", "message"):
+            continue  # rl_capture 报文键(见 docstring):事件体爆炸守卫
         flat = f"{prefix}{key}"
         if isinstance(value, dict):
             attrs.update(_flatten(value, f"{flat}."))

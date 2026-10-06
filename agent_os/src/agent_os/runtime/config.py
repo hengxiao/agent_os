@@ -53,7 +53,12 @@
                    (§10.2,默认关闭,regex 快筛,开启后 WAL 不再逐字保真);
                    [telemetry.otlp] 子表接 OTLP exporter(endpoint 必填;
                    headers 支持 {env = "VAR"} 间接;batch_max/flush_interval/
-                   queue_max/timeout 调参;best-effort:失败丢批不重试)
+                   queue_max/timeout 调参;best-effort:失败丢批不重试);
+                   [telemetry.metrics] 空表即启用 MetricsCollector(§10.2 每 run
+                   计数报告,<dir>/<run_id>.metrics.json;v1 表内任何键 ConfigError);
+                   [telemetry.rl_export] 子表接 RL 轨迹 exporter(§10.2 训练就绪
+                   导出;path 必填非空字符串;builder 见其 exporter 即开内核
+                   报文捕获,缺省关 = 信号 payload 逐字节不变)
     [memory]     → M6 记忆子系统(docs/DESIGN.md §11.2):dir = "./memory"
                    (LocalFileMemoryService 根目录);段存在才接线,缺段完全不 bind
                    (同 [credentials] 先例;接线后 system.memory.search/write 可用)
@@ -137,7 +142,9 @@ from agent_os.sidecars.builtins import (
 from agent_os.skills.draft_store import DraftStore
 from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.telemetry.jsonl_exporter import JsonlTelemetrySink
+from agent_os.telemetry.metrics import MetricsCollector
 from agent_os.telemetry.otlp_exporter import OtlpExporter
+from agent_os.telemetry.rl_exporter import RlTrajectoryExporter
 from agent_os.tools.blob import FileBlobStore
 from agent_os.tools.builtins import python_exec_tool
 from agent_os.tools.local_registry import LocalPythonToolRegistry
@@ -704,15 +711,19 @@ def _schedule_section(cfg: dict[str, Any]) -> ScheduleSection:
     return ScheduleSection(interval_seconds=float(interval))
 
 
-#: ``[telemetry]`` 支持的字段(§10.2;dir = WAL 目录,redact = PII 脱敏 hook,otlp = OTLP exporter 子表)
-_TELEMETRY_FIELDS = ("dir", "redact", "otlp")
+#: ``[telemetry]`` 支持的字段(§10.2;dir = WAL 目录,redact = PII 脱敏 hook,
+#: otlp/metrics/rl_export = exporter 子表)
+_TELEMETRY_FIELDS = ("dir", "redact", "otlp", "metrics", "rl_export")
 
 #: ``[telemetry.otlp]`` 支持的字段(endpoint 必填;其余为 OtlpExporter 调参,缺省随其默认值)
 _TELEMETRY_OTLP_FIELDS = ("endpoint", "headers", "batch_max", "flush_interval", "queue_max", "timeout")
 
+#: ``[telemetry.rl_export]`` 支持的字段(path = RL 轨迹 JSONL 落盘路径,必填)
+_TELEMETRY_RL_EXPORT_FIELDS = ("path",)
+
 
 def _telemetry_section(cfg: dict[str, Any]) -> dict[str, Any]:
-    """``[telemetry]`` 段严格解析(§10.2)→ 装配形态 dict(``dir``/``redact``/``otlp``)。
+    """``[telemetry]`` 段严格解析(§10.2)→ 装配形态 dict(``dir``/``redact``/``otlp``/``metrics``/``rl_export``)。
 
     严格未知字段 + 类型校验(同 ``_context_section`` 先例;闭合本段此前是全仓
     唯一非严格段的缺口——键拼错会静默不接线,best-effort exporter 静默丢数据,
@@ -724,12 +735,22 @@ def _telemetry_section(cfg: dict[str, Any]) -> dict[str, Any]:
       字符串字面量或 ``{env = "VAR"}`` 间接引用(``os.environ`` **装配时**现读,
       不落盘明文——同 ``_mcp_servers`` headers 先例,唯解析时点不同:mcp 连
       接时现读,otlp 一次性解析;变量缺席 → ConfigError);
-      ``batch_max``/``flush_interval``/``queue_max``/``timeout`` 正数。
+      ``batch_max``/``flush_interval``/``queue_max``/``timeout`` 正数;
+    - ``metrics`` 子表(§10.2 MetricsCollector):**空表即启用**;v1 暂不支持
+      调参,表内任何键 → ConfigError(调参拼错会静默落默认,同各段严格先例);
+    - ``rl_export`` 子表(§10.2 RL 轨迹导出):``path`` 必填非空字符串
+      (RlTrajectoryExporter 的 JSONL 落盘路径);未知键 → ConfigError。
     """
     unknown = sorted(set(cfg) - set(_TELEMETRY_FIELDS))
     if unknown:
         raise ConfigError(f"[telemetry] 含未知字段: {unknown}(支持: {list(_TELEMETRY_FIELDS)})")
-    section: dict[str, Any] = {"dir": None, "redact": False, "otlp": None}
+    section: dict[str, Any] = {
+        "dir": None,
+        "redact": False,
+        "otlp": None,
+        "metrics": None,
+        "rl_export": None,
+    }
     trace_dir = cfg.get("dir")
     if trace_dir is not None:
         if not isinstance(trace_dir, str) or not trace_dir:
@@ -786,6 +807,34 @@ def _telemetry_section(cfg: dict[str, Any]) -> dict[str, Any]:
                 raise ConfigError(f"[telemetry.otlp] {key} 须为正数,得到: {raw!r}")
             kwargs[key] = raw
         section["otlp"] = kwargs
+    metrics = cfg.get("metrics")
+    if metrics is not None:
+        if not isinstance(metrics, dict):
+            raise ConfigError(f"[telemetry.metrics] 应为表(空表即启用),得到: {metrics!r}")
+        if metrics:
+            raise ConfigError(
+                f"[telemetry.metrics] 含未知字段: {sorted(metrics)}"
+                f"(v1 暂不支持调参——``[telemetry.metrics]`` 空表即启用 MetricsCollector)"
+            )
+        section["metrics"] = {}
+    rl_export = cfg.get("rl_export")
+    if rl_export is not None:
+        if not isinstance(rl_export, dict):
+            raise ConfigError(
+                f'[telemetry.rl_export] 应为表({{ path = "./rl-trace.jsonl" }}),得到: {rl_export!r}'
+            )
+        unknown = sorted(set(rl_export) - set(_TELEMETRY_RL_EXPORT_FIELDS))
+        if unknown:
+            raise ConfigError(
+                f"[telemetry.rl_export] 含未知字段: {unknown}"
+                f"(支持: {list(_TELEMETRY_RL_EXPORT_FIELDS)})"
+            )
+        rl_path = rl_export.get("path")
+        if not isinstance(rl_path, str) or not rl_path:
+            raise ConfigError(
+                f"[telemetry.rl_export] path 必填,须为非空字符串路径,得到: {rl_path!r}"
+            )
+        section["rl_export"] = {"path": rl_path}
     return section
 
 
@@ -1211,17 +1260,29 @@ def build_kernel(
         builder.user_channel(user_channel)
     telemetry_cfg = cfg.get("telemetry")
     if telemetry_cfg is not None:
-        # §10.2:严格段解析(dir/redact/otlp 三键;未知字段 ConfigError,同各段先例)
+        # §10.2:严格段解析(dir/redact/otlp/metrics/rl_export;未知字段 ConfigError,同各段先例)
         section = _telemetry_section(telemetry_cfg)
-        if section["dir"] is None and (section["redact"] or section["otlp"] is not None):
+        if section["dir"] is None and (
+            section["redact"]
+            or section["otlp"] is not None
+            or section["metrics"] is not None
+            or section["rl_export"] is not None
+        ):
             raise ConfigError(
-                '[telemetry] 配置了 redact/otlp 但缺 dir(OTLP 是 exporter 不是 sink 替代——'
-                'sink 需要 WAL 目录;请补 dir = "./traces")'
+                '[telemetry] 配置了 redact/otlp/metrics/rl_export 但缺 dir'
+                '(exporter 不是 sink 替代——sink 需要 WAL 目录;请补 dir = "./traces")'
             )
         if section["dir"] is not None:
             sink = JsonlTelemetrySink(section["dir"], redact=section["redact"])
             if section["otlp"] is not None:
                 sink.register_exporter(OtlpExporter(**section["otlp"]))
+            if section["metrics"] is not None:
+                # §10.2 MetricsCollector:每 run 计数报告,与 WAL 同目录落 <run_id>.metrics.json
+                sink.register_exporter(MetricsCollector(section["dir"]))
+            if section["rl_export"] is not None:
+                # §10.2 RL 轨迹导出;builder build 收尾见 rl_trajectory exporter 即置
+                # kernel._rl_capture(duck-typed),runner 的 pre/post:llm.* 才带报文键
+                sink.register_exporter(RlTrajectoryExporter(**section["rl_export"]))
             builder.telemetry(sink)
     memory_cfg = cfg.get("memory")
     if memory_cfg is not None:

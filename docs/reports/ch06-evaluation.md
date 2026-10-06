@@ -109,7 +109,7 @@ Agent OS 的定位恰恰是本章所称的 Harness,因此本章对内核设计�
 - **KV Cache 稳定前缀 → `pinned` 不变量**(§7.3 不变量 1)+ `collapse_child`(§7.2,子帧 transcript 折叠直接消灭重复计费源)。
 - **原子工具要求 → Tool 定义**(§2.2"无调用栈、无 LLM 循环、单次进出");组合能力上收 Skill,与本章工具原子化逐字对应。
 - **工具失败给清晰错误信息 → 错误观察语义**(§3.2)。
-- **action legality rate → 分发流水线的可计数事件**:schema 校验失败、权限拒绝、Veto 都是显式信号事件(§8.1),离线可算。
+- **action legality rate → 分发流水线的可计数事件**:schema 校验失败、权限拒绝、Veto 都是显式信号事件(§8.1),离线可算。(**落地注记 2026-10-06**:在线汇聚已落地——MetricsCollector(docs/DESIGN.md §10.2)按 post:tool.call 口径在线统计 tools.{calls, ok, errors, legality_rate}(Veto/白名单拒绝路径不发 post:tool.call,不入分母,与离线口径一致),run 终态落 `<traces_dir>/<run_id>.metrics.json` 并归档 `runs/<id>/metrics.json`;离线可算口径不变。)
 - **轨迹 vs 结果双重覆盖 → 帧 `result` 是自报的**(§2.3);outputs schema 校验只管类型合法(§2.1),语义正确性留待评测层独立状态检查——分工与本章一致。
 - **仿真环境 / RLVR → Logic Kernel 沙箱 + MCP 适配器预留**(§9、§8.3);validator 可作为 code 技能或沙箱程序执行,契约未封死。
 
@@ -133,7 +133,7 @@ Agent OS 的定位恰恰是本章所称的 Harness,因此本章对内核设计�
 1. **评测子系统整体缺位——本章最大提醒**。../DESIGN.md 只有内核自身测试策略(§13),没有"评测跑在内核上的 Skill/Agent"的任何设施。本章立场:消融、flag、prompt 回归必须架构期内置,事后加装代价高。我们虽不必照搬产品级 feature flag,但 M5 之后"评测模式"缺位会立刻显现。
 2. **Usage 记账字段不足以支撑成本归因**。本章要求区分:input/output 分开计价、**cache read/write**(约 0.1×/1.25× 输入价)、**thinking tokens**(不可见但计费)、TTFT 与总延迟、每个工具返回的 token 体量。我们的 `Usage(steps, tokens, cost)`(§2.3)与 `ChatResponse.usage{prompt, completion, cost}`(§4.1)过粗,`ProviderCaps`(§4.1)也未声明 cache/thinking 能力。没有这组字段,"哪个 Skill/工具是成本大头"无从回答,本章实验 6-7 的成本基线无法建立。
 3. **Trace 未对齐标准协议**。本章明确 OpenTelemetry + OpenInference 的价值在采集/分析解耦、避免厂商锁定;TraceRecorder 目前是私有 JSONL(§5.5)。帧树本就是 span 树,补 OTLP/OpenInference 映射成本极低,收益是直接接入 LangSmith/Phoenix 生态与"trace 回流评测资产"通道。(**落地注记 2026-09-30**:本条已关闭——`OtlpExporter` 经 `sink.register_exporter` 注册制槽位挂接,帧树 ≡ span 树机械映射,OTLP/HTTP JSON(零新依赖,httpx 阻塞 Client + to_thread,无 protobuf);私有 JSONL 仍是 WAL baseline,OTLP 是 exporter 不是替代。留尾:protobuf 编码、导出重试/backoff、metrics/logs 管道、跨进程 traceparent 传播。)
-4. **过程指标无汇聚点**。action legality rate、path efficiency、回溯频率都能从信号流算出,但设计中没有任何指标汇聚定义(哪怕一个 ASYNC MetricsCollector)。LoopDetector(§5.4)已是 path efficiency 的在线特例,说明信息足够,只差汇聚语义。
+4. **过程指标无汇聚点**。action legality rate、path efficiency、回溯频率都能从信号流算出,但设计中没有任何指标汇聚定义(哪怕一个 ASYNC MetricsCollector)。LoopDetector(§5.4)已是 path efficiency 的在线特例,说明信息足够,只差汇聚语义。(**落地注记 2026-10-06**:汇聚语义已落地——MetricsCollector(`telemetry/metrics.py`,docs/DESIGN.md §10.2)以 Exporter 变体在线汇聚 per-run 指标(llm/tools(含 legality_rate)/data_denied/steps/frames/compress/escalations/supervisor/budget/run.status),run 终态原子写 `<traces_dir>/<run_id>.metrics.json`,宿主归档 `runs/<id>/metrics.json`,消费面 v1 = run dir 文件;path efficiency/回溯频率仍无专门口径,可凭 steps/frames/compress 计数离线推导。)
 5. **统计显著性与多次采样无抓手**。`RunConfig`(§2.4)没有 seed/temperature 钉死等复现性支持,也没有"n 次运行 + 均值/离散度汇总"的批量入口。可在内核外 eval harness 实现,但设计文档应指明归属,否则无人认领。
 6. **评审工程质量知识未覆盖**。judge calibration(kappa 门槛)、位置偏置(交换顺序)、长度偏置(罚冗长)、多源异构评审——若提供 judge skill 示例,这些应写进示例而非留给用户踩坑。
 7. **动态/条件化模型路由缺失**。H4(全局开 thinking 被拒)→ H7(按任务特征条件启用)表明静态 `model.prefer` 不足以表达"按任务特征路由";ProviderManager(§4.2)目前只有静态 prefer + fallback,无路由决策扩展点。

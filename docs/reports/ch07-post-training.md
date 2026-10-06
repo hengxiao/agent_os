@@ -179,7 +179,7 @@
 
 - 本章把轨迹数据视为一等资产(rollout → rejection sampling → RFT;τ²-bench 轨迹供模仿学习),并指出两个硬性技术要求:轨迹必须区分模型 token 与环境 token 以做 loss masking;训练/评估数据必须严格隔离。
 - 我们的 TraceRecorder 目前只记"每条信号一行 JSONL 摘要",不含完整消息体与 provenance 元数据,无法直接导出为 SFT/RL 数据。
-- 价值:内核是全系统唯一能看到完整轨迹(含子帧折叠前 transcript)的位置;补齐导出能力后 Agent OS 可兼任"rollout 基础设施"——这是本章指明的高杠杆方向,且成本只落在一个 sidecar 上。
+- 价值:内核是全系统唯一能看到完整轨迹(含子帧折叠前 transcript)的位置;补齐导出能力后 Agent OS 可兼任"rollout 基础设施"——这是本章指明的高杠杆方向,且成本只落在一个 sidecar 上。(**落地注记 2026-10-06**:导出能力 v0 已落地——RL-trajectory exporter(`telemetry/rl_exporter.py`,docs/DESIGN.md §10.2 收口):`[telemetry.rl_export] path` 开启后 pre/post:llm.* 信号携带请求/响应报文(checkpoint `_message_to_dict` 同形态),按 (run_id, frame_id) FIFO 配对写 `agent_os.rl-trace/1` JSONL(行 {seq, model, request.messages, response.message, usage, ts}),压缩链补发过滤、缺对不抛、seq 跨 pause→resume 单调;loss masking 角色维由消息自带 role/source 承担。保真边界:request.messages 是模型实际所见线报(emit 点处压缩已发生,train-on-what-the-model-saw)而非压缩前原始报文;被逐历史不在行内(可凭 WAL compress 信号 + checkpoint 部分复原),完整消息级 provenance(消息 id + 被逐 id)留 v1;"成本只落在一个 sidecar 上"的预判兑现为 Exporter 观察面,契约零改动。)
 
 **差距 2:缺少"可验证信号"的统一抽象(影响 §5.1 信号目录 / §8.1)。**
 
@@ -218,7 +218,7 @@
 
 - 我们的 Context Compression(§7)刻意丢弃/摘要历史以控制窗口;训练侧要求轨迹完整保真——若导出的轨迹取自压缩后上下文,等价于在错误的状态分布上训练。
 - 评估:两者其实不冲突。压缩作用于发给 Provider 的请求,TraceRecorder 作用于信号流;只要训练数据从信号流(压缩前)导出,两目标同时满足。
-- 但这要求 TraceRecorder 记录**请求级原始报文**而非压缩后视图;当前设计(§5.5 "payload 摘要")未明确这一点,值得写进文档。
+- 但这要求 TraceRecorder 记录**请求级原始报文**而非压缩后视图;当前设计(§5.5 "payload 摘要")未明确这一点,值得写进文档。(**落地注记 2026-10-06**:v0 已对本条作出明确裁决并写进文档——导出行取自信号流,报文为 build 后实发线报(emit 点处压缩已发生):train-on-what-the-model-saw,训练分布与策略实际面对的状态分布一致,正面回应"在错误的状态分布上训练"之忧;压缩前原始上下文不在行内,可凭 WAL pre/post:compress 信号与 checkpoint 帧上下文部分复原;"压缩前原始报文 + 完整 provenance"形态留 v1,边界已写进 docs/DESIGN.md §10.2 与 exporter docstring。)
 
 **取舍 2:稠密过程奖励 vs 我们的稀疏运行时闸门。**
 
@@ -248,7 +248,7 @@
 - 在 TraceRecorder 条目中补充:记录完整请求/响应报文(压缩前)、消息 provenance(assistant / tool_result / system,支撑 loss masking)、帧树结构。
 - 声明其目标是"可导出为 SFT/RL rollout 数据"。
 - 同时加一条纪律:golden-file 测试集标注"评估专用",呼应本章训练/评估隔离原则。
-- 成本集中在一个 sidecar,不动契约层。
+- 成本集中在一个 sidecar,不动契约层。(**落地注记 2026-10-06**:P0 主体已落地(docs/DESIGN.md §10.2 收口)——训练就绪导出 v0 经 `[telemetry.rl_export]` 配置开启,成本落在 Exporter 观察面、契约零改动(与本条预判一致,落地形态为 Exporter 而非 sidecar);"完整请求/响应报文"兑现为模型实际所见线报(保真边界见差距 1 注),"消息 provenance 支撑 loss masking"兑现为消息自带 role/source 角色维(assistant 可训练、system/user/tool/injected mask 的文档化映射),完整消息级 provenance 留 v1;"golden-file 标注评估专用"纪律维持 docs/DESIGN.md §10.2 原文不变。)
 
 **P1 — ToolSpec 增加编排元数据(影响 §2.2 / §8.1)。**
 

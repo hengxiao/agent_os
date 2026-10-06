@@ -25,7 +25,7 @@
   - 同步 request-response 无法唤醒不在场的 Agent(通知原语都在单会话内)——事件驱动架构必须建在协议之上;
   - 上下文开销:5 个 server ≈ 5.5 万 token 定义,占 200K 窗口近 30%;Cursor 的"描述同步到文件夹、默认只见索引、按需查询"省 46.9%;
   - 工具过载:按信息源类型分层组织(search / read / parse / query),系统提示中显式声明分类;动态按需检索(Anthropic 实验:Opus 4 工具使用准确率 49%→74%);Skills 把"选择问题"变成 LLM 擅长的"知识检索问题"。
-- **MCP 信任模型四类风险**:tool description poisoning(描述逐字进上下文、每 session 生效的 prompt injection 变体)、malicious/compromised server(供应链与远端被攻破)、tool shadowing(同名/近似工具遮蔽,劫持含敏感参数的调用)、credential 风险(OAuth token 被骗用)。缓解 = 描述按不可信输入审查、锁定 server 版本拒绝静默更新、最小权限凭证且设过期。运行期兜底 = 后文 Sidecar 机制(只看结构化数据,抗 rhetoric 操纵)。并引出第 5 章的 **Lethal Triad**(私有数据 + 不可信内容 + 对外通信三要素齐备即成攻击闭环,持久记忆进一步放大)。
+- **MCP 信任模型四类风险**:tool description poisoning(描述逐字进上下文、每 session 生效的 prompt injection 变体)、malicious/compromised server(供应链与远端被攻破)、tool shadowing(同名/近似工具遮蔽,劫持含敏感参数的调用)、credential 风险(OAuth token 被骗用)。缓解 = 描述按不可信输入审查、锁定 server 版本拒绝静默更新、最小权限凭证且设过期。(**落地注记 2026-10-06**:「锁定 server 版本拒绝静默更新」已落地——协议面双传输钉扎(initialize 协商 `protocolVersion` ≠ 钉扎请求值 → McpError 拒连快速失败,报两版本号并指路 `protocol_version` 配置,装配归 ConfigError,不静默降级)+ 包面装配警告(npx command 末参形似 npm 包而无 `@version` → 每 client 一次 warning 引导钉 `@x.y.z`,只引导不阻断);同句另外两条此前已落地——描述注入扫描命中整段弃用/500 截断、`{env="VAR"}` 间接引用最小权限凭证(均 2026-09-28,见 ../DESIGN.md §8.3)。)运行期兜底 = 后文 Sidecar 机制(只看结构化数据,抗 rhetoric 操纵)。并引出第 5 章的 **Lethal Triad**(私有数据 + 不可信内容 + 对外通信三要素齐备即成攻击闭环,持久记忆进一步放大)。
 
 ### 三类主动调用的工具
 
@@ -125,7 +125,7 @@
 5. **幂等语义的工程深度**。我们只有 `idempotent` 布尔位(§2.2);书给出 idempotency key(客户端生成、服务端去重)、query before mutation,以及不可幂等操作的 **two-phase confirm**(dry run + confirmation token,失败回上层重新 pre-check 而非盲目重试)。对 EXEC 级工具(发邮件、转账类),这是比人工审批更细的结构性防线。
 6. **工具级 context-aware compression**。我们的压缩作用于帧上下文整体(§7);书的感知工具在输出超阈值时**按当前查询意图**压单个输出——压缩目标更精准(知道为什么查)、损失更小,可作为 `Compressor` 新策略或归一化的可选档,与 spill 并列。
 7. **rejection circuit breaker 的显式化**。连续拒绝 → 回退人工,防"重试烧资源 + 用户被困在循环里"。我们有 LoopDetector 的升级链但只针对循环调用;审批路径上的熔断没有显式机制。
-8. **MCP 供应链安全清单**。ToolGuard(§5.4)只做运行期规则匹配;书的四类风险提示 §8.3 的 MCP 适配器需要加载期缓解:描述按不可信输入审查、版本锁定(semver 寻址 + 钉住已具雏形)、同名工具 namespace 隔离、**最小权限凭证作用域**——ToolContext 目前没有凭证概念,是真空洞。
+8. **MCP 供应链安全清单**。ToolGuard(§5.4)只做运行期规则匹配;书的四类风险提示 §8.3 的 MCP 适配器需要加载期缓解:描述按不可信输入审查、版本锁定(semver 寻址 + 钉住已具雏形)、同名工具 namespace 隔离、**最小权限凭证作用域**——ToolContext 目前没有凭证概念,是真空洞。(**落地注记 2026-10-06**:清单四条至此全落地——描述注入扫描整段弃用/500 截断与 namespace 隔离/撞名拒覆盖(2026-09-28)、凭证作用域(`ToolSpec.credentials` + `[credentials]` 段 env 间接引用,2026-08-31;MCP env/headers 同先例)、版本锁定(2026-10-06:协议面双传输钉扎拒连 + 包面 npx 未钉版装配 warning;见上文物清单行注记与 ../DESIGN.md §8.3/§16)。)
 9. **事件驱动入口(范围外但路径清晰)**。事件队列、structured event modeling、cancel/queue/parallel 三策略、轻量 LLM event router、`initiate_X` 异步命名约定、`monitor_shell` 监控模式,构成完整的"外部世界唤醒 Agent"设计。我们的信号总线(§5.1)是天然接入点(外部事件 → 信号 → Run/帧注入),§14 值得把这条路径写成开放问题而不是空白。(**落地注记 2026-10-01**:本条路径主体已落地——宿主事件入口三通道(2026-09-29)+ 在跑通道事件批处理(同日)+ 持久事件队列与调度(本日:`[schedule]` 段宿主调度器、`POST /api/events` 的 `delay_seconds`/`at`、`GET /api/schedule`、`system.schedule.set` 跨 run 派生);`initiate_X` 命名约定已落 ../SKILL-DEV.md §6;`monitor_shell`/`connect_channel` 同日落地(`system.monitor.set`/`system.channel.connect` + std 两件,三件套齐);仍开口:事件过滤/限流、LLM event router。)
 10. **协作工具的 message passing / cancel 原语**。子技能调用单次进出(§3.3),父帧无法在子帧运行中补充指令或主动取消(RunControl 只给 sidecar,§5.2)。`send_message_to_subagent` / `cancel_subagent` 提示:长运行子帧需要帧间邮箱,可与 §14 开放问题 4(黑板服务)统一考虑。
 11. **上下文来源标注**。子 Agent 提示词中显式区分 `[FROM_MAIN_AGENT]` / `[FROM_USER]` / `[TOOL_RESULT]`,是便宜的注入缓解;FrameContext 消息构造(§2.3)没有来源标注约定,可零成本采纳为内置约定。

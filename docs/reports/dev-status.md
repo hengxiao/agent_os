@@ -275,6 +275,10 @@
 > 原语、懒连接、版本锁定、未与真实 MCP server 互测(其中 Streamable HTTP 传输与
 > stdio 真实 server 互测已于 2026-09-29 关闭,见头部复核块;新增开口:GET standalone
 > SSE/resumability、batching、HTTP 真实 server 互测、OAuth);`agent_os.tools` EP 组仍预留。
+> (**2026-10-06 更新**:留尾"resources/prompts 原语"(派生工具形态)与"版本锁定"(协议面钉扎 +
+> 包面 npx 警告)已关闭、batching 裁决关闭(spec 2025-06-18 已移除,PR #416),见下文 2026-10-06
+> 复核块;懒连接(eager 定案重申)、GET standalone SSE/resumability、OAuth、HTTP 真实 server
+> 互测仍开口,理由各注于该块。)
 > 下文 §3(Tool Registry)"未开发"中的"MCP 适配器"据此关闭,dated 原文保留。
 > 全量基线:1595 收集 = 1546 passed + 10 skipped + 39 xfailed,0 失败(两轮复跑确认;
 > 时长受并行会话负载影响波动大,不作为口径)。
@@ -500,7 +504,10 @@
 > skip 护栏 = npx 缺席或 AGENT_OS_MCP_INTEROP=0。
 > **仍开口**:GET standalone SSE/Last-Event-ID resumability、batching、
 > resources/prompts 原语、HTTP 真实 server 互测(官方 server 多无 HTTP CLI 形态)、
-> OAuth、懒连接、版本锁定。
+> OAuth、懒连接、版本锁定。(**2026-10-06 更新**:"resources/prompts 原语"(派生工具形态)
+> 与"版本锁定"(协议面钉扎 + 包面 npx 警告)已关闭、batching 裁决关闭(spec 2025-06-18 已移除,
+> PR #416),见下文 2026-10-06 复核块;GET standalone SSE/resumability、OAuth、懒连接、
+> HTTP 真实 server 互测仍开口,理由各注于该块。)
 > 下文 §3(Tool Registry)开口表述同步复核(2026-09-29 行)。
 > 全量基线:1795 收集 = 1752 passed + 10 skipped + 40 xfailed,0 失败。
 
@@ -813,6 +820,48 @@
 > 22 monitor 专测 `tests/tools/test_monitor.py` + 12 std-gate 自动参数化;xfail +2 =
 > 两个新内置工具触发 std gate 逐参数元测试,属预期)。
 
+> ✅ **复核 2026-10-06(MCP 余项批次:协议版本钉扎 + resources/prompts 派生工具 + npx 包版本警告)**:
+> 上文 2026-09-28(MCP stdio 适配器落地)与 2026-09-29(MCP Streamable HTTP 传输)两块
+> 「仍开口」中的"resources/prompts 原语"与"版本锁定"据此关闭、batching 裁决关闭
+> (spec 2025-06-18 已移除该特性,PR #416;客户端单飞语义不值得为它设版本门),
+> dated 原文保留、各加同日关闭注。
+> ① **协议版本钉扎(双传输)**——ch04 供应链清单「锁定 server 版本拒绝静默更新」的协议面落地:
+> stdio `_connect_blocking`(`tools/mcp.py:267-332`)开始读 initialize result,协商
+> `protocolVersion` ≠ 钉扎请求值(缺省 stdio 2024-11-05 / http 2025-03-26,
+> `protocol_version` 显式给即换钉扎值)→ McpError 快速失败,报两版本号并指路
+> `protocol_version` 配置(装配归 ConfigError);http 同点校验(`tools/mcp_http.py:185-199`)。
+> 拒绝静默降级:协议行为随版本漂移,静默接受不可审计,换版本须显式配置。
+> ② **resources/prompts 原语 = 派生工具(双传输)**——公开方法 `request(method, params, timeout)`
+> 承载任意 JSON-RPC 调用(`call_tool`/`read_resource`/`get_prompt` 为其特化;断管重连一次、
+> 双超时、CancelledError 杀连接传播纪律原样);握手后按 server capabilities 取
+> `resources/list`/`prompts/list` 缓存(未广告不调用;宣告了响应缺数组 → McpError 快速失败,
+> 同 tools/list 先例);清单非空才注册 `mcp.<server>.resource_read`(参数 `uri`)/
+> `mcp.<server>.prompt_get`(参数 `name`/`arguments`)——描述 = 固定前缀 + 逐条清单摘要
+> (每条过 `looks_suspicious`,命中弃该条描述为占位,干净描述 500 截断),
+> `untrusted_source=True`/`concurrency_safe=False`/permission/timeout/confirm 随 server spec,
+> 撞名拒覆盖;归一化:text 块直返拼接,blob 块(base64)溢写 blob store 返 `blob://` ref
+> (先例 `std_web.py:98-99`;ctx.blob 缺席/非法 base64/未知块形 → 显式占位不静默丢),
+> `isError`/响应缺数组 → ToolError INTERNAL 族,prompt_get 逐条投影 `role: text`。
+> ③ **npx 包版本警告**(`tools/mcp.py:147` `_warn_unpinned_npx`)——ch04 清单包面:command
+> 末参形似 npm 包(`@scope/name` 或裸名)而无 `@version` → 每 client 一次 warning 引导钉版
+> (npx 对未钉版包默认拉最新,版本漂移不可审计);只引导不阻断;`-y` 等 flag/路径/已钉版/
+> 非 npx 命令不误伤。
+> ④ **罐头对端扩面**——stdio `tests/helpers/mcp_server.py`(`--extended` 宣告 resources/prompts
+> capabilities + 四方法实现,清单含 blob 资源与注入描述样本;initialize 可固定回应协议版本
+> 演练钉扎失配)与 http `tests/helpers/mcp_http_server.py`(`state.extended_caps`/
+> `state.reply_protocol_version` 同构参数化)双罐头同步扩面。
+> **仍开口(理由各注)**:懒连接(eager 定案重申——G2 tools.has/runner 白名单与 §8.2 配置即授权
+> 要求装配期工具面验明确定)、GET standalone SSE/Last-Event-ID resumability(registry 无
+> unregister,list_changed 推送无安全落点)、OAuth(交互 flow + refresh token 持久化与不落盘
+> 明文纪律冲突;`{env}` 静态 token + 重连重新解析即轮换已覆盖多数场景,建议宿主带外 flow 后注入)、
+> HTTP 真实 server 互测(官方 server 多无 HTTP CLI 形态;罐头扩面已落地)。
+> 下文 §3(Tool Registry)开口表述同步复核(2026-10-06 行);DESIGN §8.3/§16、ch04-tools、
+> RUNNERS、白皮书 03(zh/en)同批更新。
+> 全量基线:2035 收集 = 1982 passed + 10 skipped + 43 xfailed,0 失败(+14 例 =
+> tests/tools/test_mcp.py +10 → 30 例、tests/tools/test_mcp_http.py +4 → 17 例;xfail 不变——
+> 派生工具是装配期动态注册,不进 with_builtins 静态面,std gate 逐参数元测试不新增,已验证;
+> 真实 stdio interop(npx `@modelcontextprotocol/server-filesystem`)不受影响跑通)。
+
 ## 一、总览
 
 - **里程碑**:M0–M5 完成(其中 M5 拆为 a/b/c 三个子提交);**M6(演化)未开始**。
@@ -865,6 +914,7 @@
 - **复核 2026-09-27(清理批)**:`FileBlobStore` 已落地(`tools/blob.py`,内容寻址落盘 + 白名单防逃逸,`[blob] dir` 配置段接线);`ask_user`/`notify_user` 已实填(`system.user.ask`/`system.user.notify`,WRITE 档,`bind_user_channel` 装配,未 bind → NOT_FOUND;CLI 接线留 TODO);归一化 enrichment 与 ToolSpec 预留字段语义化仍开口。
 - **复核 2026-09-28**:MCP 适配器(stdio,工具侧)已落地——`tools/mcp.py` + `[mcp.servers.<name>]` 配置段,eager 装配、失败 ConfigError,工具以 `mcp.<server>.<tool>` 走全量 dispatch 管线,§8.3 供应链清单逐条落地(详见头部复核块);仍开口:Streamable HTTP、resources/prompts、真实 server 互测;归一化 enrichment 与 ToolSpec 预留字段语义化仍开口。
 - **复核 2026-09-29**:MCP Streamable HTTP 传输已接入(`tools/mcp_http.py`,spec 2025-03-26 版族;配置段加 `url`/`headers`/`transport`/`protocol_version` 四键,command/url 恰居其一),stdio 官方 server 真实互测已跑通(npx `@modelcontextprotocol/server-filesystem`,`tests/tools/test_mcp_interop.py`;详见头部复核块);仍开口:resources/prompts、HTTP 真实 server 互测(官方 server 多无 HTTP CLI 形态)、GET standalone SSE/resumability、batching、OAuth、懒连接、版本锁定;归一化 enrichment 与 ToolSpec 预留字段语义化仍开口。
+- **复核 2026-10-06(MCP 余项批次)**:协议版本钉扎双传输落地(initialize 协商 ≠ 钉扎请求值 → McpError 拒连快速失败,装配归 ConfigError;换版本须显式 `protocol_version` 配置);resources/prompts 原语落地为派生工具 `mcp.<server>.resource_read`/`mcp.<server>.prompt_get`(capabilities 门控清单缓存、清单非空才注册、描述逐条注入扫描、blob 块溢写返 `blob://` ref、permission/timeout/confirm 随 server spec);npx 未钉版包装配 warning 引导钉版(不阻断);双罐头扩面(capabilities/回应协议版本可参数化 + resources/prompts 夹具);batching 裁决关闭(spec 2025-06-18 已移除该特性,PR #416;单飞语义不值得版本门)——上行 dated 行的"resources/prompts、版本锁定、batching"据此关闭,dated 原文保留;仍开口:懒连接(eager 定案重申:G2 tools.has/runner 白名单与 §8.2 配置即授权)、GET standalone SSE/resumability(registry 无 unregister,list_changed 无安全落点)、OAuth(交互 flow 与明文纪律冲突,建议宿主带外 flow)、HTTP 真实 server 互测(官方 server 多无 HTTP CLI 形态;罐头扩面已落地);归一化 enrichment 与 ToolSpec 预留字段语义化仍开口。
 
 ### 4. Skill Registry — ✅ ~70%
 

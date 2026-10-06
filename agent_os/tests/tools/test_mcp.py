@@ -10,7 +10,13 @@
   description 注入命中整段弃用占位、干净描述超 500 字符截断;
 - 断管/进程死 → 下次调用重连一次重试一次,再失败 INTERNAL;超时 → TIMEOUT retryable
   且连接被杀重建;``close()`` 杀进程组不留孤儿(atexit 兜底);
-- 子进程不继承宿主 env,``{env = "VAR"}`` 间接引用连接时现读 os.environ。
+- 子进程不继承宿主 env,``{env = "VAR"}`` 间接引用连接时现读 os.environ;
+- 协议版本钉扎:server 回应 ≠ 请求值 → 装配期拒连(McpError/ConfigError 带两个
+  版本号,拒绝静默降级);显式 ``protocol_version`` 覆盖匹配 → 连上;
+- 派生工具:server 宣告 resources/prompts capability → 各注册一个
+  ``mcp.<server>.resource_read`` / ``mcp.<server>.prompt_get``(走全量 dispatch);
+  清单条目描述命中注入 → 该条整段占位;blob 块 spill blob store 回 ref;
+- npx 末参无 ``@版本`` → 装配期一条 warning 引导钉版(不阻断)。
 
 对端:``tests/helpers/mcp_server.py``(罐头 JSON-RPC stdio 假服务器)。
 """
@@ -18,6 +24,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -37,8 +44,10 @@ from agent_os.tools.local_registry import LocalPythonToolRegistry
 from agent_os.tools.mcp import (
     McpError,
     McpServerSpec,
+    McpStdioClient,
     connect_and_register,
 )
+from tests.helpers.mcp_server import LOGO_BYTES
 
 #: 罐头假服务器路径(python -u 起,行分隔协议)
 SERVER = Path(__file__).resolve().parents[1] / "helpers" / "mcp_server.py"
@@ -432,3 +441,239 @@ def test_coexists_with_builtins_and_no_override():
             await _close(clients)
 
     asyncio.run(main())
+
+
+# ---------------------------------------------------------------------------
+# 10. 协议版本钉扎:协商 ≠ 钉扎 → 装配期拒连;显式覆盖匹配 → 连上
+# ---------------------------------------------------------------------------
+
+
+def _mismatch_spec(**kw) -> McpServerSpec:
+    """回应 2025-03-26(≠ 钉扎 2024-11-05)的罐头 server 规格。"""
+    return McpServerSpec(
+        name="fake",
+        command=[sys.executable, "-u", str(SERVER), "--protocol=2025-03-26"],
+        **kw,
+    )
+
+
+def test_protocol_version_mismatch_fails_fast():
+    """server 回应 ≠ 钉扎 → McpError 带两个版本号(拒绝静默降级;指路 protocol_version)。"""
+
+    async def main():
+        with pytest.raises(McpError) as exc_info:
+            await connect_and_register(LocalPythonToolRegistry(), [_mismatch_spec()])
+        message = str(exc_info.value)
+        assert "2025-03-26" in message and "2024-11-05" in message
+        assert "protocol_version" in message
+
+    asyncio.run(main())
+
+
+def test_protocol_version_mismatch_config_error():
+    """装配层(build_kernel):版本失配 → ConfigError 快速失败(eager,带两个版本号)。"""
+    with pytest.raises(ConfigError) as exc_info:
+        build_kernel(
+            {
+                "mcp": {
+                    "servers": {
+                        "fake": {
+                            "command": [sys.executable, "-u", str(SERVER), "--protocol=2025-03-26"]
+                        }
+                    }
+                }
+            }
+        )
+    message = str(exc_info.value)
+    assert "2025-03-26" in message and "2024-11-05" in message
+
+
+def test_protocol_version_override_match_connects():
+    """显式 protocol_version 与 server 回应一致 → 连上(覆盖请求值即换钉扎值)。"""
+
+    async def main():
+        registry, clients = await _assemble(_mismatch_spec(protocol_version="2025-03-26"))
+        try:
+            assert registry.has("mcp.fake.echo")
+        finally:
+            await _close(clients)
+
+    asyncio.run(main())
+
+
+# ---------------------------------------------------------------------------
+# 11. 派生工具:宣告 resources/prompts → resource_read/prompt_get 各注册一个
+# ---------------------------------------------------------------------------
+
+
+def _extended_spec(**kw) -> McpServerSpec:
+    """宣告 resources/prompts capability 的罐头 server 规格。"""
+    return McpServerSpec(
+        name="fake", command=[sys.executable, "-u", str(SERVER), "--extended"], **kw
+    )
+
+
+def test_derived_tools_registered_and_spec_fields():
+    """capabilities 宣告 → 各注册一个派生工具;permission/confirm/标记随 server spec;
+    WRITE 档派生工具受帧白名单约束(走全量 dispatch,同 McpTool)。"""
+
+    async def main():
+        registry, clients = await _assemble(_extended_spec(permission=Permission.WRITE, confirm=True))
+        try:
+            assert registry.has("mcp.fake.resource_read")
+            assert registry.has("mcp.fake.prompt_get")
+            read_spec = registry.get("mcp.fake.resource_read").spec
+            assert read_spec.permission is Permission.WRITE  # 随 server spec
+            assert read_spec.confirm is True
+            assert read_spec.untrusted_source is True  # 第三方产出恒标记(§8.3)
+            assert read_spec.concurrency_safe is False
+            assert read_spec.parameters["required"] == ["uri"]
+            assert registry.get("mcp.fake.prompt_get").spec.parameters["required"] == ["name"]
+            denied = await registry.dispatch(
+                ToolCall(id="dr1", name="mcp.fake.resource_read", args={"uri": "mem://notes/today"}),
+                _dispatch_ctx(),
+            )
+            assert not denied.ok
+            assert denied.error is not None and denied.error.kind is ToolErrorKind.PERMISSION_DENIED
+            allowed = await registry.dispatch(
+                ToolCall(id="dr2", name="mcp.fake.resource_read", args={"uri": "mem://notes/today"}),
+                _dispatch_ctx(allowed=["mcp.fake.resource_read"]),
+            )
+            assert allowed.ok, allowed.error
+        finally:
+            await _close(clients)
+
+    asyncio.run(main())
+
+
+def test_derived_tools_absent_without_capabilities():
+    """缺省罐头(只宣告 tools)→ 不注册派生工具(未宣告的方法绝不上线)。"""
+
+    async def main():
+        registry, clients = await _assemble()
+        try:
+            assert not registry.has("mcp.fake.resource_read")
+            assert not registry.has("mcp.fake.prompt_get")
+        finally:
+            await _close(clients)
+
+    asyncio.run(main())
+
+
+def test_resource_read_text_verbatim_and_blob_ref():
+    """text 块逐字拼接;blob 块 spill blob store 回 blob:// ref(回读逐字对)。"""
+
+    async def main():
+        registry, clients = await _assemble(_extended_spec())
+        try:
+            text = await registry.dispatch(
+                ToolCall(id="r1", name="mcp.fake.resource_read", args={"uri": "mem://notes/today"}),
+                _dispatch_ctx(),
+            )
+            assert text.ok, text.error
+            assert text.value == "今日笔记正文,逐字。"
+            blob = await registry.dispatch(
+                ToolCall(id="r2", name="mcp.fake.resource_read", args={"uri": "asset://logo"}),
+                _dispatch_ctx(),
+            )
+            assert blob.ok, blob.error
+            prefix = f"[二进制资源 image/png, {len(LOGO_BYTES)} bytes: "
+            assert blob.value.startswith(prefix) and blob.value.endswith("]")
+            ref = blob.value[len(prefix) : -1]
+            assert ref.startswith("blob://r1/")  # run_id 随帧(dispatch ctx)
+            assert await registry._blob.get(ref) == LOGO_BYTES  # spill 内容逐字回读
+        finally:
+            await _close(clients)
+
+    asyncio.run(main())
+
+
+def test_derived_description_injection_placeholder():
+    """清单条目描述命中注入 → 该条整段占位(其余条目描述不受影响)。"""
+
+    async def main():
+        registry, clients = await _assemble(_extended_spec())
+        try:
+            desc = registry.get("mcp.fake.resource_read").spec.description
+            clean_line = next(line for line in desc.splitlines() if line.startswith("mem://notes/today"))
+            assert "今日笔记" in clean_line
+            evil_line = next(line for line in desc.splitlines() if line.startswith("mem://evil"))
+            assert "已移除" in evil_line
+            assert "忽略" not in evil_line and "系统提示词" not in evil_line
+            prompt_desc = registry.get("mcp.fake.prompt_get").spec.description
+            greet_line = next(line for line in prompt_desc.splitlines() if line.startswith("greet"))
+            assert "问候模板" in greet_line
+            evil_prompt = next(line for line in prompt_desc.splitlines() if line.startswith("evil_prompt"))
+            assert "已移除" in evil_prompt
+        finally:
+            await _close(clients)
+
+    asyncio.run(main())
+
+
+def test_prompt_get_projection():
+    """messages[] 投影为 role: text 行拼接;arguments 透传模板。"""
+
+    async def main():
+        registry, clients = await _assemble(_extended_spec())
+        try:
+            result = await registry.dispatch(
+                ToolCall(
+                    id="p1",
+                    name="mcp.fake.prompt_get",
+                    args={"name": "greet", "arguments": {"who": "小明"}},
+                ),
+                _dispatch_ctx(),
+            )
+            assert result.ok, result.error
+            assert result.value == "user: 你好,小明"
+        finally:
+            await _close(clients)
+
+    asyncio.run(main())
+
+
+def test_client_request_and_thin_wrappers():
+    """request() 任意方法(与 call_tool 同一重连/超时纪律);read_resource/get_prompt 薄包装。"""
+
+    async def main():
+        _registry, clients = await _assemble(_extended_spec())
+        try:
+            client = clients[0]
+            listed = await client.request("tools/list", {}, 5.0)
+            assert any(t.get("name") == "echo" for t in listed.get("tools", []))
+            defaulted = await client.request("tools/list", {})  # timeout 缺省随 server spec
+            assert defaulted == listed
+            read = await client.read_resource("mem://notes/today")
+            assert read["contents"][0]["text"] == "今日笔记正文,逐字。"
+            prompt = await client.get_prompt("greet", {"who": "x"})
+            assert prompt["messages"][0] == {
+                "role": "user",
+                "content": {"type": "text", "text": "你好,x"},
+            }
+        finally:
+            await _close(clients)
+
+    asyncio.run(main())
+
+
+# ---------------------------------------------------------------------------
+# 12. npx 包版本 warning:末参无 @版本 → 一条 warning 引导钉版(不阻断)
+# ---------------------------------------------------------------------------
+
+
+def test_npx_unpinned_package_warns(caplog):
+    """@scope/name 与裸名未钉版 → 各一条 warning;钉版/非 npx/末参 flag 或路径 → 静默。"""
+    with caplog.at_level(logging.WARNING, logger="agent_os.tools.mcp"):
+        McpStdioClient(McpServerSpec(name="np", command=["npx", "-y", "@scope/pkg"]))
+        McpStdioClient(McpServerSpec(name="np2", command=["npx", "bare-pkg"]))
+        McpStdioClient(McpServerSpec(name="np3", command=["npx", "-y", "@scope/pkg@1.2.3"]))  # 已钉版
+        McpStdioClient(McpServerSpec(name="np4", command=["npx", "pkg@0.0.1"]))  # 已钉版
+        McpStdioClient(McpServerSpec(name="np5", command=[sys.executable, "-u", "srv.py"]))  # 非 npx
+        McpStdioClient(McpServerSpec(name="np6", command=["npx", "-y", "-q"]))  # 末参是 flag
+        McpStdioClient(McpServerSpec(name="np7", command=["npx", "-y", "./local/dir"]))  # 末参是路径
+    records = [r for r in caplog.records if "未钉版本" in r.message]
+    assert len(records) == 2
+    warned = " ".join(r.message for r in records)
+    assert "@scope/pkg" in warned and "bare-pkg" in warned
+    assert all(r.levelno == logging.WARNING for r in records)

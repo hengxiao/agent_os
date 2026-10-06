@@ -127,19 +127,31 @@ backoff_base = 0.5
                                        # 段存在才接线,缺段零破坏;command(stdio)/url(http)恰居其一,同给/同缺均 ConfigError
 #   command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/srv"]
                                        # stdio 必填,非空字符串数组;eager 装配:装配期拉起子进程 initialize 握手 + tools/list,
-                                       # 工具注册为 mcp.<server>.<tool>(走全量 dispatch 管线),连接失败 ConfigError 快速失败
+                                       # 工具注册为 mcp.<server>.<tool>(走全量 dispatch 管线),连接失败 ConfigError 快速失败;
+                                       # npx 包版本警告(2026-10-06):command 末参形似 npm 包(@scope/name 或裸名)而无 @version
+                                       # → 每 client 一次 warning 引导钉 @x.y.z(只引导不阻断;-y 等 flag/路径/已钉版不误伤);
+                                       # 派生工具(2026-10-06):server 宣告 resources/prompts capability 且清单非空 → 各注册一个
+                                       # mcp.<server>.resource_read(参数 uri)/mcp.<server>.prompt_get(参数 name,arguments),
+                                       # permission/timeout/confirm 随本 server spec;blob 资源块溢写 blob store 返 blob:// ref
 #   url = "https://mcp.example.com/mcp"
                                        # http 必填,http(s):// 单端点 POST(Streamable HTTP,spec 2025-03-26 版族;
                                        # initialize 捕获 Mcp-Session-Id,404 自动重连重 initialize 一次)
 #   transport = "auto"                 # 缺省 auto(按键判:url → http,command → stdio);显式 stdio|http 与键不符 → ConfigError
-#   protocol_version = "2025-03-26"    # 可选,非空字符串;缺省随传输(stdio 2024-11-05 / http 2025-03-26)
+#   protocol_version = "2025-03-26"    # 可选,非空字符串;缺省随传输(stdio 2024-11-05 / http 2025-03-26);
+                                       # 显式给 = 钉扎值(2026-10-06):initialize 协商回应 ≠ 钉扎请求值 → McpError 拒连快速失败
+                                       # (拒绝静默降级;确要换版本 = 显式改此键,装配归 ConfigError)
 #   env = { API_KEY = { env = "MCP_API_KEY" } }
                                        # 可选(stdio);子进程不继承宿主 env,值 = 字符串字面量或 { env = "VAR" } 间接引用(连接时现读 os.environ)
 #   headers = { Authorization = { env = "MCP_TOKEN" } }
                                        # 可选(仅 http 有意义,配在 stdio server 上 → ConfigError);值 = 字面量或 { env = "VAR" } 间接引用(同 env 先例)
 #   permission = "read"                # 缺省 read(最小授权),可升 write|net|exec;confirm = true 则该 server 工具过 tool-confirm 闸门
-#   timeout = 30.0                     # 单次 tools/call 超时秒数;connect_timeout = 10.0 为连接/握手截止
+#   timeout = 30.0                     # 单次调用(tools/call·resources/read·prompts/get)超时秒数;connect_timeout = 10.0 为连接/握手截止
                                        # (server 名只许 [A-Za-z0-9_-],进工具命名空间;全部键 strict 校验,未知键 ConfigError)
+                                       # 维持开口(2026-10-06 边界,DESIGN §8.3):懒连接不做——eager 定案重申(G2 tools.has/runner
+                                       # 白名单与 §8.2 配置即授权要求装配期工具面验明确定);GET standalone SSE/Last-Event-ID
+                                       # resumability 不做(registry 无 unregister,list_changed 推送无安全落点);OAuth 不做
+                                       # ({env} 静态 token + 重连重新解析即轮换已覆盖多数场景,交互 flow 建议宿主带外跑后注入);
+                                       # HTTP 真实 server 互测留口(官方 server 多无 HTTP CLI 形态;罐头对端已扩面)
 
 # [data]                               # D2 数据层 authZ(docs/DATA-AUTHZ.md §3);段存在即接线——空段 = 绑定空 policy,
                                        # principals 白名单 fail closed 全拒,启用前务必配齐 domains 与白名单

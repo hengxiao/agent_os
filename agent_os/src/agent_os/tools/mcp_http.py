@@ -5,15 +5,18 @@
 ``MCP-Protocol-Version`` 请求头为 2025-06-18 版引入(旧版 server 收到未知头无害,
 缺省即假设 2025-03-26),故协商后一并带上。仓内无任何协议细节文档,以官方 spec 为准。
 
-与 :class:`agent_os.tools.mcp.McpStdioClient` 同接口(``tools`` 缓存 /
-``call_tool(name, args, timeout)`` / ``close()`` / ``connect[_sync]``),
+与 :class:`agent_os.tools.mcp.McpStdioClient` 同接口(``tools``/``resources``/
+``prompts`` 缓存、``request(method, params, timeout)`` 及其 ``call_tool``/
+``read_resource``/``get_prompt`` 特化、``close()``、``connect[_sync]``),
 ``McpTool`` 与 ``connect_and_register(+_sync)`` 整段复用;IO 模型同 stdio 先例:
 阻塞 ``httpx.Client`` 核心 + 单飞锁 + ``asyncio.to_thread`` async 包装 + 纯同步
 装配入口(``connect_sync`` 不碰 event loop,理由见 mcp.py 模块 docstring 的
 "装配 loop 与 run loop 非同一个" 论证——阻塞核心与 loop 完全无关)。
 
-协议面(只覆盖 initialize / notifications/initialized / tools/list / tools/call
-四个方法,与 stdio 对齐):
+协议面(``initialize`` / ``notifications/initialized`` / ``tools/list`` /
+``tools/call``,外加 server 宣告对应 capability 时的 ``resources/list`` /
+``prompts/list`` 握手缓存与 ``resources/read`` / ``prompts/get`` 派生工具调用,
+未宣告的方法绝不上线——与 stdio 对齐):
 
 - 单端点 POST(spec.url);每请求必带 ``Accept: application/json, text/event-stream``
   (spec 强制双 content-type);``spec.headers`` 平铺注入(值支持
@@ -24,9 +27,10 @@
   注释行忽略,坏帧丢弃——同 host/tui/kernel/sse.py 先例),取 id 匹配者,
   流尽未匹配归协议垃圾;
 - 会话管理:initialize 响应的 ``Mcp-Session-Id`` 头捕获后,后续请求(含 DELETE)
-  必带(spec 的 MUST);协商返回的 ``protocolVersion`` 记录,initialize 之后请求
-  带 ``MCP-Protocol-Version`` 头;server 回 404(会话被终止)→ 按 spec 重新
-  initialize 新会话(归可重连类);
+  必带(spec 的 MUST);协商返回的 ``protocolVersion`` 走钉扎校验(≠ 请求值 →
+  McpError 拒连,拒绝静默降级,同 stdio;换版本须显式 ``protocol_version`` 配置),
+  initialize 之后请求带 ``MCP-Protocol-Version`` 头;server 回 404(会话被终止)
+  → 按 spec 重新 initialize 新会话(归可重连类);
 - notifications/initialized → 期待 202 Accepted 无体(宽容:任意 2xx 皆可);
 - ``close()``:best-effort HTTP DELETE 终止会话(spec 的 SHOULD;server 已死/
   回 405 都无碍,吞掉),再关 httpx client;幂等;atexit 兜底。
@@ -103,7 +107,8 @@ class McpHttpClient:
     """单个 MCP server 的 Streamable HTTP 连接(会话生命周期 = kernel 寿命)。"""
 
     #: initialize 请求的缺省协议版本(spec 2025-03-26 版族;``spec.protocol_version``
-    #: 可覆盖;server 协商返回值优先,随后续 MCP-Protocol-Version 请求头带)
+    #: 可覆盖;请求值即钉扎值——server 回应 ≠ 请求 → McpError 拒连,随后续
+    #: MCP-Protocol-Version 请求头带的恒为钉扎值)
     DEFAULT_PROTOCOL_VERSION = "2025-03-26"
 
     def __init__(self, spec: McpServerSpec) -> None:
@@ -118,6 +123,11 @@ class McpHttpClient:
         self._next_id = 0
         #: tools/list 缓存(注册数据源;eager 语义:连接成功即已就位)
         self.tools: list[dict[str, Any]] = []
+        #: initialize 回应的 server capabilities(派生工具面判据;eager 语义同上)
+        self.capabilities: dict[str, Any] = {}
+        #: resources/list / prompts/list 缓存(server 宣告对应 capability 才拉取,否则恒空)
+        self.resources: list[dict[str, Any]] = []
+        self.prompts: list[dict[str, Any]] = []
         #: 单飞:同一会话 in-flight 请求最多一个(SSE 流按 id 配对的正确性依赖此)
         self._call_lock = asyncio.Lock()
         #: _ensure_connected 单飞(并发断线重连只握手一次)
@@ -175,7 +185,7 @@ class McpHttpClient:
         requested_version = self._spec.protocol_version or self.DEFAULT_PROTOCOL_VERSION
         timeout = self._spec.connect_timeout
         try:
-            result, headers = self._rpc(
+            init_result, headers = self._rpc(
                 session,
                 "initialize",
                 {
@@ -187,24 +197,53 @@ class McpHttpClient:
             )
             # 捕获会话 id(server 可不发;发了则后续请求必带,spec 的 MUST)
             session.session_id = headers.get("mcp-session-id", "")
-            negotiated = result.get("protocolVersion")
-            session.protocol_version = (
-                negotiated if isinstance(negotiated, str) and negotiated else requested_version
-            )
+            negotiated = init_result.get("protocolVersion")
+            if negotiated != requested_version:
+                raise McpError(
+                    f"server {self._spec.name!r} 协议版本协商 {negotiated!r} ≠ 钉扎 {requested_version!r},"
+                    f"拒绝静默降级(协议行为随版本漂移,静默接受不可审计;确要换版本请显式配置 "
+                    f'[mcp.servers."{self._spec.name}"] protocol_version)'
+                )
+            session.protocol_version = requested_version
             self._notify(session, "notifications/initialized", timeout)
             result, _ = self._rpc(session, "tools/list", {}, timeout)
+            tools = result.get("tools")
+            if not isinstance(tools, list):
+                raise McpError(f"server {self._spec.name!r} 的 tools/list 响应缺 tools 数组")
+            capabilities = init_result.get("capabilities")
+            capabilities = capabilities if isinstance(capabilities, dict) else {}
+            # 只拉 server 宣告过的原语(未宣告的方法绝不上线;宣告了却给不出清单 → 快速失败)
+            resources = (
+                self._handshake_list(session, "resources/list", "resources", timeout)
+                if "resources" in capabilities
+                else []
+            )
+            prompts = (
+                self._handshake_list(session, "prompts/list", "prompts", timeout)
+                if "prompts" in capabilities
+                else []
+            )
         except BaseException:
             # 握手任何一步失败都关掉这个半连会话(调用方还会再 _close_blocking 一次,幂等)
             with contextlib.suppress(Exception):
                 session.client.close()
             raise
-        tools = result.get("tools")
-        if not isinstance(tools, list):
-            with contextlib.suppress(Exception):
-                session.client.close()
-            raise McpError(f"server {self._spec.name!r} 的 tools/list 响应缺 tools 数组")
         self._session = session
         self.tools = tools
+        self.capabilities = capabilities
+        self.resources = resources
+        self.prompts = prompts
+
+    def _handshake_list(
+        self, session: _HttpSession, method: str, key: str, timeout: float
+    ) -> list[dict[str, Any]]:
+        """握手期 ``*/list`` 拉取(server 宣告了对应 capability 才被调用;
+        响应缺数组 → McpError 快速失败,同 tools/list 先例)。"""
+        result, _ = self._rpc(session, method, {}, timeout)
+        entries = result.get(key)
+        if not isinstance(entries, list):
+            raise McpError(f"server {self._spec.name!r} 的 {method} 响应缺 {key} 数组")
+        return entries
 
     # ------------------------------------------------------------------
     # JSON-RPC over HTTP(阻塞核心;每请求独立 POST)
@@ -357,24 +396,29 @@ class McpHttpClient:
         # 流尽:残余未收尾帧丢弃(server 未按 spec 先回响应再关流 → 调用方按未匹配处理)
 
     # ------------------------------------------------------------------
-    # 调用(tools/call;传输失败重建会话重连一次重试一次)
+    # 调用(任意 JSON-RPC 方法;传输失败重建会话重连一次重试一次)
     # ------------------------------------------------------------------
 
-    async def call_tool(self, name: str, args: dict[str, Any], timeout: float) -> dict[str, Any]:
-        """``tools/call``,返回 result dict(归一化由 :class:`McpTool` 负责)。
+    async def request(
+        self, method: str, params: dict[str, Any], timeout: float | None = None
+    ) -> dict[str, Any]:
+        """发一个 JSON-RPC 请求,返回 result dict(``call_tool``/``read_resource``/
+        ``get_prompt`` 为其特化;归一化由 ``McpTool`` 与派生工具各自负责)。
 
         连接错/断流/5xx/404/协议垃圾 → 关会话、重连一次、重试一次,再失败抛
         :class:`McpError`;超时(httpx 截止/帧 deadline/外层看门狗)→ 上抛内置
         TimeoutError(dispatch 归一 TIMEOUT retryable)——会话**保留**:HTTP 每请求
         独立 POST,无 stdio 那种共享流错位风险,迟到的响应随连接关闭即清;
         被取消 → 直接传播(to_thread 线程由 httpx 截止保证有界退出)。
+        ``timeout`` 缺省随 server spec。
         """
+        timeout = self._spec.timeout if timeout is None else timeout
         async with self._call_lock:
             for attempt in (1, 2):
                 try:
                     await self._ensure_connected()
                     return await asyncio.wait_for(
-                        asyncio.to_thread(self._call_blocking, name, args, timeout),
+                        asyncio.to_thread(self._request_blocking, method, params, timeout),
                         timeout=timeout + 1.0,  # 外层看门狗;内层 httpx 截止先到
                     )
                 except TimeoutError:
@@ -385,21 +429,38 @@ class McpHttpClient:
                     await self._abort()
                     if attempt == 2:
                         raise McpError(
-                            f"server {self._spec.name!r} 调用 {name!r} 重连后仍失败: "
+                            f"server {self._spec.name!r} 调用 {method!r} 重连后仍失败: "
                             f"{type(e).__name__}: {e}"
                         ) from e
                     _log.warning(
                         "server %s 调用 %s 传输失败(%s),重建会话重试一次",
-                        self._spec.name, name, e,
+                        self._spec.name, method, e,
                     )
         raise AssertionError("unreachable")  # pragma: no cover — 循环两途必 return/raise
 
-    def _call_blocking(self, name: str, args: dict[str, Any], timeout: float) -> dict[str, Any]:
-        """阻塞版 tools/call(to_thread 线程内执行;httpx 截止保证线程有界退出)。"""
+    async def call_tool(self, name: str, args: dict[str, Any], timeout: float) -> dict[str, Any]:
+        """``tools/call``(``request`` 的特化),返回 result dict。"""
+        return await self.request("tools/call", {"name": name, "arguments": args}, timeout)
+
+    async def read_resource(self, uri: str, timeout: float | None = None) -> dict[str, Any]:
+        """``resources/read``(``request`` 的特化;server 须宣告 resources capability)。"""
+        return await self.request("resources/read", {"uri": uri}, timeout)
+
+    async def get_prompt(
+        self, name: str, arguments: dict[str, Any] | None = None, timeout: float | None = None
+    ) -> dict[str, Any]:
+        """``prompts/get``(``request`` 的特化;server 须宣告 prompts capability)。"""
+        params: dict[str, Any] = {"name": name}
+        if arguments is not None:
+            params["arguments"] = arguments
+        return await self.request("prompts/get", params, timeout)
+
+    def _request_blocking(self, method: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
+        """阻塞版 JSON-RPC 调用(to_thread 线程内执行;httpx 截止保证线程有界退出)。"""
         session = self._session
         if session is None:
             raise _McpTransportError(f"server {self._spec.name!r} 未连接")
-        result, _ = self._rpc(session, "tools/call", {"name": name, "arguments": args}, timeout)
+        result, _ = self._rpc(session, method, params, timeout)
         return result
 
     async def _ensure_connected(self) -> None:

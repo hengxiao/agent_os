@@ -113,9 +113,9 @@ stream_idle_timeout = 30.0            # 流式停滞 watchdog 秒数:N 秒无新
 #                                       # HTTP 请求头:值规则同 env(字面量或 { env = "VAR" } 间接引用,
 #                                       # 连接/重连时现读,不落盘明文);仅 http 传输有意义,
 #                                       # stdio server 配了会被装配期拒绝(防静默忽略)
-# protocol_version = "2025-03-26"       # initialize 请求的协议版本(缺省随传输:
-#                                       # stdio 2024-11-05 / http 2025-03-26);server 协商
-#                                       # 返回值优先,后续请求按协商值带 MCP-Protocol-Version 头
+# protocol_version = "2025-03-26"       # initialize 请求的协议版本 = 钉扎值(缺省随传输:
+#                                       # stdio 2024-11-05 / http 2025-03-26);server 协商值
+#                                       # 与钉扎值不符即拒连快速失败(2026-10-06 起,拒绝静默降级)
 # permission = "read"                   # 以下 server 级字段两种传输通用
 # timeout = 30.0
 # connect_timeout = 10.0

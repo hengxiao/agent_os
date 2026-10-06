@@ -1,10 +1,23 @@
 """MCP(Model Context Protocol)stdio 适配器(docs/DESIGN.md §8.3 供应链清单;工具侧适配)。
 
 零新依赖:自实现极简 JSON-RPC 2.0 客户端(newline-delimited JSON over stdio),
-只覆盖 ``initialize`` / ``notifications/initialized`` / ``tools/list`` / ``tools/call``
-四个方法;Streamable HTTP 传输见 :mod:`agent_os.tools.mcp_http`(同 client 接口,
-``McpTool``/装配层整段复用),resources/prompts 原语不做(协议面留开口:
-读写循环对方法名无假设,扩展只是加方法常量与结果归一化分支)。
+方法面 ``initialize`` / ``notifications/initialized`` / ``tools/list`` / ``tools/call``,
+外加 server 宣告对应 capability 时的 ``resources/list`` / ``prompts/list``
+(握手期缓存)与 ``resources/read`` / ``prompts/get``(派生工具走它们;
+未宣告的方法绝不上线)。Streamable HTTP 传输见 :mod:`agent_os.tools.mcp_http`
+(同 client 接口,``McpTool``/派生工具/装配层整段复用)。
+
+协议版本钉扎(定案):initialize 请求值即钉扎值(缺省 2024-11-05,
+``spec.protocol_version`` 显式给覆盖),server 回应 ``protocolVersion`` ≠ 请求值
+→ McpError 拒绝连接——拒绝静默降级:协议行为随版本漂移,静默接受不可审计,
+确要换版本须显式配置(配置键语义即"换钉扎值",非"参与协商")。
+
+派生工具(定案):握手时 server 宣告 ``resources`` capability → 缓存 resources/list
+并注册单个 ``mcp.<server>.resource_read``(参数 ``uri``);宣告 ``prompts`` →
+缓存 prompts/list 并注册 ``mcp.<server>.prompt_get``(参数 ``name``/``arguments``)。
+清单描述逐条过注入扫描(命中该条整段占位)+ 截断(同 McpTool 先例);
+二进制资源块 spill 进 blob store 回 ``blob://`` ref(同 std_web.py 的
+``ctx.blob.put`` 先例,ctx/blob 缺席退化为显式占位)。
 
 连接模型(eager,定案):装配期(``connect_and_register`` / ``build_kernel`` 的
 ``[mcp.servers]`` 接线)拉起 server 子进程、完成握手与 tools/list、把全部工具以
@@ -33,7 +46,8 @@ event loop 的线程里装配也安全),运行路径走 async 包装,共用同�
 write/net/exec);``concurrency_safe=False``(远端进程状态不可知,fail-safe);
 ``confirm`` 逐 server 可开;子进程**不继承宿主环境变量**,env 只传配置解析值
 (``{env = "VAR"}`` 间接引用,连接/重连时现读 os.environ,不落盘明文,
-同 [credentials] 动态解析先例)。
+同 [credentials] 动态解析先例);npx 末参是无版本后缀的包规格(``@scope/name``
+或裸名,缺 ``@x.y.z``)→ 装配期 warning 引导钉版(版本漂移不可审计;warning 不阻断)。
 
 生命周期锚点:Kernel/registry 均无 close 钩子,clients 挂
 ``registry._mcp_clients``(``connect_and_register`` 自动挂),进程清理由
@@ -44,6 +58,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import base64
 import contextlib
 import json
 import logging
@@ -88,6 +103,10 @@ _NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 #: 工具描述长度上限(字符);超出截断并标记(描述进静态前缀,§7.4 不变量 5)
 _DESCRIPTION_MAX_CHARS = 500
 
+#: npx 包规格且无版本后缀的形态:@scope/name 或裸名(首字符非 ``-``,排除 -y/--yes
+#: 等 flag;``pkg@1.2.3``/``@scope/pkg@1.2.3`` 已钉版,不匹配)
+_NPX_UNPINNED_PKG_RE = re.compile(r"@[A-Za-z0-9._~-]+/[A-Za-z0-9._~-]+|(?!-)[A-Za-z0-9._~-]+")
+
 
 class McpError(RuntimeError):
     """MCP server 启动/握手/协议/调用失败(装配层归 ConfigError;dispatch 归一 INTERNAL)。"""
@@ -108,7 +127,8 @@ class McpServerSpec:
     直传;``{"env": "VAR"}`` 间接引用——连接时现读 ``os.environ``(不落盘明文;
     重连重新解析,token 轮换即生效),变量缺席抛 :class:`McpError`(eager 快速
     失败,防静默缺席)。``protocol_version`` 缺省随传输(stdio 2024-11-05 /
-    http 2025-03-26),显式给覆盖 initialize 请求值。
+    http 2025-03-26),显式给覆盖 initialize 请求值——请求值即钉扎值:server
+    回应 ≠ 请求 → McpError 拒连(换版本须显式配置,不静默降级)。
     """
 
     name: str
@@ -122,6 +142,26 @@ class McpServerSpec:
     headers: dict[str, Any] = field(default_factory=dict)
     transport: str = "auto"
     protocol_version: str = ""
+
+
+def _warn_unpinned_npx(spec: McpServerSpec) -> None:
+    """npx 末参是无版本后缀的包规格 → 一条 warning 引导钉 ``@x.y.z``(§8.3 供应链清单)。
+
+    npx 对未钉版包默认拉最新,版本漂移不可审计;warning 只引导不阻断。
+    已钉版/非 npx 命令/末参是 flag 或路径 → 静默。
+    """
+    command = spec.command
+    if not command or os.path.basename(command[0]).lower() not in ("npx", "npx.cmd"):
+        return
+    last = command[-1]
+    if _NPX_UNPINNED_PKG_RE.fullmatch(last):
+        _log.warning(
+            "server %s 的 npx 包 %r 未钉版本(npx 默认拉最新,版本漂移不可审计;"
+            "建议钉版 %s@x.y.z,§8.3 供应链清单)",
+            spec.name,
+            last,
+            last,
+        )
 
 
 class _LineReader:
@@ -160,8 +200,8 @@ class _LineReader:
 class McpStdioClient:
     """单个 MCP server 的 stdio 连接(进程生命周期 = kernel 寿命)。"""
 
-    #: 握手钉死的协议版本(现行稳定版;不跟 server 协商漂移,响应用同版本回显;
-    #: ``spec.protocol_version`` 显式给时覆盖)
+    #: 握手钉死的协议版本(现行稳定版;不跟 server 协商漂移——回应 ≠ 请求 →
+    #: McpError 拒连;``spec.protocol_version`` 显式给时覆盖请求值即换钉扎值)
     PROTOCOL_VERSION = "2024-11-05"
 
     def __init__(self, spec: McpServerSpec) -> None:
@@ -175,10 +215,16 @@ class McpStdioClient:
         self._next_id = 0
         #: tools/list 缓存(注册数据源;eager 语义:连接成功即已就位)
         self.tools: list[dict[str, Any]] = []
+        #: initialize 回应的 server capabilities(派生工具面判据;eager 语义同上)
+        self.capabilities: dict[str, Any] = {}
+        #: resources/list / prompts/list 缓存(server 宣告对应 capability 才拉取,否则恒空)
+        self.resources: list[dict[str, Any]] = []
+        self.prompts: list[dict[str, Any]] = []
         #: 单飞:同一连接 in-flight 请求最多一个(读循环按 id 配对的正确性依赖此)
         self._call_lock = asyncio.Lock()
         #: _ensure_connected 单飞(并发断线重连只起一个新进程)
         self._connect_lock = asyncio.Lock()
+        _warn_unpinned_npx(spec)  # 装配期引导钉版(warning 不阻断)
         # 兜底:宿主忘 close/异常退出不留孤儿(close() 之后为 no-op)
         atexit.register(self._atexit_kill)
 
@@ -236,31 +282,70 @@ class McpStdioClient:
             raise McpError(f"server {self._spec.name!r} 启动失败({self._spec.command[0]!r}): {e}") from e
         reader = _LineReader(proc.stdout.fileno())
         deadline = time.monotonic() + self._spec.connect_timeout
+        requested = self._spec.protocol_version or self.PROTOCOL_VERSION
         try:
-            self._rpc(
+            init_result = self._rpc(
                 proc,
                 reader,
                 "initialize",
                 {
-                    "protocolVersion": self._spec.protocol_version or self.PROTOCOL_VERSION,
+                    "protocolVersion": requested,
                     "capabilities": {},
                     "clientInfo": {"name": "agent-os", "version": __version__},
                 },
                 deadline,
             )
+            negotiated = init_result.get("protocolVersion")
+            if negotiated != requested:
+                raise McpError(
+                    f"server {self._spec.name!r} 协议版本协商 {negotiated!r} ≠ 钉扎 {requested!r},"
+                    f"拒绝静默降级(协议行为随版本漂移,静默接受不可审计;确要换版本请显式配置 "
+                    f'[mcp.servers."{self._spec.name}"] protocol_version)'
+                )
             self._write(proc, {"jsonrpc": "2.0", "method": "notifications/initialized"})
             result = self._rpc(proc, reader, "tools/list", {}, deadline)
+            tools = result.get("tools")
+            if not isinstance(tools, list):
+                raise McpError(f"server {self._spec.name!r} 的 tools/list 响应缺 tools 数组")
+            capabilities = init_result.get("capabilities")
+            capabilities = capabilities if isinstance(capabilities, dict) else {}
+            # 只拉 server 宣告过的原语(未宣告的方法绝不上线;宣告了却给不出清单 → 快速失败)
+            resources = (
+                self._handshake_list(proc, reader, "resources/list", "resources", deadline)
+                if "resources" in capabilities
+                else []
+            )
+            prompts = (
+                self._handshake_list(proc, reader, "prompts/list", "prompts", deadline)
+                if "prompts" in capabilities
+                else []
+            )
         except BaseException:
             # 握手任何一步失败都收掉这个半连进程(调用方还会再 _kill_blocking 一次,幂等)
             self._kill_proc(proc)
             raise
-        tools = result.get("tools")
-        if not isinstance(tools, list):
-            self._kill_proc(proc)
-            raise McpError(f"server {self._spec.name!r} 的 tools/list 响应缺 tools 数组")
         self._proc = proc
         self._reader = reader
         self.tools = tools
+        self.capabilities = capabilities
+        self.resources = resources
+        self.prompts = prompts
+
+    def _handshake_list(
+        self,
+        proc: subprocess.Popen[bytes],
+        reader: _LineReader,
+        method: str,
+        key: str,
+        deadline: float,
+    ) -> list[dict[str, Any]]:
+        """握手期 ``*/list`` 拉取(server 宣告了对应 capability 才被调用;
+        响应缺数组 → McpError 快速失败,同 tools/list 先例)。"""
+        result = self._rpc(proc, reader, method, {}, deadline)
+        entries = result.get(key)
+        if not isinstance(entries, list):
+            raise McpError(f"server {self._spec.name!r} 的 {method} 响应缺 {key} 数组")
+        return entries
 
     def _resolve_env_value(self, key: str, raw: Any) -> str:
         """env 值解析:str 字面量直传;``{"env": "VAR"}`` 现读 os.environ(缺席 → McpError)。"""
@@ -329,23 +414,28 @@ class McpStdioClient:
             return result if isinstance(result, dict) else {}
 
     # ------------------------------------------------------------------
-    # 调用(tools/call;断管重连一次重试一次)
+    # 调用(任意 JSON-RPC 方法;断管重连一次重试一次)
     # ------------------------------------------------------------------
 
-    async def call_tool(self, name: str, args: dict[str, Any], timeout: float) -> dict[str, Any]:
-        """``tools/call``,返回 result dict(归一化由 :class:`McpTool` 负责)。
+    async def request(
+        self, method: str, params: dict[str, Any], timeout: float | None = None
+    ) -> dict[str, Any]:
+        """发一个 JSON-RPC 请求,返回 result dict(``call_tool``/``read_resource``/
+        ``get_prompt`` 为其特化;归一化由 :class:`McpTool` 与派生工具各自负责)。
 
         断管/进程死/协议垃圾 → 杀连接、重连一次、重试一次,再失败抛 :class:`McpError`;
         超时(内层 select 截止或外层看门狗)→ 杀连接抛 TimeoutError(dispatch 归一
         TIMEOUT retryable)——超时的连接不可信(迟到的响应会与下一请求错位),必须重建;
         被取消(注册表超时/ run 中止)→ 杀连接后传播(同 shell_exec 的 CancelledError 先例)。
+        ``timeout`` 缺省随 server spec。
         """
+        timeout = self._spec.timeout if timeout is None else timeout
         async with self._call_lock:
             for attempt in (1, 2):
                 try:
                     await self._ensure_connected()
                     return await asyncio.wait_for(
-                        asyncio.to_thread(self._call_blocking, name, args, timeout),
+                        asyncio.to_thread(self._request_blocking, method, params, timeout),
                         timeout=timeout + 1.0,  # 外层看门狗;内层 select 截止先到
                     )
                 except TimeoutError:
@@ -358,22 +448,39 @@ class McpStdioClient:
                     await self._abort()
                     if attempt == 2:
                         raise McpError(
-                            f"server {self._spec.name!r} 调用 {name!r} 重连后仍失败: "
+                            f"server {self._spec.name!r} 调用 {method!r} 重连后仍失败: "
                             f"{type(e).__name__}: {e}"
                         ) from e
                     _log.warning(
                         "server %s 调用 %s 传输失败(%s),重连重试一次",
-                        self._spec.name, name, e,
+                        self._spec.name, method, e,
                     )
         raise AssertionError("unreachable")  # pragma: no cover — 循环两途必 return/raise
 
-    def _call_blocking(self, name: str, args: dict[str, Any], timeout: float) -> dict[str, Any]:
-        """阻塞版 tools/call(to_thread 线程内执行;select 截止保证线程有界退出)。"""
+    async def call_tool(self, name: str, args: dict[str, Any], timeout: float) -> dict[str, Any]:
+        """``tools/call``(``request`` 的特化),返回 result dict。"""
+        return await self.request("tools/call", {"name": name, "arguments": args}, timeout)
+
+    async def read_resource(self, uri: str, timeout: float | None = None) -> dict[str, Any]:
+        """``resources/read``(``request`` 的特化;server 须宣告 resources capability)。"""
+        return await self.request("resources/read", {"uri": uri}, timeout)
+
+    async def get_prompt(
+        self, name: str, arguments: dict[str, Any] | None = None, timeout: float | None = None
+    ) -> dict[str, Any]:
+        """``prompts/get``(``request`` 的特化;server 须宣告 prompts capability)。"""
+        params: dict[str, Any] = {"name": name}
+        if arguments is not None:
+            params["arguments"] = arguments
+        return await self.request("prompts/get", params, timeout)
+
+    def _request_blocking(self, method: str, params: dict[str, Any], timeout: float) -> dict[str, Any]:
+        """阻塞版 JSON-RPC 调用(to_thread 线程内执行;select 截止保证线程有界退出)。"""
         proc, reader = self._proc, self._reader
         if proc is None or reader is None:
             raise _McpTransportError(f"server {self._spec.name!r} 未连接")
         deadline = time.monotonic() + timeout
-        return self._rpc(proc, reader, "tools/call", {"name": name, "arguments": args}, deadline)
+        return self._rpc(proc, reader, method, params, deadline)
 
     async def _ensure_connected(self) -> None:
         """已连接(进程活着)直接返回;否则单飞重连(_connect_lock 防并发双连双进程)。"""
@@ -492,6 +599,197 @@ class McpTool:
         return ToolResult(ok=True, value=_content_text(content))
 
 
+def _derived_spec(
+    server: McpServerSpec, leaf: str, description: str, parameters: dict[str, Any]
+) -> ToolSpec:
+    """派生工具 spec:name = ``mcp.<server>.<leaf>``;permission/timeout/confirm 随
+    server spec;``untrusted_source=True`` 强制;``concurrency_safe=False``(同 McpTool)。"""
+    return ToolSpec(
+        name=f"mcp.{server.name}.{leaf}",
+        description=description,
+        parameters=parameters,
+        permission=server.permission,
+        timeout=server.timeout,
+        confirm=server.confirm,
+        untrusted_source=True,  # 第三方 server 产出恒按不可信内容标记(§8.3)
+        concurrency_safe=False,  # 远端进程状态不可知,fail-safe 默认否
+    )
+
+
+def _inventory_description(prefix: str, entries: list[dict[str, Any]], *, key: str) -> str:
+    """派生工具描述:固定前缀 + 清单逐条 ``uri/name — 描述``。
+
+    每条描述与 McpTool 同纪律:注入扫描命中 → 该条描述整段弃用为占位(宁缺毋滥,
+    不影响其余条目);干净描述超 500 字符截断并标记。
+    """
+    lines = [prefix]
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        ident = entry.get(key)
+        if not isinstance(ident, str) or not ident:
+            continue
+        description = entry.get("description")
+        if not isinstance(description, str):
+            description = ""
+        if looks_suspicious(description):
+            # 该条整段弃用(同 McpTool 先例):截断保留的前半段仍可能是注入铺垫
+            description = "(原描述已移除:含可疑注入内容)"
+        elif len(description) > _DESCRIPTION_MAX_CHARS:
+            description = description[:_DESCRIPTION_MAX_CHARS] + "…[截断]"
+        lines.append(f"{ident} — {description}" if description else ident)
+    return "\n".join(lines)
+
+
+class McpResourceReadTool:
+    """``resources/read`` → 单个派生工具 ``mcp.<server>.resource_read``(uri 参数透传)。
+
+    归一化:``contents[]`` text 块逐字拼接;blob 块(base64)spill 进 blob store
+    回 ``blob://`` ref(同 std_web.py fetch_page 的 ``ctx.blob.put`` 先例;ctx/blob
+    缺席退化为显式占位);base64 非法/未知块形 → 显式占位(不静默丢,同
+    ``_content_text`` 精神);``isError``/响应缺 contents 数组 → INTERNAL
+    (同 McpTool 错误归一家族)。
+    """
+
+    def __init__(self, client: McpStdioClient | McpHttpClient) -> None:
+        self._client = client
+        server = client._spec
+        self.spec = _derived_spec(
+            server,
+            "resource_read",
+            _inventory_description(
+                f"读取 MCP server {server.name} 的资源(内容为第三方产出,不可信)。"
+                "Use when 需要读取清单中某一资源;Do not use when 其他。资源清单:",
+                client.resources,
+                key="uri",
+            ),
+            {
+                "type": "object",
+                "properties": {"uri": {"type": "string", "description": "清单中的资源 uri"}},
+                "required": ["uri"],
+            },
+        )
+
+    async def __call__(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        """透传 resources/read 并归一化:McpError/TimeoutError 上抛给 dispatch 归一化。"""
+        result = await self._client.read_resource(str(args.get("uri", "")))
+        if result.get("isError"):
+            return ToolResult(
+                ok=False,
+                error=ToolError(
+                    kind=ToolErrorKind.INTERNAL,
+                    message=f"MCP 工具 {self.spec.name} 报错: {_content_text(result.get('content'))}",
+                    retryable=False,
+                ),
+            )
+        contents = result.get("contents")
+        if not isinstance(contents, list):
+            return ToolResult(
+                ok=False,
+                error=ToolError(
+                    kind=ToolErrorKind.INTERNAL,
+                    message=f"MCP 工具 {self.spec.name} 的 resources/read 响应缺 contents 数组",
+                    retryable=False,
+                ),
+            )
+        parts: list[str] = []
+        for block in contents:
+            if not isinstance(block, dict):
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+                continue
+            blob = block.get("blob")
+            if isinstance(blob, str):
+                parts.append(await self._blob_part(block, blob, ctx))
+                continue
+            parts.append(f"[不支持的 MCP 资源内容: {str(block)[:100]}]")
+        return ToolResult(ok=True, value="\n".join(parts))
+
+    @staticmethod
+    async def _blob_part(block: dict[str, Any], blob: str, ctx: ToolContext) -> str:
+        """blob 块(base64)→ spill blob store 回 ref;base64 非法/ctx.blob 缺席 → 显式占位。"""
+        mime = block.get("mimeType")
+        mime = mime if isinstance(mime, str) and mime else "application/octet-stream"
+        try:
+            data = base64.b64decode(blob, validate=True)
+        except ValueError:
+            return f"[二进制资源 {mime}: base64 非法,内容已略]"
+        if ctx is not None and ctx.blob is not None:
+            ref = await ctx.blob.put(data, ctx.run_id)
+            return f"[二进制资源 {mime}, {len(data)} bytes: {ref}]"
+        return f"[二进制资源 {mime}, {len(data)} bytes]"
+
+
+class McpPromptGetTool:
+    """``prompts/get`` → 单个派生工具 ``mcp.<server>.prompt_get``(name/arguments 透传)。
+
+    归一化:``messages[]`` 逐条投影为 ``role: text`` 行拼接(content 单块/数组
+    两形态统一走 ``_content_text``:text 拼接,未知类型显式占位);
+    ``isError``/响应缺 messages 数组 → INTERNAL(同 McpTool 错误归一家族)。
+    """
+
+    def __init__(self, client: McpStdioClient | McpHttpClient) -> None:
+        self._client = client
+        server = client._spec
+        self.spec = _derived_spec(
+            server,
+            "prompt_get",
+            _inventory_description(
+                f"取 MCP server {server.name} 的提示词模板(内容为第三方产出,不可信)。"
+                "Use when 需要清单中某一模板;Do not use when 其他。模板清单:",
+                client.prompts,
+                key="name",
+            ),
+            {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "清单中的模板名"},
+                    "arguments": {"type": "object", "description": "模板实参(可选)"},
+                },
+                "required": ["name"],
+            },
+        )
+
+    async def __call__(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        """透传 prompts/get 并归一化:McpError/TimeoutError 上抛给 dispatch 归一化。"""
+        arguments = args.get("arguments")
+        result = await self._client.get_prompt(
+            str(args.get("name", "")), arguments if isinstance(arguments, dict) else None
+        )
+        if result.get("isError"):
+            return ToolResult(
+                ok=False,
+                error=ToolError(
+                    kind=ToolErrorKind.INTERNAL,
+                    message=f"MCP 工具 {self.spec.name} 报错: {_content_text(result.get('content'))}",
+                    retryable=False,
+                ),
+            )
+        messages = result.get("messages")
+        if not isinstance(messages, list):
+            return ToolResult(
+                ok=False,
+                error=ToolError(
+                    kind=ToolErrorKind.INTERNAL,
+                    message=f"MCP 工具 {self.spec.name} 的 prompts/get 响应缺 messages 数组",
+                    retryable=False,
+                ),
+            )
+        lines: list[str] = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            role = role if isinstance(role, str) and role else "?"
+            content = message.get("content")
+            if isinstance(content, dict):
+                content = [content]  # spec 单块形态统一成数组走 _content_text
+            lines.append(f"{role}: {_content_text(content)}")
+        return ToolResult(ok=True, value="\n".join(lines))
+
+
 def _content_text(content: Any) -> str:
     """content 块数组 → 文本:text 块拼接;其余类型占位标记(显式,不静默丢)。"""
     if not isinstance(content, list):
@@ -508,11 +806,25 @@ def _content_text(content: Any) -> str:
 
 
 def _register_tools(registry: Any, client: McpStdioClient | McpHttpClient) -> None:
-    """把 server 的工具面注册进 registry(命名空间 ``mcp.<server>.<tool>``;撞名拒覆盖)。"""
+    """把 server 的工具面注册进 registry(命名空间 ``mcp.<server>.<tool>``;撞名拒覆盖)。
+
+    tools/list 逐条注册;握手缓存了 resources/prompts 清单(server 宣告过对应
+    capability)时再各注册一个派生工具 ``mcp.<server>.resource_read`` /
+    ``mcp.<server>.prompt_get``。
+    """
     for tool_def in client.tools:
         tool = McpTool.from_tool_def(client, tool_def)
         if tool is None:
             continue  # 非法条目/工具名:from_tool_def 已记 warning
+        if registry.has(tool.spec.name):
+            raise McpError(f"MCP 工具名撞已有注册项,拒绝覆盖: {tool.spec.name}")
+        registry.register(tool)
+    derived: list[Any] = []
+    if client.resources:
+        derived.append(McpResourceReadTool(client))
+    if client.prompts:
+        derived.append(McpPromptGetTool(client))
+    for tool in derived:
         if registry.has(tool.spec.name):
             raise McpError(f"MCP 工具名撞已有注册项,拒绝覆盖: {tool.spec.name}")
         registry.register(tool)

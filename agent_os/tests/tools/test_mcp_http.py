@@ -13,7 +13,12 @@
   INTERNAL;超时 → TIMEOUT retryable,**会话保留**(HTTP 每请求独立 POST,无
   stdio 共享流错位风险——与 stdio"超时必杀连接"的语义差异点,测试锚死);
 - headers 值支持 ``{"env": "VAR"}`` 间接引用(连接时现读 os.environ,不落盘明文;
-  变量缺席 eager 快速失败)。
+  变量缺席 eager 快速失败);
+- 协议版本钉扎(与 stdio 同):server 回应 ≠ 请求值 → McpError/ConfigError 拒连
+  (``state.reply_protocol_version`` 演练失配);显式 ``protocol_version`` 覆盖
+  匹配 → 连上,后续 MCP-Protocol-Version 头恒按钉扎值带;
+- 派生工具(与 stdio 同):``state.extended_caps`` 宣告 resources/prompts →
+  ``mcp.<server>.resource_read`` / ``mcp.<server>.prompt_get`` 注册并可全链调用。
 
 对端:tests/helpers/mcp_http_server.py(FastAPI 罐头服务器;真 uvicorn +
 ephemeral port,fixture 照 tests/tui/test_debugger_live.py:30-48 先例)。
@@ -45,7 +50,7 @@ from agent_os.tools.mcp import (
     connect_and_register,
 )
 from agent_os.tools.mcp_http import McpHttpClient
-from tests.helpers.mcp_http_server import ServerState, create_app
+from tests.helpers.mcp_http_server import LOGO_BYTES, ServerState, create_app
 
 #: 测试专用 env 名/值(避免与真实环境变量撞名;值带可识别标记)
 ENV_VAR = "AGENT_OS_TEST_MCP_HTTP_TOKEN"
@@ -467,3 +472,111 @@ def test_config_wiring_http(http_server, monkeypatch):
 
     with pytest.raises(ConfigError, match="eager"):
         build_kernel({"mcp": {"servers": {"web": {"url": "http://127.0.0.1:1/mcp"}}}})
+
+
+# ---------------------------------------------------------------------------
+# 12. 协议版本钉扎:server 固定回错版本 → McpError/ConfigError;覆盖匹配 → 连上
+# ---------------------------------------------------------------------------
+
+
+def test_protocol_version_pinning_mismatch(http_server):
+    """server 回应 ≠ 钉扎 2025-03-26 → McpError 带两个版本号;装配层 ConfigError。"""
+    url, state, _server = http_server
+    state.reply_protocol_version = "1999-01-01"
+
+    async def main():
+        with pytest.raises(McpError) as exc_info:
+            await connect_and_register(LocalPythonToolRegistry(), [_spec(url)])
+        message = str(exc_info.value)
+        assert "1999-01-01" in message and "2025-03-26" in message
+
+    asyncio.run(main())
+
+    with pytest.raises(ConfigError) as exc_info:
+        build_kernel({"mcp": {"servers": {"web": {"url": url}}}})
+    message = str(exc_info.value)
+    assert "1999-01-01" in message and "2025-03-26" in message
+
+
+def test_protocol_version_override_match(http_server):
+    """server 回 2024-11-05 + spec.protocol_version 同值覆盖 → 连上,后续头按钉扎值带。"""
+    url, state, _server = http_server
+    state.reply_protocol_version = "2024-11-05"
+
+    async def main():
+        registry, clients = await _assemble(_spec(url, protocol_version="2024-11-05"))
+        try:
+            assert registry.has("mcp.web.echo")
+            assert clients[0]._session.protocol_version == "2024-11-05"
+            await registry.dispatch(
+                ToolCall(id="p1", name="mcp.web.echo", args={"text": "y"}), _dispatch_ctx()
+            )
+            calls = [r for r in state.requests if r["method"] == "tools/call"]
+            assert calls and all(r["protocol_version"] == "2024-11-05" for r in calls)
+        finally:
+            await _close(clients)
+
+    asyncio.run(main())
+
+
+# ---------------------------------------------------------------------------
+# 13. 派生工具:extended_caps → resource_read/prompt_get 注册并可全链调用
+# ---------------------------------------------------------------------------
+
+
+def test_derived_tools_http(http_server):
+    """capabilities 宣告 → 派生工具注册;text 逐字/blob spill ref/模板投影/清单注入占位。"""
+    url, state, _server = http_server
+    state.extended_caps = True
+
+    async def main():
+        registry, clients = await _assemble(_spec(url))
+        try:
+            assert registry.has("mcp.web.resource_read")
+            assert registry.has("mcp.web.prompt_get")
+            text = await registry.dispatch(
+                ToolCall(id="r1", name="mcp.web.resource_read", args={"uri": "mem://notes/today"}),
+                _dispatch_ctx(),
+            )
+            assert text.ok, text.error
+            assert text.value == "今日笔记正文,逐字。"
+            blob = await registry.dispatch(
+                ToolCall(id="r2", name="mcp.web.resource_read", args={"uri": "asset://logo"}),
+                _dispatch_ctx(),
+            )
+            assert blob.ok, blob.error
+            prefix = f"[二进制资源 image/png, {len(LOGO_BYTES)} bytes: "
+            assert blob.value.startswith(prefix) and blob.value.endswith("]")
+            assert await registry._blob.get(blob.value[len(prefix) : -1]) == LOGO_BYTES
+            prompt = await registry.dispatch(
+                ToolCall(
+                    id="p1",
+                    name="mcp.web.prompt_get",
+                    args={"name": "greet", "arguments": {"who": "web"}},
+                ),
+                _dispatch_ctx(),
+            )
+            assert prompt.ok, prompt.error
+            assert prompt.value == "user: 你好,web"
+            desc = registry.get("mcp.web.resource_read").spec.description
+            evil_line = next(line for line in desc.splitlines() if line.startswith("mem://evil"))
+            assert "已移除" in evil_line and "忽略" not in evil_line
+        finally:
+            await _close(clients)
+
+    asyncio.run(main())
+
+
+def test_derived_tools_absent_http(http_server):
+    """缺省 capabilities(仅 tools)→ 不注册派生工具(未宣告的方法绝不上线)。"""
+
+    async def main():
+        url, _state, _server = http_server
+        registry, clients = await _assemble(_spec(url))
+        try:
+            assert not registry.has("mcp.web.resource_read")
+            assert not registry.has("mcp.web.prompt_get")
+        finally:
+            await _close(clients)
+
+    asyncio.run(main())

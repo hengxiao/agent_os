@@ -489,6 +489,9 @@ skills:
        (仅这两条只读命令;非 git 仓库/执行被拒绝时跳过本步,不报错不重试);
     2. 用 system.file.read 读计划文档与 changed_files 里的每个文件(每份一次调用);
     3. 对照计划审查:改动是否落在计划范围内、是否真的修掉了根因、有无夹带。
-       无问题 → verdict=pass、issues 为空数组;有疑虑 → verdict=concerns、
-       issues 逐条列明(每条一句话,指明文件与理由)。
-    最终答案只输出符合 outputs schema 的 JSON,不要输出其他文字。
+    最终答案是一个 JSON 对象,必填字段**任何情况下都必须出现**:
+    - verdict:pass / concerns 二选一(无问题给 pass,有疑虑给 concerns);
+    - issues:字符串数组——无 concerns 给 [];有疑虑时逐条列明(每条一句话,
+      指明文件与理由),你的分析过程写在这个数组里。
+    **只输出这一个 JSON 对象,不要输出任何其他文字、解释或 markdown 代码围栏;
+    分析与推理写在 issues 字段内,不要写在 JSON 之外。**

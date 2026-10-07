@@ -6,6 +6,9 @@ docstring 倡导"何时用/边界/负例"(§8.4);签名即 schema 推导来源�
 run 工作目录内操作(§2.2;§W0-1 起 read_paths 只读区可在 workdir 之外);
 需要结构化错误时函数直接返回 ``ToolResult``;错误 ``hint`` 是给模型的下一步
 动作建议(§W0-3),运行期事实(路径)现取,不硬编码。
+K2:``shell_exec_tool`` 工厂携 ``proc_states``(run 级进程态载体)支持
+``session_id`` 会话——无持久进程、状态重放式(逐调用 export 增量 + cd 后跑命令,
+marker 尾巴捕获新 cwd/env;两类生命周期见 local_registry 模块 docstring)。
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import hashlib
 import inspect
 import json
 import os
+import shlex
 import signal
 from pathlib import Path
 from typing import Any
@@ -245,26 +249,17 @@ async def _reap(proc: asyncio.subprocess.Process, comm: asyncio.Future) -> None:
         await asyncio.wait_for(comm, timeout=_SHELL_KILL_GRACE)
 
 
-async def shell_exec(
-    command: str, timeout: int = 30, ctx: ToolContext | None = None
-) -> dict[str, Any] | ToolResult:
-    """执行 shell 命令(EXEC 级;一次性子进程,在帧工作目录内运行,捕获 stdout/stderr)。
+async def _shell_spawn(
+    command: str, timeout: int, cwd: str | None
+) -> tuple[bytes, bytes, int] | ToolResult:
+    """一次性子进程执行体(K2 从 shell_exec 抽出,会话包装复用;语义逐字不变)。
 
-    Use when 需要跑构建/测试/git 等外部命令;Do not use when 只是读写文件
-    (用 system.file.read/system.file.write,权限更低且返回结构化)或做纯计算(用 system.python.exec)。
-    每次调用是**独立子进程**:``cd``、venv 激活、环境变量都不跨调用保留。
-
-    返回 ``{"stdout", "stderr", "exit_code", "truncated", "text"}``(§W0-5):
-    结构化字段供编排脚本使用,``text`` 为拼接版供模型直读;单条流超
-    100_000 字符截断并显式标记 ``truncated``(不静默截断);非零退出不算
-    工具错误,``exit_code`` 照常返回。持久会话形态(跨调用保持 cwd/env)留待
-    后续里程碑;超时先由 ``timeout`` 参数杀进程并返回 TIMEOUT,注册表
-    ``spec.timeout`` 兜底。防护主体是沙箱(§9.2)+ 权限(§8.2);
-    ToolGuard 正则仅为辅助(§5.4 能力上限)。
+    返回 ``(stdout bytes, stderr bytes, exit_code)``;超时杀进程组返回 TIMEOUT
+    ToolResult;外层取消杀进程组后传播(双超时竞态/收尸次序见函数内注释)。
     """
     proc = await asyncio.create_subprocess_shell(
         command,
-        cwd=ctx.workdir if ctx is not None else None,
+        cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         # 独立会话 = 独立进程组:超时才杀得干净(见 _kill);顺带切断 tty,
@@ -301,12 +296,17 @@ async def shell_exec(
         _kill(proc)
         comm.cancel()
         raise
+    exit_code = proc.returncode if proc.returncode is not None else 0
+    return out, err, exit_code
+
+
+def _shell_result(out: bytes, err: bytes, exit_code: int) -> dict[str, Any]:
+    """(stdout, stderr, exit_code) bytes → §W0-5 结构化返回(K2 从 shell_exec 尾部抽出,逐字不变)。"""
     stdout = out.decode("utf-8", errors="replace")
     stderr = err.decode("utf-8", errors="replace")
     truncated = len(stdout) > _SHELL_STREAM_MAX_CHARS or len(stderr) > _SHELL_STREAM_MAX_CHARS
     stdout = stdout[:_SHELL_STREAM_MAX_CHARS]
     stderr = stderr[:_SHELL_STREAM_MAX_CHARS]
-    exit_code = proc.returncode if proc.returncode is not None else 0
     parts = [stdout]
     if stderr:
         parts.append(f"[stderr]\n{stderr}")
@@ -321,6 +321,160 @@ async def shell_exec(
         "truncated": truncated,
         "text": "\n".join(parts),
     }
+
+
+#: 会话捕获的 stdout 分隔标记(K2):marker 技巧把状态捕获尾巴与用户输出隔开;
+#: 用户命令的 exit_code 经 ``$?`` 变量摆渡、包装末尾 ``exit`` 还原,不被捕获命令覆盖
+_SHELL_SESSION_PWD_MARK = "__AOS_SESSION_PWD__"
+_SHELL_SESSION_ENV_MARK = "__AOS_SESSION_ENV__"
+
+#: 会话 env 增量捕获时排除的 shell 自维护变量(sh/dash 每次启动与 cd 都会改写,
+#: 落存只会制造噪音;当前目录由会话的 cwd 键承载,不走 PWD;
+#: LINES/COLUMNS 是 dash 启动时自动导出的终端尺寸)
+_SHELL_SESSION_ENV_NOISE = ("PWD", "OLDPWD", "SHLVL", "_", "LINES", "COLUMNS")
+
+#: 会话状态在 proc_states[run_id] 下的分桶键
+_SHELL_SESSIONS_KEY = "shell_sessions"
+
+
+def _session_wrapper(command: str, cwd: str, env_delta: dict[str, str]) -> str:
+    """把会话状态重放成 sh 包装脚本(无持久进程、状态重放式,K2)。
+
+    逐个 export env 增量 + ``cd`` 到会话 cwd 之后跑用户命令;结尾先 ``$?`` 摆渡
+    存变量,再经 marker 捕获新 ``pwd`` 与完整环境(``env -0`` NUL 分隔,抗多行/
+    特殊字符),最后 ``exit`` 还原用户命令的 exit_code(不被捕获命令覆盖)。
+    """
+    lines = [f"export {k}={shlex.quote(v)}" for k, v in env_delta.items()]
+    # cd 失败(目录在会话间被删)→ 126 退出:捕获尾巴不跑,会话保留调用前状态
+    lines.append(f"cd {shlex.quote(cwd)} || exit 126")
+    lines.append(command)
+    lines.append("__aos_ec=$?")
+    lines.append(f"printf '\\n{_SHELL_SESSION_PWD_MARK}\\n'")
+    lines.append("pwd")
+    lines.append(f"printf '{_SHELL_SESSION_ENV_MARK}\\n'")
+    lines.append("env -0")
+    lines.append("exit $__aos_ec")
+    return "\n".join(lines)
+
+
+def _parse_session_capture(raw: bytes) -> tuple[bytes, str, dict[str, str]] | None:
+    """拆会话捕获尾巴 → ``(用户 stdout, 新 cwd, 新完整环境)``;marker 缺失 → None。
+
+    None 的场合:用户命令自己 ``exit``/被杀(超时/取消)——状态捕获没跑成,
+    调用方保留调用前状态(docstring 注明)。取**最后**一处 marker(rpartition):
+    我们的捕获尾巴在用户命令之后,用户输出撞 marker 时尾部那份才是真的。
+    解码用 surrogateescape:非 UTF-8 字节也能逐字节 round-trip。
+    """
+    head, sep, rest = raw.rpartition(b"\n" + _SHELL_SESSION_PWD_MARK.encode() + b"\n")
+    if not sep:
+        return None
+    pwd_raw, sep2, env_raw = rest.partition(_SHELL_SESSION_ENV_MARK.encode() + b"\n")
+    if not sep2 or not pwd_raw.endswith(b"\n"):
+        return None
+    cwd = pwd_raw[:-1].decode("utf-8", errors="surrogateescape")
+    env: dict[str, str] = {}
+    for entry in env_raw.split(b"\0"):
+        if b"=" not in entry:
+            continue
+        key, _, value = entry.partition(b"=")
+        env[key.decode("utf-8", errors="surrogateescape")] = value.decode(
+            "utf-8", errors="surrogateescape"
+        )
+    return head, cwd, env
+
+
+def shell_exec_tool(
+    *, name: str = "system.shell.exec", proc_states: dict[str, dict[str, Any]]
+) -> Tool:
+    """构造 ``system.shell.exec``(EXEC 级;一次性子进程 + K2 可选 ``session_id`` 会话)。
+
+    会话状态存 ``proc_states``(run 级**进程态**载体,不进 checkpoint,
+    ``release_run`` 回收;两类生命周期见 local_registry 模块 docstring)。
+    """
+
+    async def shell_exec(
+        command: str,
+        timeout: int = 30,
+        session_id: str | None = None,
+        ctx: ToolContext | None = None,
+    ) -> dict[str, Any] | ToolResult:
+        """执行 shell 命令(EXEC 级;一次性子进程,在帧工作目录内运行,捕获 stdout/stderr)。
+
+        Use when 需要跑构建/测试/git 等外部命令;Do not use when 只是读写文件
+        (用 system.file.read/system.file.write,权限更低且返回结构化)或做纯计算(用 system.python.exec)。
+        缺省每次调用是**独立子进程**:``cd``、venv 激活、环境变量都不跨调用保留。
+        给 ``session_id`` 则启用会话(K2):同一 (run, session_id) 跨调用保持
+        ``cd`` 后的工作目录与环境变量**增量**(如 ``export FOO=bar``、激活 venv
+        引入的 PATH 变化;多步构建/装依赖后跑测试用同一会话);增量只存用户命令
+        引入的部分,基线环境不整体落存(可能含 API key);unset 基线变量不可表达
+        (重放只有 export),``PWD``/``OLDPWD``/``SHLVL``/``_`` 等 shell 自维护
+        变量不进增量。超时/命令被杀/用户命令自己 ``exit`` 时状态捕获不可能,
+        会话**保留调用前状态**;捕获尾巴不回显(不进 stdout/上下文/checkpoint)。
+        不同 session 互不影响;同 session 并发调用串行化(per-session 锁)。
+
+        返回 ``{"stdout", "stderr", "exit_code", "truncated", "text"}``(§W0-5):
+        结构化字段供编排脚本使用,``text`` 为拼接版供模型直读;单条流超
+        100_000 字符截断并显式标记 ``truncated``(不静默截断);非零退出不算
+        工具错误,``exit_code`` 照常返回。超时先由 ``timeout`` 参数杀进程并返回
+        TIMEOUT,注册表 ``spec.timeout`` 兜底。防护主体是沙箱(§9.2)+ 权限(§8.2);
+        ToolGuard 正则仅为辅助(§5.4 能力上限)。
+        """
+        if session_id is None:
+            # 缺省路径与引入会话前逐字节一致(一次性子进程,cwd/env 不跨调用保留)
+            outcome = await _shell_spawn(command, timeout, ctx.workdir if ctx is not None else None)
+            if isinstance(outcome, ToolResult):
+                return outcome
+            return _shell_result(*outcome)
+        # 会话路径(K2):状态 = {cwd, env_delta},初始 cwd = run workdir、增量空;
+        # 存 proc_states 进程态载体(不进 checkpoint;resume 后首个调用按需重建,幂等)
+        run_id = ctx.run_id if ctx is not None else ""
+        sessions = proc_states.setdefault(run_id, {}).setdefault(_SHELL_SESSIONS_KEY, {})
+        entry = sessions.get(session_id)
+        if entry is None:
+            entry = {
+                "cwd": (ctx.workdir if ctx is not None else "") or os.getcwd(),
+                "env_delta": {},
+                # per-session 锁:内核有 parallel_invoke/spawn,同 session 并发调用
+                # 串行化,防"读状态→执行→写状态"竞态(锁在首个调用所在 loop 内创建使用)
+                "lock": asyncio.Lock(),
+            }
+            sessions[session_id] = entry
+        async with entry["lock"]:
+            wrapped = _session_wrapper(command, entry["cwd"], entry["env_delta"])
+            # 子进程 cwd 用宿主 cwd(包装脚本自己 cd;会话目录被删时 exec 不会直接炸)
+            outcome = await _shell_spawn(wrapped, timeout, None)
+            if isinstance(outcome, ToolResult):
+                # 超时/杀进程:状态捕获不可能,保留调用前状态(docstring 已注明)
+                return outcome
+            out, err, exit_code = outcome
+            capture = _parse_session_capture(out)
+            if capture is not None:
+                user_out, new_cwd, new_env = capture
+                # 新增量 = 捕获环境与调用前基线的差集(基线 = 本次一次性子进程继承的
+                # 进程环境,不整体落存——只存用户命令引入的增量;shell 自维护变量排除)
+                baseline = os.environ
+                entry["cwd"] = new_cwd
+                entry["env_delta"] = {
+                    k: v
+                    for k, v in new_env.items()
+                    if k not in _SHELL_SESSION_ENV_NOISE and baseline.get(k) != v
+                }
+                out = user_out
+            return _shell_result(out, err, exit_code)
+
+    return _FunctionTool(
+        shell_exec,
+        derive_spec(
+            shell_exec,
+            name=name,
+            permission=Permission.EXEC,
+            timeout=_SHELL_SPEC_TIMEOUT,
+            # TIER-STANDARDS §1:shell/exec 按最坏情况 L3(EXEC 默认推导已是
+            # irreversible,显式写明增强可读,防推导规则变动时静默降档)
+            side_effect="irreversible",
+            cost_hint="~100ms 起,取决于命令",
+        ),
+    )
 
 
 async def _http_request(

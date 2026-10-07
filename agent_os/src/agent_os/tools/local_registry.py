@@ -17,6 +17,12 @@ system.file.read/system.file.write/system.file.edit/system.shell.exec 共用的�
 ``bind_credentials`` 注入凭证作用域解析器(签名 ``(principal, declared_keys)``),
 dispatch 按 ``spec.credentials`` 声明键现解析注入 ``ToolContext.credentials``
 (未声明/未 bind → 空 dict;泄露纪律:值不进帧/checkpoint,错误消息只带键名)。
+K2(docs/STDLIB.md §3.3):run 级工具状态分两类生命周期——**逻辑状态**用
+``_run_states``(checkpoint 随附,resume 原样恢复;todo 清单先例;``release_run``
+故意**不清**——run 收尾快照在回收之后才经 kernel.checkpoint 落盘,清了会丢档);
+**进程态/易失状态**用 ``_proc_states``(shell 会话 cwd/env 等,**不进 checkpoint**,
+``release_run`` 统一回收,resume 按需重建、幂等——与内核进程本地状态
+``_stop_flags``/``_branch_budgets`` 同语义)。
 D2(docs/DATA-AUTHZ.md §3/§6):``bind_data_policy`` 注入 [data] 策略后,数据闸
 按域族分派(fs=路径前缀/net=URL 前缀,``register_net_domain`` 最长前缀优先),
 "未配置域 = confidential" 生效,per-subject 域白名单并入 ``allow()`` 第二判据;
@@ -119,6 +125,9 @@ class LocalPythonToolRegistry:
         self._workdirs: dict[str, str] = {}
         #: §W1-4 run 级工具状态(todo 清单等;同 run_id 的帧共享,checkpoint 随档持久)
         self._run_states: dict[str, dict[str, Any]] = {}
+        #: K2 run 级**进程态**工具状态(shell 会话 cwd/env 等;同 run_states 按 run_id
+        #: 分桶,但**不进 checkpoint**,``release_run`` 统一回收;两类生命周期见模块 docstring)
+        self._proc_states: dict[str, dict[str, Any]] = {}
         #: §W1-5 skill_search 的技能数据源(KernelBuilder 装配时经 bind_skills 注入)
         self._skills: Any = None
         #: M6 memory_search/memory_write 的 MemoryService 数据源(装配时经 bind_memory 注入)
@@ -245,8 +254,25 @@ class LocalPythonToolRegistry:
 
     @property
     def run_states(self) -> dict[str, dict[str, Any]]:
-        """run 级工具状态表(§W1-4;key = run_id,同 run 的帧共享;checkpoint 随档持久)。"""
+        """run 级工具状态表(§W1-4;key = run_id,同 run 的帧共享;checkpoint 随档持久)。
+
+        K2 两类生命周期的**逻辑状态**类:resume 要原样恢复的状态放这里(todo 清单
+        先例)。``release_run`` 故意不清理——run 收尾的 checkpoint 快照在回收之后
+        才落盘(kernel/checkpoint.py dump 读本表),清了会丢档。
+        """
         return self._run_states
+
+    @property
+    def proc_states(self) -> dict[str, dict[str, Any]]:
+        """run 级**进程态**工具状态表(K2;key = run_id;docs/STDLIB.md §3.3)。
+
+        K2 两类生命周期的**易失状态**类:shell 会话 cwd/env 等进程本地事实放这里
+        ——**不进 checkpoint**(dump 只读 ``run_states``,本表结构性排除),resume
+        按需重建、幂等(与内核 ``_stop_flags``/``_branch_budgets`` 同语义);
+        ``release_run`` 统一回收。只存用户命令引入的**增量**(如 env delta),
+        进程环境可能含 API key,整体落存既泄露又陈旧。
+        """
+        return self._proc_states
 
     def bind_signals(self, bus: Any) -> None:
         """KernelBuilder 装配钩子:给提供 ``bind()`` 的工具(如 system.python.exec)接信号总线。
@@ -685,9 +711,12 @@ class LocalPythonToolRegistry:
         取消;规格已随帧 working 持久化,resume 重武装,见 tools/timer.py)。
         ch04:顺带取消该 run 全部在册监控(shell 源进程组同步 SIGKILL;
         规格同样留帧 working 供 resume 重武装,见 tools/monitor.py)。
+        K2:顺带回收该 run 的进程态工具状态(``_proc_states``;逻辑状态
+        ``_run_states`` 不在此清——收尾 checkpoint 快照在回收后才落盘)。
         """
         self._timers.release_run(run_id)
         self._monitors.release_run(run_id)
+        self._proc_states.pop(run_id, None)
         wd = self._workdirs.pop(run_id, None)
         if wd:
             shutil.rmtree(wd, ignore_errors=True)
@@ -708,8 +737,10 @@ class LocalPythonToolRegistry:
         与 §W1 核心工具(system.file.list/system.file.search/system.time.now/system.task.todo_write/system.task.todo_update/system.skill.search)。
 
         何时用:单技能 agent 起步与测试的默认工具面;边界:fs 工具限定 run 工作目录(§2.2;
-        §W0-1 起可配 workdir/read_paths 分区),system.shell.exec 为一次性子进程(持久会话形态
-        后续里程碑),system.net.http_fetch 结果标记 ``untrusted_source``(§2.2 来源标记,注入防御);
+        §W0-1 起可配 workdir/read_paths 分区),system.shell.exec 缺省为一次性子进程(K2 起
+        可选 ``session_id`` 会话化:同 (run, session) 跨调用保 cwd/env 增量,状态存进程态
+        载体 ``proc_states``,不进 checkpoint,见模块 docstring 两类生命周期段),
+        system.net.http_fetch 结果标记 ``untrusted_source``(§2.2 来源标记,注入防御);
         ``http_transport`` 供测试注入 httpx MockTransport,不碰真实网络。
         §W0-2:READ 档 system.file.read 声明 idempotent/cacheable/concurrent_safe(两个拼写一并置位),
         各工具 cost_hint 写量级(声明不强制)。
@@ -743,7 +774,7 @@ class LocalPythonToolRegistry:
             fs_write,
             http_fetch_tool,
             http_request_tool,
-            shell_exec,
+            shell_exec_tool,
         )
         from agent_os.tools.std import (
             fs_delete,
@@ -788,14 +819,9 @@ class LocalPythonToolRegistry:
             cost_hint="~10ms",
         )(fs_edit)
         reg.register_alias("fs_edit", "system.file.edit")
-        reg.tool(
-            name="system.shell.exec",
-            permission=Permission.EXEC,
-            # TIER-STANDARDS §1:shell/exec 按最坏情况 L3(EXEC 默认推导已是
-            # irreversible,显式写明增强可读,防推导规则变动时静默降档)
-            side_effect="irreversible",
-            cost_hint="~100ms 起,取决于命令",
-        )(shell_exec)
+        # K2:session_id 会话化(cwd/env_delta 存 proc_states 进程态载体,
+        # 见 tools/builtins.py shell_exec_tool 与本模块 docstring 两类生命周期段)
+        reg.register(shell_exec_tool(name="system.shell.exec", proc_states=reg.proc_states))
         reg.register_alias("shell_exec", "system.shell.exec")
         reg.register(http_fetch_tool(name="system.net.http_fetch", transport=http_transport))
         reg.register_alias("http_fetch", "system.net.http_fetch")

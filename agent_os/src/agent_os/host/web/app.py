@@ -77,6 +77,7 @@ from agent_os.host.web.run_manager import (
 )
 from agent_os.kernel.errors import AgentOSError, SkillLoadError
 from agent_os.runtime.config import load_config
+from agent_os.runtime.overrides import OverrideError, validate_overrides, web_fields
 from agent_os.skills.closure import compute_closure
 from agent_os.skills.draft_store import (
     DraftStore,
@@ -170,27 +171,19 @@ def _lab_replace_providers(kernel: Any, script: list[dict[str, Any]]) -> None:
     replace_providers(kernel, responses)
 
 
-class RunOverrides(BaseModel):
-    """``POST /api/runs`` 的 ``overrides``(docs/WEB-UI.md §4.3 高级区):合并进本次 run 的 RunConfig。
-
-    ``inline``(docs/SKILL-INLINING.md §9 消融开关):``"on" | "off"``,其余值 422。
-    ``checkpoint_interval``(Debugger P5 周期 checkpoint):每 N 步覆盖写"最近现场",0=关。
-    """
-
-    model: str | None = None
-    max_cost: float | None = None
-    max_steps: int | None = None
-    inline: Literal["on", "off"] | None = None
-    checkpoint_interval: int | None = None
-
-
 class RunBody(BaseModel):
-    """``POST /api/runs`` 请求体(§4.3 ``{skill, input, overrides?, wait?}``;D6 增 ``skill_set``)。"""
+    """``POST /api/runs`` 请求体(§4.3 ``{skill, input, overrides?, wait?}``;D6 增 ``skill_set``)。
+
+    ``overrides`` 刻意 ``dict`` 而非 pydantic 子模型(K1,docs/RUNNERS.md §2.5):
+    字段白名单/类型 coercion/值校验全部走注册表 ``validate_overrides``(P2 单一
+    事实源,P3 fail-closed 归 400 而非 422,与 EventBody 手动校验先例一致);
+    P6:``web=False`` 的注册字段(workdir/read_paths)在本面同样归 400。
+    """
 
     skill: str
     input: dict[str, Any]
     wait: bool = False
-    overrides: RunOverrides | None = None
+    overrides: dict[str, Any] | None = None
     skill_set: str | None = None
 
 
@@ -715,7 +708,11 @@ def create_app(
         # D6:skill_set 未知属请求非法(400),与"run 未开始"的 200+failed 归类不同
         if body.skill_set is not None and body.skill_set not in manager.skillsets():
             raise HTTPException(status_code=400, detail=f"未知 skill set: {body.skill_set!r}")
-        overrides = body.overrides.model_dump(exclude_none=True) if body.overrides else None
+        try:
+            # K1(§2.5 P3/P6):注册表统一校验(白名单外/非法值归 400,与上一行同族)
+            overrides = validate_overrides(body.overrides or {}, allowed=web_fields()) or None
+        except OverrideError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         try:
             run_id = await manager.start_run(
                 body.skill,

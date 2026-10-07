@@ -232,7 +232,8 @@ backoff_base = 0.5
 
 ```
 .agent-os/runs/<run_id>/
-├── meta.json         # {run_id, skill, input, host: "cli"|"web", started_at}(resume 产物目录加 resumed_from)
+├── meta.json         # {run_id, skill, input, host: "cli"|"web", started_at}(resume 产物目录加 resumed_from;
+                      # K1 起可选 overrides 段:覆盖字段 provenance {field: flag|env|toml|api},§2.5)
 ├── trace.jsonl       # Telemetry WAL(版本头,全部信号)
 ├── checkpoint.json   # 结束/中止/挂起(paused)时自动快照(帧含完整上下文)
 └── result.json       # {status, result, error, usage 汇总}
@@ -268,6 +269,20 @@ src/agent_os/host/
 
 `host/` 是独立顶层包:只 import `agent_os.api.v1` 与内核公开件(builder/manager/sink/checkpoint),不 import 内核私有实现——边界由 ruff 自定义规则或 import-lint 守护(可选)。
 
+### 2.5 run 覆盖选项治理(K1)
+
+一次 run 的配置来自 `agent-os.toml` 的 `[run]` 段,但宿主允许对**单次 run** 覆盖其中少数字段(CLI flag / Web `POST /api/runs` 的 `overrides`)。此前字段清单在 CLI、Web、配置加载器三处各写一份,已漂移;K1 收编为**声明式注册表** `runtime/overrides.py`(`OVERRIDE_SPECS`,每行一个 `OverrideSpec`),原则:
+
+- **P1 三类分流**:host 行为选项(`--config`/`--artifacts`/`--json`)归 host parser 私有,不进注册表;run 覆盖选项必须 1:1 映射 `RunConfig` 字段(= toml `[run]` 键)且只能经注册表生成;定位参数(skill、run_id、checkpoint 路径)用位置参数。
+- **P2 单一事实源**:`runtime/overrides.py` 注册表;CLI flag、Web overrides 白名单、env 别名、类型 coercion、校验、help 文本全部从 spec 派生。新增可覆盖项 = 一行 spec + 测试,host 零改动。
+- **P3 fail-closed 白名单**:未注册/未开放字段拒绝——CLI 退出码 2,Web 400;导入期断言每个 `spec.field ∈ config.py _RUN_FIELDS`(权威字段集),注册表与 `[run]` 字段漂移在导入期即炸。
+- **P4 优先级链**:`flag > env`(spec 声明了别名时,如 `AGENT_OS_MODEL`)`> toml > 默认`;只改本次 run 私有的 config dict 副本(`apply_overrides`),配置文件永不被运行时改写;每个最终生效字段的来源(`flag|env|toml`,Web 统一记 `api`)写 meta.json 的 `overrides` 段(空段不写键)。
+- **P5 命名/类型约定**:flag = toml 键 kebab-case(`max_steps → --max-steps`);布尔用 `--xxx on|off`(枚举校验与 argparse choices 同源);列表用可重复 flag(`--read-paths PATH`,argparse `action="append"`)。
+- **P6 安全分级**:影响爆炸半径的字段(`workdir`/`read_paths`/`tool_policy` 类)`web=False`——Web 是多用户面(Bearer token),这些字段只对 CLI 本机 principal 开放,且强制 provenance 落盘。
+- **P7 拒绝私货**:新 spec 需对 ≥2 类场景通用(一次性调试开关请走配置文件,不注册)。
+
+当前注册表:`model`(`--model`,env `AGENT_OS_MODEL`)、`max_cost`(`--max-cost`)、`max_steps`(`--max-steps`)、`inline`(`--inline on|off`)、`checkpoint_interval`(`--checkpoint-interval N`,0=关)——以上 web 开放;`workdir`(`--workdir PATH`,须已存在目录)、`read_paths`(`--read-paths PATH` 可重复,每个路径须存在)——仅 CLI。
+
 ---
 
 ## 3. CLI Runner 设计
@@ -281,10 +296,11 @@ src/agent_os/host/
 ```
 agent-os run <skill> --input '<json>'|@file
     [--config agent-os.toml] [--json] [--artifacts .agent-os]
-    [--inline on|off] [--checkpoint-interval N]
+    [--model M] [--max-cost F] [--max-steps N] [--inline on|off]
+    [--checkpoint-interval N] [--workdir PATH] [--read-paths PATH ...]
   → 运行;stdout = RunRecord JSON(见 3.3);产物落盘
-  (注:--skills/--model/--max-cost/--seed 旗标未实现——覆盖走 agent-os.toml;
-   单次覆盖只有 Web 的 POST /api/runs overrides 面,见 §4.3)
+  (run 覆盖选项全部由 §2.5 注册表生成:优先级 flag > env(AGENT_OS_MODEL)> toml > 默认,
+   只改本次 run 私有副本,provenance 写 meta.json;--seed 等未注册字段仍走 agent-os.toml)
 
 agent-os trace <run_id> [--format json|table] [--artifacts .agent-os]
   → 从 trace.jsonl 读信号时间线(coding agent 用 json;--kind 过滤未实现)
@@ -388,6 +404,10 @@ FastAPI app ─── RunManager(进程内)
 
 ```
 POST   /api/runs                     {skill, input, overrides?} → {run_id}
+                                     (overrides 白名单 = §2.5 注册表 web=True 字段:model/max_cost/max_steps/
+                                     inline/checkpoint_interval;白名单外字段与非法值 fail-closed 归 400;
+                                     workdir/read_paths 为 web=False 不对本面开放;覆盖字段 provenance
+                                     以 "api" 来源写 meta.json)
 GET    /api/runs                     → [{run_id, skill, status, started_at, cost}]  (含历史,来自产物索引)
 GET    /api/runs/{id}                → RunRecord 详情(status/result/error/usage/帧树)
 GET    /api/runs/{id}/signals?kind=&after=  → 信号时间线(分页;kind=llm|tool|frame|sidecar|all)

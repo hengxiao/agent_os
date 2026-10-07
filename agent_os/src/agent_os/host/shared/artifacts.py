@@ -2,7 +2,8 @@
 
 每次运行落 ``<artifacts_root>/runs/<run_id>/``::
 
-    meta.json        # {run_id, skill, input, host, started_at}
+    meta.json        # {run_id, skill, input, host, started_at}(K1 起可选 overrides 段:
+                     # 覆盖字段 provenance {field: "flag"|"env"|"toml"|"api"},docs/RUNNERS.md §2.5)
     trace.jsonl      # 从 telemetry 目录归档的 WAL(<run_id>.jsonl;缺则空文件)
     checkpoint.json  # run 结束/中止时经 kernel.checkpoint 快照(RCA 与 resume 数据源)
     result.json      # {status, result, error, usage 汇总}
@@ -116,6 +117,7 @@ def execute_run(
     artifacts_root: Path,
     host: str,
     principal: Any = None,
+    overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """跑一个 run 并落产物(§2.2),返回 RunRecord dict(§3.3)。
 
@@ -127,6 +129,9 @@ def execute_run(
     (Debugger P5;覆盖写"最近现场",kernel/checkpoint.py)。
     ``principal``(docs/DATA-AUTHZ.md §2.2):宿主认证后的调用方身份,透传给
     ``Kernel.run``;缺省 None = v1 单用户语义。
+    ``overrides``(K1,docs/RUNNERS.md §2.5):本次 run 覆盖字段的 provenance
+    (``{field: "flag"|"env"|"toml"|"api"}``),非空时写入 meta.json 的
+    ``overrides`` 段;空/None 不写该键。
     """
     started: list[str] = []
 
@@ -153,17 +158,21 @@ def execute_run(
             raise  # run 未开始(校验/装配类):上抛由宿主归退出码 2/4
         status, error = STATUS_FAILED, f"{type(e).__name__}: {e}"
     run_id = started[0]
+    meta: dict[str, Any] = {
+        "run_id": run_id,
+        "skill": skill,
+        "input": input,
+        "host": host,
+        "started_at": started_at,
+    }
+    if overrides:
+        # K1(§2.5):覆盖字段 provenance 落盘(空段不写键)
+        meta["overrides"] = dict(overrides)
     return _finalize_run(
         kernel,
         run_id,
         Path(artifacts_root),
-        meta={
-            "run_id": run_id,
-            "skill": skill,
-            "input": input,
-            "host": host,
-            "started_at": started_at,
-        },
+        meta=meta,
         status=status,
         result=result,
         error=error,

@@ -28,6 +28,8 @@ D3 增量(docs/WEB-UI.md §4.3/§6.2):
 - ``start_run(..., overrides=...)``:``{model?, max_cost?, max_steps?, inline?}`` 合并进
   本次 run 的 RunConfig——每次重新 ``load_config`` 读文件,改动只落在该 run
   私有的 config dict 副本上,不污染共享配置(后续 run 与 reload 路径不受影响);
+  (K1 起字段白名单/合并/校验全部由 docs/RUNNERS.md §2.5 注册表派生,
+  覆盖字段 provenance 写 meta.json,来源记 ``"api"``);
 - ``skills_manifests`` / ``skill_manifest``:共享 registry 的只读查询
   (``GET /api/skills`` 数据源),与 ``reload_skills`` 共用惰性装配路径。
 
@@ -177,6 +179,7 @@ from agent_os.runtime.config import (
     load_skillsets,
     web_token_map,
 )
+from agent_os.runtime.overrides import apply_overrides, web_fields
 
 #: rerun 等 stop verdict 落地的兜底(秒):超时按 best-effort 收尾,不悬挂
 _RERUN_STOP_TIMEOUT = 10.0
@@ -189,9 +192,9 @@ HUB_CLOSED: Any = object()
 BUFFER_MAXLEN = 2000
 
 #: ``POST /api/runs`` 的 ``overrides`` 允许覆盖的 RunConfig 字段(docs/WEB-UI.md §4.3 高级区;
-#: ``inline`` = docs/SKILL-INLINING.md §9 消融开关,写入 ``cfg["run"]["inline"]``;
-#: ``checkpoint_interval`` = Debugger P5 周期 checkpoint,0=关)
-OVERRIDE_FIELDS = ("model", "max_cost", "max_steps", "inline", "checkpoint_interval")
+#: K1 起从注册表派生(docs/RUNNERS.md §2.5 P2 单一事实源),不再手写;P6 安全分级:
+#: workdir/read_paths 等影响爆炸半径的字段 web=False,不进本白名单)
+OVERRIDE_FIELDS = web_fields()
 
 
 class _StopBridge:
@@ -559,9 +562,11 @@ class RunManager:
     ) -> Any:
         """按 config 装配一个 run 的内核;恒附带 _StopBridge 保证 ctl 存在(stop 通道)。
 
-        ``overrides``(D3,docs/WEB-UI.md §4.3):``{model?, max_cost?, max_steps?, inline?}``
-        合并进本次 run 的 ``[run]`` 配置。配置文件每次重新读取,改动只落在本 run 私有的
-        dict 副本上——只影响本次 run,不泄漏到后续 run 或共享 registry(D3 锚点)。
+        ``overrides``(D3,docs/WEB-UI.md §4.3;K1 起字段集/合并/校验全部由
+        docs/RUNNERS.md §2.5 注册表派生)合并进本次 run 的 ``[run]`` 配置。
+        配置文件每次重新读取,改动只落在本 run 私有的 dict 副本上——只影响本次
+        run,不泄漏到后续 run 或共享 registry(D3 锚点)。白名单外字段抛
+        ``OverrideError``(P3 fail-closed;路由层在 start_run 之前预校验归 400)。
 
         ``skill_set``(D6):用该 set 的装配(``_base_config``);全程持
         ``_assemble_lock``,与并发 run/其它 set 的装配串行化(sys.path 是进程全局)。
@@ -586,11 +591,9 @@ class RunManager:
                 )
             else:
                 cfg = load_config(base) if isinstance(base, (str, Path)) else dict(base)
-                run_section = dict(cfg.get("run") or {})
-                for key in OVERRIDE_FIELDS:
-                    if key in overrides and overrides[key] is not None:
-                        run_section[key] = overrides[key]
-                cfg["run"] = run_section
+                # K1(§2.5):合并走注册表 apply_overrides(P3 fail-closed:web 白名单外
+                # 字段 OverrideError;只动 cfg["run"] 副本,不污染共享配置)
+                cfg = apply_overrides(cfg, overrides, allowed=OVERRIDE_FIELDS)
                 kernel = build_kernel(
                     cfg, extra_sidecars=[_StopBridge()], supervisor_handler=handler
                 )
@@ -858,6 +861,8 @@ class RunManager:
                     # 数据层身份(docs/DATA-AUTHZ.md §2.2):D3-lite 请求级身份优先,
                     # 缺省回落单用户部署者(行为与引入前逐字一致)
                     principal=principal or self._principal(),
+                    # K1(§2.5 P4):覆盖字段 provenance 落 meta.json(web 来源统一记 "api")
+                    overrides={key: "api" for key in overrides} if overrides else None,
                 )
                 record["skill_set"] = tag
                 self._tag_artifacts(record["run_id"], tag)

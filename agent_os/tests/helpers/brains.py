@@ -86,6 +86,62 @@ def done_brain(req: ChatRequest) -> ChatResponse:
     return _final({"done": True})
 
 
+def file_writer_brain(req: ChatRequest) -> ChatResponse:
+    """先调 system.file.write 写相对路径文件,再收尾(K1 --workdir 覆盖测试用)。
+
+    输入 ``{"name": "<文件名>"}``;相对路径经 resolve_work_path 三段判定落在
+    本次 run 的 workdir 内(§W0-1)。
+    """
+    name = "out.txt"
+    for m in req.messages:
+        if m.role is Role.USER:
+            name = json.loads(m.content)["name"]
+            break
+    if not any(m.role is Role.TOOL for m in req.messages):
+        return _calls(ToolCall(id="w1", name="system.file.write", args={"path": name, "content": "x"}))
+    return _final({"done": True})
+
+
+def shell_session_brain(req: ChatRequest) -> ChatResponse:
+    """K2 内核级 e2e:两次 system.shell.exec 同 session_id,第二次应看到第一次的 cd/export。
+
+    决策:无调用 → ``cd sub && export``(session "build");已有一次调用 →
+    读 ``pwd`` 与变量(同 session);已有两次 → 断言第二次输出带着第一次的
+    会话状态,给最终答案(断言失败即 run 失败,e2e 锚)。
+    """
+    shell_calls = [
+        tc
+        for m in req.messages
+        if m.role is Role.ASSISTANT
+        for tc in m.tool_calls
+        if tc.name == "system.shell.exec"
+    ]
+    if not shell_calls:
+        return _calls(
+            ToolCall(
+                id="s1",
+                name="system.shell.exec",
+                args={
+                    "command": "mkdir -p sub && cd sub && export AOS_K2_MARK=session-works",
+                    "session_id": "build",
+                },
+            )
+        )
+    if len(shell_calls) == 1:
+        return _calls(
+            ToolCall(
+                id="s2",
+                name="system.shell.exec",
+                args={"command": "pwd && printf '<%s>' \"$AOS_K2_MARK\"", "session_id": "build"},
+            )
+        )
+    tool_msgs = [m for m in req.messages if m.role is Role.TOOL]
+    last = json.loads(tool_msgs[-1].content)
+    text = last["value"]["stdout"]
+    assert "sub" in text and "<session-works>" in text, f"会话状态未跨调用保留: {text!r}"
+    return _final({"done": True})
+
+
 class PowerCut(Exception):
     """模拟断电:第 cut_at 次 LLM 调用时直接崩掉。"""
 

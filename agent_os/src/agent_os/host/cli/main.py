@@ -6,7 +6,7 @@
 | code | 含义 |
 |---|---|
 | 0 | run 成功(status=done) |
-| 2 | 输入/配置/技能校验错误(SkillLoadError、输入不合 schema、输入 JSON 解析错) |
+| 2 | 输入/配置/技能校验错误(SkillLoadError、输入不合 schema、输入 JSON 解析错、run 覆盖选项非法 §2.5) |
 | 3 | run 失败或中止(技能返回错误、OutputValidationError、RunAborted) |
 | 4 | 宿主/基础设施错误(配置缺失、provider 装配失败、docker 不可用) |
 
@@ -43,6 +43,15 @@ from agent_os.host.shared.replay import build_mock_script, diff_runs, replace_pr
 from agent_os.host.shared.runrecord import STATUS_DONE, dumps
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.runtime.config import build_kernel, load_config
+from agent_os.runtime.overrides import (
+    OVERRIDE_SPECS,
+    OverrideError,
+    apply_overrides,
+    cli_flag,
+    collect_cli_overrides,
+    resolve_effective,
+    resolve_provenance,
+)
 from agent_os.skills.local_file import LocalFileSkillRegistry
 
 
@@ -116,17 +125,16 @@ class _CliUserChannel:
 
 def _build_kernel(
     config: str,
-    inline: str | None = None,
+    overrides: dict[str, Any] | None = None,
     supervisor: bool = True,
-    checkpoint_interval: int | None = None,
 ) -> Any:
-    """build_kernel 的退出码归类包装:SkillLoadError → 2,其余装配失败 → 4。
+    """build_kernel 的退出码归类包装:OverrideError/SkillLoadError → 2,其余装配失败 → 4。
 
-    ``inline``(``--inline on|off``,docs/SKILL-INLINING.md §9 消融开关):覆盖本次 run 的
-    ``[run].inline``;缺省用配置文件值。改动只落在本次装配私有的 dict 副本上。
-
-    ``checkpoint_interval``(``--checkpoint-interval``,Debugger P5):覆盖本次 run 的
-    ``[run].checkpoint_interval``(每 N 步周期 checkpoint,0=关);与 inline 同路径。
+    ``overrides``(K1,docs/RUNNERS.md §2.5):run 覆盖选项集(``collect_cli_overrides``
+    收集的显式 flag;``None`` = 本路径不做覆盖,resume/replay/lab 用)。非 None 时经
+    注册表 ``resolve_effective`` 补 env 别名(P4:flag > env > toml)再
+    ``apply_overrides`` 合并进本次装配私有的 config dict 副本——只影响本次 run,
+    配置文件永不被运行时改写(D3 锚点语义)。
 
     ``supervisor``(S2,§2.3):注入 CLI 宿主通道(``_cli_supervisor``);replay
     传 False——回放按 trace 记录值走,不应阻塞等 stdin(§4)。M1(§8.3)同理:
@@ -136,17 +144,12 @@ def _build_kernel(
     handler = _cli_supervisor if supervisor else None
     channel = _CliUserChannel() if supervisor else None
     try:
-        if inline is None and checkpoint_interval is None:
+        effective = resolve_effective(overrides) if overrides is not None else {}
+        if not effective:
             return build_kernel(config, supervisor_handler=handler, user_channel=channel)
-        cfg = load_config(config)
-        run_section = dict(cfg.get("run") or {})
-        if inline is not None:
-            run_section["inline"] = inline
-        if checkpoint_interval is not None:
-            run_section["checkpoint_interval"] = checkpoint_interval
-        cfg["run"] = run_section
+        cfg = apply_overrides(load_config(config), effective)
         return build_kernel(cfg, supervisor_handler=handler, user_channel=channel)
-    except SkillLoadError:
+    except (SkillLoadError, OverrideError):
         raise
     except Exception as e:  # 装配失败统一归基础设施错(§3.3 退出码 4)
         raise _InfraError(f"{type(e).__name__}: {e}") from e
@@ -195,12 +198,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
     except (OSError, json.JSONDecodeError) as e:
         print(f"输入错误: {e}", file=sys.stderr)
         return 2
+    overrides = collect_cli_overrides(args)  # K1(§2.5):显式 flag 集(env 补全在 _build_kernel)
     try:
-        kernel = _build_kernel(
-            args.config,
-            inline=getattr(args, "inline", None),
-            checkpoint_interval=args.checkpoint_interval,
-        )
+        kernel = _build_kernel(args.config, overrides=overrides)
+    except OverrideError as e:
+        print(f"覆盖选项错误: {e}", file=sys.stderr)
+        return 2
     except SkillLoadError as e:
         print(f"技能校验错误: {e}", file=sys.stderr)
         return 2
@@ -208,10 +211,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"基础设施错误: {e}", file=sys.stderr)
         return 4
     try:
+        try:
+            # K1(§2.5 P4):覆盖字段 provenance 写 meta.json(空段不写键,artifacts.py)
+            provenance = resolve_provenance(load_config(args.config).get("run") or {}, overrides)
+        except Exception:  # noqa: BLE001 — provenance 是审计面,读取失败不阻断 run
+            provenance = {}
         record = execute_run(
             kernel, args.skill, run_input, artifacts_root=Path(args.artifacts), host="cli",
             # 数据层身份(docs/DATA-AUTHZ.md §2.2):CLI 本机用户即身份
             principal=cli_principal(),
+            overrides=provenance,
         )
     except SkillLoadError as e:
         # run 未开始的根帧输入校验/技能寻址错(execute_run 上抛)→ 2(§3.3)
@@ -514,19 +523,26 @@ def _parser() -> argparse.ArgumentParser:
     p_run.add_argument("--input", required=True, help="'<json>' 或 @file")
     p_run.add_argument("--config", default="agent-os.toml")
     p_run.add_argument("--artifacts", default=".agent-os")
-    p_run.add_argument(
-        "--inline",
-        choices=["on", "off"],
-        default=None,
-        help="merge 消融开关(docs/SKILL-INLINING.md §9):off 时 inline 技能退化为压帧调用;缺省用配置值",
-    )
-    p_run.add_argument(
-        "--checkpoint-interval",
-        type=int,
-        default=None,
-        metavar="N",
-        help="周期 checkpoint(Debugger P5):每 N 步覆盖写 checkpoint.json(最近现场);缺省用配置值,0=关",
-    )
+    # K1(docs/RUNNERS.md §2.5 P2):run 覆盖选项全部由注册表生成(P1:--config/
+    # --artifacts/--json 是 host 私有选项,不进注册表);default=None 区分"没给"
+    # (P4:collect_cli_overrides 只收集显式 flag);列表型 action="append",
+    # 枚举型 choices 与 spec.validate 同源
+    for spec in OVERRIDE_SPECS:
+        flag = cli_flag(spec)
+        if flag is None:
+            continue
+        kwargs: dict[str, Any] = {"default": None, "help": spec.help}
+        if spec.type is int:
+            kwargs["type"] = int
+        elif spec.type is float:
+            kwargs["type"] = float
+        if spec.type is list:
+            kwargs["action"] = "append"
+            kwargs["metavar"] = "PATH"
+        choices = getattr(spec.validate, "options", None)
+        if choices is not None:
+            kwargs["choices"] = list(choices)
+        p_run.add_argument(flag, **kwargs)
     p_run.add_argument("--json", action="store_true", help="stdout 仅 RunRecord JSON")
     p_run.set_defaults(func=_cmd_run)
 

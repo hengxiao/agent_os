@@ -1,0 +1,494 @@
+# coding_agent(任务式 coding agent)——阶段一 M1–M3。
+# 技能树:coding.agent.run(编排入口,L1 直接能力面)
+#   → coding.explore(L1 只读)→ coding.plan(L2 写计划)
+#   → coding.fix_loop(code 技能,确定性"改→测"循环)
+#       → coding.implement(L2 写改)/ coding.verify(EXEC 跑测试)
+#   → coding.collect_diff(code 技能,git diff 结构化)/ coding.review(L1 + git diff)
+# 信任档阶梯:入口调 fix_loop/collect_diff/review(可达 EXEC)触发升权门,
+# shell.exec 逐次过 tool-confirm 门(HumanApproval 策略载体),见 README。
+skills:
+- name: coding.agent.run
+  version: 1.0.0
+  kind: prompt
+  description: 任务式 coding agent 入口,端到端"探索→计划→人审→修复循环→审查"。Use
+    when 给一个代码仓库派发带测试验证的修复/改造任务;Do not use when 只问代码问题
+    不需要改动(直接用 coding.explore)或没有可跑的验证命令。
+  inputs:
+    type: object
+    properties:
+      task:
+        type: string
+        description: 自然语言任务描述(修什么 bug/加什么功能)
+      test_command:
+        type: string
+        description: 验证命令,在 run workdir 下执行(如 python -m pytest test_calc.py -x)
+      focus_paths:
+        type: array
+        items:
+          type: string
+        description: 可选,限定探索范围的相对路径
+    required:
+    - task
+    - test_command
+  outputs:
+    type: object
+    properties:
+      status:
+        type: string
+        enum: [done, partial, failed]
+      summary:
+        type: string
+      changed_files:
+        type: array
+        items:
+          type: string
+      tests:
+        type: object
+        properties:
+          command:
+            type: string
+          ran:
+            type: boolean
+          passed:
+            type: boolean
+        required:
+        - command
+        - ran
+        - passed
+      plan_path:
+        type: string
+    required:
+    - status
+    - summary
+    - changed_files
+    - tests
+    - plan_path
+  permissions:
+    tools:
+    - system.file.read
+    - system.file.list
+    - system.file.search
+    - system.task.todo_write
+    - system.task.todo_update
+    - system.task.todo_read
+    - ask_supervisor
+    skills:
+    - coding.explore
+    - coding.plan
+    - coding.fix_loop
+    - coding.collect_diff
+    - coding.review
+  model:
+    prefer:
+    - openai/kimi-for-coding
+    - mock/coding
+  limits:
+    max_steps: 60
+    timeout: 900
+  prompt: |
+    # skill: coding.agent.run
+    你是任务式 coding agent 的编排器。任务:{task};验证命令:{test_command}。
+
+    严格按以下编号步骤执行,每步只发一个调用:
+    1. 调用 system.file.list 列出工作目录;若发现 AGENTS.md/CLAUDE.md/README.md,
+       用 system.file.read 逐个读取(不存在的跳过,每份文件一次调用);
+    2. 调用 system.task.todo_write 把任务拆成清单(探索/计划/修复/验证/审查);
+    3. 调用 skill.coding.explore,question 由任务生成,定位问题与相关文件;
+    4. 调用 skill.coding.plan,把 task 与 explore 的 findings 交给它写实施计划;
+       计划落盘后调用 ask_supervisor 请人类批准(question 简述计划要点与路径,
+       要求对方用 gate 同款词汇作答:approve-once / approve-run / deny,
+       deny 可附冒号与修改意见;不要再带 options 字段)。审批判定规则(写死,
+       不得自行发明词汇或把 approve-once 判为非法):
+       - 答案以 "approve" 开头(含 approve-once、approve-run)→ 视为批准,进入第 5 步;
+       - 答案以 "deny" 开头 → 视为拒绝:冒号后的内容作为修改意见,带上意见
+         重新调用 coding.plan 出下一版,然后再问一次;
+       - 其余答案 → 视为无效:不重出计划,用同一计划重问一次。
+       审批提问至多 2 次(含重问),计划至多重出 1 版;2 次提问均未获批准 →
+       以 status=failed 干净收尾(沿用第 7 步的必填字段规则),不再继续后续步骤;
+    5. 调用 skill.coding.fix_loop,传 task/plan_path/test_command,
+       由它确定性地执行"改代码→跑测试"循环;
+    6. 调用 skill.coding.collect_diff 拿结构化改动清单,再调用 skill.coding.review
+       审查(输入带 plan_path、changed_files 与 collect_diff 返回的 diff 内容);
+    7. 输出结果 JSON。
+    status 语义:fix_loop 返回 done 且 review verdict 为 pass → done;
+    fix_loop partial 或 review concerns → partial;计划未获批或中途异常 → failed。
+    tests.ran:测试命令真实执行过为 true(verify 的执行被拒绝则为 false)。
+    任何一步收到 permission_denied 都不要重试同一调用,记录后继续后续步骤。
+    最终答案是一个 JSON 对象,以下必填字段**任何情况下都必须出现**(含 failed/
+    partial 路径),且**不得添加 schema 之外的字段**(失败原因写进 summary,
+    不要另造 failure_reason 之类的键):
+    - status:done / partial / failed 三选一;
+    - summary:一句话总结(失败路径在此写明失败原因);
+    - changed_files:改动文件的相对路径数组,无改动给 [];
+    - tests:对象,三个必填键——command(验证命令原文)、ran(布尔,
+      命令真实执行过才给 true)、passed(布尔,通过才给 true);
+    - plan_path:计划文档的相对路径;未落盘(如计划未获批)给空字符串 ""。
+    降级示例:计划未获批 → status=failed、changed_files=[]、
+    tests.command 照填、tests.ran=false、tests.passed=false、
+    plan_path 给已落盘路径或 ""。
+    只输出该 JSON,不要输出其他文字。
+- name: coding.explore
+  version: 1.0.0
+  kind: prompt
+  description: 只读代码探索,回答问题并列出相关文件。Use when 修复前需要定位问题、
+    读懂相关代码;Do not use when 需要改文件或跑命令(纯只读,无 shell)。
+  inputs:
+    type: object
+    properties:
+      question:
+        type: string
+      focus_paths:
+        type: array
+        items:
+          type: string
+    required:
+    - question
+  outputs:
+    type: object
+    properties:
+      findings:
+        type: string
+      relevant_files:
+        type: array
+        items:
+          type: string
+    required:
+    - findings
+    - relevant_files
+  permissions:
+    tools:
+    - system.file.read
+    - system.file.list
+    - system.file.search
+    - system.file.stat
+    skills: []
+  model:
+    prefer:
+    - openai/kimi-for-coding
+    - mock/coding
+  limits:
+    max_steps: 20
+    timeout: 300
+  prompt: |
+    # skill: coding.explore
+    你是代码探索员(L1 只读档,无任何写/执行权限)。问题:{question}
+
+    严格按以下编号步骤执行,每步只发一个调用:
+    1. 调用 system.file.list 列出工作目录(有 focus_paths 时先列给定路径);
+    2. 用 system.file.read 逐个读取与问题相关的源码/测试文件(每份一次调用),
+       必要时用 system.file.search 按内容定位符号;
+    3. 汇总发现:问题在哪个文件哪个函数、根因是什么、修验证时应看哪些文件。
+    铁律:findings 只写你真实读到的内容(文件、行号、代码事实),不得臆造。
+    最终答案只输出符合 outputs schema 的 JSON(findings 字符串 +
+    relevant_files 路径数组),不要输出其他文字。
+- name: coding.plan
+  version: 1.0.0
+  kind: prompt
+  description: 把实施计划写成 markdown 落盘(L2 可逆写)。Use when 探索完成后需要把
+    修复方案写成待批准的计划文档;Do not use when 要直接改代码(那是 coding.implement)。
+  inputs:
+    type: object
+    properties:
+      task:
+        type: string
+      findings:
+        type: string
+      feedback:
+        type: string
+        description: 可选,人类对上一版计划的修改意见(重出时携带)
+    required:
+    - task
+    - findings
+  outputs:
+    type: object
+    properties:
+      plan_path:
+        type: string
+      summary:
+        type: string
+    required:
+    - plan_path
+    - summary
+  permissions:
+    tools:
+    - system.file.write
+    skills: []
+  trust:
+    reversal: 覆盖写前自动 .bak(写工具现状),回滚 = 取回 .bak 重写
+  model:
+    prefer:
+    - openai/kimi-for-coding
+    - mock/coding
+  limits:
+    max_steps: 6
+    timeout: 120
+  prompt: |
+    # skill: coding.plan
+    你是计划书记员(L2 可逆档)。任务:{task};探索发现:{findings}
+
+    严格按以下编号步骤执行,每步只发一个调用:
+    1. 调用 system.file.write 把实施计划写入 .agent-os/plans/<任务摘要 slug>.md
+       (markdown:目标/根因分析/改动步骤/验证方式;输入带 feedback 时,
+       按意见修订上一版并注明修订点);
+    2. 返回结果 JSON:plan_path 为写入路径,summary 为计划一句话摘要。
+    最终答案只输出符合 outputs schema 的 JSON,不要输出其他文字。
+- name: coding.fix_loop
+  version: 1.0.0
+  kind: code
+  description: 确定性"实现→验证"修复循环(handler 管迭代,最多 5 轮)。Use when 计划
+    已批准、需要边改边跑测试直到通过;Do not use when 验证命令缺失或任务不需要改代码。
+  handler: handlers:fix_loop
+  inputs:
+    type: object
+    properties:
+      task:
+        type: string
+      plan_path:
+        type: string
+      test_command:
+        type: string
+    required:
+    - task
+    - plan_path
+    - test_command
+  outputs:
+    type: object
+    properties:
+      status:
+        type: string
+        enum: [done, partial, failed]
+      changed_files:
+        type: array
+        items:
+          type: string
+      iterations:
+        type: integer
+      last_test_output:
+        type: string
+    required:
+    - status
+    - changed_files
+    - iterations
+    - last_test_output
+  permissions:
+    tools: []
+    skills:
+    - coding.implement
+    - coding.verify
+    blackboard:
+    - coding
+  trust:
+    blast_radius: 改动限于 workdir 内文件(implement 的写工具)+ 执行调用方给的
+      test_command(verify 的 shell.exec,逐次过 tool-confirm 门);循环 ≤5 轮硬上限
+  limits:
+    max_steps: 40
+    timeout: 600
+- name: coding.implement
+  version: 1.0.0
+  kind: prompt
+  description: 按计划与测试反馈改代码(L2 可逆写,无 shell)。Use when 修复循环里需要
+    落一次代码修改;Do not use when 需要跑测试或命令(验证归 coding.verify)。
+  inputs:
+    type: object
+    properties:
+      task:
+        type: string
+      plan_path:
+        type: string
+      test_feedback:
+        type: string
+        description: 可选,上一轮测试失败输出(修复循环第 2 轮起携带)
+    required:
+    - task
+    - plan_path
+  outputs:
+    type: object
+    properties:
+      changed_files:
+        type: array
+        items:
+          type: string
+      notes:
+        type: string
+    required:
+    - changed_files
+    - notes
+  permissions:
+    tools:
+    - system.file.read
+    - system.file.write
+    - system.file.edit
+    - python_orchestrate
+    - system.task.todo_update
+    skills: []
+  trust:
+    reversal: 覆盖写/编辑前自动 .bak(写工具现状),回滚 = 取回 .bak 重写
+  model:
+    prefer:
+    - openai/kimi-for-coding
+    - mock/coding
+  limits:
+    max_steps: 30
+    timeout: 300
+  prompt: |
+    # skill: coding.implement
+    你是实现员(L2 可逆档,没有 shell)。任务:{task};计划文档:{plan_path}
+
+    严格按以下编号步骤执行,每步只发一个调用:
+    1. 用 system.file.read 读计划文档与待改源文件(输入带 test_feedback 时,
+       先读反馈里点名的文件);可用 system.task.todo_update 推进任务清单状态;
+    2. 用 system.file.edit(局部改)或 system.file.write(整体改)落一处修改:
+       无 test_feedback 时按计划实施;带 test_feedback 时针对失败输出对症修复;
+    3. 返回结果 JSON:changed_files 为实际改动的相对路径数组(没改成则为空数组
+       并在 notes 说明),notes 为改动说明。
+    铁律:只改与任务相关的文件;不得伪造改动——edit/write 调用失败就如实报告。
+    最终答案只输出符合 outputs schema 的 JSON,不要输出其他文字。
+- name: coding.verify
+  version: 1.0.0
+  kind: prompt
+  description: 跑验证命令并汇报通过与否(EXEC 档,逐次过 tool-confirm 门)。Use when
+    需要执行测试/构建命令验证改动;Do not use when 只是读文件或改代码。
+  inputs:
+    type: object
+    properties:
+      command:
+        type: string
+    required:
+    - command
+  outputs:
+    type: object
+    properties:
+      passed:
+        type: boolean
+      summary:
+        type: string
+      output_tail:
+        type: string
+    required:
+    - passed
+    - summary
+    - output_tail
+  permissions:
+    tools:
+    - system.shell.exec
+    skills: []
+  trust:
+    blast_radius: 仅执行调用方传入的 command(在 workdir 沙箱内的一次性子进程),
+      不拼接、不扩散;被拒绝时返回 passed=false 而非重试
+  model:
+    prefer:
+    - openai/kimi-for-coding
+    - mock/coding
+  limits:
+    max_steps: 4
+    timeout: 120
+  prompt: |
+    # skill: coding.verify
+    你是验证员(EXEC 档)。验证命令:{command}
+
+    严格按以下编号步骤执行,每步只发一个调用:
+    1. 调用 system.shell.exec 执行该命令(原样执行,不改写、不拼接);
+       该工具支持可选 session_id:多步构建/激活 venv 等需要跨调用保持
+       cd 与环境变量的场景,给同一个 session_id(如 "verify")即可;
+       单条命令验证无需使用;
+    2. 按 exit_code 判定:0 → passed=true,非 0 → passed=false;
+       output_tail 取输出末尾(至多 2000 字符);summary 一句话说明结果。
+       执行被拒绝(permission_denied)时 passed=false、output_tail 置空、
+       summary 注明"执行被拒绝",不得重试。
+    最终答案只输出符合 outputs schema 的 JSON,不要输出其他文字。
+- name: coding.collect_diff
+  version: 1.0.0
+  kind: code
+  description: 收集结构化改动清单(git diff --stat + git status --porcelain)。Use when
+    修复完成后需要给审查提供改动面;Do not use when workdir 不是 git 仓库也要硬出
+    diff(此时返回 available=false,不报错)。
+  handler: handlers:collect_diff
+  inputs:
+    type: object
+    properties:
+      note:
+        type: string
+        description: 可选,调用方附言(透传到黑板/日志,不影响行为)
+  outputs:
+    type: object
+    properties:
+      available:
+        type: boolean
+      stat:
+        type: string
+      status:
+        type: string
+      note:
+        type: string
+    required:
+    - available
+  permissions:
+    tools:
+    - system.shell.exec
+    skills: []
+  trust:
+    blast_radius: 仅 git diff/status 两条只读命令(一次性子进程,workdir 沙箱内)
+  limits:
+    max_steps: 4
+    timeout: 60
+- name: coding.review
+  version: 1.0.0
+  kind: prompt
+  description: 审查改动与计划的一致性(L1 只读 + git diff)。Use when 修复循环结束后
+    需要把关改动质量;Do not use when 还要改代码(回 coding.fix_loop)。
+  inputs:
+    type: object
+    properties:
+      plan_path:
+        type: string
+      changed_files:
+        type: array
+        items:
+          type: string
+      diff:
+        type: string
+        description: 可选,collect_diff 收集的 diff 摘要(非 git 仓库时缺省)
+    required:
+    - plan_path
+    - changed_files
+  outputs:
+    type: object
+    properties:
+      verdict:
+        type: string
+        enum: [pass, concerns]
+      issues:
+        type: array
+        items:
+          type: string
+    required:
+    - verdict
+    - issues
+  permissions:
+    tools:
+    - system.file.read
+    - system.file.search
+    - system.shell.exec
+    skills: []
+  trust:
+    blast_radius: shell.exec 仅限 git diff/git status 只读命令(prompt 限定);
+      文件工具只读,不改任何文件
+  model:
+    prefer:
+    - openai/kimi-for-coding
+    - mock/coding
+  limits:
+    max_steps: 8
+    timeout: 120
+  prompt: |
+    # skill: coding.review
+    你是审查员(L1 只读档)。计划文档:{plan_path}
+
+    严格按以下编号步骤执行,每步只发一个调用:
+    1. 调用 system.shell.exec 执行 git diff --stat 与 git status --porcelain
+       (仅这两条只读命令;非 git 仓库/执行被拒绝时跳过本步,不报错不重试);
+    2. 用 system.file.read 读计划文档与 changed_files 里的每个文件(每份一次调用);
+    3. 对照计划审查:改动是否落在计划范围内、是否真的修掉了根因、有无夹带。
+       无问题 → verdict=pass、issues 为空数组;有疑虑 → verdict=concerns、
+       issues 逐条列明(每条一句话,指明文件与理由)。
+    最终答案只输出符合 outputs schema 的 JSON,不要输出其他文字。

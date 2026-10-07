@@ -1,0 +1,47 @@
+# coding_agent skillset 实例配置(skillsets/coding_agent/)
+# 当前为真实模型档:Kimi Code 端点(OpenAI 兼容协议,需 MOONSHOT_API_KEY)。
+# 用法(仓库根目录下):
+#   export MOONSHOT_API_KEY=sk-...
+#   source agent_os/.venv/bin/activate
+#   agent-os run coding.agent.run \
+#     --input '{"task":"修复 calc 的 bug","test_command":"python -m pytest test_calc.py -x"}' \
+#     --config skillsets/coding_agent/agent-os.toml --workdir /path/to/目标仓库 --json
+# 离线 mock 档(无 key 演示/CI):把下行 [run].model 换成 mock 档、启用 [providers.mock],
+# 并保证 PYTHONPATH 含本目录(brain/handler 均为 dotted path 加载):
+#   PYTHONPATH=skillsets/coding_agent agent-os run coding.agent.run --input ... --workdir ...
+
+[run]
+model = "openai/kimi-for-coding"  # 真实模型档(Kimi Code 端点,需 MOONSHOT_API_KEY)
+# model = "mock/coding"           # 离线 mock 档(scripted 大脑,零网络)
+max_depth = 8
+max_steps = 150
+max_cost = 3.0
+compression = "hierarchical"
+
+# Kimi Code 平台(OpenAI 兼容协议),key 走环境变量不落盘
+[providers.openai]
+base_url = "https://api.kimi.com/coding/v1"
+api_key_env = "MOONSHOT_API_KEY"
+
+# 离线 mock 档:scripted 大脑(brain 为 dotted path,需 PYTHONPATH 含本目录)
+# [providers.mock]
+# brain = "brains:coding_brain"
+
+[tools]
+builtins = true
+python_exec = "subprocess"
+python_orchestrate = true  # coding.implement 声明了编排伪工具;不开则该工具对模型不可见
+
+[skills]
+path = "skillsets/coding_agent/skills.yaml"
+
+[sidecars]
+budget_guard = { max_cost = 3.0 }
+loop_detector = { threshold = 3, max_strikes = 2 }
+# 规则为 [工具名, 参数正则, 理由] 三元组(config 加载器口径);shell 组合爆炸的
+# 防护主体是沙箱与权限,正则仅辅助(§5.4 能力上限)
+tool_guard_rules = [ ["system.shell.exec", '''rm\s+-rf\s+/(\s|$)''', "veto: 禁止删除根目录"] ]
+human_approval = {}  # EXEC 档工具(system.shell.exec)逐次过内核 tool-confirm 门
+
+[telemetry]
+dir = "skillsets/coding_agent/traces"

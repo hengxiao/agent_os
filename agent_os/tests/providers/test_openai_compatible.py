@@ -442,3 +442,160 @@ def test_vision_parts_also_serialized_in_stream():
     content = seen["body"]["messages"][0]["content"]
     assert content[0] == {"type": "text", "text": "看"}
     assert content[1]["type"] == "image_url"
+
+
+# ---------------------------------------------------------------------------
+# F3 回归(dogfood 实捕):中止/取消穿过流式响应时的生成器清理
+# ---------------------------------------------------------------------------
+
+
+def _slow_sse_client(texts: tuple[str, ...], *, tick: float = 0.05) -> httpx.AsyncClient:
+    """慢流 SSE mock:逐段 sleep 后产出一行(中止落在字节途中的真实形态)。"""
+    from httpx._content import AsyncIteratorByteStream
+
+    async def body():
+        for t in texts:
+            yield _sse_payload({"choices": [{"index": 0, "delta": {"content": t}}]})
+            await asyncio.sleep(tick)
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=AsyncIteratorByteStream(body()),
+        )
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+def _run_watched(main) -> list:
+    """自建 loop 跑 ``main()`` 协程函数并捕获 loop 异常处理器的全部上下文。
+
+    asyncgen 收尾错误(``an error occurred during closing of asynchronous
+    generator`` 级联 / ``RuntimeError: generator didn't stop after athrow()``)
+    经 loop 异常处理器上报——``asyncio.run`` 内部 loop 挂不上钩,故自建
+    (收尾阶段显式 ``shutdown_asyncgens``,与 asyncio.run 的关闭序列一致)。
+    """
+    loop = asyncio.new_event_loop()
+    errors: list = []
+    loop.set_exception_handler(lambda lp, ctx: errors.append(ctx))
+    try:
+        loop.run_until_complete(main())
+    finally:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.close()
+    return errors
+
+
+def test_abort_mid_stream_closes_generators_cleanly():
+    """F3(provider+Manager 层):loop 体抛 RunAborted + finally aclose(runner._stream_call
+    形态)穿过慢流——RunAborted 干净传播,loop 异常处理器零上报。
+
+    修复前(stream 跨 yield 的 ``async with client.stream``):aclose 掷入的
+    GeneratorExit 经 contextlib ``__aexit__`` athrow 进 httpx 的 stream 生成器,
+    级联终态下冒 ``RuntimeError: generator didn't stop after athrow()``。
+    """
+    from agent_os.providers.manager import ProviderManager
+
+    class _RunAborted(Exception):
+        pass
+
+    seen: list[str] = []
+
+    async def main():
+        p = OpenAICompatibleProvider(client=_slow_sse_client(("a", "b", "c")))
+        stream = ProviderManager([p]).stream(_stream_req())
+        try:
+            async for _chunk in stream:
+                raise _RunAborted("流中强停")
+        except _RunAborted as e:
+            seen.append(str(e))
+        finally:
+            await stream.aclose()
+
+    errors = _run_watched(main)
+    assert seen == ["流中强停"], "中止须按原异常传播"
+    assert errors == [], f"loop 异常处理器收到(生成器清理级联泄漏): {errors}"
+
+
+def test_kernel_stop_mid_stream_aborts_clean(tmp_path):
+    """F3(内核级):流中 ctl.stop → run 正常抛 RunAborted(ABORTED 语义),
+    无生成器清理 RuntimeError(Loop 异常处理器零上报)。"""
+    from typing import ClassVar
+
+    from agent_os.api.v1 import (
+        POST_LLM_CHUNK,
+        Allow,
+        Mode,
+        Permission,
+        RunConfig,
+        Signal,
+        ToolPolicy,
+    )
+    from agent_os.kernel.errors import RunAborted
+    from agent_os.providers.openai_compatible import OpenAICompatibleProvider as _OCP
+    from tests.helpers.kernels import assemble
+
+    class _StopProbe:
+        """首个 chunk 落地即 ctl.stop(test_streaming.py _Probe 同款形态)。"""
+
+        name: ClassVar[str] = "f3-stop-probe"
+        mode: ClassVar[Mode] = Mode.SYNC
+        priority: ClassVar[int] = 10
+        needs_free_text: ClassVar[bool] = False
+        subscriptions: ClassVar[list] = [POST_LLM_CHUNK]
+        fired = 0
+
+        async def on_signal(self, sig: Signal, ctl) -> Allow:
+            if self.fired == 0:
+                self.fired += 1
+                await ctl.stop(sig.run_id, "流中强停(F3 回归)")
+            return Allow()
+
+    skills = tmp_path / "skills.yaml"
+    skills.write_text(
+        """
+skills:
+  - name: test.greet
+    version: 1.0.0
+    kind: prompt
+    inputs:
+      type: object
+      properties: { who: { type: string } }
+      required: [who]
+    outputs:
+      type: object
+      properties: { answer: { type: string } }
+      required: [answer]
+    permissions: { tools: [], skills: [] }
+    model: { prefer: ["openai/gpt-x"] }
+    limits: { max_steps: 4 }
+    prompt: GREET
+""",
+        encoding="utf-8",
+    )
+    provider = _OCP(client=_slow_sse_client(('{"answer": "he', 'llo"}', '…')))
+    probe = _StopProbe()
+    kernel = assemble(
+        RunConfig(
+            model="openai/gpt-x",
+            tool_policy=ToolPolicy(max_permission=Permission.EXEC),
+            compression="off",
+        ),
+        provider,
+        skills,
+        sidecars=(probe,),
+    )
+
+    outcome: list[str] = []
+
+    async def main():
+        try:
+            await kernel.run("test.greet", {"who": "世界"})
+        except RunAborted:
+            outcome.append("aborted")
+
+    errors = _run_watched(main)
+    assert outcome == ["aborted"], "流中 stop 须按 RunAborted 正常收场"
+    assert probe.fired == 1
+    assert errors == [], f"loop 异常处理器收到(生成器清理级联泄漏): {errors}"

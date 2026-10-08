@@ -13,6 +13,7 @@ OpenAI parts 数组(text + ``image_url`` data URI);否则逐 part 落显式占�
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from collections.abc import AsyncIterator
@@ -120,6 +121,14 @@ class OpenAICompatibleProvider:
         tool_calls 分片按 index 缓冲,finish 时组装为完整 ToolCall(unmangle)一次交付——
         流式只透传文本/推理;usage 末 chunk(choices 空)连同暂存的 finish_reason 交付。
         流提前结束(未见 ``[DONE]``)/传输层错误 → UNAVAILABLE(retryable)。
+
+        生命周期手工管理(2026-10-08 修复,dogfood 实捕):**不用**跨 yield 的
+        ``async with client.stream()``——中止/取消穿过流时(runner 的 finally
+        ``aclose()`` 把 GeneratorExit 掷进本生成器),帧退栈会跑 contextlib 的
+        ``__aexit__``,它向 httpx 的 stream 生成器 ``athrow``,级联终态下对方
+        可能再 yield,冒 ``RuntimeError: generator didn't stop after athrow()``。
+        改为 finally 里直接 ``resp.aclose()``(+临时 client 时 ``client.aclose()``):
+        清理段无 yield、无 contextlib athrow 链,GeneratorExit/CancelledError 干净穿透。
         """
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         body = {
@@ -127,22 +136,19 @@ class OpenAICompatibleProvider:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        client = self._client if self._client is not None else httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=10.0)
+        )
+        resp: httpx.Response | None = None
         try:
-            if self._client is not None:
-                async with self._client.stream(
-                    "POST", f"{self.base_url}/chat/completions", json=body, headers=headers
-                ) as resp:
-                    async for chunk in self._stream_chunks(resp):
-                        yield chunk
-            else:
-                async with (
-                    httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client,
-                    client.stream(
-                        "POST", f"{self.base_url}/chat/completions", json=body, headers=headers
-                    ) as resp,
-                ):
-                    async for chunk in self._stream_chunks(resp):
-                        yield chunk
+            # 等价于 client.stream(...) 的内容管理器本体(build_request + send);
+            # 手工持有 resp,finally 直接关,避开 contextlib __aexit__ 的 athrow 语义
+            request = client.build_request(
+                "POST", f"{self.base_url}/chat/completions", json=body, headers=headers
+            )
+            resp = await client.send(request, stream=True)
+            async for chunk in self._stream_chunks(resp):
+                yield chunk
         except httpx.TransportError as e:
             # 连接/读超时、中途断流(ReadError/RemoteProtocolError 均归此类)
             raise ProviderError(
@@ -150,6 +156,13 @@ class OpenAICompatibleProvider:
                 f"{type(e).__name__}: {e}",
                 retryable=True,
             ) from e
+        finally:
+            if resp is not None:
+                with contextlib.suppress(Exception):  # 中止路径的收尾不盖过原异常
+                    await resp.aclose()
+            if self._client is None:  # 临时 client 才由本函数关;注入 client 归调用方
+                with contextlib.suppress(Exception):
+                    await client.aclose()
 
     async def _stream_chunks(self, resp: httpx.Response) -> AsyncIterator[ChatChunk]:
         """单个 SSE 响应 → ChatChunk 序列(``async with client.stream`` 内消费)。"""

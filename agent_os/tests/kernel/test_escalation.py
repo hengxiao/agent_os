@@ -1002,7 +1002,12 @@ def test_spawn_same_tier_no_confirmation(tmp_path):
 
 
 def test_cli_supervisor_passthrough_escalation(monkeypatch, capsys):
-    """CLI 通道:escalation 问题带 kind 与结构化载荷,options 内答案原样闭环。"""
+    """CLI 通道:escalation 问题带 kind 与结构化载荷,options 内答案原样闭环。
+
+    F2 起协议行写**原始** stderr(sys.__stderr__,redirect_stderr 吞不掉 dunder
+    流)——capsys 抓不到 dunder 流,monkeypatch 替换断言(语义不变:仍是进程
+    stderr 上的单行 JSON)。
+    """
     import io
     import sys
 
@@ -1026,10 +1031,12 @@ def test_cli_supervisor_passthrough_escalation(monkeypatch, capsys):
         options=["approve-once", "approve-run", "deny"],
         kind="escalation",
     )
+    real_err = io.StringIO()
+    monkeypatch.setattr(sys, "__stderr__", real_err)
     monkeypatch.setattr(sys, "stdin", io.StringIO("approve-run\n"))
     out = asyncio.run(_cli_supervisor(question))
     assert out == {"answer": "approve-run", "decided_by": "host:cli"}
-    row = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    row = json.loads(real_err.getvalue().strip().splitlines()[-1])
     assert row["kind"] == "escalation"
     assert row["options"] == ["approve-once", "approve-run", "deny"]
     assert row["context"]["tier"] == "reversible"
@@ -1041,7 +1048,7 @@ def test_cli_supervisor_passthrough_escalation(monkeypatch, capsys):
     # 普通问答行形状不变(不带 kind)
     monkeypatch.setattr(sys, "stdin", io.StringIO("ok\n"))
     asyncio.run(_cli_supervisor(Question(question_id="q-1", question="继续?")))
-    row2 = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    row2 = json.loads(real_err.getvalue().strip().splitlines()[-1])
     assert "kind" not in row2
 
 

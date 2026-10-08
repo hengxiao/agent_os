@@ -168,7 +168,7 @@ skills:
     - openai/kimi-for-coding
     - mock/coding
   limits:
-    max_steps: 20
+    max_steps: 30
     timeout: 300
   prompt: |
     # skill: coding.explore
@@ -493,7 +493,7 @@ skills:
     - openai/kimi-for-coding
     - mock/coding
   limits:
-    max_steps: 8
+    max_steps: 16
     timeout: 120
   prompt: |
     # skill: coding.review

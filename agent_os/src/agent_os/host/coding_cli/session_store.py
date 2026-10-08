@@ -121,6 +121,18 @@ class SessionStore:
         self._write_json(self._path(session_id), doc)
         return doc
 
+    def latest_turn(self, session_id: str) -> dict[str, Any] | None:
+        """
+        返回会话 ``turns`` 列表的最后一个 turn(docs/RUNNERS.md §2.2 产物布局)。
+
+        会话尚无 turn(空列表)时返回 ``None``。复用 :meth:`SessionStore.load`
+        读档,异常语义与其一致:会话不存在抛 ``FileNotFoundError``、
+        文件损坏(半写/非法 JSON)抛 ``ValueError``(§3.3 错误归类)。
+        """
+        doc = self.load(session_id)
+        turns = doc.get("turns") or []
+        return turns[-1] if turns else None
+
     def list_sessions(self) -> list[dict[str, Any]]:
         """
         枚举全部会话,按 updated_at 降序(最新在前)。

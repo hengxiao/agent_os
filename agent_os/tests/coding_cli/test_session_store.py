@@ -60,6 +60,27 @@ def test_append_turn_missing_field_raises(tmp_path: Path) -> None:
         store.append_turn("s1", {"run_id": "r1"})
 
 
+def test_latest_turn_empty_session_returns_none(tmp_path: Path) -> None:
+    """空会话(仅 create,未 append_turn)latest_turn 返回 None(P2-M3:无 turn 兜底)。"""
+    store = SessionStore(tmp_path)
+    store.create("s1", "demo-skill", "config.toml")
+    assert store.latest_turn("s1") is None
+
+
+def test_latest_turn_returns_last_turn(tmp_path: Path) -> None:
+    """多轮会话 latest_turn 返回最后一个 turn(P2-M3:取末轮供 resume 定位)。"""
+    store = SessionStore(tmp_path)
+    store.create("s1", "demo-skill", "config.toml")
+    store.append_turn("s1", _turn("run-1"))
+    store.append_turn("s1", _turn("run-2", status="failed"))
+    latest = store.latest_turn("s1")
+    assert latest is not None
+    assert latest["run_id"] == "run-2"
+    assert latest["status"] == "failed"
+    assert latest["checkpoint_path"] == "runs/run-2/checkpoint.json"
+    assert latest == _turn("run-2", status="failed")
+
+
 def test_list_sessions_sorted_and_skips_corrupt(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     store.create("old", "demo-skill", "config.toml")

@@ -108,17 +108,19 @@ class _CliUserChannel:
     ``ask``:stderr 打印 ``[user] {question}`` + stdin 读一行返回答(coding agent
     可解析的协议行,单命令进程内闭环);stdin EOF → EOFError(工具侧经 dispatch
     归一 INTERNAL,§8.1 分发边界)。``notify``:单向,只打印不读答。
+    打印都写**原始** stderr(``sys.__stderr__``;理由见 ``_cli_supervisor`` 注释——
+    code 技能帧内的 redirect_stderr 捕获会吞掉 sys.stderr 上的提示行)。
     """
 
     async def ask(self, question: str) -> str:
-        print(f"[user] {question}", file=sys.stderr, flush=True)
+        print(f"[user] {question}", file=sys.__stderr__, flush=True)
         line = await asyncio.to_thread(sys.stdin.readline)
         if line == "":
             raise EOFError("stdin EOF:读不到用户回答")
         return line.strip()
 
     async def notify(self, message: str) -> None:
-        print(f"[user] {message}", file=sys.stderr, flush=True)
+        print(f"[user] {message}", file=sys.__stderr__, flush=True)
 
 
 # M1 接线(§8.3):system.user.ask/system.user.notify 的宿主通道已接到 CLI——

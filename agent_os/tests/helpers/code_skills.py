@@ -56,6 +56,16 @@ async def monitor_probe(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     return {"monitor_id": r["value"]["monitor_id"]}
 
 
+async def confirm_delete(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
+    """帧内经 ctx.call_tool 调 system.file.delete(confirm=True;F2 测试用)。
+
+    tool-confirm 闸门在该 code 帧的 redirect_stderr 捕获区内触发——CLI 宿主的
+    提问协议行须写 ``sys.__stderr__`` 才不被吞(见 tests/cli/test_run.py F2 用例)。
+    """
+    r = await ctx.call_tool("system.file.delete", {"path": input.get("path", "gone.txt")})
+    return {"deleted": bool(r["ok"])}
+
+
 async def naughty(input: dict[str, Any], ctx: Any) -> dict[str, Any]:
     """调用白名单外的子技能(用于权限拒绝测试)。"""
     await ctx.invoke("demo.fib", {"n": 3})

@@ -149,27 +149,36 @@ def test_cli_resume_from_checkpoint(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_cli_user_channel_ask_reads_stdin(monkeypatch, capsys):
-    """ask:stderr 打印 [user] 问题行 + stdin 读一行作答(与 _cli_supervisor 同构)。"""
+def test_cli_user_channel_ask_reads_stdin(monkeypatch):
+    """ask:stderr 打印 [user] 问题行 + stdin 读一行作答(与 _cli_supervisor 同构)。
+
+    F2 起打印走**原始** stderr(sys.__stderr__;redirect_stderr 吞不掉 dunder 流,
+    code 技能帧内不被捕获)——capsys 抓不到 dunder 流,monkeypatch 替换断言。
+    """
     import io
     import sys
 
     from agent_os.host.cli.main import _CliUserChannel
 
     monkeypatch.setattr(sys, "stdin", io.StringIO("  继续  \n"))
+    real_err = io.StringIO()
+    monkeypatch.setattr(sys, "__stderr__", real_err)
     out = asyncio.run(_CliUserChannel().ask("确认覆盖现有文件吗?"))
     assert out == "继续", "回答须 strip 后原样返回"
-    err = capsys.readouterr().err
-    assert "[user] 确认覆盖现有文件吗?" in err
+    assert "[user] 确认覆盖现有文件吗?" in real_err.getvalue()
 
 
-def test_cli_user_channel_notify_one_way(capsys):
-    """notify:单向语义——只打印,不读 stdin。"""
+def test_cli_user_channel_notify_one_way(monkeypatch):
+    """notify:单向语义——只打印,不读 stdin(打印走 sys.__stderr__,F2)。"""
+    import io
+    import sys
+
     from agent_os.host.cli.main import _CliUserChannel
 
+    real_err = io.StringIO()
+    monkeypatch.setattr(sys, "__stderr__", real_err)
     asyncio.run(_CliUserChannel().notify("已完成 3/5"))
-    err = capsys.readouterr().err
-    assert "[user] 已完成 3/5" in err
+    assert "[user] 已完成 3/5" in real_err.getvalue()
 
 
 def test_cli_user_channel_ask_eof_raises(monkeypatch, capsys):
@@ -202,3 +211,97 @@ def test_build_kernel_replay_leaves_user_channel_unbound(tmp_path):
     cfg = _write_config(tmp_path, builtins=True)
     kernel = _build_kernel(str(cfg), supervisor=False)
     assert kernel.tools._user_channel is None
+
+
+# ---------------------------------------------------------------------------
+# F2:supervisor/user 协议行写原始 stderr(sys.__stderr__),不被帧内重定向吞掉
+# ---------------------------------------------------------------------------
+
+CONFIRM_SKILLS_YAML = """
+skills:
+  - name: test.confirm_root
+    version: 1.0.0
+    kind: prompt
+    description: 触发帧内确认门的根技能。Use when 测试协议行逃逸。
+    inputs:
+      type: object
+      properties: {}
+    outputs:
+      type: object
+      properties: { done: { type: boolean } }
+      required: [done]
+    permissions: { tools: [], skills: [test.confirm_write] }
+    model: { prefer: ["mock/fib"] }
+    limits: { max_steps: 4 }
+    prompt: 调用子技能后收尾。
+  - name: test.confirm_write
+    version: 1.0.0
+    kind: code
+    description: 帧内经 ctx.call_tool 触发 confirm 门。Use when 测试协议行逃逸。
+    handler: tests.helpers.code_skills:confirm_delete
+    inputs:
+      type: object
+      properties: {}
+    outputs:
+      type: object
+      properties: { deleted: { type: boolean } }
+      required: [deleted]
+    permissions: { tools: [system.file.delete], skills: [] }
+"""
+
+
+def _confirm_brain(req):
+    """先调 test.confirm_write(帧内撞 tool-confirm 门),再收尾。"""
+    from agent_os.api.v1 import ChatResponse, ChatUsage, Message, Role, ToolCall
+
+    called = any(
+        tc.name == "skill.test.confirm_write"
+        for m in req.messages if m.role is Role.ASSISTANT for tc in m.tool_calls
+    )
+    if not called:
+        return ChatResponse(
+            message=Message(role=Role.ASSISTANT, tool_calls=[
+                ToolCall(id="c1", name="skill.test.confirm_write", args={})
+            ]),
+            finish_reason="tool_calls", usage=ChatUsage(prompt=1, completion=1),
+        )
+    return ChatResponse(
+        message=Message(role=Role.ASSISTANT, content=json.dumps({"done": True})),
+        finish_reason="stop", usage=ChatUsage(prompt=1, completion=1),
+    )
+
+
+def test_supervisor_line_survives_code_frame_redirect(tmp_path, monkeypatch, capsys):
+    """F2 回归:code 技能帧内触发 tool-confirm,提问协议行出现在**真实** stderr。
+
+    InProcessLogicKernel 用 contextlib.redirect_stderr 把 sys.stderr 换成 StringIO
+    (帧产物);协议行写 sys.__stderr__(redirect 不碰 dunder 原始流)才逃得出。
+    capsys 抓不到 dunder 流——monkeypatch 替换 sys.__stderr__ 为 StringIO 断言;
+    对照:capsys 的 sys.stderr 捕获里**不应**有该行(证明它没被吞进重定向面)。
+    """
+    import io
+    import sys
+
+    skills = tmp_path / "skills.yaml"
+    skills.write_text(CONFIRM_SKILLS_YAML, encoding="utf-8")
+    cfg = _write_config(
+        tmp_path, brain="tests.cli.test_run:_confirm_brain", skills=skills, builtins=True
+    )
+    # 两道门都可能问(升权 + tool-confirm):stdin 备足 approve-once
+    monkeypatch.setattr(sys, "stdin", io.StringIO("approve-once\n" * 5))
+    real_err = io.StringIO()
+    monkeypatch.setattr(sys, "__stderr__", real_err)
+
+    rc = main(["run", "test.confirm_root", "--input", "{}",
+               "--config", str(cfg), "--artifacts", str(tmp_path / "runs"), "--json"])
+    assert rc == 0, f"run 应走完(批准后门放行):stderr={real_err.getvalue()[:500]}"
+    protocol_lines = [
+        line for line in real_err.getvalue().splitlines() if '"supervisor.ask"' in line
+    ]
+    assert protocol_lines, "提问协议行须到达原始 stderr(否则用户看不到提问而 stdin 在等答)"
+    assert any('"kind": "tool-confirm"' in line for line in protocol_lines), (
+        "tool-confirm 门的协议行须在列"
+    )
+    assert '"supervisor.ask"' not in capsys.readouterr().err, (
+        "对照:协议行不应落在可被 redirect_stderr 替换的 sys.stderr 面上"
+    )

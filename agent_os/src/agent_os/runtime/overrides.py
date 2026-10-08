@@ -209,6 +209,32 @@ def collect_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
     return out
 
 
+def add_override_arguments(parser: argparse.ArgumentParser) -> None:
+    """把注册表的 CLI 覆盖选项挂到 parser 上(P2:cli ``run`` 与 coding_cli 入口共用)。
+
+    约定(P5):flag = toml 键 kebab-case;``default=None`` 区分"没给"
+    (collect_cli_overrides 只收显式 flag);数值型经 argparse ``type`` coercion
+    (非法值 argparse 退出码 2);列表型 ``action="append"``;枚举 choices 与
+    ``spec.validate`` 同源(``_choices`` 工厂携 ``options``)。
+    """
+    for spec in OVERRIDE_SPECS:
+        flag = cli_flag(spec)
+        if flag is None:
+            continue
+        kwargs: dict[str, Any] = {"default": None, "help": spec.help}
+        if spec.type is int:
+            kwargs["type"] = int
+        elif spec.type is float:
+            kwargs["type"] = float
+        if spec.type is list:
+            kwargs["action"] = "append"
+            kwargs["metavar"] = "PATH"
+        choices = getattr(spec.validate, "options", None)
+        if choices is not None:
+            kwargs["choices"] = list(choices)
+        parser.add_argument(flag, **kwargs)
+
+
 def _coerce(spec: OverrideSpec, raw: Any) -> Any:
     """按 spec.type coercion;失败抛 :class:`OverrideError`(消息带字段名与原值)。"""
     if spec.type is list:

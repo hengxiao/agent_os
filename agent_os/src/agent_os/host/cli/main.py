@@ -44,10 +44,9 @@ from agent_os.host.shared.runrecord import STATUS_DONE, dumps
 from agent_os.kernel.errors import SkillLoadError
 from agent_os.runtime.config import build_kernel, load_config
 from agent_os.runtime.overrides import (
-    OVERRIDE_SPECS,
     OverrideError,
+    add_override_arguments,
     apply_overrides,
-    cli_flag,
     collect_cli_overrides,
     resolve_effective,
     resolve_provenance,
@@ -524,25 +523,9 @@ def _parser() -> argparse.ArgumentParser:
     p_run.add_argument("--config", default="agent-os.toml")
     p_run.add_argument("--artifacts", default=".agent-os")
     # K1(docs/RUNNERS.md §2.5 P2):run 覆盖选项全部由注册表生成(P1:--config/
-    # --artifacts/--json 是 host 私有选项,不进注册表);default=None 区分"没给"
-    # (P4:collect_cli_overrides 只收集显式 flag);列表型 action="append",
-    # 枚举型 choices 与 spec.validate 同源
-    for spec in OVERRIDE_SPECS:
-        flag = cli_flag(spec)
-        if flag is None:
-            continue
-        kwargs: dict[str, Any] = {"default": None, "help": spec.help}
-        if spec.type is int:
-            kwargs["type"] = int
-        elif spec.type is float:
-            kwargs["type"] = float
-        if spec.type is list:
-            kwargs["action"] = "append"
-            kwargs["metavar"] = "PATH"
-        choices = getattr(spec.validate, "options", None)
-        if choices is not None:
-            kwargs["choices"] = list(choices)
-        p_run.add_argument(flag, **kwargs)
+    # --artifacts/--json 是 host 私有选项,不进注册表);挂载逻辑与 coding_cli
+    # 入口共用 runtime/overrides.py 的 add_override_arguments
+    add_override_arguments(p_run)
     p_run.add_argument("--json", action="store_true", help="stdout 仅 RunRecord JSON")
     p_run.set_defaults(func=_cmd_run)
 

@@ -31,6 +31,7 @@ web = [
 agent-os = "agent_os.host.cli.main:main"
 agent-os-web = "agent_os.host.web.serve:main"
 agent-os-tui = "agent_os.host.tui.__main__:main"
+agent-os-chat = "agent_os.host.coding_cli.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_os"]

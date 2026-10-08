@@ -1,11 +1,14 @@
 """
-交互式 coding 宿主(docs/RUNNERS.md \u00a72 \u5bbf\u4e3b\u5951\u7ea6):\u6682\u505c/\u6062\u590d\u4f1a\u8bdd\u6a21\u578b\u7684\u4f1a\u8bdd\u6301\u4e45\u5316\u5c42\u3002
+交互式 coding 宿主(docs/RUNNERS.md §2 宿主契约):暂停/恢复会话模型。
 
-\u4e00\u4e2a\u4ea4\u4e92\u4f1a\u8bdd = \u957f\u5b58 run + checkpoint resume(WS2):
-``SessionStore`` \u7ba1\u7406 ``<root>/sessions/<session_id>.json`` \u4f1a\u8bdd\u6587\u6863,
-\u8bb0\u5f55\u6bcf\u4e00\u8f6e turn \u7684 run_id \u4e0e checkpoint_path(\u6062\u590d\u6570\u636e\u4fa7\u951a\u70b9)\u3002
+一个交互会话 = 长存 run + checkpoint resume(WS2):
+``SessionStore`` 管理 ``<root>/sessions/<session_id>.json`` 会话文档,
+记录每一轮 turn 的 run_id 与 checkpoint_path(恢复数据侧锚点);
+``SessionRunner``(P2-M1)是会话生命周期核心——worker 线程跑 run、
+信号行化进事件队列、问答/暂停/插话通道,与 I/O 完全解耦(渲染在 M2 repl.py)。
 """
 
+from agent_os.host.coding_cli.session import InboxUserChannel, SessionRunner
 from agent_os.host.coding_cli.session_store import SessionStore
 
-__all__ = ["SessionStore"]
+__all__ = ["InboxUserChannel", "SessionRunner", "SessionStore"]

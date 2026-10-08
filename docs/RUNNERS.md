@@ -263,6 +263,7 @@ backoff_base = 0.5
 src/agent_os/host/
 ├── shared/           # 配置加载、产物组织、RunRecord 读取层
 ├── cli/              # CLI runner(argparse,无新依赖)
+├── coding_cli/       # 交互宿主 agent-os-chat(P2:SessionRunner + 行式 REPL,§3.6)
 ├── web/              # Web runner(FastAPI,optional extra `agent-os[web]`)
 └── web_platform/     # Web Platform(对话中枢宿主,docs/WEB-PLATFORM.md)
 ```
@@ -374,6 +375,37 @@ agent-os lab validate <name> [--config agent-os.toml] [--json]
 - 子命令输出全部经同一 `RunRecord` 序列化函数,coding agent 只依赖这一个 JSON schema(版本化,`"v": 1`);
 - 测试:`capsys`/子进程跑 CLI,MockProvider + tmp_path 技能文件;断言 stdout JSON schema、退出码、产物文件存在与内容。
 
+### 3.6 交互宿主 `agent-os-chat`(P2,2026-10-08 落地 M1/M2)
+
+面向**人**的终端会话面(行式 REPL,stdlib-only,docs/TUI-DOC.md §0 零依赖方针):跑一个长存会话——观察 run 推进、应答提问、中途插话、暂停后改天续跑。
+
+```
+agent-os-chat <skill> [--input '<json>'|@file] [--config agent-os.toml] [--artifacts .agent-os]
+              [--session-id <id>] [--resume <session_id>] [run 覆盖选项(§2.5 注册表同款)]
+  → 首轮任务经 skill + --input 传入;--resume 从会话最后一个 paused turn 的 checkpoint 续跑
+```
+
+- **会话模型**:一个交互会话 = 长存 run + checkpoint resume(WS2)。`SessionStore` 管
+  `<artifacts>/sessions/<session_id>.json`(每轮 turn 记 `{run_id, input, status, checkpoint_path, summary}`,
+  原子写);建会话时的 run 覆盖选项(§2.5,如 `--workdir`)随文档存档,`--resume` 继承
+  (显式 flag 优先于存档)——恢复会话不丢工作目录;`SessionRunner`(host/coding_cli/session.py)
+  是生命周期核心——worker 线程跑 execute_run/execute_resume,信号行化进 `queue.Queue`
+  (渲染事件枚举稳定:run.start/chunk/tool.start/tool.end/frame.push/frame.pop/question/
+  notify/run.end),与 I/O 解耦。
+- **重问语义**:pause/stop 除 ctl 置旗外把 RunPaused/RunAborted 注入收件箱挂起等待点
+  (`InboxChannel.fail_all`),挂起期间未决问题保留进 checkpoint;resume 后以**新 question_id**
+  重问,UI 重答即可(stock ctl.pause 单独用时旗标要等 answer 结算后才消费,交互场景不生效)。
+- **输入分派**:有挂起问题 → 输入作为答案(options 不合的重问透传 previous_error);
+  run 活跃 → 注入根帧事件队列(下一步 build 前排干为批头消息,保 §7.4 配对);空闲 → 引导提示。
+  斜杠命令 `/help` `/status` `/pause` `/stop` `/quit`(活 run 时 /quit 拒退);Ctrl-C/EOF = pause 语义。
+- **与批 CLI 的契约差异**:chat 渲染写 **stdout**、输入读 stdin——它是人机面,不受
+  `agent-os run` 的「stdout 仅 JSON」契约(§3.3)约束;退出码沿用 §3.3 语义
+  (0 正常含 paused / 2 输入·会话·覆盖校验 / 3 run 失败中止 / 4 配置基础设施)。
+- 装配:每轮 rebuild 内核(D3 先例),恒塞 no-op sidecar 保证 ctl 在场(pause/stop/inject 通道);
+  overrides 走 §2.5 注册表(host 私有 flags 不进注册表,P1)。
+- 测试:逻辑层单测(tests/coding_cli/test_session_runner.py,mock brain + 线程安全等待)+
+  e2e 子进程管道驱动(test_repl_e2e.py,pexpect 式读锚点写 stdin,全等待有界)。
+
 ---
 
 ## 4. Web UI Runner 设计
@@ -463,4 +495,4 @@ POST   /api/skills/reload            → 热重载 skills.yaml
 
 ## 7. 非目标
 
-多用户与权限、持久化队列/分布式 worker、生产级部署形态、前端框架化(npm/构建链)、cron 表达式与跨进程多宿主互斥(单宿主定时调度已落地:POST /api/events 三通道 + [events] 段(2026-09-29)+ [schedule] 段宿主调度器与 system.schedule.set(2026-10-01),见 §4.3/§2.1)、CLI 的交互式 TUI。
+多用户与权限、持久化队列/分布式 worker、生产级部署形态、前端框架化(npm/构建链)、cron 表达式与跨进程多宿主互斥(单宿主定时调度已落地:POST /api/events 三通道 + [events] 段(2026-09-29)+ [schedule] 段宿主调度器与 system.schedule.set(2026-10-01),见 §4.3/§2.1)、CLI 的交互式 TUI(全屏终端 UI;行式 REPL 形态的交互宿主 `agent-os-chat` 不算 TUI,已落地,见 §3.6)。

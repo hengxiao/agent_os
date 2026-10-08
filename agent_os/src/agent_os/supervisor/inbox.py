@@ -100,6 +100,34 @@ class InboxChannel:
             return False
         return True
 
+    def fail_all(self, exc: BaseException) -> int:
+        """让全部挂起问题以异常收场(任意线程可调),返回注入条数。
+
+        交互宿主(coding_cli SessionRunner)的 pause/stop 语义:挂起期间未决问题
+        的 ask 等待点以异常(如 ``RunPaused``)弹出——内核按"异常保留 pending"
+        把问题留进 checkpoint(kernel/runner.py ``_ask_supervisor`` 注),resume 经
+        ``_settle_pending_ask`` 以新 question_id 重问。**不要用 CancelledError**:
+        取消路径会写 interrupted 占位配对,resume 视为已结算不再重问。
+        跨线程结算同 :meth:`answer`(``loop.call_soon_threadsafe`);循环已关闭的
+        条目跳过(answer 与 fail 竞态先到先得,同 ``_settle`` 防御)。
+        """
+        with self._lock:
+            entries = list(self._pending.values())
+        injected = 0
+        for entry in entries:
+            future: asyncio.Future[dict[str, Any]] = entry["future"]
+            try:
+                future.get_loop().call_soon_threadsafe(self._fail, future, exc)
+            except RuntimeError:  # 循环已关闭:跳过(run 收尾竞态)
+                continue
+            injected += 1
+        return injected
+
+    @staticmethod
+    def _fail(future: asyncio.Future[dict[str, Any]], exc: BaseException) -> None:
+        if not future.done():  # 竞态防御:answer/超时取消与 fail 同时到达时先到先得
+            future.set_exception(exc)
+
     @staticmethod
     def _settle(future: asyncio.Future[dict[str, Any]], answer: dict[str, Any]) -> None:
         if not future.done():  # 竞态防御:超时取消与 answer 同时到达时先到先得

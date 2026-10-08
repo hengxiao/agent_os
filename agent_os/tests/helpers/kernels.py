@@ -44,6 +44,28 @@ async def auto_approve(question) -> dict:
     return {"answer": "approve-once", "decided_by": "test:auto-approve"}
 
 
+class ScriptedUserChannel:
+    """system.user.ask/notify 的测试通道(M1 §8.3):ask 按预置队列应答,notify 记录。
+
+    与 CLI 的 ``_CliUserChannel`` 同契约(``ask(question) -> str`` /
+    ``notify(message)``,同步/async 均可);答案队列耗尽时断言失败——剧本外提问
+    必须显式看见,不静默兜底。
+    """
+
+    def __init__(self, answers: list[str] | None = None) -> None:
+        self._answers = list(answers or [])
+        self.questions: list[str] = []
+        self.notifications: list[str] = []
+
+    async def ask(self, question: str) -> str:
+        self.questions.append(question)
+        assert self._answers, f"user 通道答案队列耗尽(剧本外提问): {question!r}"
+        return self._answers.pop(0)
+
+    async def notify(self, message: str) -> None:
+        self.notifications.append(message)
+
+
 def sandbox_tools(*, builtins: bool = False) -> LocalPythonToolRegistry:
     """注册了 system.python.exec(子进程沙箱)的工具注册表。"""
     reg = LocalPythonToolRegistry.with_builtins() if builtins else LocalPythonToolRegistry()
@@ -62,11 +84,14 @@ def assemble(
     telemetry_dir: str | Path | None = None,
     debug_controller=None,
     supervisor=None,
+    user_channel=None,
 ):
     """标准组装链:MockProvider(brain) + sandbox 工具 + 双 Logic Kernel。
 
     ``brain`` 可以是应答函数,也可以是现成 Provider 实例。
     ``supervisor`` 给定时装配 supervisor 通道(升权闸门需要确认通道,docs/ESCALATION.md §3)。
+    ``user_channel`` 给定时装配 user 通道(system.user.ask/notify 的宿主回调,
+    M1 §8.3;可用本模块的 ScriptedUserChannel)。
     """
     provider = brain if hasattr(brain, "chat") else MockProvider(brain)
     builder = (
@@ -78,6 +103,8 @@ def assemble(
     )
     if supervisor is not None:
         builder = builder.supervisor(supervisor)
+    if user_channel is not None:
+        builder = builder.user_channel(user_channel)
     if sidecars:
         builder = builder.sidecars(*sidecars)
     if blackboard is not None:

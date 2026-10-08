@@ -15,6 +15,10 @@ TOOL 结果为 ``{"ok","value","error"}``)。核心在"真读真改真跑":
   变体恒报失败,用于修复循环上限测试;
 - ``coding.review``:git diff(可选,失败不碍)+ 真读改动文件,按真实内容
   判定根因是否修掉;
+- ``coding.agent.chat``:多轮会话接待(P2-M3)——开场有 opening 直接起第一轮,
+  否则开场即 user.ask;每轮 agent.run 子帧返回后 user.notify 汇报、user.ask
+  要下一任务;答复以 退出/结束/bye/quit 开头收官;test_command 从用户指令
+  原文提取(含绝对路径 python 形态),没给则按 fixture 形态给缺省;
 - ``coding.agent.run``:table-driven 状态机,按已完成调用推进
   探索→计划→人审(ask_supervisor)→修复循环→collect_diff→review→结果 JSON。
 """
@@ -23,6 +27,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from typing import Any
 
 from agent_os.api.v1 import (
@@ -591,6 +596,89 @@ def _entry(inp: dict[str, Any], seq: list[dict[str, Any]], skill: str) -> ChatRe
 
 
 # ---------------------------------------------------------------------------
+# coding.agent.chat:多轮会话接待(长存 run + user.ask 循环;P2-M3)
+# ---------------------------------------------------------------------------
+
+#: 用户收官词汇(答复以其开头即收官;中文精确匹配,英文小写匹配)
+_CHAT_EXIT_ZH = ("退出", "结束")
+_CHAT_EXIT_EN = ("bye", "quit")
+
+#: 用户指令里的验证命令提取:python 标记取绝对路径形态(/\S*?python)或裸词
+#: 边界(\bpython)——``\S`` 含 CJK 字符,贪婪 \S* 会把"验证命令:..."这类
+#:  glued 中文前缀吞进命令(实测坑:shell 拿到 "bug,验证命令:/..." 报 127);
+#: 尾部同理只收 ASCII shell 字符,中文尾巴(如"...-x 验证")不混入
+_CHAT_CMD_RE = re.compile(r"(?:/\S*?|\b)python\S*\s+-m\s+pytest[A-Za-z0-9_\s./=-]*")
+
+
+def _extract_test_command(text: str) -> str:
+    """从用户指令提取验证命令原文;没给则按 fixture 仓库形态给缺省(mock 剧本约定)。"""
+    m = _CHAT_CMD_RE.search(text)
+    if m:
+        return m.group(0).strip()
+    return f"{sys.executable} -m pytest test_calc.py -x"
+
+
+def _chat(inp: dict[str, Any], seq: list[dict[str, Any]], skill: str) -> ChatResponse:
+    """会话循环状态机:收尾规则只看最近一次调用的类型——
+
+    run/collect_diff 之后 → notify 汇报;notify 之后 → ask 要下一任务;
+    ask 答复以收官词开头 → 收官 JSON,否则答复原文即下一轮任务;
+    无任何调用 → 有 opening 直接起第一轮,否则开场即 ask。
+    """
+    runs = _calls_named(seq, "skill.coding.agent.run")
+    opening = str(inp.get("opening") or "").strip()
+    turns = len(runs)
+    last = seq[-1] if seq else None
+
+    if last is not None and last["name"] == "system.user.ask":
+        payload = last["payload"]
+        if not payload["ok"]:
+            return _final(
+                {"status": "failed", "summary": "user.ask 通道故障,无法继续会话", "turns": turns}
+            )
+        answer = str(payload["value"]).strip()
+        if answer.startswith(_CHAT_EXIT_ZH) or answer.lower().startswith(_CHAT_EXIT_EN):
+            return _final(
+                {
+                    "status": "done",
+                    "summary": f"会话收官:共完成 {turns} 轮任务",
+                    "turns": turns,
+                }
+            )
+        task = answer
+        return _issue(
+            skill, seq, "skill.coding.agent.run",
+            {"task": task, "test_command": _extract_test_command(task)},
+        )
+    if last is not None and last["name"] == "skill.coding.agent.run":
+        payload = last["payload"]
+        if payload["ok"]:
+            v = payload["value"]
+            tests = v.get("tests") or {}
+            message = (
+                f"任务 {v.get('status')}:{v.get('summary')};"
+                f"改动 {v.get('changed_files')};tests.passed={tests.get('passed')}"
+            )
+        else:
+            message = f"任务子帧失败:{(payload.get('error') or {}).get('message', '')}"
+        return _issue(skill, seq, "system.user.notify", {"message": message})
+    if last is not None and last["name"] == "system.user.notify":
+        return _issue(
+            skill, seq, "system.user.ask",
+            {"question": "下一步做什么?(说 退出/结束 收官)"},
+        )
+    # 开场(无任何调用)
+    if opening:
+        return _issue(
+            skill, seq, "skill.coding.agent.run",
+            {"task": opening, "test_command": _extract_test_command(opening)},
+        )
+    return _issue(
+        skill, seq, "system.user.ask", {"question": "要做什么?(说 退出/结束 收官)"}
+    )
+
+
+# ---------------------------------------------------------------------------
 # 入口:按 system 首行的技能名分派
 # ---------------------------------------------------------------------------
 
@@ -602,6 +690,7 @@ def _dispatch(req: ChatRequest, *, force_verify_fail: bool = False) -> ChatRespo
         return _verify_forced_fail(_frame_input(req), seq, name)
     handlers = {
         "coding.agent.run": _entry,
+        "coding.agent.chat": _chat,
         "coding.explore": _explore,
         "coding.plan": _plan,
         "coding.implement": _implement,

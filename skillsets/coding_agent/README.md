@@ -10,7 +10,7 @@
 skillsets/coding_agent/
 ├── README.md            # 本文件
 ├── agent-os.toml        # 实例配置(真实模型档 + 注释掉的 mock 档)
-├── skills.yaml          # 8 个技能(7 个编排/叶子 + collect_diff)
+├── skills.yaml          # 9 个技能(8 个单任务链路 + coding.agent.chat 会话入口)
 ├── handlers.py          # code 技能:fix_loop(确定性修复循环)+ collect_diff
 ├── brains.py            # mock 大脑:coding_brain / failing_verify_brain
 └── tests/
@@ -31,6 +31,9 @@ coding.agent.run (entry,prompt;L1 直接能力面:只读 + todo)
 │   └── coding.verify    (prompt,EXEC:shell.exec 跑测试,逐次过 tool-confirm 门)
 ├── coding.collect_diff  (code,handlers.py:collect_diff;git diff 结构化,L3)
 └── coding.review     (prompt,L1 只读 + git diff/status,L3)
+
+coding.agent.chat (会话入口,prompt;P2-M3):长存 run + user.ask 循环,
+逐轮委托 coding.agent.run(升权门逐次触发,设计意图),用户说 退出/结束 收官
 ```
 
 - entry 的直接能力面只到 L2(todo 写入),调 L3 推导档的 fix_loop /
@@ -38,8 +41,13 @@ coding.agent.run (entry,prompt;L1 直接能力面:只读 + todo)
   由 supervisor 通道逐次裁决;
 - `system.shell.exec` 是 EXEC 档,`[sidecars] human_approval = {}` 在场时逐次过
   **tool-confirm 门**;拒绝折叠为工具结果里的错误观察,run 不崩(降级为 partial);
-- 计划必须经 `ask_supervisor` 人类批准才进入修复循环;不批准可带意见重出 1 版,
-  仍不批准则 `status=failed` 收尾。
+- 计划必须经 `ask_supervisor` 人类批准才进入修复循环;答复用 gate 同款词汇
+  (approve-once/approve-run/deny,deny 可附冒号与修改意见),提问至多 2 次,
+  仍不批准则 `status=failed` 收尾;
+- `coding.agent.chat` 是长存会话帧:每轮任务 = 一次 `coding.agent.run` 子帧,
+  轮间用 `system.user.ask` 要下一任务、`system.user.notify` 汇报上一轮结果;
+  CLI 下 user 通道是 stdin/stderr 协议(与 supervisor 通道同构),
+  答复以 退出/结束/bye/quit 开头即收官。
 
 ## 用法
 
@@ -54,9 +62,24 @@ agent-os run coding.agent.run \
   --workdir /path/to/目标仓库 --json
 ```
 
-run 挂起时 CLI 在 stderr 打印 `supervisor.ask` 协议行(plan 批准答
-`approve`/`revise`/`reject`,升权与 tool-confirm 答 `approve-once`/`deny`),
-从 stdin 读一行作答。
+run 挂起时 CLI 在 stderr 打印 `supervisor.ask` 协议行(plan 批准与升权、
+tool-confirm 统一用 `approve-once`/`approve-run`/`deny` 作答;计划拒绝可写
+`deny:<修改意见>`),从 stdin 读一行作答。
+
+### 多轮会话(coding.agent.chat)
+
+同一工作区里连续派发多个任务(长存 run,轮间问答):
+
+```bash
+agent-os run coding.agent.chat \
+  --input '{"opening":"修复 calc 的 bug,验证命令:python -m pytest test_calc.py -x"}' \
+  --config skillsets/coding_agent/agent-os.toml \
+  --workdir /path/to/目标仓库 --json
+```
+
+首轮用 `opening`(缺省则开场即问);每轮子帧返回后在 stderr 看到
+`[user] 下一步做什么?` 提示,stdin 作答继续派任务;答 `退出`/`结束` 收官,
+输出 `{status, summary, turns}`。
 
 ### 离线 mock 档(无 key 演示 / CI)
 
@@ -71,6 +94,34 @@ PYTHONPATH=skillsets/coding_agent agent-os run coding.agent.run \
 
 mock 大脑(`brains.py`)是确定性剧本:真读源码定位矛盾 → 第一轮**故意改错**
 (只交换操作数)→ 验证真跑失败 → 第二轮对症修复 → 验证真过。同输入同调用树。
+
+### 交互模式(agent-os-chat)
+
+`agent-os-chat` console script(host/coding_cli,docs/RUNNERS.md §3.6)是交互宿主:
+一个会话 = 一个长存 run,`coding.agent.chat` 技能在 run 内循环「取任务 → 调
+coding.agent.run 执行 → notify 汇报 → user.ask 问下一步」,说 退出/结束 收官。
+
+```bash
+export MOONSHOT_API_KEY=sk-...
+PYTHONPATH=skillsets/coding_agent agent-os-chat coding.agent.chat \
+  --config skillsets/coding_agent/agent-os.toml \
+  --workdir /path/to/repo \
+  --input '{"opening": "首个任务描述(可省,省了开场即问)"}'
+```
+
+交互要点:
+
+- 审批门在 REPL 里直接答(approve-once/approve-run/deny,gate 同款词汇;
+  计划审批同协议,`deny:<修改意见>` 带意见重出一版);
+- agent 工作中可直接输入补充指令(经事件队列注入,下一步生效);
+- 斜杠命令:`/help` `/status` `/pause` `/stop` `/quit`。
+
+暂停/恢复:`/pause` 或 Ctrl-C → 落 checkpoint + 会话文档;
+`agent-os-chat --resume <session-id>` 恢复(overrides 随会话存档继承,resume
+不用重带 --workdir);恢复后未决的提问会以新问题 id 重问,重新回答即可。
+
+已知限制(如实):行式渲染,流式与输入提示行交错属正常;supervisor 提问
+120s 超时兜底(超时按 fail 闭环,帧可降级)。
 
 ### 测试
 

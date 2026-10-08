@@ -86,6 +86,16 @@ def test_load_missing_raises_file_not_found(tmp_path: Path) -> None:
         store.load("nope")
 
 
+def test_create_persists_overrides(tmp_path: Path) -> None:
+    """overrides 随会话文档落盘(P2-M3:--resume 继承会话级覆盖);缺省为空 dict。"""
+    store = SessionStore(tmp_path)
+    doc = store.create("s1", "demo-skill", "config.toml", overrides={"workdir": "/tmp/w"})
+    assert doc["overrides"] == {"workdir": "/tmp/w"}
+    assert store.load("s1")["overrides"] == {"workdir": "/tmp/w"}
+    doc2 = store.create("s2", "demo-skill", "config.toml")
+    assert doc2["overrides"] == {}, "缺省无覆盖为空 dict(旧文档缺键由消费方 get 兜底)"
+
+
 def test_atomic_write_leaves_no_tmp(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     store.create("s1", "demo-skill", "config.toml")

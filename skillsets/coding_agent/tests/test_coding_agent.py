@@ -38,7 +38,12 @@ from agent_os.skills.local_file import LocalFileSkillRegistry
 from agent_os.skills.manifest import validate_manifest
 from agent_os.tools.local_registry import LocalPythonToolRegistry
 from conftest import SKILLSET_DIR, copy_fixture
-from tests.helpers.kernels import assemble, record_all, sandbox_tools
+from tests.helpers.kernels import (
+    ScriptedUserChannel,
+    assemble,
+    record_all,
+    sandbox_tools,
+)
 
 SKILLS_YAML = SKILLSET_DIR / "skills.yaml"
 
@@ -72,7 +77,7 @@ def _make_supervisor(
     return handler
 
 
-def _build(work: Path, supervisor, brain=None, *, checkpoint_interval: int = 0):
+def _build(work: Path, supervisor, brain=None, *, checkpoint_interval: int = 0, user_channel=None):
     """标准装配:MockProvider + 全真内置工具 + sidecar 组(与 agent-os.toml 对齐)。"""
     config = RunConfig(
         model="mock/coding",
@@ -99,6 +104,7 @@ def _build(work: Path, supervisor, brain=None, *, checkpoint_interval: int = 0):
         ),
         blackboard=LocalBlackboard(),
         supervisor=supervisor,
+        user_channel=user_channel,
     )
     return kernel, mock
 
@@ -107,14 +113,14 @@ def _run(kernel) -> dict:
     return asyncio.run(kernel.run("coding.agent.run", {"task": TASK, "test_command": TEST_COMMAND}))
 
 
-def _entry_calls(recorded) -> list[tuple[str, dict, dict]]:
-    """entry 帧最终请求(全量历史)里的已完成调用 (name, args, payload) 序列。"""
+def _entry_calls(recorded, skill: str = "coding.agent.run") -> list[tuple[str, dict, dict]]:
+    """指定技能帧最终请求(全量历史)里的已完成调用 (name, args, payload) 序列。"""
     reqs = [
         r
         for r in recorded
-        if r.messages and "# skill: coding.agent.run" in r.messages[0].content
+        if r.messages and f"# skill: {skill}" in r.messages[0].content
     ]
-    assert reqs, "entry 帧必须真实跑过"
+    assert reqs, f"{skill} 帧必须真实跑过"
     names: dict[str, tuple[str, dict]] = {}
     out: list[tuple[str, dict, dict]] = []
     for m in reqs[-1].messages:
@@ -285,7 +291,7 @@ def test_manifests_pass_lint():
     registry.load()
     tools = LocalPythonToolRegistry.with_builtins()
     manifests = registry.manifests()
-    assert len(manifests) == 8
+    assert len(manifests) == 9
     for m in manifests:
         tier = derive_skill_tier(m, tools, registry)
         assert validate_manifest(m, tier) == [], f"{m.name} 的 lint 告警须为空"
@@ -380,3 +386,70 @@ def test_pause_and_resume(tmp_path):
     assert sum(1 for c in entry if c[0] == "skill.coding.fix_loop") == 1
     fix = next(p for n, _a, p in entry if n == "skill.coding.fix_loop")
     assert fix["value"]["status"] == "done" and fix["value"]["iterations"] == 2
+
+
+# ---------------------------------------------------------------------------
+# 9. coding.agent.chat:多轮会话入口(P2-M3;长存 run + user.ask 循环)
+# ---------------------------------------------------------------------------
+
+
+def test_chat_two_turns_e2e(tmp_path):
+    """opening 首轮 → agent.run 子帧完整修复 → notify 汇报 → ask 接第二轮 → 再 ask
+    答「退出」→ 收官 JSON(status=done、turns=2);user.ask 恰 2 次、agent.run 子帧 2 个。"""
+    work = copy_fixture(tmp_path)
+    user = ScriptedUserChannel(["再跑一遍测试确认修复", "退出"])
+    kernel, mock = _build(work, _make_supervisor([]), user_channel=user)
+    seen = record_all(kernel)
+
+    result = asyncio.run(
+        kernel.run(
+            "coding.agent.chat",
+            {"opening": f"修复 calc 的 bug,验证命令:{TEST_COMMAND}"},
+        )
+    )
+
+    assert result["status"] == "done"
+    assert result["turns"] == 2
+    assert result["summary"]
+    # 第一轮真修好了 fixture(第二轮是"再确认",文件保持修复态)
+    assert "return a + b" in (work / "calc.py").read_text(encoding="utf-8")
+    assert len(user.questions) == 2, "两轮任务之间与收官前各问一次"
+    assert len(user.notifications) == 2, "每轮子帧返回后都 notify 汇报"
+    assert any("done" in n and "calc.py" in n for n in user.notifications), (
+        "汇报摘要须含子帧 status 与 changed_files"
+    )
+    chat = _entry_calls(mock.recorded, "coding.agent.chat")
+    runs = [c for c in chat if c[0] == "skill.coding.agent.run"]
+    assert len(runs) == 2
+    assert all(c[2]["ok"] for c in runs)
+    assert all(c[2]["value"]["status"] == "done" for c in runs)
+    # 第二轮任务文本没给验证命令:chat 侧推断缺省命令(契约不动 agent.run 必填)
+    assert TEST_COMMAND in runs[0][1]["test_command"]
+    assert "pytest" in runs[1][1]["test_command"]
+    # chat(直接能力面 reversible)调 agent.run(推导档 irreversible)触发升权门,
+    # 两轮各一次(设计意图)
+    escalations = [
+        s
+        for s in seen
+        if s.name == "pre:skill.escalate" and s.payload.get("skill") == "coding.agent.run"
+    ]
+    assert len(escalations) == 2
+
+
+def test_chat_no_opening_asks_first(tmp_path):
+    """opening 缺省:开场即 user.ask → 答复即首轮任务 → 正常推进 → 「结束」收官。"""
+    work = copy_fixture(tmp_path)
+    user = ScriptedUserChannel([f"修复 calc 的 bug(验证:{TEST_COMMAND})", "结束"])
+    kernel, mock = _build(work, _make_supervisor([]), user_channel=user)
+
+    result = asyncio.run(kernel.run("coding.agent.chat", {}))
+
+    assert result["status"] == "done"
+    assert result["turns"] == 1
+    assert len(user.questions) == 2, "开场即问 + 收官前一问"
+    assert "要做什么" in user.questions[0]
+    assert "return a + b" in (work / "calc.py").read_text(encoding="utf-8")
+    chat = _entry_calls(mock.recorded, "coding.agent.chat")
+    assert sum(1 for c in chat if c[0] == "skill.coding.agent.run") == 1
+    # 首轮调用序列:第一次调用必须是 user.ask(开场即问,不是直接起任务)
+    assert chat[0][0] == "system.user.ask"

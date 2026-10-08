@@ -1,9 +1,10 @@
-# coding_agent(任务式 coding agent)——阶段一 M1–M3。
+# coding_agent(任务式 coding agent)——阶段一 M1–M3 + 阶段二 P2-M3(会话入口)。
 # 技能树:coding.agent.run(编排入口,L1 直接能力面)
 #   → coding.explore(L1 只读)→ coding.plan(L2 写计划)
 #   → coding.fix_loop(code 技能,确定性"改→测"循环)
 #       → coding.implement(L2 写改)/ coding.verify(EXEC 跑测试)
 #   → coding.collect_diff(code 技能,git diff 结构化)/ coding.review(L1 + git diff)
+# coding.agent.chat(多轮会话入口):长存 run + user.ask 循环,逐轮委托 agent.run。
 # 信任档阶梯:入口调 fix_loop/collect_diff/review(可达 EXEC)触发升权门,
 # shell.exec 逐次过 tool-confirm 门(HumanApproval 策略载体),见 README。
 skills:
@@ -179,8 +180,12 @@ skills:
        必要时用 system.file.search 按内容定位符号;
     3. 汇总发现:问题在哪个文件哪个函数、根因是什么、修验证时应看哪些文件。
     铁律:findings 只写你真实读到的内容(文件、行号、代码事实),不得臆造。
-    最终答案只输出符合 outputs schema 的 JSON(findings 字符串 +
-    relevant_files 路径数组),不要输出其他文字。
+    最终答案**只输出一个 JSON 对象**——不以散文开头、不用 markdown 代码围栏、
+    不在 JSON 外写任何文字;分析过程写进字段值里。必填字段任何情况下都必须
+    出现(给空值兜底),且不得添加 schema 之外的字段:
+    - findings:字符串,你的分析过程与结论写在这里(含文件、行号、代码事实);
+      没发现问题也如实写明,不得留空键;
+    - relevant_files:相关文件的相对路径数组,没有则给 []。
 - name: coding.plan
   version: 1.0.0
   kind: prompt
@@ -230,8 +235,13 @@ skills:
     1. 调用 system.file.write 把实施计划写入 .agent-os/plans/<任务摘要 slug>.md
        (markdown:目标/根因分析/改动步骤/验证方式;输入带 feedback 时,
        按意见修订上一版并注明修订点);
-    2. 返回结果 JSON:plan_path 为写入路径,summary 为计划一句话摘要。
-    最终答案只输出符合 outputs schema 的 JSON,不要输出其他文字。
+    2. 返回结果 JSON。
+    最终答案**只输出一个 JSON 对象**——不以散文开头、不用 markdown 代码围栏、
+    不在 JSON 外写任何文字;分析过程写进字段值里。必填字段任何情况下都必须
+    出现(给空值兜底),且不得添加 schema 之外的字段:
+    - plan_path:计划文档的相对路径(与第 1 步写入路径一致);写入失败给 ""
+      并在 summary 说明;
+    - summary:计划的一句话摘要(修订要点/失败原因也写在这里)。
 - name: coding.fix_loop
   version: 1.0.0
   kind: code
@@ -339,10 +349,14 @@ skills:
        先读反馈里点名的文件);可用 system.task.todo_update 推进任务清单状态;
     2. 用 system.file.edit(局部改)或 system.file.write(整体改)落一处修改:
        无 test_feedback 时按计划实施;带 test_feedback 时针对失败输出对症修复;
-    3. 返回结果 JSON:changed_files 为实际改动的相对路径数组(没改成则为空数组
-       并在 notes 说明),notes 为改动说明。
+    3. 返回结果 JSON。
     铁律:只改与任务相关的文件;不得伪造改动——edit/write 调用失败就如实报告。
-    最终答案只输出符合 outputs schema 的 JSON,不要输出其他文字。
+    最终答案**只输出一个 JSON 对象**——不以散文开头、不用 markdown 代码围栏、
+    不在 JSON 外写任何文字;分析过程写进字段值里。必填字段任何情况下都必须
+    出现(给空值兜底),且不得添加 schema 之外的字段:
+    - changed_files:实际改动文件的相对路径数组;没改成(编辑未命中/失败)给 [];
+    - notes:改动说明,你的分析与失败原因写在这里(edit/write 失败时如实
+      写明错误,不得伪造改动)。
 - name: coding.verify
   version: 1.0.0
   kind: prompt
@@ -388,14 +402,15 @@ skills:
 
     严格按以下编号步骤执行,每步只发一个调用:
     1. 调用 system.shell.exec 执行该命令(原样执行,不改写、不拼接);
-       该工具支持可选 session_id:多步构建/激活 venv 等需要跨调用保持
-       cd 与环境变量的场景,给同一个 session_id(如 "verify")即可;
-       单条命令验证无需使用;
-    2. 按 exit_code 判定:0 → passed=true,非 0 → passed=false;
-       output_tail 取输出末尾(至多 2000 字符);summary 一句话说明结果。
+    2. 按 exit_code 判定:0 → passed=true,非 0 → passed=false。
        执行被拒绝(permission_denied)时 passed=false、output_tail 置空、
        summary 注明"执行被拒绝",不得重试。
-    最终答案只输出符合 outputs schema 的 JSON,不要输出其他文字。
+    最终答案**只输出一个 JSON 对象**——不以散文开头、不用 markdown 代码围栏、
+    不在 JSON 外写任何文字;分析过程写进字段值里。必填字段任何情况下都必须
+    出现(给空值兜底),且不得添加 schema 之外的字段:
+    - passed:布尔,exit_code 为 0 才给 true;
+    - summary:一句话结论(含 exit_code;被拒绝时注明"执行被拒绝");
+    - output_tail:输出末尾的字符串(至多 2000 字符);无输出或被拒绝给 ""。
 - name: coding.collect_diff
   version: 1.0.0
   kind: code
@@ -495,3 +510,80 @@ skills:
       指明文件与理由),你的分析过程写在这个数组里。
     **只输出这一个 JSON 对象,不要输出任何其他文字、解释或 markdown 代码围栏;
     分析与推理写在 issues 字段内,不要写在 JSON 之外。**
+- name: coding.agent.chat
+  version: 1.0.0
+  kind: prompt
+  description: 多轮会话式 coding agent 入口(长存 run + user.ask 循环)。Use when 需要
+    在同一工作区边聊边改、连续派发多个带验证的编码任务;Do not use when 只有一个一次性
+    任务(直接用 coding.agent.run)或无需与用户交互的批处理场景。
+  inputs:
+    type: object
+    properties:
+      opening:
+        type: string
+        description: 首轮任务;缺省则开场即问用户要任务
+  outputs:
+    type: object
+    properties:
+      status:
+        type: string
+        enum: [done, failed]
+      summary:
+        type: string
+      turns:
+        type: integer
+    required:
+    - status
+    - summary
+    - turns
+  permissions:
+    tools:
+    - system.file.read
+    - system.file.list
+    - system.file.search
+    - system.task.todo_write
+    - system.task.todo_update
+    - system.task.todo_read
+    - system.user.ask
+    - system.user.notify
+    - ask_supervisor
+    skills:
+    - coding.agent.run
+    - coding.collect_diff
+  trust:
+    blast_radius: 每轮任务委托 coding.agent.run(其子树含 EXEC 档 verify,
+      升权门逐次裁决);本帧自身只有只读 + todo + 用户对话工具
+  model:
+    prefer:
+    - openai/kimi-for-coding
+    - mock/coding
+  limits:
+    max_steps: 80
+    timeout: 1800
+  prompt: |
+    # skill: coding.agent.chat
+    你是多轮会话式 coding agent 的接待员(长存 run + 用户问答循环)。
+    首轮任务在输入 JSON 的 opening 字段(缺省 = 没有首轮任务,开场即问)。
+
+    严格按以下编号步骤执行,每步只发一个调用:
+    1. 取任务:首轮——输入带 opening 时直接用它作为本轮任务,否则调用
+       system.user.ask 问「要做什么?(说 退出/结束 收官)」;后续轮一律调用
+       system.user.ask 问「下一步做什么?(说 退出/结束 收官)」。
+       用户答复以 退出/结束/bye/quit 开头 → 进第 4 步收官;
+    2. 执行任务:调用 skill.coding.agent.run,task 取用户指令原文;
+       test_command 必填——用户指令里给了验证命令(如含 pytest 的命令原文)就
+       原样用;没给时按仓库形态推断一条合理的验证命令(如该仓库 README 或
+       计划文档里记载的测试命令,形如 python -m pytest -x),不得留空。
+       纯查询类请求(如"看看现在有哪些改动")不必起完整任务,可直接调
+       skill.coding.collect_diff 拿改动清单后回答,同样计入一轮;
+    3. 汇报:子帧返回后调用 system.user.notify,摘要含该轮的
+       status/changed_files/tests.passed;然后回第 1 步;
+    4. 收官:输出最终 JSON——必填字段任何情况下都必须出现,且不得添加
+       schema 之外的字段:
+       - status:done / failed 二选一(用户收官词正常结束给 done;工具通道
+         故障等无法继续时给 failed,原因写进 summary);
+       - summary:一句话总结本次会话(完成了几轮任务、整体结果如何);
+       - turns:实际完成的任务轮数(整数,一轮 = 一次 coding.agent.run 或
+         collect_diff 执行)。
+    任何一步收到 permission_denied 都不要重试同一调用,记录后继续后续步骤。
+    只输出该 JSON,不要输出其他文字。

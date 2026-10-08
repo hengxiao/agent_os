@@ -27,7 +27,15 @@ TURN_FIELDS = ("run_id", "input", "status", "checkpoint_path", "summary")
 
 
 class SessionStore:
-    """管理 ``<root>/sessions/<session_id>.json`` 会话文档(暂停/恢复会话模型)。"""
+    """
+    管理 ``<root>/sessions/<session_id>.json`` 会话文档(暂停/恢复会话模型)。
+
+    线程安全:本类不提供锁;调用方须自行串行化对同一会话的写操作
+    (如 ``create``/``append_turn``),否则并发写可能相互覆盖丢数据。
+
+    会话文档字段演进要保持向后兼容:新增字段只对写侧生效,读侧
+    (含本类 ``list_sessions`` 与外部消费方)对缺失键一律用 ``dict.get`` 兜底。
+    """
 
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
@@ -54,12 +62,17 @@ class SessionStore:
         except (OSError, json.JSONDecodeError):
             return None
 
-    def create(self, session_id: str, skill: str, config_path: str) -> dict[str, Any]:
+    def create(
+        self, session_id: str, skill: str, config_path: str,
+        overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         新建会话文档并返回;session_id 已存在时抛 ``FileExistsError``。
 
-        文档字段:session_id/skill/config_path/created_at/updated_at/turns,
-        turns 初始为空列表(§2.2 产物布局)。
+        文档字段:session_id/skill/config_path/overrides/created_at/updated_at/turns,
+        turns 初始为空列表(§2.2 产物布局)。``overrides``(P2-M3):建会话时的 run
+        覆盖选项(K1 §2.5,如 workdir)随文档落盘——``--resume`` 重启进程后由
+        SessionRunner 继承,会话的工作目录/模型覆盖不丢(显式 flag 优先于存档)。
         """
         path = self._path(session_id)
         if path.exists():
@@ -69,6 +82,7 @@ class SessionStore:
             "session_id": session_id,
             "skill": skill,
             "config_path": config_path,
+            "overrides": dict(overrides or {}),
             "created_at": now,
             "updated_at": now,
             "turns": [],

@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from typing import Any
 from agent_os.host.coding_cli.repl import Repl
 from agent_os.host.coding_cli.session import SessionRunner
 from agent_os.host.coding_cli.session_store import SessionStore
+from agent_os.host.shared.token_refresh import start_token_refresher
 from agent_os.runtime.config import ConfigError, load_config
 from agent_os.runtime.overrides import (
     OverrideError,
@@ -128,7 +130,15 @@ def main(argv: list[str] | None = None) -> int:
         runner.start(args.skill, opening)
     else:
         print("[引导] 未给首轮任务;REPL 进入观察模式(应答/插话/斜杠命令,/help 查看)")
-    return repl.run()
+    # kimi-code OAuth 凭证 15 分钟过期:长会话自动续期(host/shared/token_refresh.py;
+    # 缺凭据文件安静退化,provider 的 api_key_env property 下次访问即读新票);
+    # REPL 退出时 stop 事件收尾线程(web create_app 无 shutdown 钩子的缺口这里补上)
+    stop_refresh = threading.Event()
+    start_token_refresher(stop_refresh)
+    try:
+        return repl.run()
+    finally:
+        stop_refresh.set()
 
 
 if __name__ == "__main__":

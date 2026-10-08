@@ -89,7 +89,11 @@ async def _cli_supervisor(question: Question) -> dict[str, Any]:
         row["kind"] = question.kind
     if question.previous_error:
         row["previous_error"] = question.previous_error
-    print(json.dumps(row, ensure_ascii=False, default=repr), file=sys.stderr, flush=True)
+    # 写**原始** stderr(sys.__stderr__):code 技能帧内经 contextlib.redirect_stderr
+    # 捕获时 sys.stderr 已换成 StringIO(logic/inprocess.py),协议行会被吞进帧产物——
+    # 用户看不到提问而 stdin 在等答;redirect_* 只换 sys.stderr/sys.stdout 绑定,
+    # 不碰 dunder 原始流。机器消费者契约(单行 JSON 协议行)不变。
+    print(json.dumps(row, ensure_ascii=False, default=repr), file=sys.__stderr__, flush=True)
     line = await asyncio.to_thread(sys.stdin.readline)
     return {"answer": line.strip(), "decided_by": "host:cli"}
 

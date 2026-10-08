@@ -95,3 +95,55 @@ def test_failure_is_tolerated(tmp_path, monkeypatch):
         mock.Mock(side_effect=OSError("network down")))
     assert tr._refresh_once(cred) is False  # 不外抛
     assert json.loads(cred.read_text())["access_token"] == "old-token"  # 文件未动
+
+
+# ---------------------------------------------------------------------------
+# 生命周期(P2:挪 host/shared 后 chat 宿主共用;本文件钉 web 兼容壳路径)
+# ---------------------------------------------------------------------------
+
+
+def test_start_missing_credentials_degrades(tmp_path, monkeypatch, capsys):
+    """缺凭据文件:返回 None 不启动 + 一行 stderr 提示(_log.info 默认不可见)。"""
+    monkeypatch.setenv("KIMI_CODE_CREDENTIALS", str(tmp_path / "nope.json"))
+    monkeypatch.setattr(tr, "_started", None)  # 进程级单例复位(其它用例可能已起)
+    assert tr.start_token_refresher() is None
+    assert "token 续期未启用" in capsys.readouterr().err
+
+
+def test_start_and_stop_lifecycle(tmp_path, monkeypatch):
+    """启动 → 幂等(单例)→ stop 事件收尾线程退出。"""
+    cred = tmp_path / "kimi-code.json"
+    _write_cred(cred, expires_in=600)  # 很新:不刷、不发请求
+    monkeypatch.setenv("MOONSHOT_API_KEY", "old-token")
+    monkeypatch.setattr(
+        tr.urllib.request, "urlopen",
+        mock.Mock(side_effect=AssertionError("凭证很新,不该发请求")),
+    )
+    monkeypatch.setattr(tr, "_started", None)
+    monkeypatch.setattr(tr, "_CHECK_INTERVAL_S", 0.02)  # 测试节拍
+    stop = __import__("threading").Event()
+    thread = tr.start_token_refresher(stop)
+    assert thread is not None and thread.is_alive()
+    assert tr.start_token_refresher(stop) is thread, "进程级幂等:重复 start 不堆积线程"
+    stop.set()
+    thread.join(timeout=2)
+    assert not thread.is_alive(), "stop 事件须让 daemon 线程退出"
+    monkeypatch.setattr(tr, "_started", None)  # 收尾复位(下个用例干净)
+
+
+def test_refreshed_env_visible_to_provider(tmp_path, monkeypatch):
+    """贯通:refresher 续期写 env 后,``api_key_env`` 配置的 provider 下次访问即读新票
+    (providers/openai_compatible.py 的 api_key property 每次访问重读 os.environ)。"""
+    from agent_os.providers.openai_compatible import OpenAICompatibleProvider
+
+    provider = OpenAICompatibleProvider(api_key_env="MOONSHOT_API_KEY")
+    monkeypatch.setenv("MOONSHOT_API_KEY", "old-token")
+    assert provider.api_key == "old-token"
+    cred = tmp_path / "kimi-code.json"
+    _write_cred(cred, expires_in=60)  # 临近过期 → 触发续期
+    monkeypatch.setattr(
+        tr.urllib.request, "urlopen",
+        lambda req, timeout=0: _Resp({"access_token": "new-token", "expires_in": 900}),
+    )
+    assert tr._refresh_once(cred) is True
+    assert provider.api_key == "new-token"

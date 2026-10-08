@@ -402,7 +402,10 @@ agent-os-chat <skill> [--input '<json>'|@file] [--config agent-os.toml] [--artif
   `agent-os run` 的「stdout 仅 JSON」契约(§3.3)约束;退出码沿用 §3.3 语义
   (0 正常含 paused / 2 输入·会话·覆盖校验 / 3 run 失败中止 / 4 配置基础设施)。
 - 装配:每轮 rebuild 内核(D3 先例),恒塞 no-op sidecar 保证 ctl 在场(pause/stop/inject 通道);
-  overrides 走 §2.5 注册表(host 私有 flags 不进注册表,P1)。
+  overrides 走 §2.5 注册表(host 私有 flags 不进注册表,P1);启动时接 token 刷新
+  (`host/shared/token_refresh.py`,自 web 挪入共用;kimi-code OAuth 凭证 15 分钟寿命,
+  daemon 自动续期写回 env,provider `api_key_env` property 下次访问即读新票;
+  `KIMI_CODE_CREDENTIALS` 可指向非默认凭据文件,缺文件安静退化),REPL 退出时 stop 收尾。
 - 测试:逻辑层单测(tests/coding_cli/test_session_runner.py,mock brain + 线程安全等待)+
   e2e 子进程管道驱动(test_repl_e2e.py,pexpect 式读锚点写 stdin,全等待有界)。
 

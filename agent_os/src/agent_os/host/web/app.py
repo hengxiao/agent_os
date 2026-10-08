@@ -645,9 +645,9 @@ def create_app(
     #: 嵌入方/测试的 programmatic 入口(E5:调度器 tick 驱动等)
     app.state.manager = manager
 
-    # OAuth 凭证 15 分钟过期:daemon 线程用 refresh_token 自动续期(见 token_refresh.py;
-    # 凭证库不存在时(如用长期 API key 部署)自动不启用)
-    from agent_os.host.web.token_refresh import start_token_refresher
+    # OAuth 凭证 15 分钟过期:daemon 线程用 refresh_token 自动续期(host/shared/
+    # token_refresh.py;凭证库不存在时(如用长期 API key 部署)自动不启用)
+    from agent_os.host.shared.token_refresh import start_token_refresher
 
     start_token_refresher()
 
